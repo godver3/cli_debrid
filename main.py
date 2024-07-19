@@ -1,9 +1,10 @@
+import curses
 import inquirer
 from state_machine import StateMachine
 from queue_manager import QueueManager
 from launch_check import perform_launch_check
 from scraper.scraper import scrape
-from settings import edit_settings, get_setting
+from settings import SettingsEditor, get_setting
 from database import get_all_collected_movies, get_all_collected_episodes, get_all_wanted_movies, get_all_wanted_episodes, search_collected_movies, search_collected_episodes, purge_database, purge_wanted_database, verify_database, load_collected_cache
 from plex_integration import populate_db_from_plex
 from content_checkers.overseer_checker import check_overseer_requests, get_unavailable_content, get_mdblists
@@ -316,11 +317,13 @@ async def main_menu():
                 Choice("Exit", "exit")
             ]
         ).ask_async()
-
+        
+        os.system('clear')
+        
         if action == "run":
             await run_program_from_menu()
         elif action == "settings":
-            edit_settings()
+            SettingsEditor()
         elif action == "scrape":
             await run_manual_scrape()
         elif action == "debug":
