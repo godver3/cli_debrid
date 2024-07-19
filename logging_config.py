@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
-log_messages = deque(maxlen=5)  # Store last 28 log messages
+log_messages = deque(maxlen=28)  # Store last 28 log messages
 
 class CustomHandler(logging.Handler):
     def emit(self, record):
@@ -20,14 +20,20 @@ custom_handler = CustomHandler()
 custom_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(custom_handler)
 
-# File handler for date/time stamped logs
+# Directory for log files
 log_directory = 'logs'
 if not os.path.exists(log_directory):
     os.makedirs(log_directory)
 
+# Variable switch for logging strategy
+use_single_log_file = True  # Set this to False to use date-stamped files
+
 def create_rotating_file_handler():
-    current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    filename = os.path.join(log_directory, f'program_{current_time}.log')
+    if use_single_log_file:
+        filename = os.path.join(log_directory, 'program.log')
+    else:
+        current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        filename = os.path.join(log_directory, f'program_{current_time}.log')
 
     file_handler = RotatingFileHandler(
         filename=filename,
@@ -49,10 +55,8 @@ def get_logger():
 def get_log_messages():
     try:
         messages = list(log_messages)
-        #logger.debug(f"Retrieved {len(messages)} log messages from deque")
         return messages
     except Exception as e:
-        #logger.error(f"Error in get_log_messages: {str(e)}")
         logger.error(traceback.format_exc())
         return []
 
@@ -65,6 +69,7 @@ def delete_oldest_files(log_directory, num_files_to_keep):
         for file in log_files[:-num_files_to_keep]:
             os.remove(os.path.join(log_directory, file))
     logger.info("Deleted oldest logs.")
+
 # Function to switch to a new file if current file exceeds 100MB
 def rotate_file_if_needed():
     if file_handler.stream.tell() > 100 * 1024 * 1024:  # If file size > 100MB
@@ -72,4 +77,5 @@ def rotate_file_if_needed():
         file_handler.close()
         new_file_handler = create_rotating_file_handler()
         logger.addHandler(new_file_handler)
-        delete_oldest_files(log_directory, 5)
+        if not use_single_log_file:
+            delete_oldest_files(log_directory, 5)
