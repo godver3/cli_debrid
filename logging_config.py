@@ -3,7 +3,11 @@ from collections import deque
 import os
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from settings import get_setting
 
+# Load settings
+use_single_log_file = get_setting('Logging', 'use_single_log_file', 'False').lower() == 'true'
+logging_level = get_setting('Logging', 'logging_level', 'INFO').upper()
 log_messages = deque(maxlen=28)  # Store last 28 log messages
 
 class CustomHandler(logging.Handler):
@@ -18,64 +22,70 @@ logger.propagate = False
 # Custom handler for in-memory logging
 custom_handler = CustomHandler()
 custom_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(custom_handler)
+
+# Stream handler for console output
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(stream_handler)
 
 # Directory for log files
 log_directory = 'logs'
 if not os.path.exists(log_directory):
     os.makedirs(log_directory)
 
-# Variable switch for logging strategy
-use_single_log_file = True  # Set this to False to use date-stamped files
-
-def create_rotating_file_handler():
-    if use_single_log_file:
-        filename = os.path.join(log_directory, 'program.log')
-    else:
-        current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = os.path.join(log_directory, f'program_{current_time}.log')
-
+def create_rotating_file_handler(level, filename):
     file_handler = RotatingFileHandler(
         filename=filename,
         maxBytes=100 * 1024 * 1024,  # 100 MB
         backupCount=5,
         encoding='utf-8'
     )
+    file_handler.setLevel(level)
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     return file_handler
 
-file_handler = create_rotating_file_handler()
-logger.addHandler(file_handler)
+# Create separate handlers for DEBUG and INFO levels
+debug_log_file = os.path.join(log_directory, 'debug.log')
+info_log_file = os.path.join(log_directory, 'info.log')
 
-logger.setLevel(logging.INFO)
+debug_handler = create_rotating_file_handler(logging.DEBUG, debug_log_file)
+info_handler = create_rotating_file_handler(logging.INFO, info_log_file)
+
+logger.addHandler(debug_handler)
+logger.addHandler(info_handler)
+
+# Set logging level based on settings
+try:
+    logger.setLevel(logging_level)
+except ValueError:
+    logger.setLevel(logging.INFO)
+    logger.error(f"Invalid logging level '{logging_level}', defaulting to INFO")
 
 def get_logger():
     return logger
 
 def get_log_messages():
     try:
-        messages = list(log_messages)
-        return messages
+        return list(log_messages)
     except Exception as e:
-        logger.error(traceback.format_exc())
+        logger.error(e, exc_info=True)
         return []
 
-def delete_oldest_files(log_directory, num_files_to_keep):
-    log_files = sorted(
-        [f for f in os.listdir(log_directory) if f.startswith('program_') and f.endswith('.log')],
-        key=lambda x: os.path.getmtime(os.path.join(log_directory, x))
-    )
-    if len(log_files) > num_files_to_keep:
-        for file in log_files[:-num_files_to_keep]:
-            os.remove(os.path.join(log_directory, file))
-    logger.info("Deleted oldest logs.")
+# Function to engage the custom handler
+def engage_custom_handler():
+    logger.addHandler(custom_handler)
+    logger.info("Custom handler engaged.")
 
-# Function to switch to a new file if current file exceeds 100MB
-def rotate_file_if_needed():
-    if file_handler.stream.tell() > 100 * 1024 * 1024:  # If file size > 100MB
-        logger.removeHandler(file_handler)
-        file_handler.close()
-        new_file_handler = create_rotating_file_handler()
-        logger.addHandler(new_file_handler)
-        if not use_single_log_file:
-            delete_oldest_files(log_directory, 5)
+# Function to disengage the custom handler
+def disengage_custom_handler():
+    if custom_handler in logger.handlers:
+        logger.removeHandler(custom_handler)
+        logger.info("Custom handler disengaged.")
+
+# Function to remove console stream handler
+def remove_console_handler():
+    logger.removeHandler(stream_handler)
+
+# Function to add console stream handler
+def add_console_handler():
+    logger.addHandler(stream_handler)

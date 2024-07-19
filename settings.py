@@ -15,6 +15,7 @@ def load_config():
 def save_config(config):
     with open(CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
+    print(f"Configuration saved to {CONFIG_FILE}")
 
 def get_setting(section, key, default=None):
     config = load_config()
@@ -24,7 +25,7 @@ def set_setting(section, key, value):
     config = load_config()
     if not config.has_section(section):
         config.add_section(section)
-    config[section][key] = value
+    config.set(section, key, value)
     save_config(config)
 
 class SettingsEditor:
@@ -67,7 +68,10 @@ class SettingsEditor:
         ])
 
     def show_debug_settings(self, button):
-        self.show_settings("Debug Settings", [])
+        self.show_settings("Debug Settings", [
+            ('Logging', 'use_single_log_file', 'Use Single Log File (True/False)'),
+            ('Logging', 'logging_level', 'Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)')
+        ])
 
     def show_settings(self, title, settings):
         self.edits = {}
@@ -85,10 +89,13 @@ class SettingsEditor:
         self.main_loop.widget = urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
 
     def save_settings(self):
+        print("Saving settings...")
         for (section, key), edit in self.edits.items():
             value = edit.get_edit_text()
+            print(f"Setting {section} - {key} to {value}")
             set_setting(section, key, value)
-        save_config(self.config)
+        # Reload config to ensure updates are applied
+        self.config = load_config()
 
     def back_to_main_menu(self, button):
         self.save_settings()

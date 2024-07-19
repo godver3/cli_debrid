@@ -3,8 +3,7 @@ import logging
 from tqdm import tqdm
 from datetime import datetime, date
 import unicodedata
-from trakt_config import get_trakt_movie_release_date, get_trakt_episode_release_date
-from cache import create_cache_table
+from utilities.release_date_checker import get_trakt_movie_release_date, get_trakt_episode_release_date
 import pickle
 import os
 from logging_config import get_logger
@@ -14,7 +13,7 @@ logger = get_logger()
 COLLECTED_CACHE_FILE = 'collected_content_cache.pkl'
 
 def get_db_connection():
-    conn = sqlite3.connect('content_verification.db')
+    conn = sqlite3.connect('db_content/content_verification.db')
     conn.row_factory = sqlite3.Row
     return conn
 
