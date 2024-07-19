@@ -158,25 +158,10 @@ class MainUI:
 
 async def initial_setup():
     logger.info("Running initial setup...")
-    #try:
-        #await asyncio.to_thread(get_unavailable_content)
-    #except Exception as e:
-        #logger.error(f"Error in get_unavailable_content: {e}")
-
-    #try:
-        #result = await asyncio.to_thread(clone_wanted_to_working)
-        #if result:
-            #logger.debug("Successfully cloned wanted items to working tables.")
-        #else:
-            #logger.debug("No items were cloned to working tables.")
-    #except Exception as e:
-        #logger.error(f"Error in clone_wanted_to_working: {e}")
-
-    # Initial setup tasks
     await asyncio.to_thread(purge_wanted_database)
     await asyncio.to_thread(purge_working_database)
     await asyncio.to_thread(verify_database)
-    await asyncio.to_thread(populate_db_from_plex, get_setting('Plex', 'url'), get_setting('Plex', 'token'))
+    #await asyncio.to_thread(populate_db_from_plex, get_setting('Plex', 'url'), get_setting('Plex', 'token'))
     await asyncio.to_thread(sync_mdblist_with_overseerr)
     await asyncio.to_thread(get_unavailable_content)
     await asyncio.to_thread(clone_wanted_to_working)
@@ -353,83 +338,13 @@ async def process_scraping(item: Dict[str, Any]) -> Tuple[str, List[Dict[str, An
         logger.error(f"Error scraping item {title}: {str(e)}")
         return 'Wanted', []
 
-async def bk_process_queue(state: str, process_func: callable) -> None:
-    logger.info(f"Starting to process queue for state: {state}")
-
-    movies = await fetch_and_convert(get_working_movies_by_state, state)
-    episodes = await fetch_and_convert(get_working_episodes_by_state, state)
-
-    all_items = movies + episodes
-    logger.info(f"Total items to process for state {state}: {len(all_items)}")
-
-    for item in all_items:
-        try:
-            if 'episode_title' in item:
-                item_title = f"{item.get('show_title', 'Unknown Show')} - {item.get('episode_title', 'Unknown Episode')}"
-            else:
-                item_title = item.get('title', 'Unknown Title')
-
-            item_id = item.get('id', 'Unknown ID')
-
-            logger.info(f"Processing item: {item_title} (ID: {item_id})")
-
-            if state == 'Adding':
-                # For 'Adding' state, we need to use the scraping results
-                scraping_results = item.get('scraping_results', [])
-                result = await process_func(item, scraping_results)
-            else:
-                result = await process_func(item)
-
-            logger.info(f"Result from process_func: {result}")
-
-            if isinstance(result, tuple) and len(result) == 2:
-                new_state, additional_info = result
-            elif isinstance(result, str):
-                new_state = result
-                additional_info = None
-            else:
-                logger.error(f"Unexpected result format: {result}")
-                continue
-
-            logger.info(f"New state: {new_state}, Additional info: {additional_info}")
-
-            if additional_info:
-                if state == 'Scraping':
-                    # Store scraping results for the 'Adding' state
-                    item['scraping_results'] = additional_info
-                best_result = additional_info[0] if isinstance(additional_info, list) else additional_info
-                if 'episode_number' in item:
-                    await asyncio.to_thread(update_working_episode, item_id, new_state, best_result.get('title'))
-                else:
-                    await asyncio.to_thread(update_working_movie, item_id, new_state, best_result.get('title'))
-            else:
-                if 'episode_number' in item:
-                    await asyncio.to_thread(update_working_episode, item_id, new_state)
-                else:
-                    await asyncio.to_thread(update_working_movie, item_id, new_state)
-
-        except Exception as e:
-            logger.error(f"Error processing item in state {state}. Item details: {item}. Error: {str(e)}", exc_info=True)
-
-    logger.info(f"Finished processing queue for state: {state}")
-
 async def process_adding(item: Dict[str, Any], scraping_results: List[Dict[str, Any]]) -> str:
     if 'show_title' in item:
         title = f"{item['show_title']} - {item.get('episode_title', 'Unknown Episode')}"
     else:
         title = item.get('title', 'Unknown Title')
 
-    logger.info(f"Adding item to debrid: {title}")
-
-    if not scraping_results:
-        logger.warning(f"No scraping results found for item: {title}")
-        return 'Wanted'
-
-    # Verify the status of the item
-    current_status = await fetch_item_status(item['id'])
-    if current_status != 'Adding':
-        logger.warning(f"Item {title} is no longer in Adding state. Current state: {current_status}")
-        return current_status
+    logger.info(f"Processing Adding item: {title}")
 
     for result in scraping_results:
         magnet_link = result.get('magnet')
@@ -442,7 +357,7 @@ async def process_adding(item: Dict[str, Any], scraping_results: List[Dict[str, 
 
                 # Check if the result is a season pack
                 season_pack_detected = detect_season_pack(result.get('title', '')) != 'N/A'
-                if season_pack_detected:
+                if season_pack_detected and 'show_imdb_id' in item:
                     logger.debug(f"Season pack detected for item: {title}")
                     relevant_states = ['Wanted', 'Scraping', 'Adding', 'Checking']
                     episodes_in_season = []
@@ -499,35 +414,41 @@ async def main_loop(ui: MainUI, loop: urwid.MainLoop) -> None:
     await initial_setup()
     logger.info("Starting main loop...")
 
-    # Periodic tasks
+    # Schedule immediate processing tasks
+    async def schedule_immediate_tasks():
+        global sync_requested
+        while True:
+            tasks = [
+                asyncio.create_task(process_queue('Wanted', process_wanted)),
+                asyncio.create_task(process_queue('Scraping', process_scraping)),
+                asyncio.create_task(process_queue('Adding', process_adding)),
+                asyncio.create_task(process_queue('Checking', process_checking)),
+                asyncio.create_task(process_queue('Filled', process_filled)),
+            ]
+            await asyncio.gather(*tasks)
+
+            ui.update_display()
+            loop.draw_screen()
+
+            if sync_requested:
+                await asyncio.to_thread(sync_mdblist_with_overseerr)
+                sync_requested = False  # Reset the flag
+
+            await asyncio.sleep(5)  # Short delay between iterations
+
+    # Schedule periodic tasks
     async def periodic_task(interval, coro):
         while True:
             await asyncio.to_thread(coro)
             await asyncio.sleep(interval)
 
+    asyncio.create_task(schedule_immediate_tasks())
     asyncio.create_task(periodic_task(5 * 60, sync_mdblist_with_overseerr))  # Every 5 minutes
     asyncio.create_task(periodic_task(5 * 60, get_unavailable_content))  # Every 5 minutes
+
+    # Delay for 60 minutes before scheduling the periodic populate_db_from_plex task
+    await asyncio.sleep(60 * 60)
     asyncio.create_task(periodic_task(60 * 60, lambda: populate_db_from_plex(get_setting('Plex', 'url'), get_setting('Plex', 'token'))))  # Every 60 minutes
-
-    while True:
-        tasks = [
-            asyncio.create_task(process_queue('Wanted', process_wanted)),
-            asyncio.create_task(process_queue('Scraping', process_scraping)),
-            asyncio.create_task(process_queue('Adding', process_adding)),
-            asyncio.create_task(process_queue('Checking', process_checking)),
-            asyncio.create_task(process_queue('Filled', process_filled)),
-        ]
-
-        await asyncio.gather(*tasks)
-
-        ui.update_display()
-        loop.draw_screen()
-
-        if sync_requested:
-            await asyncio.to_thread(sync_mdblist_with_overseerr)
-            sync_requested = False  # Reset the flag
-
-        await asyncio.sleep(5)  # Short delay between iterations
 
 async def run_program():
     ui = MainUI()
