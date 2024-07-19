@@ -3,6 +3,7 @@ import requests
 import logging
 from plexapi.server import PlexServer
 from logging_config import get_logger, get_log_messages
+from content_checkers.overseer_checker import get_unavailable_content
 
 logger = get_logger()
 
@@ -48,6 +49,8 @@ def get_mdblists():
     ]
 
     logger.debug(f"Fetched {len(unavailable_movies)} movies from MDBList")
+
+    
     return unavailable_movies
 
 def get_overseerr_requests(overseerr_url, overseerr_api_key):
@@ -119,6 +122,39 @@ def filter_plex_library(plex, movies):
     logger.debug(f"Filtered Plex library content, {len(filtered_content)} movies remaining out of {len(movies)}")
     return filtered_content
 
+def add_requests_to_overseerr(overseerr_url, overseerr_api_key, movies):
+    headers = {
+        'X-Api-Key': overseerr_api_key,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
+
+    for movie in movies:
+        # Convert imdb_id to tvdbId only if it's numeric
+        tvdb_id = movie['imdb_id']
+        if tvdb_id.isdigit():
+            tvdb_id = int(tvdb_id)
+        else:
+            tvdb_id = None
+
+        payload = {
+            'mediaType': 'movie',
+            'mediaId': movie['tmdb_id'],
+            'imdbId': tvdb_id,
+        }
+        
+        try:
+            logger.info(f"Adding request to Overseerr for movie: {movie['title']} (TMDB ID: {movie['tmdb_id']})")
+            logger.debug(f"Payload: {payload}")
+            response = requests.post(f"{overseerr_url}/api/v1/request", json=payload, headers=headers)
+            response.raise_for_status()
+            logger.debug(f"Successfully added request for movie: {movie['title']}")
+        except requests.RequestException as e:
+            logger.error(f"Error adding request to Overseerr: {e}")
+            logger.error(f"Response content: {response.content}")
+        except Exception as e:
+            logger.error(f"Unexpected error while adding request to Overseerr: {e}")
+
 def sync_mdblist_with_overseerr():
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')
@@ -141,7 +177,10 @@ def sync_mdblist_with_overseerr():
     filtered_mdblist_content = filter_mdblist_content(mdblist_content, overseerr_requests)
     final_filtered_content = filter_plex_library(plex, filtered_mdblist_content)
 
-    logger.debug(f"Final filtered MDBList content: {final_filtered_content}")
+    logger.info(f"Final filtered MDBList content: {final_filtered_content}")
+
+    add_requests_to_overseerr(overseerr_url, overseerr_api_key, final_filtered_content)
+
     return final_filtered_content
 
 # Example usage
