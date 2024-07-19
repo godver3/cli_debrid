@@ -7,7 +7,7 @@ from settings import get_setting
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-CACHE_FILE = 'release_dates_cache.pkl'
+CACHE_FILE = '../db_content/release_dates_cache.pkl'
 CACHE_EXPIRY_HOURS = 24
 TRAKT_API_URL = 'https://api.trakt.tv'
 TRAKT_CLIENT_ID = get_setting('Trakt', 'client_id')

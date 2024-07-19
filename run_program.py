@@ -20,7 +20,7 @@ from logging_config import get_logger, get_log_messages
 from typing import Dict, Any, List, Tuple
 import sqlite3
 from scraper.scraper import scrape, detect_season_pack
-from processor.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet
+from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet
 import aiofiles
 from os import path
 import pickle
@@ -28,8 +28,6 @@ from aiohttp import web
 from settings import get_setting
 
 logger = get_logger()
-
-SCRAPING_RESULTS_FILE = 'scraping_results.pkl'
 
 sync_requested = False
 
@@ -240,13 +238,7 @@ async def process_queue(state: str, process_func: callable) -> None:
 
 async def update_scraping_results(item_id: int, results: List[Dict[str, Any]]) -> None:
     try:
-        # Load existing results
-        if path.exists(SCRAPING_RESULTS_FILE):
-            async with aiofiles.open(SCRAPING_RESULTS_FILE, 'rb') as f:
-                content = await f.read()
-                all_results = pickle.loads(content)
-        else:
-            all_results = {}
+        all_results = {}
 
         # Update results for this item
         all_results[item_id] = results
