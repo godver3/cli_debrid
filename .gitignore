@@ -55,3 +55,4 @@ archives
 *.pkl
 *.db
 config.ini
+commit.sh
