@@ -3,7 +3,7 @@ import requests
 import logging
 from plexapi.server import PlexServer
 from logging_config import get_logger, get_log_messages
-from content_checkers.overseer_checker import get_unavailable_content
+#from content_checkers.overseer_checker import get_unavailable_content
 
 logger = get_logger()
 
