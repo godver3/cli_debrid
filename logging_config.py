@@ -26,7 +26,6 @@ custom_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(m
 # Stream handler for console output
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(stream_handler)
 
 # Directory for log files
 log_directory = 'logs'
@@ -53,12 +52,15 @@ info_handler = create_rotating_file_handler(logging.INFO, info_log_file)
 
 logger.addHandler(debug_handler)
 logger.addHandler(info_handler)
+logger.addHandler(stream_handler)  # Always add stream handler
 
-# Set logging level based on settings
+# Set logging level for the console based on settings
 try:
-    logger.setLevel(logging_level)
+    stream_handler.setLevel(logging_level)
+    logger.setLevel(logging.DEBUG)  # Set to DEBUG to ensure all levels are passed to handlers
 except ValueError:
-    logger.setLevel(logging.INFO)
+    stream_handler.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     logger.error(f"Invalid logging level '{logging_level}', defaulting to INFO")
 
 def get_logger():
@@ -73,6 +75,8 @@ def get_log_messages():
 
 # Function to engage the custom handler
 def engage_custom_handler():
+    if stream_handler in logger.handlers:
+        logger.removeHandler(stream_handler)
     logger.addHandler(custom_handler)
     logger.info("Custom handler engaged.")
 
@@ -80,12 +84,15 @@ def engage_custom_handler():
 def disengage_custom_handler():
     if custom_handler in logger.handlers:
         logger.removeHandler(custom_handler)
-        logger.info("Custom handler disengaged.")
+    logger.addHandler(stream_handler)
+    logger.info("Custom handler disengaged.")
 
 # Function to remove console stream handler
 def remove_console_handler():
-    logger.removeHandler(stream_handler)
+    if stream_handler in logger.handlers:
+        logger.removeHandler(stream_handler)
 
 # Function to add console stream handler
 def add_console_handler():
-    logger.addHandler(stream_handler)
+    if stream_handler not in logger.handlers:
+        logger.addHandler(stream_handler)

@@ -4,7 +4,7 @@ import urwid
 import subprocess
 import sys
 
-CONFIG_FILE = 'config.ini'
+CONFIG_FILE = './config.ini'
 
 def load_config():
     config = configparser.ConfigParser()

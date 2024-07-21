@@ -7,7 +7,7 @@ from settings import get_setting
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-CACHE_FILE = '../db_content/release_dates_cache.pkl'
+CACHE_FILE = 'db_content/release_dates_cache.pkl'
 CACHE_EXPIRY_HOURS = 24
 TRAKT_API_URL = 'https://api.trakt.tv'
 TRAKT_CLIENT_ID = get_setting('Trakt', 'client_id')
@@ -36,12 +36,6 @@ def update_cache_release_date(imdb_id, release_date, season=None, episode=None):
     key = (imdb_id, season, episode)
     cache[key] = {'release_date': release_date, 'timestamp': datetime.now()}
     save_cache(cache)
-
-import os
-import pickle
-import logging
-import requests
-from datetime import datetime, date
 
 def get_trakt_movie_release_date(imdb_id):
     cached_date = get_cached_release_date(imdb_id)
