@@ -2,14 +2,19 @@ import logging
 import requests
 from settings import get_setting
 from logging_config import get_logger
-from database import get_all_media_items
-from utilities.release_date_checker import get_trakt_movie_release_date, get_trakt_episode_release_date
+from database import get_all_media_items, get_media_item_status
+from datetime import datetime
 
 logger = get_logger()
 
-DEFAULT_TAKE = 50
+DEFAULT_TAKE = 100
 DEFAULT_TOTAL_RESULTS = float('inf')
-REQUEST_TIMEOUT = 10  # seconds
+REQUEST_TIMEOUT = 3  # seconds
+REQUEST_LIMIT = 5  # Limit of items to handle
+PAGINATION_TAKE = 20  # Number of items to fetch per pagination request
+MAX_RETRIES = 1
+RETRY_DELAY = 2  # seconds
+JITTER = 2  # seconds
 
 def get_overseerr_headers(api_key):
     return {
@@ -29,23 +34,35 @@ def fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key, take=DEFAUL
     headers = get_overseerr_headers(overseerr_api_key)
     wanted_content = []
     skip = 0
-    total_results = DEFAULT_TOTAL_RESULTS
+    page = 1
 
-    while skip < total_results:
+    while True:
         try:
+            logger.debug(f"Fetching page {page} (skip={skip}, take={take})")
             response = requests.get(
-                get_url(overseerr_url, f"/api/v1/request?filter=approved&take={take}&skip={skip}"),
+                get_url(overseerr_url, f"/api/v1/request?take={take}&skip={skip}"),
                 headers=headers,
                 timeout=REQUEST_TIMEOUT
             )
             response.raise_for_status()
             data = response.json()
+            
+            results = data.get('results', [])
+            total_results = data.get('pageInfo', {}).get('total', data.get('total', 0))
+            
+            logger.debug(f"Page {page}: Received {len(results)} results. API reports total of {total_results}")
+            
+            if not results:
+                logger.debug("No more results returned. Stopping pagination.")
+                break
 
-            logger.debug(f"Overseerr response data: {data}")
-
-            total_results = data.get('pageInfo', {}).get('totalResults', data.get('totalResults', 0))
-            wanted_content.extend(data.get('results', []))
+            wanted_content.extend(results)
             skip += take
+            page += 1
+
+            if len(results) < take:
+                logger.debug("Received fewer results than requested. This is likely the last page.")
+                break
 
         except requests.RequestException as e:
             logger.error(f"Error fetching wanted content from Overseerr: {e}")
@@ -58,6 +75,8 @@ def fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key, take=DEFAUL
             logger.error(f"Unexpected error while processing Overseerr response: {e}")
             break
 
+    logger.info(f"Fetched a total of {len(wanted_content)} wanted content items from Overseerr")
+    logger.debug(f"Pagination details: Pages fetched: {page - 1}, Last skip value: {skip - take}")
     return wanted_content
 
 def get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies):
@@ -92,13 +111,6 @@ def get_wanted_from_overseerr():
         wanted_movies = []
         wanted_episodes = []
 
-        # Get collected movies and episodes from the database
-        collected_movies = get_all_media_items(state='Collected', media_type='movie')
-        collected_episodes = get_all_media_items(state='Collected', media_type='episode')
-
-        collected_movie_titles_years = {(movie['title'], movie['year']) for movie in collected_movies if movie['title'] and movie['year']}
-        collected_episode_titles = {(episode['title'], episode['season_number'], episode['episode_number']) for episode in collected_episodes}
-
         for item in wanted_content_raw:
             media = item.get('media', {})
             if media.get('mediaType') == 'tv':
@@ -107,11 +119,15 @@ def get_wanted_from_overseerr():
                 show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
                 imdb_id = show_details.get('externalIds', {}).get('imdbId', 'Unknown IMDb ID')
                 show_title = show_details.get('name', 'Unknown Show Title')
-                logger.debug(f"Show details: {show_details}")
                 for season in range(1, show_details.get('numberOfSeasons', 0) + 1):
                     season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, season, cookies)
                     for episode in season_details.get('episodes', []):
-                        if (show_title, season, episode.get('episodeNumber')) not in collected_episode_titles:
+                        # Check if this episode is already collected
+                        status = get_media_item_status(imdb_id=imdb_id, season_number=season, episode_number=episode.get('episodeNumber'))
+                        if status == "Missing":
+                            logger.info(f"Episode missing: {show_title} S{season}E{episode.get('episodeNumber')}, fetching air date.")
+                            air_date = episode.get('airDate', 'Unknown')
+                            logger.info(f"Fetched air date for episode: {air_date}")
                             episode_item = {
                                 'imdb_id': imdb_id,
                                 'tmdb_id': tmdb_id,
@@ -120,25 +136,42 @@ def get_wanted_from_overseerr():
                                 'year': episode.get('airDate', 'Unknown Year')[:4] if episode.get('airDate') else 'Unknown Year',
                                 'season_number': season,
                                 'episode_number': episode.get('episodeNumber', 'Unknown Episode Number'),
-                                'release_date': get_trakt_episode_release_date(imdb_id, season, episode.get('episodeNumber'))
+                                'release_date': air_date
                             }
                             wanted_episodes.append(episode_item)
+                        else:
+                            logger.debug(f"Episode already collected: {show_title} S{season}E{episode.get('episodeNumber')}")
 
             elif media.get('mediaType') == 'movie':
                 tmdb_id = media.get('tmdbId')
                 logger.debug(f"Processing movie media: {media}")
                 movie_details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
                 title = movie_details.get('title', 'Unknown Title')
-                year = movie_details.get('releaseDate', 'Unknown Year')[:4] if movie_details.get('releaseDate') else None
-                if title and year and (title, year) not in collected_movie_titles_years:
+                year = movie_details.get('releaseDate', 'Unknown Year')[:4] if movie_details.get('releaseDate') else 'Unknown Year'
+                # Check if this movie is already collected
+                status = get_media_item_status(imdb_id=movie_details.get('externalIds', {}).get('imdbId'), title=title, year=year)
+                if status == "Missing":
+                    logger.info(f"Movie missing: {title} ({year}), fetching release date.")
+                    releases = movie_details.get('releases', {}).get('results', [])
+                    release_date = 'Unknown'
+                    for release in releases:
+                        for date in release.get('release_dates', []):
+                            if date.get('type') in [4, 5]:  # Type 4 and 5 are of interest
+                                release_date = date.get('release_date')
+                                break
+                        if release_date != 'Unknown':
+                            break
+                    logger.info(f"Fetched release date for movie: {release_date}")
                     movie_item = {
                         'imdb_id': movie_details.get('externalIds', {}).get('imdbId', 'Unknown IMDb ID'),
                         'tmdb_id': tmdb_id,
                         'title': title,
                         'year': year,
-                        'release_date': get_trakt_movie_release_date(movie_details.get('externalIds', {}).get('imdbId', ''))
+                        'release_date': release_date
                     }
                     wanted_movies.append(movie_item)
+                else:
+                    logger.debug(f"Movie already collected: {title} ({year})")
 
         logger.info(f"Retrieved {len(wanted_movies)} wanted movies from Overseerr")
         logger.info(f"Retrieved {len(wanted_episodes)} wanted episodes from Overseerr")

@@ -10,6 +10,7 @@ from .torrentio import scrape_torrentio
 from .knightcrawler import scrape_knightcrawler
 from settings import get_setting
 from logging_config import get_logger
+from database import get_item_state
 
 # Set up logger for this module
 logger = get_logger()
