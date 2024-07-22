@@ -1,8 +1,8 @@
 import configparser
 import os
-import urwid
 import subprocess
 import sys
+import urwid
 
 CONFIG_FILE = './config.ini'
 
@@ -41,6 +41,7 @@ class SettingsEditor:
     def build_main_menu(self):
         menu = urwid.Pile([
             urwid.Text("Settings Editor (press 'q' to quit)"),
+            urwid.Text("Use Shift-Insert to paste values."),
             urwid.AttrMap(urwid.Button("Required Settings", on_press=self.show_required_settings), None, focus_map='reversed'),
             urwid.AttrMap(urwid.Button("Additional Settings", on_press=self.show_additional_settings), None, focus_map='reversed'),
             urwid.AttrMap(urwid.Button("Debug Settings", on_press=self.show_debug_settings), None, focus_map='reversed')

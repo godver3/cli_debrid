@@ -3,17 +3,17 @@ import sys
 import questionary
 from questionary import Choice
 from utilities.plex_functions import get_collected_from_plex
-from content_checkers.mdb_list import sync_mdblist_with_overseerr
 import curses
 from database import (
-    get_all_media_items, search_media_items,
+    get_all_media_items, search_movies, search_tv_shows,
     purge_database, verify_database,
-    add_or_update_media_items_batch
+    add_collected_items, add_wanted_items
 )
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from settings import get_setting
 from logging_config import get_logger, get_log_messages
 from content_checkers.overseerr import get_wanted_from_overseerr
+from content_checkers.mdb_list import get_wanted_from_mdblists
 
 logger = get_logger()
 
@@ -28,27 +28,30 @@ def search_db():
     ).ask()
 
     if content_type == 'movies':
-        results = search_media_items(search_term)
+        results = search_movies(search_term)
         log_movie_results(results)
     elif content_type == 'tv_shows':
-        results = search_media_items(search_term)
+        results = search_tv_shows(search_term)
         log_tv_results(results)
-
+        
 def log_movie_results(results):
     if results:
-        logger.info("\nMatching Movies:")
-        for movie in results:
-            logger.info(f"ID: {movie['id']}, IMDb ID: {movie['imdb_id']}, Title: {movie['title']}, Year: {movie['year']}")
+        logger.info(f"{'ID':<5} {'Title':<50} {'Year':<5} {'State':<10}")
+        logger.info("-" * 70)
+        for item in results:
+            logger.info(f"{item['id']:<5} {item['title']:<50} {item['year']:<5} {item['state']:<10}")
     else:
-        logger.info("No matching movies found.")
+        logger.info("No movies found matching the search term.")
 
 def log_tv_results(results):
     if results:
-        logger.info("\nMatching TV Shows:")
-        for episode in results:
-            logger.info(f"Show: {episode['title']}, Episode: {episode['episode_title']}, Season: {episode['season_number']}, Episode: {episode['episode_number']}, Year: {episode['year']}")
+        logger.info(f"{'ID':<5} {'Show Title':<50} {'Season':<6} {'Episode':<7} {'Ep Title':<50} {'State':<10}")
+        logger.info("-" * 130)
+        for item in results:
+            logger.info(f"{item['id']:<5} {item['title']:<50} S{item['season_number']:<5}E{item['episode_number']:<6} {item['episode_title']:<50} {item['state']:<10}")
     else:
-        logger.info("No matching TV shows found.")
+        logger.info("No TV shows found matching the search term.")
+
 
 def purge_db():
     confirm = questionary.confirm("Are you sure you want to purge the database? This action cannot be undone.", default=False).ask()
@@ -58,7 +61,7 @@ def purge_db():
             choices=[
                 Choice("Movies", "movie"),
                 Choice("Episodes", "episode"),
-                Choice("All", None)
+                Choice("All", "all")
             ]
         ).ask()
 
@@ -67,7 +70,7 @@ def purge_db():
             choices=[
                 Choice("Wanted", "Wanted"),
                 Choice("Collected", "Collected"),
-                Choice("All", None)
+                Choice("All", "all")
             ]
         ).ask()
 
@@ -174,10 +177,11 @@ def debug_commands():
             choices=[
                 Choice("Get and Add All Collected from Plex", "get_all_collected"),
                 Choice("Get and Add All Recent from Plex", "get_recent_collected"),
+                Choice("Get and Add All Wanted from Overseerr", "get_all_wanted"),
+                Choice("Get and Add All Wanted from MDB List", "pull_mdblist"),
                 Choice("View Database Content", "view_db"),
                 Choice("Search Database", "search_db"),
-                Choice("Get and Add All Wanted from Overseerr", "get_all_wanted"),
-                Choice("Pull MDBList Items", "pull_mdblist"),
+                Choice("Sync all collected content to Overseerr", "sync_all"),
                 Choice("Purge Database", "purge_db"),
                 Choice("Back to Main Menu", "back")
             ]
@@ -186,23 +190,27 @@ def debug_commands():
         if action == 'get_all_collected':
             collected_content = get_collected_from_plex('all')
             if collected_content:
-                add_or_update_media_items_batch(collected_content['movies'] + collected_content['episodes'], status='Collected', full_scan=True)
+                add_collected_items(collected_content['movies'] + collected_content['episodes'])
         elif action == 'get_recent_collected':
             collected_content = get_collected_from_plex('recent')
             if collected_content:
-                add_or_update_media_items_batch(collected_content['movies'] + collected_content['episodes'], status='Collected')
+                add_collected_items(collected_content['movies'] + collected_content['episodes'])
         elif action == 'view_db':
             view_database_content()
         elif action == 'search_db':
             search_db()
         elif action == 'pull_mdblist':
-            sync_mdblist_with_overseerr()
+            wanted_content = get_wanted_from_mdblists()
+            if wanted_content:
+                add_wanted_items(wanted_content['movies'] + wanted_content['episodes'])
         elif action == 'purge_db':
             purge_db()
         elif action == 'get_all_wanted':
             wanted_content = get_wanted_from_overseerr()
             if wanted_content:
-                add_or_update_media_items_batch(wanted_content['movies'] + wanted_content['episodes'], status='Wanted')
+                add_wanted_items(wanted_content['movies'] + wanted_content['episodes'])
+        elif action == 'sync_all':
+            sync_collected_to_overseerr()
         elif action == 'back':
             os.system('clear')
             break

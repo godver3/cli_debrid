@@ -56,3 +56,4 @@ archives
 *.db
 config.ini
 commit.sh
+logs
