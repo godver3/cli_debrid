@@ -2,7 +2,7 @@ import logging
 import requests
 from settings import get_setting
 from database import get_all_media_items, update_release_date_and_state, get_media_item_status, get_metadata_updated, is_metadata_stale, update_metadata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Optional
 
 DEFAULT_TAKE = 100
@@ -367,26 +367,28 @@ def refresh_release_dates():
         try:
             if item['type'] == 'movie':
                 details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+                media_type = 'movie'
             else:  # TV show episode
                 show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
                 season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], item['season_number'], cookies)
                 episode_details = next((ep for ep in season_details.get('episodes', []) if ep['episodeNumber'] == item['episode_number']), None)
                 details = episode_details if episode_details else show_details
+                media_type = 'tv'
 
             if details:
-                new_release_date = get_release_date(details, item['type'])
+                new_release_date = get_release_date(details, media_type)
                 if new_release_date != 'Unknown':
                     release_date = datetime.strptime(new_release_date, "%Y-%m-%d").date()
                     today = date.today()
-                    
+
                     if release_date <= today:
                         update_release_date_and_state(item['id'], new_release_date, "Wanted")
                         logging.info(f"Moved item {item['title']} from Unreleased to Wanted queue (Release date: {new_release_date})")
                     else:
                         update_release_date_and_state(item['id'], new_release_date, "Unreleased")
-                        logging.info(f"Updated release date for {item['title']} to {new_release_date}")
+                        logging.debug(f"Updated release date for {item['title']} to {new_release_date}")
                 else:
-                    logging.warning(f"Unknown release date for {item['title']}")
+                    logging.debug(f"Unknown release date for {item['title']}")
             else:
                 logging.warning(f"Could not fetch details for {item['title']}")
         except Exception as e:

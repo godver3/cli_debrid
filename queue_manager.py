@@ -56,11 +56,9 @@ class QueueManager:
         self.wake_counts = {}
 
     def update_all_queues(self):
-        logging.debug("Updating all queues")
         for state in self.queues.keys():
             items = get_all_media_items(state=state)
             self.queues[state] = [dict(row) for row in items]
-        logging.debug("All queues updated")
 
     def get_queue_contents(self):
         return {state: list(queue) for state, queue in self.queues.items()}
@@ -99,7 +97,10 @@ class QueueManager:
                     if season_key in seasons_in_scraping:
                         logging.debug(f"Already scraping an item from season {item['season_number']} of {item['imdb_id']}. Keeping {item['title']} in Wanted queue.")
                         continue
-                    logging.info(f"Item {item['title']} has been released. Marking for move to Scraping.")
+                    if item['type'] == 'episode':
+                        logging.info(f"Item {item['title']} S{item['season_number']}E{item['episode_number']} has been released. Marking for move to Scraping.")
+                    else:
+                        logging.info(f"Item {item['title']} ({item['year']}) has been released. Marking for move to Scraping.")
                     items_to_move.append(item)
                     seasons_in_scraping.add(season_key)
             except ValueError as e:
@@ -166,7 +167,7 @@ class QueueManager:
                 )
 
                 if item['type'] == 'episode':
-                    logging.info(f"Scraping for {item['title']} S{item['season_number']}E{item['episode_number']} ({item['year']}) with multi={is_multi_pack}")
+                    logging.info(f"Scraping for {item['title']} S{item['season_number']}E{item['episode_number']} ({item['year']})")
                 else:
                     logging.info(f"Scraping for {item['title']} ({item['year']})")
 

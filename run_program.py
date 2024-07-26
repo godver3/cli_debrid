@@ -31,7 +31,20 @@ class ProgramRunner:
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
-
+        
+        # List of enabled tasks
+        self.enabled_tasks = {
+            'wanted',
+            'scraping',
+            'adding',
+            'checking',
+            'sleeping',
+            'task_plex_full_scan',
+            'task_overseerr_wanted',
+            'task_mdb_list_wanted',
+            'task_debug_log',
+            'task_refresh_release_dates'
+        }
 
     def run_initialization(self):
         logging.info("Running initialization...")
@@ -40,6 +53,8 @@ class ProgramRunner:
         logging.info("Initialization complete")
 
     def should_run_task(self, task_name):
+        if task_name not in self.enabled_tasks:
+            return False
         current_time = time.time()
         if current_time - self.last_run_times[task_name] >= self.task_intervals[task_name]:
             self.last_run_times[task_name] = current_time
@@ -126,11 +141,11 @@ class ProgramRunner:
 
     def process_overseerr_webhook(self, data):
         notification_type = data.get('notification_type')
-        
+
         if notification_type == 'TEST_NOTIFICATION':
             logging.info("Received test notification from Overseerr")
             return
-        
+
         media = data.get('media')
         if not media:
             logging.warning("Received webhook without media information")
@@ -190,7 +205,7 @@ class ProgramRunner:
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    logging.info(f"Received webhook: {data}")
+    logging.debug(f"Received webhook: {data}")
     try:
         runner.process_overseerr_webhook(data)
         return jsonify({"status": "success"}), 200

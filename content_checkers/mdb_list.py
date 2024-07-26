@@ -134,7 +134,7 @@ def process_mdblist_items(items, mdblist_api_key, overseerr_url, overseerr_api_k
             detailed_type = tmdb_info['type']
             reported_media_type = item.get('mediatype', '').lower()
 
-            logging.info(f"Processing item: {title} ({year}) - Reported Type: {reported_media_type}, Detailed Type: {detailed_type}")
+            logging.debug(f"Processing item: {title} ({year}) - Reported Type: {reported_media_type}, Detailed Type: {detailed_type}")
 
             if reported_media_type != detailed_type:
                 logging.warning(f"Media type mismatch for {title} ({year}): Reported as {reported_media_type}, but detailed type is {detailed_type}")
@@ -164,7 +164,7 @@ def process_mdblist_items(items, mdblist_api_key, overseerr_url, overseerr_api_k
                         'year': year,
                         'release_date': release_date
                     })
-                    logging.info(f"Movie added to wanted list: {title} ({year})")
+                    logging.debug(f"Movie added to wanted list: {title} ({year})")
                 else:
                     logging.warning(f"Could not fetch movie details for {title} ({year})")
             elif reported_media_type == 'show':
@@ -198,7 +198,7 @@ def process_mdblist_items(items, mdblist_api_key, overseerr_url, overseerr_api_k
                                 })
                             show_item['seasons'].append(season_item)
                     wanted_shows.append(show_item)
-                    logging.info(f"Show added to wanted list: {title} ({year})")
+                    logging.debug(f"Show added to wanted list: {title} ({year})")
                 else:
                     logging.warning(f"Could not fetch show details for {title} ({year})")
 
@@ -258,11 +258,11 @@ def get_wanted_from_mdblists():
 
     # Log details of wanted items
     for movie in all_wanted_movies:
-        logging.info(f"Wanted movie: {movie['title']} ({movie['year']}) - IMDB: {movie['imdb_id']}, TMDB: {movie['tmdb_id']} - Release Date: {movie['release_date']}")
+        logging.debug(f"Wanted movie: {movie['title']} ({movie['year']}) - IMDB: {movie['imdb_id']}, TMDB: {movie['tmdb_id']} - Release Date: {movie['release_date']}")
 
     wanted_episodes = []
     for show in all_wanted_shows:
-        logging.info(f"Wanted show: {show['title']} ({show['year']}) - IMDB: {show['imdb_id']}, TMDB: {show['tmdb_id']}")
+        logging.debug(f"Wanted show: {show['title']} ({show['year']}) - IMDB: {show['imdb_id']}, TMDB: {show['tmdb_id']}")
         for season in show.get('seasons', []):
             logging.info(f"  Season {season['season_number']}: {len(season['episodes'])} episodes")
             for episode in season['episodes']:
