@@ -2,9 +2,14 @@ from flask import Flask, render_template_string, jsonify
 import threading
 import time
 from queue_manager import QueueManager
+import logging
 
 app = Flask(__name__)
 queue_manager = QueueManager()
+
+# Disable Werkzeug request logging
+log = logging.getLogger('werkzeug')
+log.disabled = True
 
 # Global variables for statistics
 start_time = time.time()

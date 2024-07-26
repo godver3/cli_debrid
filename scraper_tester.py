@@ -68,7 +68,7 @@ class ScraperTester:
         header = urwid.AttrMap(urwid.Columns([
             ('weight', 40, urwid.Text("Name")),
             ('weight', 15, urwid.Text("Size")),
-            ('weight', 15, urwid.Text("Quality")),
+            ('weight', 15, urwid.Text("Est. Mbps")),
             ('weight', 15, urwid.Text("Scraper")),
             ('weight', 15, urwid.Text("Score")),
         ]), 'header')
@@ -80,14 +80,14 @@ class ScraperTester:
     def format_result(self, result: Dict[str, Any]) -> List[urwid.Widget]:
         title = result.get('title', 'Unknown')
         size = result.get('size', 'Unknown')
-        quality = result.get('quality', 'Unknown')
+        bitrate = result.get('bitrate', 'Unknown')
         scraper = result.get('scraper', 'Unknown')
         score = result.get('score_breakdown', {}).get('total_score', 'N/A')
 
         return [
             ('weight', 40, urwid.Text(title)),
-            ('weight', 15, urwid.Text(str(size))),
-            ('weight', 15, urwid.Text(quality)),
+            ('weight', 15, urwid.Text(f"{size:.2f}" if isinstance(size, (int, float)) else str(size))),
+            ('weight', 15, urwid.Text(f"{bitrate:.0f}" if isinstance(bitrate, (int, float)) else str(bitrate))),
             ('weight', 15, urwid.Text(scraper)),
             ('weight', 15, urwid.Text(f"{score:.2f}" if isinstance(score, (int, float)) else str(score))),
         ]

@@ -90,13 +90,15 @@ def get_collected_from_plex(request='all'):
         def log_progress(current, total, item_type):
             progress = (current / total) * 100
             if progress % 10 < (current - 1) / total * 100 % 10:
-                logging.info(f"{item_type} progress: {current}/{total} ({progress:.1f}%)")
+                logging.debug(f"{item_type} progress: {current}/{total} ({progress:.1f}%)")
 
         if request == 'recent':
+            logging.info("Gathering recently added from Plex")
+
             # Fetch recently added movies
             movies_section = plex.library.section('Films')
             recent_movies = movies_section.recentlyAdded()
-            logging.info(f"Number of recent movies found: {len(recent_movies)}")
+            logging.debug(f"Number of recent movies found: {len(recent_movies)}")
             for i, movie in enumerate(recent_movies, start=1):
                 if movie.addedAt >= time_limit:
                     process_movie(movie, collected_content, missing_guid_items)
@@ -107,7 +109,7 @@ def get_collected_from_plex(request='all'):
             # Fetch recently added TV shows
             shows_section = plex.library.section('TV Shows')
             recent_shows = shows_section.recentlyAdded()
-            logging.info(f"Number of recent shows found: {len(recent_shows)}")
+            logging.debug(f"Number of recent shows found: {len(recent_shows)}")
             for i, show in enumerate(recent_shows, start=1):
                 recent_episodes = [ep for ep in show.episodes() if ep.addedAt >= time_limit]
                 logging.debug(f"Processing show: {show.title}, Recent episodes: {len(recent_episodes)}")
@@ -116,6 +118,7 @@ def get_collected_from_plex(request='all'):
                 log_progress(i, len(recent_shows), "Recent shows")
 
         else:
+            logging.info("Gathering all collected from Plex")
             # Fetch all movies
             movies_section = plex.library.section('Films')
             movies = movies_section.all()
@@ -132,7 +135,7 @@ def get_collected_from_plex(request='all'):
                     process_episode(show, episode, collected_content, missing_guid_items)
                 log_progress(i, len(shows), "Shows")
 
-        logging.info(f"Collection complete: {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes collected.")
+        logging.debug(f"Collection complete: {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes collected.")
         logging.debug(f"Content collected: {collected_content}")
 
         # Log missing GUID items

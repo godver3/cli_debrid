@@ -20,7 +20,7 @@ def similarity(a: str, b: str) -> float:
 def calculate_bitrate(size_gb, runtime_minutes):
     if not size_gb or not runtime_minutes:
         return 0
-    size_bits = size_gb * 8 * 1024 * 1024 * 1024  # Convert GB to bits
+    size_bits = size_gb * 8 * 1024 * 1024 * 1024 * 100  # Convert GB to bits
     runtime_seconds = runtime_minutes * 60
     bitrate_mbps = (size_bits / runtime_seconds) / 1000000  # Convert to Mbps
     return round(bitrate_mbps, 2)
@@ -136,6 +136,8 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
         logging.debug(f"  Calculated Bitrate: {bitrate} Mbps")
     bitrate_score = bitrate * bitrate_bonus
 
+    result['bitrate'] = bitrate
+
     # Existing logic for year, season, and episode matching
     year_match = 2 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
     season_match = 1 if query_season == torrent_season else 0
@@ -162,7 +164,7 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
         resolution_score +
         (hdr_score * 2) +
         (size_score / 8) +
-        (bitrate_score / 2) +
+        (bitrate_score / 200) +
         (year_match * 5) +  # Giving more weight to year match
         (season_match * 5) +
         (episode_match * 5) +
@@ -193,20 +195,22 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)
 
+import re
+
 def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     try:
         start_time = time.time()
         all_results = []
 
-        logging.debug(f"Scraping for: {title} ({year})")
+        logging.debug(f"Starting scraping for: {title} ({year})")
 
         # Get TMDB ID and runtime once for all results
         overseerr_url = get_setting('Overseerr', 'url')
         overseerr_api_key = get_setting('Overseerr', 'api_key')
         cookies = get_overseerr_cookies(overseerr_url)
-        
+
         tmdb_id = imdb_to_tmdb(overseerr_url, overseerr_api_key, f"{imdb_id}")
-        
+
         if not tmdb_id:
             logging.warning(f"No TMDB ID found for IMDB ID: {imdb_id}")
             return []
@@ -236,15 +240,21 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
         preferred_filter_in = [term.strip().lower() for term in preferred_filter_in if term.strip()]
         preferred_filter_out = [term.strip().lower() for term in preferred_filter_out if term.strip()]
 
+        # Compile regular expressions for filter out terms
+        filter_out_regex = [re.compile(r'\b{}\b'.format(re.escape(term)), re.IGNORECASE) for term in filter_out]
+        filter_in_regex = [re.compile(r'\b{}\b'.format(re.escape(term)), re.IGNORECASE) for term in filter_in]
+
         # Run scrapers concurrently using ThreadPoolExecutor
         def run_scraper(scraper_func, scraper_name):
             scraper_start = time.time()
             try:
+                logging.debug(f"Starting {scraper_name} scraper")
                 scraper_results = scraper_func(imdb_id, content_type, season, episode)
                 if isinstance(scraper_results, tuple):
                     _, scraper_results = scraper_results
                 for item in scraper_results:
                     item['scraper'] = scraper_name
+                logging.debug(f"{scraper_name} scraper found {len(scraper_results)} results")
                 logging.debug(f"{scraper_name} scraper took {time.time() - scraper_start:.2f} seconds")
                 return scraper_results
             except Exception as e:
@@ -276,7 +286,9 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
                     all_results.extend(results)
                 except Exception as e:
                     logging.error(f"Scraper {scraper_name} generated an exception: {str(e)}")
+
         logging.debug(f"Total scraping time: {time.time() - scraping_start:.2f} seconds")
+        logging.debug(f"Total results before filtering: {len(all_results)}")
 
         # Filter results
         filtering_start = time.time()
@@ -291,29 +303,37 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
             resolution = parsed_info.get('resolution', '').lower()
             is_hdr = parsed_info.get('hdr', False)
             result_year = parsed_info.get('year')
-            
+
             # Apply hard filters
-            if filter_in and not any(term in torrent_title.lower() for term in filter_in):
+            if any(regex.search(torrent_title) for regex in filter_in_regex):
+                logging.debug(f"Filtered out by filter_in: {torrent_title}")
                 continue
-            if any(term in torrent_title.lower() for term in filter_out):
+            if any(regex.search(torrent_title) for regex in filter_out_regex):
+                logging.debug(f"Filtered out by filter_out: {torrent_title}")
                 continue
             if size_gb < min_size_gb:
+                logging.debug(f"Filtered out by size: {torrent_title}, size: {size_gb} GB")
                 continue
             if not enable_4k and ('4k' in resolution or '2160p' in resolution):
+                logging.debug(f"Filtered out by 4K: {torrent_title}")
                 continue
             if not enable_hdr and is_hdr:
+                logging.debug(f"Filtered out by HDR: {torrent_title}")
                 continue
             if year and result_year and year != result_year:
+                logging.debug(f"Filtered out by year: {torrent_title}, year: {result_year}")
                 continue
-            
+
             # Apply preferred filters (these don't exclude results, but affect ranking)
-            preferred_in_bonus = sum(preferred_filter_bonus for term in preferred_filter_in if term in torrent_title.lower())
-            preferred_out_penalty = sum(preferred_filter_bonus for term in preferred_filter_out if term in torrent_title.lower())
-            
+            preferred_in_bonus = sum(preferred_filter_bonus for term in preferred_filter_in if term in torrent_title)
+            preferred_out_penalty = sum(preferred_filter_bonus for term in preferred_filter_out if term in torrent_title)
+
             result['filter_score'] = preferred_in_bonus - preferred_out_penalty
             result['parsed_info'] = parsed_info
             filtered_results.append(result)
+
         logging.debug(f"Filtering took {time.time() - filtering_start:.2f} seconds")
+        logging.debug(f"Total results after filtering: {len(filtered_results)}")
 
         # Add is_multi_pack information to each result
         for result in filtered_results:

@@ -216,14 +216,17 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
                         datetime.now()
                     ))
-                logging.info(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title}")
+                if item_type == 'movie':
+                    logging.info(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} ({year})")
+                else:
+                    logging.info(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} S{season_number}E{episode_number}")
                 items_added += 1
             else:
                 logging.debug(f"Skipping {'movie' if item_type == 'movie' else 'episode'} as it already exists in DB: {normalized_title}")
                 items_skipped += 1
 
         conn.commit()
-        logging.info(f"Wanted items processing complete. Added: {items_added}, Skipped: {items_skipped}")
+        logging.info(f"Wanted items processing complete. Added: {items_added}")
     except Exception as e:
         logging.error(f"Error adding wanted items: {str(e)}")
         conn.rollback()
