@@ -14,7 +14,7 @@ def setup_logging():
     console_level = get_setting("Logging", "logging_level", "INFO")
     
     # Create formatter
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
     
     # Set up root logger
     root_logger = logging.getLogger()

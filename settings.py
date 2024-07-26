@@ -1,9 +1,9 @@
-import logging
+import urwid
 import configparser
 import os
 import subprocess
 import sys
-import urwid
+import logging
 
 CONFIG_FILE = './config.ini'
 
@@ -16,7 +16,6 @@ def load_config():
 def save_config(config):
     with open(CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
-    #print(f"Configuration saved to {CONFIG_FILE}")
 
 def get_setting(section, option, default=None):
     config = configparser.ConfigParser()
@@ -24,6 +23,10 @@ def get_setting(section, option, default=None):
     if config.has_option(section, option):
         raw_value = config.get(section, option)
         logging.debug(f"Setting found - Section: {section}, Option: {option}, Raw Value: {raw_value}")
+
+        if raw_value.strip() == '':
+            logging.debug(f"Empty value found for {section}.{option}, using default: {default}")
+            return default
 
         if raw_value.lower() in ['true', 'yes', '1']:
             value = True
@@ -45,6 +48,11 @@ def set_setting(section, key, value):
     config.set(section, key, value)
     save_config(config)
 
+def get_all_settings(section):
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
+    return dict(config[section])
+
 class SettingsEditor:
     def __init__(self):
         self.config = load_config()
@@ -61,6 +69,7 @@ class SettingsEditor:
             urwid.Text("Use Shift-Insert to paste values."),
             urwid.AttrMap(urwid.Button("Required Settings", on_press=self.show_required_settings), None, focus_map='reversed'),
             urwid.AttrMap(urwid.Button("Additional Settings", on_press=self.show_additional_settings), None, focus_map='reversed'),
+            urwid.AttrMap(urwid.Button("Scraping Settings", on_press=self.show_scraping_settings), None, focus_map='reversed'),
             urwid.AttrMap(urwid.Button("Debug Settings", on_press=self.show_debug_settings), None, focus_map='reversed')
         ])
         return urwid.Filler(menu, valign='top')
@@ -72,9 +81,7 @@ class SettingsEditor:
             ('Overseerr', 'url', 'Overseerr URL'),
             ('Overseerr', 'api_key', 'Overseerr API Key'),
             ('RealDebrid', 'api_key', 'Real-Debrid API Key'),
-            ('Torrentio', 'enabled', 'Torrentio enabled? True/False'),
-            ('Scraper', '4k', '4k disabled? True/False'),
-            ('Scraper', 'hdr', 'HDR disabled? True/False')
+            ('Torrentio', 'enabled', 'Torrentio enabled? True/False')
         ])
 
     def show_additional_settings(self, button):
@@ -90,9 +97,25 @@ class SettingsEditor:
             ('Trakt', 'client_id', 'Trakt Client ID'),
             ('Trakt', 'client_secret', 'Trakt Client Secret'),
             ('TMDB', 'api_key', 'TMDB API Key'),
-            ('Logging', 'filter_out', 'Enter comma-separated list of ignore terms (i.e. TS, CAM etc)')
+            ('Queue', 'wake_limit', 'Enter number of times to wake items before blacklisting')
         ])
 
+    def show_scraping_settings(self, button):
+        self.show_settings("Scraping Settings", [
+            ('Scraping', 'enable_4k', '4k enabled? True/False'),
+            ('Scraping', 'enable_hdr', 'HDR enabled? True/False'),
+            ('Scraping', 'resolution_bonus', 'Resolution bonus (1-5)'),
+            ('Scraping', 'hdr_bonus', 'HDR bonus (1-5)'),
+            ('Scraping', 'similarity_threshold_bonus', 'Title similarity threshold bonus (1-5)'),
+            ('Scraping', 'file_size_bonus', 'File size bonus (1-5)'),
+            ('Scraping', 'bitrate_bonus', 'Bitrate bonus (1-5)'),
+            ('Scraping', 'preferred_filter_in', 'Preferred filter-in terms (comma-separated)'),
+            ('Scraping', 'preferred_filter_out', 'Preferred filter-out terms (comma-separated)'),
+            ('Scraping', 'filter_in', 'Required filter-in terms (comma-separated)'),
+            ('Scraping', 'filter_out', 'Required filter-out terms (comma-separated)'),
+            ('Scraping', 'min_size_gb', 'Minimum file size in GB (e.g., 0.01)')
+        ])
+        
     def show_debug_settings(self, button):
         self.show_settings("Debug Settings", [
             ('Logging', 'use_single_log_file', 'Use Single Log File (True/False)'),
@@ -117,10 +140,8 @@ class SettingsEditor:
         self.main_loop.widget = urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
 
     def save_settings(self):
-        #print("Saving settings...")
         for (section, key), edit in self.edits.items():
             value = edit.get_edit_text()
-            #print(f"Setting {section} - {key} to {value}")
             set_setting(section, key, value)
         # Reload config to ensure updates are applied
         self.config = load_config()

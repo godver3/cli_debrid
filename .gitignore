@@ -50,7 +50,7 @@ coverage.xml
 docs/_build/
 
 **/__pycache__/
-logs/*.log
+logs/*.log*
 archives
 *.pkl
 *.db

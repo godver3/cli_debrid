@@ -1,8 +1,8 @@
 import logging
 import requests
 from settings import get_setting
-from database import get_all_media_items, get_media_item_status, get_metadata_updated, is_metadata_stale, update_metadata
-from datetime import datetime
+from database import get_all_media_items, update_release_date_and_state, get_media_item_status, get_metadata_updated, is_metadata_stale, update_metadata
+from datetime import datetime, timedelta
 
 DEFAULT_TAKE = 100
 DEFAULT_TOTAL_RESULTS = float('inf')
@@ -42,11 +42,12 @@ def parse_date(date_str):
 def get_release_date(media_details, media_type):
     if media_details is None:
         return 'Unknown'
+    
+    current_date = datetime.now()
+    general_release_date = parse_date(media_details.get('releaseDate'))
 
     if media_type == 'movie':
         releases = media_details.get('releases', {}).get('results', [])
-
-        # Only consider US release types 4 and 5
         valid_releases = []
         for release in releases:
             if release.get('iso_3166_1') == 'US':  # Check if it's a US release
@@ -54,20 +55,38 @@ def get_release_date(media_details, media_type):
                     if date.get('type') in [4, 5]:
                         parsed_date = parse_date(date.get('release_date'))
                         if parsed_date:
-                            valid_releases.append((parsed_date, date.get('type')))
-
+                            valid_releases.append(parsed_date)
+        
         if valid_releases:
-            # Sort by date, then prefer type 4 over 5 if dates are the same
-            valid_releases.sort(key=lambda x: (x[0], -x[1]))
-            return valid_releases[0][0].strftime("%Y-%m-%d")
+            # Check if all release dates are 2 years or older
+            if all(release < current_date - timedelta(days=730) for release in valid_releases):
+                return general_release_date.strftime("%Y-%m-%d") if general_release_date else 'Unknown'
+            
+            # If all releases are newer than 2 years, return the earliest one
+            return min(valid_releases).strftime("%Y-%m-%d")
         else:
+            # If no valid US releases of type 4 or 5, check if there are any releases at all
+            all_releases = [parse_date(date.get('release_date')) for release in releases for date in release.get('release_dates', [])]
+            all_releases = [date for date in all_releases if date is not None]
+            
+            if all_releases:
+                # If all releases are 2 years or older, use general release date
+                if all(release < current_date - timedelta(days=730) for release in all_releases):
+                    return general_release_date.strftime("%Y-%m-%d") if general_release_date else 'Unknown'
+            
+            # If no valid US releases or all releases are newer than 2 years, return Unknown
             return 'Unknown'
-
+    
     elif media_type == 'tv':
         # For TV shows, we'll use the airDate of the episode
         parsed_date = parse_date(media_details.get('airDate'))
+        
+        # If airDate is 2 years or older, use the general release date
+        if parsed_date and parsed_date < current_date - timedelta(days=730):
+            return general_release_date.strftime("%Y-%m-%d") if general_release_date else 'Unknown'
+        
         return parsed_date.strftime("%Y-%m-%d") if parsed_date else 'Unknown'
-
+    
     else:
         logging.error(f"Unknown media type: {media_type}")
         return 'Unknown'
@@ -301,3 +320,42 @@ def map_collected_media_to_wanted():
         logging.error(f"Unexpected error while mapping collected media to wanted: {str(e)}")
         logging.exception("Traceback:")
         return {'episodes': []}
+
+def refresh_release_dates():
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    if not overseerr_url or not overseerr_api_key:
+        logging.error("Overseerr URL or API key not set. Please configure in settings.")
+        return
+
+    cookies = get_overseerr_cookies(overseerr_url)
+    unreleased_items = get_all_media_items(state="Unreleased")
+
+    for item in unreleased_items:
+        try:
+            if item['type'] == 'movie':
+                details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+            else:  # TV show episode
+                show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+                season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], item['season_number'], cookies)
+                episode_details = next((ep for ep in season_details.get('episodes', []) if ep['episodeNumber'] == item['episode_number']), None)
+                details = episode_details if episode_details else show_details
+
+            if details:
+                new_release_date = get_release_date(details, item['type'])
+                if new_release_date != 'Unknown':
+                    release_date = datetime.strptime(new_release_date, "%Y-%m-%d").date()
+                    today = date.today()
+                    
+                    if release_date <= today:
+                        update_release_date_and_state(item['id'], new_release_date, "Wanted")
+                        logging.info(f"Moved item {item['title']} from Unreleased to Wanted queue (Release date: {new_release_date})")
+                    else:
+                        update_release_date_and_state(item['id'], new_release_date, "Unreleased")
+                        logging.info(f"Updated release date for {item['title']} to {new_release_date}")
+                else:
+                    logging.warning(f"Unknown release date for {item['title']}")
+            else:
+                logging.warning(f"Could not fetch details for {item['title']}")
+        except Exception as e:
+            logging.error(f"Error processing item {item['title']}: {str(e)}")

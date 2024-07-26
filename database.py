@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import unicodedata
 import os
 import json
+from manual_blacklist import is_blacklisted
 
 def get_db_connection():
     conn = sqlite3.connect('db_content/media_items.db')
@@ -177,6 +178,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
         for item in media_items_batch:
             if not item.get('imdb_id'):
                 logging.warning(f"Skipping item without valid IMDb ID: {item.get('title', 'Unknown')}")
+                items_skipped += 1
+                continue
+            
+            if is_blacklisted(item['imdb_id']):
+                logging.debug(f"Skipping blacklisted item: {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
                 items_skipped += 1
                 continue
 
@@ -483,5 +489,49 @@ def get_item_state(item_id: int) -> str:
     except Exception as e:
         logging.error(f"Error getting state for item ID: {item_id}: {str(e)}")
         return None
+    finally:
+        conn.close()
+
+def get_blacklisted_items():
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('SELECT * FROM media_items WHERE state = "Blacklisted"')
+        items = cursor.fetchall()
+        return [dict(item) for item in items]
+    except Exception as e:
+        logging.error(f"Error retrieving blacklisted items: {str(e)}")
+        return []
+    finally:
+        conn.close()
+
+def remove_from_blacklist(item_ids: List[int]):
+    conn = get_db_connection()
+    try:
+        for item_id in item_ids:
+            conn.execute('''
+                UPDATE media_items
+                SET state = 'Wanted', last_updated = ?, sleep_cycles = 0
+                WHERE id = ? AND state = 'Blacklisted'
+            ''', (datetime.now(), item_id))
+        conn.commit()
+        logging.info(f"Removed {len(item_ids)} items from blacklist")
+    except Exception as e:
+        logging.error(f"Error removing items from blacklist: {str(e)}")
+        conn.rollback()
+    finally:
+        conn.close()
+        
+def update_release_date_and_state(item_id, release_date, new_state):
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET release_date = ?, state = ?, last_updated = ?
+            WHERE id = ?
+        ''', (release_date, new_state, datetime.now(), item_id))
+        conn.commit()
+        logging.info(f"Updated release date to {release_date} and state to {new_state} for item ID {item_id}")
+    except Exception as e:
+        logging.error(f"Error updating release date and state for item ID {item_id}: {str(e)}")
     finally:
         conn.close()

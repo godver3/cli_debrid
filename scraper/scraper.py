@@ -11,9 +11,23 @@ from .knightcrawler import scrape_knightcrawler
 from .comet import scrape_comet
 from settings import get_setting
 from database import get_item_state
+import time
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+def parse_size(size):
+    if isinstance(size, (int, float)):
+        return float(size)  # Assume it's already in GB
+    elif isinstance(size, str):
+        size = size.upper()
+        if 'GB' in size:
+            return float(size.replace('GB', '').strip())
+        elif 'MB' in size:
+            return float(size.replace('MB', '').strip()) / 1024
+        elif 'KB' in size:
+            return float(size.replace('KB', '').strip()) / (1024 * 1024)
+    return 0  # Default to 0 if unable to parse
 
 def detect_season_pack(title: str) -> str:
     # Regular expression to match season patterns
@@ -75,61 +89,120 @@ def extract_title_and_se(torrent_name: str) -> Tuple[str, int, int]:
 
 def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_season: int, query_episode: int, multi: bool) -> Tuple:
     torrent_title = result.get('title', '')
-    parsed = PTN.parse(torrent_title)
+    parsed = result.get('parsed_info', {})
     extracted_title = parsed.get('title', torrent_title)
     torrent_year = parsed.get('year')
     torrent_season, torrent_episode = parsed.get('season'), parsed.get('episode')
 
-    # Ensure season and episode are integers
-    query_season = int(query_season) if query_season is not None else None
-    query_episode = int(query_episode) if query_episode is not None else None
+    # Get user-defined weights
+    resolution_bonus = int(get_setting('Scraping', 'resolution_bonus', default=3))
+    hdr_bonus = int(get_setting('Scraping', 'hdr_bonus', default=3))
+    similarity_threshold_bonus = int(get_setting('Scraping', 'similarity_threshold_bonus', default=3))
+    file_size_bonus = int(get_setting('Scraping', 'file_size_bonus', default=3))
+    bitrate_bonus = int(get_setting('Scraping', 'bitrate_bonus', default=3))
 
-    # Check for season/episode pattern in the torrent title
-    se_pattern = f"S{query_season:02d}E{query_episode:02d}" if query_season is not None and query_episode is not None else None
-    se_match = 1 if se_pattern and se_pattern in torrent_title else 0
-
+    # Calculate scores
     title_similarity = similarity(extracted_title, query)
+    similarity_score = title_similarity * similarity_threshold_bonus
+
+    resolution_score = get_resolution_rank(torrent_title) * resolution_bonus
+    hdr_score = hdr_bonus if 'HDR' in torrent_title.upper() else 0
+    
+    size = result.get('size', 0)
+    size_score = size * file_size_bonus
+
+    # Placeholder for bitrate score (you'll need to implement bitrate extraction)
+    bitrate_score = 0 * bitrate_bonus
+
+    # Existing logic for year, season, and episode matching
+    year_match = 2 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
     season_match = 1 if query_season == torrent_season else 0
     episode_match = 1 if query_episode == torrent_episode else 0
-    year_match = 2 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
 
-    resolution_rank = max(get_resolution_rank(torrent_title), 0)
-
-    size = result.get('size', 0)
-    hdr_preference = 1 if 'HDR' in torrent_title.upper() else 0
-
+    # Multi-pack handling
     season_pack = detect_season_pack(torrent_title)
-    is_queried_season_pack = (season_pack != 'N/A' and season_pack != 'Unknown' and str(query_season) in season_pack.split(','))
+    is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
+    is_queried_season_pack = is_multi_pack and str(query_season) in season_pack.split(',')
 
-    # Adjust scoring based on multi flag
-    if multi:
-        season_pack_bonus = 30 if is_queried_season_pack else 0
-        exact_match_bonus = season_pack_bonus
-    else:
-        exact_match_bonus = 20 if (se_match and season_match and episode_match) else (10 if is_queried_season_pack else 0)
+    # Apply a flat large bonus for multi-packs when requested
+    MULTI_PACK_BONUS = 1000  # This is a large flat bonus
+    multi_pack_score = MULTI_PACK_BONUS if multi and is_queried_season_pack else 0
 
-    single_episode_preference = 5 if not multi and query_episode is not None and season_pack == 'N/A' else 0
+    # Penalize multi-packs when looking for single episodes
+    SINGLE_EPISODE_PENALTY = -500  # This is a large flat penalty
+    single_episode_score = SINGLE_EPISODE_PENALTY if not multi and is_multi_pack and query_episode is not None else 0
 
-    return (-year_match, -exact_match_bonus, -single_episode_preference, -resolution_rank, -hdr_preference, -se_match, -season_match, -episode_match, -title_similarity, -size, season_pack)
+    filter_score = result.get('filter_score', 0)
+
+    # Combine scores
+    total_score = (
+        similarity_score +
+        resolution_score +
+        (hdr_score * 2) +
+        size_score +
+        bitrate_score +
+        (year_match * 10) +  # Giving more weight to year match
+        (season_match * 5) +
+        (episode_match * 5) +
+        multi_pack_score +
+        single_episode_score +
+        filter_score  # This now includes the preferred filter bonus/penalty
+    )
+
+    # Create a score breakdown
+    score_breakdown = {
+        'similarity_score': similarity_score,
+        'resolution_score': resolution_score,
+        'hdr_score': hdr_score * 2,
+        'size_score': size_score,
+        'bitrate_score': bitrate_score,
+        'year_match': year_match * 10,
+        'season_match': season_match * 5,
+        'episode_match': episode_match * 5,
+        'multi_pack_score': multi_pack_score,
+        'single_episode_score': single_episode_score,
+        'filter_score': filter_score,
+        'total_score': total_score
+    }
+
+    # Add the score breakdown to the result
+    result['score_breakdown'] = score_breakdown
+
+    # Return negative total_score to sort in descending order
+    return (-total_score, -year_match, -season_match, -episode_match)
 
 def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     try:
+        start_time = time.time()
         all_results = []
 
         logging.debug(f"Scraping for: {title} ({year})")
 
-        # Get filter out terms
-        filter_out_terms = get_setting('Logging', 'filter_out', default='').split(',')
-        filter_out_terms = [term.strip().lower() for term in filter_out_terms if term.strip()]
+        # Get filter terms and minimum size
+        filter_in = get_setting('Scraping', 'filter_in', default='').split(',')
+        filter_out = get_setting('Scraping', 'filter_out', default='').split(',')
+        preferred_filter_in = get_setting('Scraping', 'preferred_filter_in', default='').split(',')
+        preferred_filter_out = get_setting('Scraping', 'preferred_filter_out', default='').split(',')
+        min_size_gb = float(get_setting('Scraping', 'min_size_gb', default=0.01))
+        enable_4k = get_setting('Scraping', 'enable_4k', default='True')
+        enable_hdr = get_setting('Scraping', 'enable_hdr', default='True')
+        preferred_filter_bonus = 50
+        filter_in = [term.strip().lower() for term in filter_in if term.strip()]
+        filter_out = [term.strip().lower() for term in filter_out if term.strip()]
+
+        preferred_filter_in = [term.strip().lower() for term in preferred_filter_in if term.strip()]
+        preferred_filter_out = [term.strip().lower() for term in preferred_filter_out if term.strip()]
 
         # Run scrapers concurrently using ThreadPoolExecutor
         def run_scraper(scraper_func, scraper_name):
+            scraper_start = time.time()
             try:
                 scraper_results = scraper_func(imdb_id, content_type, season, episode)
                 if isinstance(scraper_results, tuple):
                     _, scraper_results = scraper_results
                 for item in scraper_results:
                     item['scraper'] = scraper_name
+                logging.debug(f"{scraper_name} scraper took {time.time() - scraper_start:.2f} seconds")
                 return scraper_results
             except Exception as e:
                 logging.error(f"Error in {scraper_name} scraper: {str(e)}")
@@ -150,6 +223,7 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
             if get_setting(scraper_name, 'enabled', default=False)
         ]
 
+        scraping_start = time.time()
         with ThreadPoolExecutor(max_workers=len(scrapers)) as executor:
             future_to_scraper = {executor.submit(run_scraper, scraper_func, scraper_name): scraper_name for scraper_func, scraper_name in scrapers}
             for future in as_completed(future_to_scraper):
@@ -159,64 +233,55 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
                     all_results.extend(results)
                 except Exception as e:
                     logging.error(f"Scraper {scraper_name} generated an exception: {str(e)}")
+        logging.debug(f"Total scraping time: {time.time() - scraping_start:.2f} seconds")
 
-        # Filter out results based on user settings, filter_out terms, minimum size, and year
-        disable_4k = get_setting('Scraper', '4k', default='False')
-        disable_hdr = get_setting('Scraper', 'hdr', default='False')
-        min_size_gb = 0.01  # Minimum size in GB
+        # Filter results
+        filtering_start = time.time()
         filtered_results = []
-
-        def parse_size(size):
-            if isinstance(size, (int, float)):
-                return float(size)  # Assume it's already in GB
-            elif isinstance(size, str):
-                size = size.upper()
-                if 'GB' in size:
-                    return float(size.replace('GB', '').strip())
-                elif 'MB' in size:
-                    return float(size.replace('MB', '').strip()) / 1024
-                elif 'KB' in size:
-                    return float(size.replace('KB', '').strip()) / (1024 * 1024)
-            return 0  # Default to 0 if unable to parse
-
-        def extract_year(title):
-            match = re.search(r'\b(19\d{2}|20\d{2})\b', title)
-            return int(match.group(1)) if match else None
-
         for result in all_results:
             torrent_title = result.get('title', '').lower()
             size_gb = parse_size(result.get('size', 0))
-            result_year = extract_year(torrent_title)
+            parsed_info = PTN.parse(torrent_title)
+            resolution = parsed_info.get('resolution', '').lower()
+            is_hdr = parsed_info.get('hdr', False)
+            result_year = parsed_info.get('year')
             
-            if disable_4k and ('4k' in torrent_title or '2160p' in torrent_title):
+            # Apply hard filters
+            if filter_in and not any(term in torrent_title.lower() for term in filter_in):
                 continue
-            if disable_hdr and 'hdr' in torrent_title:
-                continue
-            if any(term in torrent_title for term in filter_out_terms):
+            if any(term in torrent_title.lower() for term in filter_out):
                 continue
             if size_gb < min_size_gb:
                 continue
-            if result_year is not None and result_year != year:
+            if not enable_4k and ('4k' in resolution or '2160p' in resolution):
                 continue
+            if not enable_hdr and is_hdr:
+                continue
+            if year and result_year and year != result_year:
+                continue
+            
+            # Apply preferred filters (these don't exclude results, but affect ranking)
+            preferred_in_bonus = sum(preferred_filter_bonus for term in preferred_filter_in if term in torrent_title.lower())
+            preferred_out_penalty = sum(preferred_filter_bonus for term in preferred_filter_out if term in torrent_title.lower())
+            
+            result['filter_score'] = preferred_in_bonus - preferred_out_penalty
+            result['parsed_info'] = parsed_info
             filtered_results.append(result)
+        logging.debug(f"Filtering took {time.time() - filtering_start:.2f} seconds")
 
-        # Filter out results with low title similarity
-        similarity_threshold = 0.5
-        final_results = []
+        # Add is_multi_pack information to each result
         for result in filtered_results:
             torrent_title = result.get('title', '')
-            parsed_title, _, _ = extract_title_and_se(torrent_title)
-            title_similarity = similarity(parsed_title, title)
-            if title_similarity > similarity_threshold:
-                final_results.append(result)
+            season_pack = detect_season_pack(torrent_title)
+            is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
+            result['is_multi_pack'] = is_multi_pack
 
-        sorted_results = sorted(final_results, key=lambda x: rank_result_key(x, title, year, season, episode, multi))
+        # Sort results
+        sorting_start = time.time()
+        sorted_results = sorted(filtered_results, key=lambda x: rank_result_key(x, title, year, season, episode, multi))
+        logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
 
-        # Assign multi-pack status to each result
-        for result in sorted_results:
-            season_pack = detect_season_pack(result.get('title', ''))
-            result['is_multi_pack'] = season_pack != 'N/A' and season_pack != 'Unknown'
-
+        logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
         return sorted_results
 
     except Exception as e:

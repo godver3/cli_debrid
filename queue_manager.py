@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import time
 from database import get_all_media_items, update_media_item_state, get_db_connection, get_media_item_by_id, add_collected_items
 from scraper.scraper import scrape
@@ -7,6 +7,7 @@ from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash
 from utilities.plex_functions import get_collected_from_plex
 import pickle
 import json
+from settings import get_setting
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -51,6 +52,8 @@ class QueueManager:
         }
         self.scraping_cap = 5  # Cap for scraping queue
         self.checking_queue_times = {}
+        self.sleeping_queue_times = {}
+        self.wake_counts = {}
 
     def update_all_queues(self):
         logging.debug("Updating all queues")
@@ -141,11 +144,11 @@ class QueueManager:
                     logging.info(f"Item {item['title']} has an unknown release date. Moving back to Wanted queue.")
                     self.move_to_wanted(item)
                     return
-                
+
                 try:
                     release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
                     today = date.today()
-                    
+
                     if release_date > today:
                         logging.info(f"Item {item['title']} has a future release date ({release_date}). Moving back to Wanted queue.")
                         self.move_to_wanted(item)
@@ -178,11 +181,15 @@ class QueueManager:
                 )
 
                 if not results:
-                    logging.warning(f"No results returned for {item['title']}. Moving to Sleeping queue.")
+                    wake_count = self.wake_counts.get(item['id'], 0)
+                    logging.warning(f"No results returned for {item['title']}. Moving to Sleeping queue with wake count {wake_count}")
                     update_media_item_state(item['id'], 'Sleeping')
                     updated_item = get_media_item_by_id(item['id'])
                     if updated_item:
                         self.queues["Sleeping"].append(updated_item)
+                        self.wake_counts[item['id']] = wake_count  # Preserve the wake count
+                        self.sleeping_queue_times[item['id']] = datetime.now()
+                        logging.debug(f"Set wake count for {item['title']} (ID: {item['id']}) to {wake_count}")
                     return
 
                 # Filter out "not wanted" results
@@ -361,5 +368,87 @@ class QueueManager:
 
     def process_sleeping(self):
         logging.debug("Processing sleeping queue")
-        # Implement your sleeping logic here
+        current_time = datetime.now()
+        wake_limit = int(get_setting("Queue", "wake_limit", default=3))
+        sleep_duration = timedelta(minutes=30)
 
+        items_to_wake = []
+        items_to_blacklist = []
+
+        for item in self.queues["Sleeping"]:
+            item_id = item['id']
+            logging.debug(f"Processing sleeping item: {item['title']} (ID: {item_id})")
+
+            if item_id not in self.sleeping_queue_times:
+                self.sleeping_queue_times[item_id] = current_time
+                if item_id not in self.wake_counts:
+                    self.wake_counts[item_id] = 0
+
+            time_asleep = current_time - self.sleeping_queue_times[item_id]
+            logging.debug(f"Item {item['title']} (ID: {item_id}) has been asleep for {time_asleep}")
+            logging.debug(f"Current wake count for item {item['title']} (ID: {item_id}): {self.wake_counts[item_id]}")
+
+            if time_asleep >= sleep_duration:
+                self.wake_counts[item_id] += 1
+                logging.debug(f"Incremented wake count for {item['title']} (ID: {item_id}) to {self.wake_counts[item_id]}")
+
+                if self.wake_counts[item_id] > wake_limit:
+                    items_to_blacklist.append(item)
+                    logging.debug(f"Adding {item['title']} (ID: {item_id}) to items_to_blacklist list")
+                else:
+                    items_to_wake.append(item)
+                    logging.debug(f"Adding {item['title']} (ID: {item_id}) to items_to_wake list")
+            else:
+                logging.debug(f"Item {item['title']} (ID: {item_id}) hasn't slept long enough yet. Time left: {sleep_duration - time_asleep}")
+
+        if items_to_wake:
+            logging.debug(f"Waking {len(items_to_wake)} items")
+            self.wake_items(items_to_wake)
+        else:
+            logging.debug("No items to wake")
+
+        if items_to_blacklist:
+            logging.debug(f"Blacklisting {len(items_to_blacklist)} items")
+            self.blacklist_items(items_to_blacklist)
+        else:
+            logging.debug("No items to blacklist")
+
+        # Clean up sleeping_queue_times and wake_counts for items no longer in the Sleeping queue
+        for item_id in list(self.sleeping_queue_times.keys()):
+            if item_id not in [item['id'] for item in self.queues["Sleeping"]]:
+                del self.sleeping_queue_times[item_id]
+                if item_id in self.wake_counts:
+                    del self.wake_counts[item_id]
+
+        logging.debug(f"Finished processing sleeping queue. Remaining items: {len(self.queues['Sleeping'])}")
+
+    def wake_items(self, items):
+        logging.debug(f"Attempting to wake {len(items)} items")
+        for item in items:
+            item_id = item['id']
+            wake_count = self.wake_counts.get(item_id, 0)
+            logging.debug(f"Waking item: {item['title']} (ID: {item_id}, Wake count: {wake_count})")
+            
+            update_media_item_state(item['id'], 'Wanted')
+            updated_item = get_media_item_by_id(item['id'])
+            
+            if updated_item:
+                self.queues["Wanted"].append(updated_item)
+                self.queues["Sleeping"].remove(item)
+                del self.sleeping_queue_times[item_id]
+                # Don't delete the wake count, we want to keep track of it
+                logging.info(f"Moved item {item['title']} (ID: {item_id}) from Sleeping to Wanted queue (Wake count: {wake_count})")
+            else:
+                logging.error(f"Failed to retrieve updated item for ID: {item_id}")
+        
+        logging.debug(f"Woke up {len(items)} items")
+        logging.debug(f"Current Sleeping queue size: {len(self.queues['Sleeping'])}")
+        logging.debug(f"Current Wanted queue size: {len(self.queues['Wanted'])}")
+
+    def blacklist_items(self, items):
+        for item in items:
+            update_media_item_state(item['id'], 'Blacklisted')
+            self.queues["Sleeping"].remove(item)
+            del self.sleeping_queue_times[item['id']]
+            del self.wake_counts[item['id']]  # Remove wake count for blacklisted items
+            logging.info(f"Moved item {item['title']} to Blacklisted state")
