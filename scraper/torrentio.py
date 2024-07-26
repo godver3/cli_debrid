@@ -1,4 +1,4 @@
-import aiohttp
+import requests
 import logging
 import re
 from typing import List, Dict, Any, Tuple
@@ -6,11 +6,11 @@ from urllib.parse import quote_plus
 
 TORRENTIO_URL = "https://torrentio.strem.fun"
 
-async def scrape_torrentio(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
+def scrape_torrentio(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
     try:
         url = construct_url(imdb_id, content_type, season, episode)
         #logging.info(f"Fetching Torrentio data from URL: {url}")
-        response = await fetch_data(url)
+        response = fetch_data(url)
         if not response or 'streams' not in response:
             #logging.warning(f"No streams found for IMDb ID: {imdb_id}")
             return url, []
@@ -32,11 +32,14 @@ def construct_url(imdb_id: str, content_type: str, season: int = None, episode: 
         #logging.error("Invalid content type provided. Must be 'movie' or 'episode'.")
         return ""
 
-async def fetch_data(url: str) -> Dict:
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                return await response.json()
+def fetch_data(url: str) -> Dict:
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+    except requests.RequestException as e:
+        #logging.error(f"Error fetching data: {str(e)}")
+        pass
     return {}
 
 def parse_results(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -45,7 +48,6 @@ def parse_results(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         try:
             title = stream.get('title', '')
             title_parts = title.split('\n')
-
             if len(title_parts) >= 3:  # TV Show format
                 name = title_parts[0].strip()
                 size_info = title_parts[2].strip()
@@ -54,14 +56,11 @@ def parse_results(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 size_info = title_parts[1].strip()
             else:
                 continue  # Skip if the format is unexpected
-
             size = parse_size(size_info)
-
             info_hash = stream.get("infoHash", "")
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
             if stream.get('fileIdx') is not None:
                 magnet_link += f'&dn={quote_plus(name)}&so={stream["fileIdx"]}'
-
             results.append({
                 'title': name,
                 'size': size,
@@ -82,4 +81,4 @@ def parse_size(size_info: str) -> float:
             return size
         elif unit.lower() == 'mb':
             return size / 1024
-    return 0
+    return 0.0

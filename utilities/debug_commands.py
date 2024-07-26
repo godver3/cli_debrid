@@ -11,11 +11,9 @@ from database import (
 )
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from settings import get_setting
-from logging_config import get_logger, get_log_messages
-from content_checkers.overseerr import get_wanted_from_overseerr
+from content_checkers.overseerr import get_wanted_from_overseerr, map_collected_media_to_wanted
 from content_checkers.mdb_list import get_wanted_from_mdblists
-
-logger = get_logger()
+import logging
 
 def search_db():
     search_term = input("Enter search term (use % for wildcards): ")
@@ -36,22 +34,21 @@ def search_db():
         
 def log_movie_results(results):
     if results:
-        logger.info(f"{'ID':<5} {'Title':<50} {'Year':<5} {'State':<10}")
-        logger.info("-" * 70)
+        logging.info(f"{'ID':<5} {'Title':<50} {'Year':<5} {'State':<10}")
+        logging.info("-" * 70)
         for item in results:
-            logger.info(f"{item['id']:<5} {item['title']:<50} {item['year']:<5} {item['state']:<10}")
+            logging.info(f"{item['id']:<5} {item['title']:<50} {item['year']:<5} {item['state']:<10}")
     else:
-        logger.info("No movies found matching the search term.")
+        logging.info("No movies found matching the search term.")
 
 def log_tv_results(results):
     if results:
-        logger.info(f"{'ID':<5} {'Show Title':<50} {'Season':<6} {'Episode':<7} {'Ep Title':<50} {'State':<10}")
-        logger.info("-" * 130)
+        logging.info(f"{'ID':<5} {'Show Title':<50} {'Season':<6} {'Episode':<7} {'Ep Title':<50} {'State':<10}")
+        logging.info("-" * 130)
         for item in results:
-            logger.info(f"{item['id']:<5} {item['title']:<50} S{item['season_number']:<5}E{item['episode_number']:<6} {item['episode_title']:<50} {item['state']:<10}")
+            logging.info(f"{item['id']:<5} {item['title']:<50} S{item['season_number']:<5}E{item['episode_number']:<6} {item['episode_title']:<50} {item['state']:<10}")
     else:
-        logger.info("No TV shows found matching the search term.")
-
+        logging.info("No TV shows found matching the search term.")
 
 def purge_db():
     confirm = questionary.confirm("Are you sure you want to purge the database? This action cannot be undone.", default=False).ask()
@@ -70,53 +67,67 @@ def purge_db():
             choices=[
                 Choice("Wanted", "Wanted"),
                 Choice("Collected", "Collected"),
-                Choice("All", "all")
+                Choice("All", "all"),
+                Choice("Working", "working")
             ]
         ).ask()
 
         purge_database(content_type, state)
         verify_database()
-        logger.info(f"Database has been purged for type '{content_type}' and state '{state}'. Tables recreated.")
+        logging.info(f"Database has been purged for type '{content_type}' and state '{state}'. Tables recreated.")
     else:
-        logger.info("Database purge cancelled.")
+        logging.info("Database purge cancelled.")
 
 def view_database_content():
     os.system('clear')
     while True:
-        content_type = questionary.select(
-            "Select content type to view:",
+        queue = questionary.select(
+            "Select a queue to view:",
             choices=[
-                Choice("Collected Movies", "collected_movies"),
-                Choice("Collected Episodes", "collected_episodes"),
-                Choice("Wanted Movies", "wanted_movies"),
-                Choice("Wanted Episodes", "wanted_episodes"),
+                Choice("Collected", "Collected"),
+                Choice("Wanted", "Wanted"),
+                Choice("Scraping", "Scraping"),
+                Choice("Adding", "Adding"),
+                Choice("Checking", "Checking"),
+                Choice("Sleeping", "Sleeping"),
+                Choice("Blacklisted", "Blacklisted"),
                 Choice("Back", "back")
             ]
         ).ask()
 
-        if content_type == 'collected_movies':
-            movies = get_all_media_items(state='Collected', media_type='movie')
-            headers = ["ID", "IMDb ID", "TMDb ID", "Title", "Year", "Release Date", "State", "Type", "Last Updated"]
-            movie_data = [[str(movie['id']), movie['imdb_id'], movie['tmdb_id'], movie['title'], str(movie['year']), str(movie['release_date']), movie['state'], movie['type'], str(movie['last_updated'])] for movie in movies]
-            display_results_curses(movie_data, headers)
-        elif content_type == 'collected_episodes':
-            episodes = get_all_media_items(state='Collected', media_type='episode')
-            headers = ["ID", "IMDb ID", "TMDb ID", "Title", "Episode Title", "Year", "Season Number", "Episode Number", "Release Date", "State", "Type", "Last Updated"]
-            episode_data = [[str(episode['id']), episode['imdb_id'], episode['tmdb_id'], episode['title'], episode['episode_title'], str(episode['year']), str(episode['season_number']), str(episode['episode_number']), str(episode['release_date']), episode['state'], episode['type'], str(episode['last_updated'])] for episode in episodes]
-            display_results_curses(episode_data, headers)
-        elif content_type == 'wanted_movies':
-            movies = get_all_media_items(state='Wanted', media_type='movie')
-            headers = ["ID", "IMDb ID", "TMDb ID", "Title", "Year", "Release Date", "State", "Type", "Last Updated"]
-            movie_data = [[str(movie['id']), movie['imdb_id'], movie['tmdb_id'], movie['title'], str(movie['year']), str(movie['release_date']), movie['state'], movie['type'], str(movie['last_updated'])] for movie in movies]
-            display_results_curses(movie_data, headers)
-        elif content_type == 'wanted_episodes':
-            episodes = get_all_media_items(state='Wanted', media_type='episode')
-            headers = ["ID", "IMDb ID", "TMDb ID", "Title", "Episode Title", "Year", "Season Number", "Episode Number", "Release Date", "State", "Type", "Last Updated"]
-            episode_data = [[str(episode['id']), episode['imdb_id'], episode['tmdb_id'], episode['title'], episode['episode_title'], str(episode['year']), str(episode['season_number']), str(episode['episode_number']), str(episode['release_date']), episode['state'], episode['type'], str(episode['last_updated'])] for episode in episodes]
-            display_results_curses(episode_data, headers)
-        elif content_type == 'back':
+        if queue == 'back':
             os.system('clear')
             break
+
+        content_type = questionary.select(
+            f"Select content type to view in {queue} queue:",
+            choices=[
+                Choice("Movies", "movie"),
+                Choice("TV Shows", "episode")
+            ]
+        ).ask()
+
+        items = get_all_media_items(state=queue, media_type=content_type)
+
+        if content_type == 'movie':
+            headers = ["ID", "IMDb ID", "Title", "Year", "Release Date", "State", "Type", "Metadata Updated"]
+            item_data = [
+                [str(item['id']), item['imdb_id'], item['title'], str(item['year']), 
+                 str(item['release_date']), item['state'], item['type'], 
+                 str(item['metadata_updated'])] 
+                for item in items
+            ]
+        else:  # TV shows (episodes)
+            headers = ["ID", "IMDb ID", "Title", "Season", "Episode", "Year", "Release Date", "State", "Type", "Metadata Updated"]
+            item_data = [
+                [str(item['id']), item['imdb_id'], item['title'], 
+                 str(item['season_number']), str(item['episode_number']), 
+                 str(item['year']), str(item['release_date']), item['state'], 
+                 item['type'], str(item['metadata_updated'])] 
+                for item in items
+            ]
+
+        display_results_curses(item_data, headers)
 
 def display_results_curses(results, headers):
     def draw_menu(stdscr):
@@ -179,9 +190,9 @@ def debug_commands():
                 Choice("Get and Add All Recent from Plex", "get_recent_collected"),
                 Choice("Get and Add All Wanted from Overseerr", "get_all_wanted"),
                 Choice("Get and Add All Wanted from MDB List", "pull_mdblist"),
+                Choice("Get and Add All Collected/Wanted Shows to Wanted", "map_all"),
                 Choice("View Database Content", "view_db"),
                 Choice("Search Database", "search_db"),
-                Choice("Sync all collected content to Overseerr", "sync_all"),
                 Choice("Purge Database", "purge_db"),
                 Choice("Back to Main Menu", "back")
             ]
@@ -194,7 +205,7 @@ def debug_commands():
         elif action == 'get_recent_collected':
             collected_content = get_collected_from_plex('recent')
             if collected_content:
-                add_collected_items(collected_content['movies'] + collected_content['episodes'])
+                add_collected_items(collected_content['movies'] + collected_content['episodes'], recent=True)
         elif action == 'view_db':
             view_database_content()
         elif action == 'search_db':
@@ -209,8 +220,10 @@ def debug_commands():
             wanted_content = get_wanted_from_overseerr()
             if wanted_content:
                 add_wanted_items(wanted_content['movies'] + wanted_content['episodes'])
-        elif action == 'sync_all':
-            sync_collected_to_overseerr()
+        elif action == 'map_all':
+            wanted_content = map_collected_media_to_wanted()
+            if wanted_content:
+                add_wanted_items(wanted_content['episodes'])
         elif action == 'back':
             os.system('clear')
             break

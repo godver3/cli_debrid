@@ -1,11 +1,8 @@
 import logging
 import requests
 from settings import get_setting
-from logging_config import get_logger
-from database import get_all_media_items, get_media_item_status
+from database import get_all_media_items, get_media_item_status, get_metadata_updated, is_metadata_stale, update_metadata
 from datetime import datetime
-
-logger = get_logger()
 
 DEFAULT_TAKE = 100
 DEFAULT_TOTAL_RESULTS = float('inf')
@@ -15,6 +12,65 @@ PAGINATION_TAKE = 20  # Number of items to fetch per pagination request
 MAX_RETRIES = 1
 RETRY_DELAY = 2  # seconds
 JITTER = 2  # seconds
+
+def parse_date(date_str):
+    """
+    Parse a date string in various formats.
+
+    :param date_str: String representing a date or None
+    :return: datetime object if parsing is successful, None otherwise
+    """
+    if date_str is None:
+        return None
+
+    date_formats = [
+        "%Y-%m-%d",  # Standard ISO 8601 date format
+        "%Y-%m-%dT%H:%M:%S.%fZ",  # ISO 8601 with milliseconds and Z
+        "%Y-%m-%dT%H:%M:%SZ",  # ISO 8601 with Z but no milliseconds
+        "%Y-%m-%dT%H:%M:%S",  # ISO 8601 without Z
+    ]
+
+    for date_format in date_formats:
+        try:
+            return datetime.strptime(date_str, date_format)
+        except (ValueError, TypeError):
+            continue
+
+    logging.warning(f"Unable to parse date: {date_str}")
+    return None
+
+def get_release_date(media_details, media_type):
+    if media_details is None:
+        return 'Unknown'
+
+    if media_type == 'movie':
+        releases = media_details.get('releases', {}).get('results', [])
+
+        # Only consider US release types 4 and 5
+        valid_releases = []
+        for release in releases:
+            if release.get('iso_3166_1') == 'US':  # Check if it's a US release
+                for date in release.get('release_dates', []):
+                    if date.get('type') in [4, 5]:
+                        parsed_date = parse_date(date.get('release_date'))
+                        if parsed_date:
+                            valid_releases.append((parsed_date, date.get('type')))
+
+        if valid_releases:
+            # Sort by date, then prefer type 4 over 5 if dates are the same
+            valid_releases.sort(key=lambda x: (x[0], -x[1]))
+            return valid_releases[0][0].strftime("%Y-%m-%d")
+        else:
+            return 'Unknown'
+
+    elif media_type == 'tv':
+        # For TV shows, we'll use the airDate of the episode
+        parsed_date = parse_date(media_details.get('airDate'))
+        return parsed_date.strftime("%Y-%m-%d") if parsed_date else 'Unknown'
+
+    else:
+        logging.error(f"Unknown media type: {media_type}")
+        return 'Unknown'
 
 def get_overseerr_headers(api_key):
     return {
@@ -38,7 +94,7 @@ def fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key, take=DEFAUL
 
     while True:
         try:
-            logger.debug(f"Fetching page {page} (skip={skip}, take={take})")
+            logging.debug(f"Fetching page {page} (skip={skip}, take={take})")
             response = requests.get(
                 get_url(overseerr_url, f"/api/v1/request?take={take}&skip={skip}"),
                 headers=headers,
@@ -50,10 +106,10 @@ def fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key, take=DEFAUL
             results = data.get('results', [])
             total_results = data.get('pageInfo', {}).get('total', data.get('total', 0))
             
-            logger.debug(f"Page {page}: Received {len(results)} results. API reports total of {total_results}")
+            logging.debug(f"Page {page}: Received {len(results)} results. API reports total of {total_results}")
             
             if not results:
-                logger.debug("No more results returned. Stopping pagination.")
+                logging.debug("No more results returned. Stopping pagination.")
                 break
 
             wanted_content.extend(results)
@@ -61,22 +117,22 @@ def fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key, take=DEFAUL
             page += 1
 
             if len(results) < take:
-                logger.debug("Received fewer results than requested. This is likely the last page.")
+                logging.debug("Received fewer results than requested. This is likely the last page.")
                 break
 
         except requests.RequestException as e:
-            logger.error(f"Error fetching wanted content from Overseerr: {e}")
+            logging.error(f"Error fetching wanted content from Overseerr: {e}")
             break
         except KeyError as e:
-            logger.error(f"Unexpected response structure from Overseerr: {e}")
-            logger.debug(f"Full response: {data}")
+            logging.error(f"Unexpected response structure from Overseerr: {e}")
+            logging.debug(f"Full response: {data}")
             break
         except Exception as e:
-            logger.error(f"Unexpected error while processing Overseerr response: {e}")
+            logging.error(f"Unexpected error while processing Overseerr response: {e}")
             break
 
-    logger.info(f"Fetched a total of {len(wanted_content)} wanted content items from Overseerr")
-    logger.debug(f"Pagination details: Pages fetched: {page - 1}, Last skip value: {skip - take}")
+    logging.info(f"Fetched a total of {len(wanted_content)} wanted content items from Overseerr")
+    logging.debug(f"Pagination details: Pages fetched: {page - 1}, Last skip value: {skip - take}")
     return wanted_content
 
 def get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies):
@@ -92,7 +148,13 @@ def get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, seaso
 def get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies):
     url = get_url(overseerr_url, f"/api/v1/movie/{tmdb_id}?language=en")
     headers = get_overseerr_headers(overseerr_api_key)
-    return fetch_data(url, headers, cookies)
+    try:
+        response = requests.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logging.error(f"Error fetching movie details for TMDB ID {tmdb_id}: {str(e)}")
+        return None
 
 def get_overseerr_cookies(overseerr_url):
     session = requests.Session()
@@ -103,7 +165,7 @@ def get_wanted_from_overseerr():
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')
     if not overseerr_url or not overseerr_api_key:
-        logger.error("Overseerr URL or API key not set. Please configure in settings.")
+        logging.error("Overseerr URL or API key not set. Please configure in settings.")
         return {'movies': [], 'episodes': []}
     try:
         cookies = get_overseerr_cookies(overseerr_url)
@@ -115,67 +177,127 @@ def get_wanted_from_overseerr():
             media = item.get('media', {})
             if media.get('mediaType') == 'tv':
                 tmdb_id = media.get('tmdbId')
-                logger.debug(f"Processing TV media: {media}")
+                logging.debug(f"Processing TV media: {media}")
                 show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
                 imdb_id = show_details.get('externalIds', {}).get('imdbId', 'Unknown IMDb ID')
                 show_title = show_details.get('name', 'Unknown Show Title')
+
                 for season in range(1, show_details.get('numberOfSeasons', 0) + 1):
                     season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, season, cookies)
                     for episode in season_details.get('episodes', []):
-                        # Check if this episode is already collected
-                        status = get_media_item_status(imdb_id=imdb_id, season_number=season, episode_number=episode.get('episodeNumber'))
-                        if status == "Missing":
-                            logger.info(f"Episode missing: {show_title} S{season}E{episode.get('episodeNumber')}, fetching air date.")
-                            air_date = episode.get('airDate', 'Unknown')
-                            logger.info(f"Fetched air date for episode: {air_date}")
-                            episode_item = {
-                                'imdb_id': imdb_id,
-                                'tmdb_id': tmdb_id,
-                                'title': show_title,
-                                'episode_title': episode.get('name', 'Unknown Episode Title'),
-                                'year': episode.get('airDate', 'Unknown Year')[:4] if episode.get('airDate') else 'Unknown Year',
-                                'season_number': season,
-                                'episode_number': episode.get('episodeNumber', 'Unknown Episode Number'),
-                                'release_date': air_date
-                            }
-                            wanted_episodes.append(episode_item)
-                        else:
-                            logger.debug(f"Episode already collected: {show_title} S{season}E{episode.get('episodeNumber')}")
-
+                        air_date = episode.get('airDate', 'Unknown')
+                        episode_item = {
+                            'imdb_id': imdb_id,
+                            'tmdb_id': tmdb_id,
+                            'title': show_title,
+                            'episode_title': episode.get('name', 'Unknown Episode Title'),
+                            'year': episode.get('airDate', 'Unknown Year')[:4] if episode.get('airDate') else 'Unknown Year',
+                            'season_number': season,
+                            'episode_number': episode.get('episodeNumber', 'Unknown Episode Number'),
+                            'release_date': air_date if air_date else 'Unknown'
+                        }
+                        logging.debug(f"Appending episode: {episode_item}")
+                        wanted_episodes.append(episode_item)
             elif media.get('mediaType') == 'movie':
                 tmdb_id = media.get('tmdbId')
-                logger.debug(f"Processing movie media: {media}")
                 movie_details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-                title = movie_details.get('title', 'Unknown Title')
-                year = movie_details.get('releaseDate', 'Unknown Year')[:4] if movie_details.get('releaseDate') else 'Unknown Year'
-                # Check if this movie is already collected
-                status = get_media_item_status(imdb_id=movie_details.get('externalIds', {}).get('imdbId'), title=title, year=year)
-                if status == "Missing":
-                    logger.info(f"Movie missing: {title} ({year}), fetching release date.")
-                    releases = movie_details.get('releases', {}).get('results', [])
-                    release_date = 'Unknown'
-                    for release in releases:
-                        for date in release.get('release_dates', []):
-                            if date.get('type') in [4, 5]:  # Type 4 and 5 are of interest
-                                release_date = date.get('release_date')
-                                break
-                        if release_date != 'Unknown':
-                            break
-                    logger.info(f"Fetched release date for movie: {release_date}")
-                    movie_item = {
-                        'imdb_id': movie_details.get('externalIds', {}).get('imdbId', 'Unknown IMDb ID'),
-                        'tmdb_id': tmdb_id,
-                        'title': title,
-                        'year': year,
-                        'release_date': release_date
-                    }
-                    wanted_movies.append(movie_item)
-                else:
-                    logger.debug(f"Movie already collected: {title} ({year})")
+                if movie_details is None:
+                    logging.warning(f"Unable to fetch details for movie with TMDB ID: {tmdb_id}. Skipping.")
+                    continue
+                release_date = get_release_date(movie_details, 'movie')
+                movie_item = {
+                    'imdb_id': movie_details.get('externalIds', {}).get('imdbId', 'Unknown IMDb ID'),
+                    'tmdb_id': tmdb_id,
+                    'title': movie_details.get('title', 'Unknown Title'),
+                    'year': release_date[:4] if release_date != 'Unknown' else 'Unknown Year',
+                    'release_date': release_date
+                }
+                wanted_movies.append(movie_item)
 
-        logger.info(f"Retrieved {len(wanted_movies)} wanted movies from Overseerr")
-        logger.info(f"Retrieved {len(wanted_episodes)} wanted episodes from Overseerr")
+        logging.debug(f"Added {len(wanted_movies)} wanted movies from Overseerr.")
+        logging.debug(f"Added {len(wanted_episodes)} wanted episodes from Overseerr")
         return {'movies': wanted_movies, 'episodes': wanted_episodes}
     except Exception as e:
-        logger.error(f"Unexpected error while processing Overseerr response: {e}")
+        logging.error(f"Unexpected error while processing Overseerr response: {e}")
         return {'movies': [], 'episodes': []}
+
+def map_collected_media_to_wanted():
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    if not overseerr_url or not overseerr_api_key:
+        logging.error("Overseerr URL or API key not set. Please configure in settings.")
+        return {'episodes': []}
+
+    try:
+        logging.debug("Starting map_collected_media_to_wanted function")
+        cookies = get_overseerr_cookies(overseerr_url)
+        wanted_episodes = []
+
+        # Process collected and wanted episodes
+        collected_episodes = get_all_media_items(state="Collected", media_type="episode")
+        wanted_episodes_db = get_all_media_items(state="Wanted", media_type="episode")
+        all_episodes = collected_episodes + wanted_episodes_db
+
+        logging.info(f"Processing episodes for {len(set(episode['tmdb_id'] for episode in all_episodes))} unique shows")
+
+        processed_tmdb_ids = set()
+        for i, episode in enumerate(all_episodes, 1):
+            try:
+                tmdb_id = episode['tmdb_id']
+
+                if i % 20 == 0:
+                    logging.info(f"Processed {i}/{len(all_episodes)} episodes")
+
+                if tmdb_id is None:
+                    logging.warning(f"Skipping episode due to None TMDB ID")
+                    continue
+
+                if tmdb_id in processed_tmdb_ids:
+                    continue
+
+                processed_tmdb_ids.add(tmdb_id)
+
+                show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+                if show_details:
+                    known_seasons = set(ep['season_number'] for ep in all_episodes if ep['tmdb_id'] == tmdb_id and ep['season_number'] != 0)
+
+                    for season in show_details.get('seasons', []):
+                        season_number = season.get('seasonNumber')
+                        if season_number == 0:
+                            continue  # Skip season 0
+
+                        season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, season_number, cookies)
+                        if season_details:
+                            known_episodes_this_season = [ep for ep in all_episodes if ep['tmdb_id'] == tmdb_id and ep['season_number'] == season_number]
+                            known_episode_numbers = set(ep['episode_number'] for ep in known_episodes_this_season)
+
+                            for overseerr_episode in season_details.get('episodes', []):
+                                if overseerr_episode['episodeNumber'] not in known_episode_numbers:
+                                    release_date = get_release_date(overseerr_episode, 'tv')
+                                    wanted_episodes.append({
+                                        'imdb_id': show_details.get('externalIds', {}).get('imdbId', 'Unknown IMDb ID'),
+                                        'tmdb_id': tmdb_id,
+                                        'title': show_details.get('name', 'Unknown Show Title'),
+                                        'episode_title': overseerr_episode.get('name', 'Unknown Episode Title'),
+                                        'year': release_date[:4] if release_date != 'Unknown' else 'Unknown Year',
+                                        'season_number': season_number,
+                                        'episode_number': overseerr_episode['episodeNumber'],
+                                        'release_date': release_date
+                                    })
+
+            except requests.exceptions.RequestException as e:
+                logging.error(f"Error processing show TMDB ID: {tmdb_id}: {str(e)}")
+            except Exception as e:
+                logging.error(f"Unexpected error processing show TMDB ID: {tmdb_id}: {str(e)}")
+
+        logging.info(f"Retrieved {len(wanted_episodes)} additional wanted episodes")
+
+        # Log details of wanted episodes
+        for episode in wanted_episodes:
+            logging.info(f"Wanted episode: {episode['title']} S{episode['season_number']}E{episode['episode_number']} - {episode['episode_title']} - IMDB: {episode['imdb_id']}, TMDB: {episode['tmdb_id']} - Air Date: {episode['release_date']}")
+
+        return {'episodes': wanted_episodes}
+    except Exception as e:
+        logging.error(f"Unexpected error while mapping collected media to wanted: {str(e)}")
+        logging.exception("Traceback:")
+        return {'episodes': []}

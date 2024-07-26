@@ -1,3 +1,4 @@
+import logging
 import configparser
 import os
 import subprocess
@@ -15,11 +16,27 @@ def load_config():
 def save_config(config):
     with open(CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
-    print(f"Configuration saved to {CONFIG_FILE}")
+    #print(f"Configuration saved to {CONFIG_FILE}")
 
-def get_setting(section, key, default=None):
-    config = load_config()
-    return config.get(section, key, fallback=default)
+def get_setting(section, option, default=None):
+    config = configparser.ConfigParser()
+    config.read('config.ini')  # Ensure this path is correct
+    if config.has_option(section, option):
+        raw_value = config.get(section, option)
+        logging.debug(f"Setting found - Section: {section}, Option: {option}, Raw Value: {raw_value}")
+
+        if raw_value.lower() in ['true', 'yes', '1']:
+            value = True
+        elif raw_value.lower() in ['false', 'no', '0']:
+            value = False
+        else:
+            value = raw_value
+
+        logging.debug(f"Parsed value - Section: {section}, Option: {option}, Value: {value}, Type: {type(value)}")
+        return value
+    else:
+        logging.debug(f"Setting not found - Section: {section}, Option: {option}, using default: {default}")
+        return default
 
 def set_setting(section, key, value):
     config = load_config()
@@ -55,23 +72,33 @@ class SettingsEditor:
             ('Overseerr', 'url', 'Overseerr URL'),
             ('Overseerr', 'api_key', 'Overseerr API Key'),
             ('RealDebrid', 'api_key', 'Real-Debrid API Key'),
-            ('Trakt', 'client_id', 'Trakt Client ID'),
-            ('Trakt', 'client_secret', 'Trakt Client Secret'),
-            ('TMDB', 'api_key', 'TMDB API Key'),
+            ('Torrentio', 'enabled', 'Torrentio enabled? True/False'),
+            ('Scraper', '4k', '4k disabled? True/False'),
+            ('Scraper', 'hdr', 'HDR disabled? True/False')
         ])
 
     def show_additional_settings(self, button):
         self.show_settings("Additional Settings", [
             ('Zilean', 'url', 'Zilean URL'),
+            ('Zilean', 'enabled', 'Zilean enabled? True/False'),
             ('Knightcrawler', 'url', 'Knightcrawler URL'),
+            ('Knightcrawler', 'enabled', 'Knightcrawler enabled? (True/False)'),
+            ('Comet', 'url', 'Comet URL'),
+            ('Comet', 'enabled', 'Comet enabled? True/False'),
             ('MDBList', 'api_key', 'MDB API Key'),
-            ('MDBList', 'urls', 'MDB List URLs')
+            ('MDBList', 'urls', 'MDB List URLs'),
+            ('Trakt', 'client_id', 'Trakt Client ID'),
+            ('Trakt', 'client_secret', 'Trakt Client Secret'),
+            ('TMDB', 'api_key', 'TMDB API Key'),
+            ('Logging', 'filter_out', 'Enter comma-separated list of ignore terms (i.e. TS, CAM etc)')
         ])
 
     def show_debug_settings(self, button):
         self.show_settings("Debug Settings", [
             ('Logging', 'use_single_log_file', 'Use Single Log File (True/False)'),
-            ('Logging', 'logging_level', 'Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)')
+            ('Logging', 'logging_level', 'Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)'),
+            ('Plex', 'skip_initial_plex_update', 'Skip Plex initial collection scan (True/False)'),
+            ('Logging', 'skip_menu', 'Skip menu? (True/False)')
         ])
 
     def show_settings(self, title, settings):
@@ -90,10 +117,10 @@ class SettingsEditor:
         self.main_loop.widget = urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
 
     def save_settings(self):
-        print("Saving settings...")
+        #print("Saving settings...")
         for (section, key), edit in self.edits.items():
             value = edit.get_edit_text()
-            print(f"Setting {section} - {key} to {value}")
+            #print(f"Setting {section} - {key} to {value}")
             set_setting(section, key, value)
         # Reload config to ensure updates are applied
         self.config = load_config()

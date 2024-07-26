@@ -21,7 +21,7 @@ def display_results(results: List[Dict]):
             name_width = width - 85  # Adjust this value to allocate space for other columns
 
             # Display header
-            stdscr.addstr(0, 0, "Name".ljust(name_width) + "Size".ljust(15) + "Source".ljust(15) + "Cached".ljust(10))
+            stdscr.addstr(0, 0, "Name".ljust(name_width) + "Size".ljust(15) + "Source".ljust(15))
             stdscr.addstr(1, 0, "-" * (width - 1))
 
             # Display results

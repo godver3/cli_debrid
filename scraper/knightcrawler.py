@@ -1,42 +1,33 @@
-import aiohttp
+import requests
 import logging
 import re
 from types import SimpleNamespace
 from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
 from settings import get_setting
-from logging_config import get_logger
 
-logger = get_logger()
 TMDB_API_URL = "https://api.themoviedb.org/3"
 TMDB_API_KEY = get_setting('TMDB', 'api_key')
 KNIGHTCRAWLER_URL = get_setting('Knightcrawler', 'url')
 
-async def scrape_knightcrawler(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
-    #print(f"Starting scrape_knightcrawler for IMDb ID: {imdb_id}, Content Type: {content_type}, Season: {season}, Episode: {episode}")
+def scrape_knightcrawler(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
     try:
         url = construct_url(imdb_id, content_type, season, episode)
-        #print(f"Constructed URL: {url}")
-        
-        response = await fetch_data(url)
-        #print(f"Fetch data response: {response}")
-        
+        response = fetch_data(url)
+
         if not response:
-            logger.warning(f"No response received for IMDb ID: {imdb_id}")
+            logging.warning(f"No response received for IMDb ID: {imdb_id}")
             return url, []
-        
+
         if 'streams' not in response:
-            logger.warning(f"No 'streams' key in response for IMDb ID: {imdb_id}")
+            logging.warning(f"No 'streams' key in response for IMDb ID: {imdb_id}")
             return url, []
-        
-        #print(f"Number of streams found: {len(response['streams'])}")
-        
+
         parsed_results = parse_results(response['streams'])
-        #print(f"Number of parsed results: {len(parsed_results)}")
-        
+
         return url, parsed_results
     except Exception as e:
-        logger.error(f"Error in scrape_knightcrawler: {str(e)}", exc_info=True)
+        logging.error(f"Error in scrape_knightcrawler: {str(e)}", exc_info=True)
         return "", []
 
 def construct_url(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> str:
@@ -48,14 +39,15 @@ def construct_url(imdb_id: str, content_type: str, season: int = None, episode: 
     elif content_type == "episode":
         return f"{KNIGHTCRAWLER_URL}/{opts}/stream/series/{imdb_id}.json"
     else:
-        #print("Invalid content type provided. Must be 'movie' or 'episode'.")
         return ""
 
-async def fetch_data(url: str) -> Dict:
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                return await response.json()
+def fetch_data(url: str) -> Dict:
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        logging.error(f"Error fetching data: {str(e)}", exc_info=True)
     return {}
 
 def parse_seeds(title: str) -> int:
@@ -90,7 +82,7 @@ def parse_results(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 'magnet': magnet_link
             })
         except Exception as e:
-            logger.error(f"Error parsing result: {str(e)}")
+            logging.error(f"Error parsing result: {str(e)}")
             continue
     return results
 

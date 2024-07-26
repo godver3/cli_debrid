@@ -1,0 +1,57 @@
+2024-07-24 22:42:38,935 - root - INFO - Database verified and tables created if not exists.
+2024-07-24 22:42:38,935 - root - INFO - Main menu started
+[H[J[3JWarning: Input is not a terminal (fd=0).
+Traceback (most recent call last):
+  File "/usr/lib/python3.11/asyncio/selector_events.py", line 265, in _add_reader
+    key = self._selector.get_key(fd)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/selectors.py", line 192, in get_key
+    raise KeyError("{!r} is not registered".format(fileobj)) from None
+KeyError: '0 is not registered'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/root/myenv/lib/python3.11/site-packages/prompt_toolkit/input/vt100.py", line 176, in _attached_input
+    loop.add_reader(fd, callback_wrapper)
+  File "/usr/lib/python3.11/asyncio/selector_events.py", line 340, in add_reader
+    self._add_reader(fd, callback, *args)
+  File "/usr/lib/python3.11/asyncio/selector_events.py", line 267, in _add_reader
+    self._selector.register(fd, selectors.EVENT_READ,
+  File "/usr/lib/python3.11/selectors.py", line 359, in register
+    self._selector.register(key.fd, poller_events)
+PermissionError: [Errno 1] Operation not permitted
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/root/cli_debrid/main.py", line 52, in <module>
+    main()
+  File "/root/cli_debrid/main.py", line 49, in main
+    main_menu()
+  File "/root/cli_debrid/main.py", line 31, in main_menu
+    ).ask()
+      ^^^^^
+  File "/root/myenv/lib/python3.11/site-packages/questionary/question.py", line 64, in ask
+    return self.unsafe_ask(patch_stdout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/myenv/lib/python3.11/site-packages/questionary/question.py", line 89, in unsafe_ask
+    return self.application.run()
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/myenv/lib/python3.11/site-packages/prompt_toolkit/application/application.py", line 978, in run
+    return loop.run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/root/myenv/lib/python3.11/site-packages/prompt_toolkit/application/application.py", line 885, in run_async
+    return await _run_async(f)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/myenv/lib/python3.11/site-packages/prompt_toolkit/application/application.py", line 737, in _run_async
+    with self.input.raw_mode(), self.input.attach(
+  File "/usr/lib/python3.11/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/root/myenv/lib/python3.11/site-packages/prompt_toolkit/input/vt100.py", line 185, in _attached_input
+    raise EOFError
+EOFError
