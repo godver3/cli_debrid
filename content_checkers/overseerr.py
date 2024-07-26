@@ -3,6 +3,7 @@ import requests
 from settings import get_setting
 from database import get_all_media_items, update_release_date_and_state, get_media_item_status, get_metadata_updated, is_metadata_stale, update_metadata
 from datetime import datetime, timedelta
+from typing import Optional
 
 DEFAULT_TAKE = 100
 DEFAULT_TOTAL_RESULTS = float('inf')
@@ -12,6 +13,37 @@ PAGINATION_TAKE = 20  # Number of items to fetch per pagination request
 MAX_RETRIES = 1
 RETRY_DELAY = 2  # seconds
 JITTER = 2  # seconds
+
+def imdb_to_tmdb(overseerr_url: str, overseerr_api_key: str, imdb_id: str) -> Optional[int]:
+    """
+    Convert an IMDB ID to a TMDB ID using Overseerr's search endpoint.
+    
+    :param overseerr_url: The base URL of the Overseerr instance
+    :param overseerr_api_key: The API key for Overseerr
+    :param imdb_id: The IMDB ID to convert
+    :return: The TMDB ID if found, None otherwise
+    """
+    headers = {
+        'X-Api-Key': overseerr_api_key,
+        'Accept': 'application/json'
+    }
+    
+    search_url = f"{overseerr_url}/api/v1/search?query=imdb%3A{imdb_id}"
+    
+    try:
+        response = requests.get(search_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data['results']:
+            first_result = data['results'][0]
+            return first_result.get('id')  # This is the TMDB ID
+        else:
+            logging.warning(f"No results found for IMDB ID: {imdb_id}")
+            return None
+    except requests.RequestException as e:
+        logging.error(f"Error converting IMDB ID to TMDB ID: {e}")
+        return None
 
 def parse_date(date_str):
     """
