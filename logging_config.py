@@ -11,7 +11,7 @@ class OverwriteFileHandler(logging.FileHandler):
 
 def setup_logging():
     # Get logging level from settings
-    console_level = get_setting("Logging", "logging_level", "INFO")
+    console_level = get_setting("Debug", "logging_level", "INFO")
     
     # Create formatter
     formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')

@@ -35,7 +35,7 @@ class ProgramRunner:
 
     def run_initialization(self):
         logging.info("Running initialization...")
-        skip_initial_plex_update = get_setting('Plex', 'skip_initial_plex_update', False)
+        skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
         initialize(skip_initial_plex_update)
         logging.info("Initialization complete")
 

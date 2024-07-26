@@ -12,9 +12,18 @@ from .comet import scrape_comet
 from settings import get_setting
 from database import get_item_state
 import time
+from content_checkers.overseerr import get_overseerr_movie_details, get_overseerr_show_details, get_overseerr_cookies, imdb_to_tmdb
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+def calculate_bitrate(size_gb, runtime_minutes):
+    if not size_gb or not runtime_minutes:
+        return 0
+    size_bits = size_gb * 8 * 1024 * 1024 * 1024  # Convert GB to bits
+    runtime_seconds = runtime_minutes * 60
+    bitrate_mbps = (size_bits / runtime_seconds) / 1000000  # Convert to Mbps
+    return round(bitrate_mbps, 2)
 
 def parse_size(size):
     if isinstance(size, (int, float)):
@@ -111,8 +120,21 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
     size = result.get('size', 0)
     size_score = size * file_size_bonus
 
-    # Placeholder for bitrate score (you'll need to implement bitrate extraction)
-    bitrate_score = 0 * bitrate_bonus
+    tmdb_id = result.get('tmdb_id')
+    runtime = result.get('runtime')
+    
+    if not tmdb_id or runtime is None:
+        logging.warning(f"Missing TMDB ID or runtime for result: {result.get('title', 'Unknown Title')}")
+        bitrate = 0
+    else:
+        bitrate = calculate_bitrate(size, runtime)
+        
+        logging.debug(f"Bitrate calculation for {result.get('title', 'Unknown Title')}:")
+        logging.debug(f"  TMDB ID: {tmdb_id}")
+        logging.debug(f"  Size: {size} GB")
+        logging.debug(f"  Runtime: {runtime} minutes")
+        logging.debug(f"  Calculated Bitrate: {bitrate} Mbps")
+    bitrate_score = bitrate * bitrate_bonus
 
     # Existing logic for year, season, and episode matching
     year_match = 2 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
@@ -139,9 +161,9 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
         similarity_score +
         resolution_score +
         (hdr_score * 2) +
-        size_score +
-        bitrate_score +
-        (year_match * 10) +  # Giving more weight to year match
+        (size_score / 8) +
+        (bitrate_score / 2) +
+        (year_match * 5) +  # Giving more weight to year match
         (season_match * 5) +
         (episode_match * 5) +
         multi_pack_score +
@@ -177,6 +199,27 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
         all_results = []
 
         logging.debug(f"Scraping for: {title} ({year})")
+
+        # Get TMDB ID and runtime once for all results
+        overseerr_url = get_setting('Overseerr', 'url')
+        overseerr_api_key = get_setting('Overseerr', 'api_key')
+        cookies = get_overseerr_cookies(overseerr_url)
+        
+        tmdb_id = imdb_to_tmdb(overseerr_url, overseerr_api_key, f"{imdb_id}")
+        
+        if not tmdb_id:
+            logging.warning(f"No TMDB ID found for IMDB ID: {imdb_id}")
+            return []
+
+        # Fetch runtime based on content type
+        if content_type.lower() == 'movie':
+            details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+            runtime = details.get('runtime') if details else None
+        else:  # Assume TV show
+            details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+            runtime = details.get('episodeRuntime', [None])[0] if details else None
+
+        logging.debug(f"Retrieved runtime for {title}: {runtime} minutes")
 
         # Get filter terms and minimum size
         filter_in = get_setting('Scraping', 'filter_in', default='').split(',')
@@ -239,6 +282,9 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
         filtering_start = time.time()
         filtered_results = []
         for result in all_results:
+            result['tmdb_id'] = tmdb_id
+            result['runtime'] = runtime
+
             torrent_title = result.get('title', '').lower()
             size_gb = parse_size(result.get('size', 0))
             parsed_info = PTN.parse(torrent_title)

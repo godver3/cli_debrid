@@ -147,7 +147,7 @@ class SelectableColumns(urwid.Columns):
 
 def scraper_tester():
     ScraperTester().run()
-    subprocess.run([sys.executable, 'main.py'])
+    #subprocess.run([sys.executable, 'main.py'])
 
 if __name__ == "__main__":
     ScraperTester().run()

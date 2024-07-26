@@ -22,7 +22,6 @@ def get_setting(section, option, default=None):
     config.read('config.ini')  # Ensure this path is correct
     if config.has_option(section, option):
         raw_value = config.get(section, option)
-        logging.debug(f"Setting found - Section: {section}, Option: {option}, Raw Value: {raw_value}")
 
         if raw_value.strip() == '':
             logging.debug(f"Empty value found for {section}.{option}, using default: {default}")
@@ -35,7 +34,6 @@ def get_setting(section, option, default=None):
         else:
             value = raw_value
 
-        logging.debug(f"Parsed value - Section: {section}, Option: {option}, Value: {value}, Type: {type(value)}")
         return value
     else:
         logging.debug(f"Setting not found - Section: {section}, Option: {option}, using default: {default}")
@@ -81,7 +79,7 @@ class SettingsEditor:
             ('Overseerr', 'url', 'Overseerr URL'),
             ('Overseerr', 'api_key', 'Overseerr API Key'),
             ('RealDebrid', 'api_key', 'Real-Debrid API Key'),
-            ('Torrentio', 'enabled', 'Torrentio enabled? True/False')
+            ('Torrentio', 'enabled', 'Torrentio enabled? (Must configure at least one scraper in Additional Settings if not Torrentio) True/False')
         ])
 
     def show_additional_settings(self, button):
@@ -118,10 +116,9 @@ class SettingsEditor:
         
     def show_debug_settings(self, button):
         self.show_settings("Debug Settings", [
-            ('Logging', 'use_single_log_file', 'Use Single Log File (True/False)'),
-            ('Logging', 'logging_level', 'Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)'),
-            ('Plex', 'skip_initial_plex_update', 'Skip Plex initial collection scan (True/False)'),
-            ('Logging', 'skip_menu', 'Skip menu? (True/False)')
+            ('Debug', 'logging_level', 'Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)'),
+            ('Debug', 'skip_initial_plex_update', 'Skip Plex initial collection scan (True/False)'),
+            ('Debug', 'skip_menu', 'Skip menu? (True/False)')
         ])
 
     def show_settings(self, title, settings):

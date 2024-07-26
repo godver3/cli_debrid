@@ -17,30 +17,6 @@ logging_config.setup_logging()
 if not os.path.exists('logs'):
     os.makedirs('logs')
 
-def display_settings():
-    config = configparser.ConfigParser()
-    config.read('config.ini')
-    
-    print("Current Settings:")
-    print("================")
-    
-    for section in config.sections():
-        print(f"\n[{section}]")
-        for key, value in config[section].items():
-            print(f"{key} = {value} (type: {type(get_setting(section, key)).__name__})")
-            print(f"  get_setting value: {get_setting(section, key)} (type: {type(get_setting(section, key)).__name__})")
-    
-    # Example usage
-    logger = logging.getLogger(__name__)
-    logger.debug("This is a debug message")
-    logger.info("This is an info message")
-    
-    queue_logger = logging.getLogger('queue')
-    queue_logger.info("This is a queue message")
-    
-    print("\nPress any key to continue...")
-    input()
-
 def main_menu():
     logging.debug("Main menu started")
     logging.debug("Debug logging started")
@@ -82,7 +58,7 @@ def main():
     # display_settings()
     
     # Check for the debug flag
-    skip_menu = get_setting('Logging', 'skip_menu', default=False)
+    skip_menu = get_setting('Debug', 'skip_menu', default=False)
     
     if skip_menu:
         logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
