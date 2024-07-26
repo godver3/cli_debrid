@@ -3,17 +3,15 @@ import time
 from queue_manager import QueueManager
 from initialization import initialize
 from settings import get_setting
-from web_server import start_server
+from web_server import start_server, update_stats, app
 from tabulate import tabulate
 from utilities.plex_functions import get_collected_from_plex
-from content_checkers.overseerr import get_wanted_from_overseerr, map_collected_media_to_wanted, get_overseerr_show_details, get_overseerr_movie_details, get_release_date
+from content_checkers.overseerr import get_wanted_from_overseerr, map_collected_media_to_wanted, get_overseerr_show_details, get_overseerr_movie_details, get_release_date, refresh_release_dates
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
-from flask import Flask, request, jsonify
-from threading import Thread
+from flask import request, jsonify
 
 queue_logger = logging.getLogger('queue_logger')
-app = Flask(__name__)
 
 class ProgramRunner:
     def __init__(self):
@@ -29,9 +27,11 @@ class ProgramRunner:
             'task_overseerr_wanted': 60,  # 1 minute
             'task_mdb_list_wanted': 900,  # 15 minutes
             'task_debug_log': 60,  # 1 minute
+            'task_refresh_release_dates': 3600,  # 1 hour
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
+
 
     def run_initialization(self):
         logging.info("Running initialization...")
@@ -51,15 +51,19 @@ class ProgramRunner:
 
         if self.should_run_task('wanted'):
             self.queue_manager.process_wanted()
+            update_stats(processed=1)  # Update processed count
 
         if self.should_run_task('scraping'):
             self.queue_manager.process_scraping()
+            update_stats(processed=1)  # Update processed count
 
         if self.should_run_task('adding'):
             self.queue_manager.process_adding()
+            update_stats(processed=1, successful=1)  # Update processed and successful counts
 
         if self.should_run_task('checking'):
             self.queue_manager.process_checking()
+            update_stats(processed=1)  # Update processed count
 
         if self.should_run_task('sleeping'):
             self.queue_manager.process_sleeping()
@@ -72,6 +76,9 @@ class ProgramRunner:
 
         if self.should_run_task('task_mdb_list_wanted'):
             task_mdb_list_wanted()
+
+        if self.should_run_task('task_refresh_release_dates'):
+            task_refresh_release_dates()
 
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
@@ -179,6 +186,7 @@ class ProgramRunner:
         else:
             logging.error(f"Unknown media type: {media_type}")
 
+# Webhook route
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
@@ -190,18 +198,15 @@ def webhook():
         logging.error(f"Error processing webhook: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-def run_flask():
-    app.run(host='0.0.0.0', port=5000)
-
 def run_program():
     logging.info("Program started")
+
     global runner
     runner = ProgramRunner()
-    
-    # Start Flask in a separate thread
-    flask_thread = Thread(target=run_flask)
-    flask_thread.start()
-    
+
+    # Start the web server
+    start_server()
+
     runner.run()
 
 def task_plex_full_scan():
@@ -221,6 +226,9 @@ def task_mdb_list_wanted():
     if wanted_content:
         add_wanted_items(wanted_content['movies'] + wanted_content['episodes'])
     return
+
+def task_refresh_release_dates():
+    refresh_release_dates()
 
 if __name__ == "__main__":
     run_program()

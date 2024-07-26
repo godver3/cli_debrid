@@ -9,6 +9,7 @@ from utilities.debug_commands import debug_commands
 from utilities.manual_scrape import run_manual_scrape
 from database import verify_database, create_database
 import logging_config
+from scraper_tester import scraper_tester
 
 logging_config.setup_logging()
 
@@ -41,7 +42,7 @@ def display_settings():
     input()
 
 def main_menu():
-    logging.info("Main menu started")
+    logging.debug("Main menu started")
     logging.debug("Debug logging started")
     os.system('clear')
     while True:
@@ -51,36 +52,40 @@ def main_menu():
                 "Run Program",
                 "Edit Settings",
                 "Manual Scrape",
+                "Scraper Tester",
                 "Debug Commands",
                 "Exit"
             ]
         ).ask()
+
+        os.system('clear')
+
         if action == "Run Program":
             run_program()
         elif action == "Edit Settings":
             SettingsEditor()
         elif action == "Manual Scrape":
             run_manual_scrape()
+        elif action == "Scraper Tester":
+            scraper_tester()
         elif action == "Debug Commands":
             debug_commands()
         elif action == "Exit":
-            logging.info("Exiting program.")
+            logging.debug("Exiting program.")
             break
-        logging.info("Returned to main menu.")
+        logging.debug("Returned to main menu.")
 
 def main():
     verify_database()
     
     # Display all settings
-    display_settings()
+    # display_settings()
     
     # Check for the debug flag
     skip_menu = get_setting('Logging', 'skip_menu', default=False)
-    logging.info(f"skip_menu setting: {skip_menu}")
-    logging.info(f"skip_menu setting is: {skip_menu} (type: {type(skip_menu)})")
     
     if skip_menu:
-        logging.info("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
+        logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
         run_program()
     else:
         main_menu()
