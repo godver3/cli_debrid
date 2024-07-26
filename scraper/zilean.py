@@ -1,4 +1,4 @@
-import aiohttp
+import requests
 import logging
 from typing import List, Dict, Any
 from database import get_title_by_imdb_id  # Import the function from database.py
@@ -6,17 +6,13 @@ from settings import get_setting
 
 ZILEAN_URL = get_setting('Zilean', 'url')
 
-async def scrape_zilean(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_zilean(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
     if not ZILEAN_URL:
         return []
 
-    #logging.info(f"Fetching title for IMDb ID: {imdb_id}")
     title = get_title_by_imdb_id(imdb_id)
     if not title:
         return []
-
-    #logging.info(f"Title: {title}, Season: {season}, Episode: {episode}")
-    #logging.info(f"Season type: {type(season)}, Episode type: {type(episode)}")
 
     try:
         if season is not None and episode is not None:
@@ -28,25 +24,22 @@ async def scrape_zilean(imdb_id: str, content_type: str, season: int = None, epi
             query = f"{title} S{season:02d}"
         else:
             query = title
-
-        #logging.info(f"Constructed Query: {query}")
-
-    except ValueError as ve:
+    except ValueError:
         return []
 
     search_endpoint = f"{ZILEAN_URL}/dmm/search"
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(search_endpoint, json={"queryText": query}) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return parse_zilean_results(data)
-                else:
-                    error_data = await response.json()
-                    #logging.error(f"Zilean API error: {error_data.get('detail', 'Unknown error')}")
-                    return []
+        response = requests.post(search_endpoint, json={"queryText": query})
+        if response.status_code == 200:
+            data = response.json()
+            return parse_zilean_results(data)
+        else:
+            error_data = response.json()
+            logging.error(f"Zilean API error: {error_data.get('detail', 'Unknown error')}")
+            return []
     except Exception as e:
+        logging.error(f"Error in scrape_zilean: {str(e)}", exc_info=True)
         return []
 
 def parse_zilean_results(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
