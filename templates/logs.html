@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}Logs{% endblock %}
+
+{% block content %}
+<div id="log-entries">
+{% for log in logs %}
+<div class="log-entry">{{ log }}</div>
+{% endfor %}
+</div>
+{% endblock %}

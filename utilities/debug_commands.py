@@ -6,11 +6,10 @@ from utilities.plex_functions import get_collected_from_plex
 import curses
 from database import (
     get_all_media_items, search_movies, search_tv_shows,
-    purge_database, verify_database, get_title_by_imdb_id,
+    purge_database, verify_database,
     add_collected_items, add_wanted_items, get_blacklisted_items, remove_from_blacklist
 )
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from settings import get_setting
 from content_checkers.overseerr import get_wanted_from_overseerr, map_collected_media_to_wanted
 from content_checkers.mdb_list import get_wanted_from_mdblists
 import logging

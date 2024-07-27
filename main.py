@@ -1,13 +1,11 @@
 import os
 import logging
-import time
-import configparser
-from questionary import select, prompt
+from questionary import select
 from run_program import run_program
 from settings import SettingsEditor, get_setting
 from utilities.debug_commands import debug_commands
 from utilities.manual_scrape import run_manual_scrape
-from database import verify_database, create_database
+from database import verify_database
 import logging_config
 from scraper_tester import run_tester
 

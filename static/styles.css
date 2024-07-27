@@ -1,0 +1,168 @@
+body { 
+    font-family: Arial, sans-serif; 
+    line-height: 1.6; 
+    color: #333; 
+    transition: background-color 0.3s, color 0.3s;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+body.dark-mode {
+    background-color: #333;
+    color: #f4f4f4;
+}
+.container { 
+    width: 95%; 
+    max-width: 1200px;
+    margin: 0 auto; 
+    padding: 20px; 
+    flex-grow: 1;
+}
+header {
+    background-color: #007bff;
+    color: white;
+    padding: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8em;
+}
+header h1 {
+    font-size: 1.5em;
+    margin: 0;
+}
+nav ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+}
+nav ul li {
+    display: inline;
+    margin-right: 1rem;
+}
+nav ul li a {
+    color: white;
+    text-decoration: none;
+}
+.stats { 
+    display: flex; 
+    justify-content: space-between; 
+    flex-wrap: wrap; 
+}
+.stat-item { 
+    flex: 1 1 200px; 
+    margin: 10px; 
+    padding: 10px; 
+    background: #e9ecef; 
+    border-radius: 5px;
+    transition: background-color 0.3s;
+}
+.dark-mode .stat-item { 
+    background: #555; 
+}
+.queue-container { 
+    display: flex; 
+    flex-direction: column;
+}
+.queue { 
+    margin: 10px 0; 
+    background: #f4f4f4; 
+    padding: 15px; 
+    border-radius: 5px;
+    transition: background-color 0.3s;
+}
+.dark-mode .queue { 
+    background: #444; 
+}
+.queue-title { 
+    font-size: 18px; 
+    font-weight: bold; 
+    cursor: pointer; 
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.queue-title:hover { 
+    color: #007bff; 
+}
+.queue-items { 
+    display: none; 
+    margin-top: 10px; 
+}
+.item { 
+    margin-left: 20px; 
+    padding: 5px 0; 
+}
+.log-entry { 
+    font-family: monospace; 
+    white-space: pre-wrap; 
+}
+#log-entries { 
+    height: 300px;
+    overflow-y: auto; 
+    border: 1px solid #ccc; 
+    padding: 10px; 
+    background: #fff;
+    transition: background-color 0.3s, border-color 0.3s;
+}
+.dark-mode #log-entries { 
+    background: #222; 
+    border-color: #555;
+}
+#darkModeToggle {
+    background: none;
+    border: none;
+    font-size: 1.5em;
+    cursor: pointer;
+    padding: 0;
+}
+main {
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 5px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+.submit-button {
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.submit-button:hover {
+    background-color: #0056b3;
+}
+
+.dark-mode .form-group input {
+    background-color: #444;
+    color: #f4f4f4;
+    border-color: #555;
+}
+
+.dark-mode .submit-button {
+    background-color: #0056b3;
+}
+
+.dark-mode .submit-button:hover {
+    background-color: #003d82;
+}

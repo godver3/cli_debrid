@@ -2,8 +2,7 @@ import urwid
 import configparser
 from typing import List, Dict, Any
 from scraper.scraper import scrape, rank_result_key
-from settings import get_setting, set_setting, get_all_settings
-import subprocess, sys
+from settings import set_setting, get_all_settings
 from utilities.manual_scrape import imdb_id_to_title_and_year
 
 CONFIG_FILE = './config.ini'

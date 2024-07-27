@@ -5,7 +5,6 @@ import logging
 from settings import get_setting
 from types import SimpleNamespace
 from time import sleep
-from datetime import datetime
 
 API_BASE_URL = "https://api.real-debrid.com/rest/1.0"
 api_key = get_setting('RealDebrid', 'api_key')

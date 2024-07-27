@@ -1,7 +1,7 @@
 import logging
 import requests
 from settings import get_setting
-from database import get_all_media_items, update_release_date_and_state, get_media_item_status, get_metadata_updated, is_metadata_stale, update_metadata
+from database import get_all_media_items, update_release_date_and_state
 from datetime import datetime, timedelta, date
 from typing import Optional
 

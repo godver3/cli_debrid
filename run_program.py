@@ -3,10 +3,10 @@ import time
 from queue_manager import QueueManager
 from initialization import initialize
 from settings import get_setting
-from web_server import start_server, update_stats, app
+from web_server import start_server, update_stats, app, queue_manager as web_queue_manager
 from tabulate import tabulate
 from utilities.plex_functions import get_collected_from_plex
-from content_checkers.overseerr import get_wanted_from_overseerr, map_collected_media_to_wanted, get_overseerr_show_details, get_overseerr_movie_details, get_release_date, refresh_release_dates
+from content_checkers.overseerr import get_wanted_from_overseerr, get_overseerr_show_details, get_overseerr_movie_details, get_release_date, refresh_release_dates
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
 from flask import request, jsonify
@@ -98,6 +98,9 @@ class ProgramRunner:
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
 
+        # Update the web server's queue manager
+        web_queue_manager.queues = self.queue_manager.queues.copy()
+
     def task_debug_log(self):
         current_time = time.time()
         debug_info = []
@@ -112,7 +115,7 @@ class ProgramRunner:
 
     def run(self):
         self.run_initialization()
-        #start_server()
+        start_server()  # Start the web server
 
         while True:
             self.process_queues()
@@ -218,10 +221,6 @@ def run_program():
 
     global runner
     runner = ProgramRunner()
-
-    # Start the web server
-    start_server()
-
     runner.run()
 
 def task_plex_full_scan():

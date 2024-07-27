@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, date, timedelta
 import time
-from database import get_all_media_items, update_media_item_state, get_db_connection, get_media_item_by_id, add_collected_items
+from database import get_all_media_items, update_media_item_state, get_media_item_by_id, add_collected_items
 from scraper.scraper import scrape
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet
 from utilities.plex_functions import get_collected_from_plex
@@ -48,17 +48,21 @@ class QueueManager:
             "Scraping": [],
             "Adding": [],
             "Checking": [],
-            "Sleeping": []
+            "Sleeping": [],
+            "Unreleased": []  # Add Unreleased state
         }
         self.scraping_cap = 5  # Cap for scraping queue
         self.checking_queue_times = {}
         self.sleeping_queue_times = {}
         self.wake_counts = {}
+        self.update_all_queues()  # Initialize queues on startup
 
     def update_all_queues(self):
+        logging.debug("Updating all queues")
         for state in self.queues.keys():
             items = get_all_media_items(state=state)
             self.queues[state] = [dict(row) for row in items]
+        logging.debug(f"Queue contents after update: {self.get_queue_contents()}")
 
     def get_queue_contents(self):
         return {state: list(queue) for state, queue in self.queues.items()}

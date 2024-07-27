@@ -4,7 +4,6 @@ from typing import Dict, Any, List
 import logging
 from datetime import datetime, timedelta
 import unicodedata
-import os
 import json
 from manual_blacklist import is_blacklisted
 
