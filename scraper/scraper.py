@@ -1,5 +1,4 @@
 import PTN
-import requests
 import logging
 import re
 from typing import List, Dict, Any, Tuple
@@ -10,9 +9,8 @@ from .torrentio import scrape_torrentio
 from .knightcrawler import scrape_knightcrawler
 from .comet import scrape_comet
 from settings import get_setting
-from database import get_item_state
 import time
-from content_checkers.overseerr import get_overseerr_movie_details, get_overseerr_show_details, get_overseerr_cookies, imdb_to_tmdb
+from content_checkers.overseerr import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
@@ -196,9 +194,6 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
 
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)
-
-
-import re
 
 def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     try:

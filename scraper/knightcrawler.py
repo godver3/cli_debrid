@@ -1,9 +1,7 @@
 import requests
 import logging
 import re
-from types import SimpleNamespace
 from typing import List, Dict, Any, Tuple
-from urllib.parse import quote_plus
 from settings import get_setting
 
 KNIGHTCRAWLER_URL = get_setting('Knightcrawler', 'url')
@@ -66,7 +64,7 @@ def parse_results(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             size_info = title_parts[2].strip() if len(title_parts) > 2 else ''
 
             size = parse_size(size_info)
-            quality = parse_quality(stream.get('name', ''))
+            #quality = parse_quality(stream.get('name', ''))
 
             info_hash = stream.get("infoHash", "")
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'

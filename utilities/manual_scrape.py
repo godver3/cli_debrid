@@ -1,7 +1,4 @@
-import sys
-import os
 import logging
-import re
 import requests
 from typing import Tuple
 from scraper.scraper import scrape

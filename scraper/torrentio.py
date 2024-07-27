@@ -1,5 +1,5 @@
-import requests
 import logging
+import requests
 import re
 from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
@@ -17,7 +17,7 @@ def scrape_torrentio(imdb_id: str, content_type: str, season: int = None, episod
         parsed_results = parse_results(response['streams'])
         return url, parsed_results
     except Exception as e:
-        #logging.error(f"Error in scrape_torrentio: {str(e)}")
+        logging.error(f"Error in scrape_torrentio: {str(e)}")
         return "", []
 
 def construct_url(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> str:
@@ -29,7 +29,7 @@ def construct_url(imdb_id: str, content_type: str, season: int = None, episode: 
     elif content_type == "episode":
         return f"{TORRENTIO_URL}/{opts}/stream/series/{imdb_id}.json"
     else:
-        #logging.error("Invalid content type provided. Must be 'movie' or 'episode'.")
+        logging.error("Invalid content type provided. Must be 'movie' or 'episode'.")
         return ""
 
 def fetch_data(url: str) -> Dict:
@@ -38,7 +38,7 @@ def fetch_data(url: str) -> Dict:
         if response.status_code == 200:
             return response.json()
     except requests.RequestException as e:
-        #logging.error(f"Error fetching data: {str(e)}")
+        logging.error(f"Error fetching data: {str(e)}")
         pass
     return {}
 
@@ -68,7 +68,7 @@ def parse_results(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 'magnet': magnet_link
             })
         except Exception as e:
-            #logging.error(f"Error parsing result: {str(e)}")
+            logging.error(f"Error parsing result: {str(e)}")
             continue
     return results
 

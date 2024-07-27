@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2>Settings</h2>
+    <form method="POST">
+        {% for category, category_settings in settings.items() %}
+        <h3>{{ category }}</h3>
+        {% for key, value in category_settings.items() %}
+        <div class="form-group">
+            <label for="{{ category }}.{{ key }}">{{ key }}:</label>
+            <input type="text" id="{{ category }}.{{ key }}" name="{{ category }}.{{ key }}" value="{{ value }}">
+        </div>
+        {% endfor %}
+        {% endfor %}
+        <button type="submit" class="submit-button">Save Settings</button>
+    </form>
+</div>
+{% endblock %}
