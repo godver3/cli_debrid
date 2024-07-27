@@ -140,9 +140,9 @@ def get_collected_from_plex(request='all'):
 
         # Log missing GUID items
         if missing_guid_items['movies']:
-            logging.warning(f"Movies without valid IMDb or TMDb IDs: {missing_guid_items['movies']}")
+            logging.debug(f"Movies without valid IMDb or TMDb IDs: {missing_guid_items['movies']}")
         if missing_guid_items['episodes']:
-            logging.warning(f"Episodes without valid show IMDb or TMDb IDs: {missing_guid_items['episodes']}")
+            logging.debug(f"Episodes without valid show IMDb or TMDb IDs: {missing_guid_items['episodes']}")
 
         return collected_content
     except Exception as e:

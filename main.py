@@ -9,7 +9,7 @@ from utilities.debug_commands import debug_commands
 from utilities.manual_scrape import run_manual_scrape
 from database import verify_database, create_database
 import logging_config
-from scraper_tester import scraper_tester
+from scraper_tester import run_tester
 
 logging_config.setup_logging()
 
@@ -43,7 +43,7 @@ def main_menu():
         elif action == "Manual Scrape":
             run_manual_scrape()
         elif action == "Scraper Tester":
-            scraper_tester()
+            run_tester()
         elif action == "Debug Commands":
             debug_commands()
         elif action == "Exit":

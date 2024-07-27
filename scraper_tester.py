@@ -4,15 +4,23 @@ from typing import List, Dict, Any
 from scraper.scraper import scrape, rank_result_key
 from settings import get_setting, set_setting, get_all_settings
 import subprocess, sys
+from utilities.manual_scrape import imdb_id_to_title_and_year
 
 CONFIG_FILE = './config.ini'
 
 class ScraperTester:
-    def __init__(self):
+    def __init__(self, imdb_id: str, title: str, year: int, movie_or_episode: str, season: int = None, episode: int = None, multi: bool = False):
         self.config = configparser.ConfigParser()
         self.config.read(CONFIG_FILE)
         self.settings_widgets = {}
         self.results = []
+        self.imdb_id = imdb_id
+        self.title = title
+        self.year = year
+        self.movie_or_episode = movie_or_episode
+        self.season = season
+        self.episode = episode
+        self.multi = multi
         self.palette = [
             ('reversed', 'standout', ''),
             ('header', 'white', 'dark blue'),
@@ -105,13 +113,11 @@ class ScraperTester:
         self.config.read(CONFIG_FILE)  # Reload the config
 
     def refresh_results(self, button):
-        imdb_id = 'tt0078748'  # Alien (1979)
-        content_type = 'movie'
-        self.results = scrape(imdb_id, "Alien", 1979, content_type)
+        self.results = scrape(self.imdb_id, self.title, self.year, self.movie_or_episode, self.season, self.episode, self.multi)
 
         # Calculate scores for each result
         for result in self.results:
-            rank_result_key(result, "Alien", 1979, None, None, False)
+            rank_result_key(result, self.title, self.year, self.season, self.episode, self.multi)
             # The score_breakdown is now directly added to the result by rank_result_key
 
         self.main_loop.widget = self.main_view()
@@ -145,9 +151,28 @@ class SelectableColumns(urwid.Columns):
     def keypress(self, size, key):
         return key
 
-def scraper_tester():
-    ScraperTester().run()
-    #subprocess.run([sys.executable, 'main.py'])
+def scraper_tester(imdb_id: str, title: str, year: int, movie_or_episode: str, season: int = None, episode: int = None, multi: bool = False):
+    ScraperTester(imdb_id, title, year, movie_or_episode, season, episode, multi).run()
+
+def run_tester():
+    imdb_id = input("Enter IMDb ID: ")
+    title = input("Enter title (optional, press Enter to fetch from IMDb ID): ")
+    year = input("Enter year (optional, press Enter to fetch from IMDb ID): ")
+    movie_or_episode = input("Enter type (movie or episode): ")
+    season = input("Enter season number (if applicable): ")
+    episode = input("Enter episode number (if applicable): ")
+    multi = input("Enter multi-pack (if applicable - true or false): ").strip().lower() == 'true'
+
+    if not title or not year:
+        fetched_title, fetched_year = imdb_id_to_title_and_year(imdb_id)
+        if not title:
+            title = fetched_title
+            print(f"Fetched title: {title}")
+        if not year:
+            year = str(fetched_year)
+            print(f"Fetched year: {year}")
+
+    scraper_tester(imdb_id, title, int(year), movie_or_episode, int(season) if season else None, int(episode) if episode else None, multi)
 
 if __name__ == "__main__":
-    ScraperTester().run()
+    run_tester()

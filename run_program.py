@@ -108,7 +108,7 @@ class ProgramRunner:
                 hours, minutes = divmod(minutes, 60)
                 debug_info.append(f"{task}: {hours:02d}:{minutes:02d}:{seconds:02d}")
 
-        logging.debug("Time until next task run:\n" + "\n".join(debug_info))
+        logging.info("Time until next task run:\n" + "\n".join(debug_info))
 
     def run(self):
         self.run_initialization()

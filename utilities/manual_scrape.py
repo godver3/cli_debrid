@@ -8,22 +8,44 @@ from scraper.scraper import scrape
 from utilities.result_viewer import display_results
 from debrid.real_debrid import add_to_real_debrid, extract_hash_from_magnet
 from settings import get_setting
+from content_checkers.overseerr import imdb_to_tmdb
 
 logger = logging.getLogger(__name__)
 
-TMDB_API_URL = "https://api.themoviedb.org/3"
-TMDB_API_KEY = get_setting('TMDB', 'api_key')
-
 def imdb_id_to_title_and_year(imdb_id: str) -> Tuple[str, int]:
-    search_url = f"{TMDB_API_URL}/find/{imdb_id}?api_key={TMDB_API_KEY}&external_source=imdb_id"
-    response = requests.get(search_url)
-    if response.status_code == 200:
-        data = response.json()
-        if 'movie_results' in data and data['movie_results']:
-            return data['movie_results'][0]['title'], int(data['movie_results'][0]['release_date'][:4])
-        elif 'tv_results' in data and data['tv_results']:
-            return data['tv_results'][0]['name'], int(data['tv_results'][0]['first_air_date'][:4])
-    return "", None
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+
+    tmdb_id = imdb_to_tmdb(overseerr_url, overseerr_api_key, imdb_id)
+    if not tmdb_id:
+        return "", 0
+
+    headers = {
+        'X-Api-Key': overseerr_api_key,
+        'Accept': 'application/json'
+    }
+
+    # Try movie endpoint first
+    movie_url = f"{overseerr_url}/api/v1/movie/{tmdb_id}"
+    try:
+        response = requests.get(movie_url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return data['title'], int(data['releaseDate'][:4])
+    except requests.RequestException as e:
+        logging.error(f"Error fetching movie data: {e}")
+
+    # If movie not found, try TV show endpoint
+    tv_url = f"{overseerr_url}/api/v1/tv/{tmdb_id}"
+    try:
+        response = requests.get(tv_url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return data['name'], int(data['firstAirDate'][:4])
+    except requests.RequestException as e:
+        logging.error(f"Error fetching TV show data: {e}")
+
+    return "", 0
 
 def scrape_sync(imdb_id, title, year, movie_or_episode, season, episode, multi):
     season = int(season) if season.strip() else None
