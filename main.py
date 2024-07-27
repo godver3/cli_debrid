@@ -19,7 +19,18 @@ def main_menu():
     logging.debug("Main menu started")
     logging.debug("Debug logging started")
     os.system('clear')
+
     while True:
+        print("""                                           
+          (            (             )           (     
+          )\ (         )\ )   (   ( /(  (   (    )\ )  
+      (  ((_))\       (()/(  ))\  )\()) )(  )\  (()/(  
+      )\  _ ((_)       ((_))/((_)((_)\ (()\((_)  ((_)) 
+     ((_)| | (_)       _| |(_))  | |(_) ((_)(_)  _| |  
+    / _| | | | |     / _` |/ -_) | '_ \| '_|| |/ _` |  
+    \__| |_| |_|_____\__,_|\___| |_.__/|_|  |_|\__,_|  
+               |_____|                                 
+        """)
         action = select(
             "Select an action:",
             choices=[

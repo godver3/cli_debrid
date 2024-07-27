@@ -1,4 +1,4 @@
-import urwid
+import urwid, os
 import configparser
 from typing import List, Dict, Any
 from scraper.scraper import scrape, rank_result_key
@@ -124,6 +124,7 @@ class ScraperTester:
     def handle_input(self, key):
         if key in ('q', 'Q'):
             raise urwid.ExitMainLoop()
+            
         elif key in ('up', 'down', 'enter'):
             self.update_score_box()
 
@@ -163,14 +164,13 @@ def run_tester():
     multi = input("Enter multi-pack (if applicable - true or false): ").strip().lower() == 'true'
 
     if not title or not year:
-        fetched_title, fetched_year = imdb_id_to_title_and_year(imdb_id)
+        fetched_title, fetched_year = imdb_id_to_title_and_year(imdb_id, movie_or_episode)
         if not title:
             title = fetched_title
-            print(f"Fetched title: {title}")
         if not year:
             year = str(fetched_year)
-            print(f"Fetched year: {year}")
 
+    os.system('clear')
     scraper_tester(imdb_id, title, int(year), movie_or_episode, int(season) if season else None, int(episode) if episode else None, multi)
 
 if __name__ == "__main__":

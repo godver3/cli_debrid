@@ -1,0 +1,12 @@
+aiohttp==3.9.5
+Flask==3.0.3
+inquirer==3.3.0
+parse_torrent_title==2.8.1
+PlexAPI==4.15.15
+questionary==2.0.1
+Requests==2.32.3
+rich==13.7.1
+tabulate==0.9.0
+tqdm==4.66.4
+trakt==3.4.0
+urwid==2.6.15

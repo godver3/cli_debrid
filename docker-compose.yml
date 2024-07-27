@@ -1,0 +1,15 @@
+services:
+  cli_debrid:
+    image: godver3/cli_debrid:latest
+    pull_policy: always
+    container_name: cli_debrid
+    ports:
+      - "5000:5000"
+    volumes:
+      - ${HOME}/cli_debrid/db_contents:/app/db_contents
+      - ${HOME}/cli_debrid/config:/app/config
+    environment:
+      - TZ=UTC
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
