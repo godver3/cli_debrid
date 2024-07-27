@@ -6,10 +6,11 @@ from utilities.result_viewer import display_results
 from debrid.real_debrid import add_to_real_debrid, extract_hash_from_magnet
 from settings import get_setting
 from content_checkers.overseerr import imdb_to_tmdb
+import os
 
 logger = logging.getLogger(__name__)
 
-def imdb_id_to_title_and_year(imdb_id: str) -> Tuple[str, int]:
+def imdb_id_to_title_and_year(imdb_id: str, movie_or_episode: str) -> Tuple[str, int]:
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')
 
@@ -22,25 +23,25 @@ def imdb_id_to_title_and_year(imdb_id: str) -> Tuple[str, int]:
         'Accept': 'application/json'
     }
 
-    # Try movie endpoint first
-    movie_url = f"{overseerr_url}/api/v1/movie/{tmdb_id}"
-    try:
-        response = requests.get(movie_url, headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            return data['title'], int(data['releaseDate'][:4])
-    except requests.RequestException as e:
-        logging.error(f"Error fetching movie data: {e}")
-
-    # If movie not found, try TV show endpoint
-    tv_url = f"{overseerr_url}/api/v1/tv/{tmdb_id}"
-    try:
-        response = requests.get(tv_url, headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            return data['name'], int(data['firstAirDate'][:4])
-    except requests.RequestException as e:
-        logging.error(f"Error fetching TV show data: {e}")
+    if movie_or_episode == "movie":
+        movie_url = f"{overseerr_url}/api/v1/movie/{tmdb_id}"
+        try:
+            response = requests.get(movie_url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                return data['title'], int(data['releaseDate'][:4])
+        except requests.RequestException as e:
+            logging.error(f"Error fetching movie data: {e}")
+    else:
+        tv_url = f"{overseerr_url}/api/v1/tv/{tmdb_id}"
+        try:
+            response = requests.get(tv_url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                return data['name'], int(data['firstAirDate'][:4])
+        except requests.RequestException as e:
+            logging.error(f"Error fetching TV show data: {e}")
+    os.system('clear')
 
     return "", 0
 
@@ -91,10 +92,13 @@ def scrape_sync(imdb_id, title, year, movie_or_episode, season, episode, multi):
         magnet_link = selected_item.get('magnet')
         if magnet_link:
             add_to_real_debrid(magnet_link)
+            sleep(2)
+            os.system('clear')
         else:
             logger.error("No magnet link found for the selected item.")
     else:
         logger.error("No item selected.")
+        os.system('clear')
 
 def manual_scrape(imdb_id, title, year, movie_or_episode, season, episode, multi):
     scrape_sync(imdb_id, title, year, movie_or_episode, season, episode, multi)
@@ -109,12 +113,10 @@ def run_manual_scrape():
     multi = input("Enter multi-pack (if applicable - true or false): ").strip().lower() == 'true'
 
     if not title or not year:
-        fetched_title, fetched_year = imdb_id_to_title_and_year(imdb_id)
+        fetched_title, fetched_year = imdb_id_to_title_and_year(imdb_id, movie_or_episode)
         if not title:
             title = fetched_title
-            print(f"Fetched title: {title}")
         if not year:
             year = str(fetched_year)
-            print(f"Fetched year: {year}")
 
     manual_scrape(imdb_id, title, year, movie_or_episode, season, episode, multi)

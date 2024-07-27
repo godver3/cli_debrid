@@ -155,4 +155,4 @@ class SettingsEditor:
 if __name__ == "__main__":
     SettingsEditor()
     # Relaunch main script
-    subprocess.run([sys.executable, 'main.py'])
+    # subprocess.run([sys.executable, 'main.py'])
