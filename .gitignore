@@ -57,3 +57,4 @@ archives
 config.ini
 commit.sh
 logs
+*.json
