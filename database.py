@@ -217,9 +217,9 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                         datetime.now()
                     ))
                 if item_type == 'movie':
-                    logging.info(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} ({year})")
+                    logging.info(f"Adding new movie as Wanted in DB: {normalized_title} ({item.get('year', 'Unknown')})")
                 else:
-                    logging.info(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} S{season_number}E{episode_number}")
+                    logging.info(f"Adding new episode as Wanted in DB: {normalized_title} S{item['season_number']}E{item['episode_number']}")
                 items_added += 1
             else:
                 logging.debug(f"Skipping {'movie' if item_type == 'movie' else 'episode'} as it already exists in DB: {normalized_title}")

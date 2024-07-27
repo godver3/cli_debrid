@@ -271,7 +271,7 @@ class QueueManager:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
     def process_multi_pack(self, item, magnet):
-        logging.info(f"Starting process_multi_pack for item: {item['title']} (ID: {item['id']})")
+        logging.debug(f"Starting process_multi_pack for item: {item['title']} (ID: {item['id']})")
         logging.debug(f"Item details: type={item['type']}, imdb_id={item['imdb_id']}, season_number={item['season_number']}")
         
         # Log the current state of the Wanted queue
@@ -293,7 +293,7 @@ class QueueManager:
                 wanted_item['id'] != item['id'])
         ]
         
-        logging.info(f"Found {len(matching_items)} matching items in Wanted queue")
+        logging.debug(f"Found {len(matching_items)} matching items in Wanted queue")
         
         # Log details of matching items
         for match in matching_items:

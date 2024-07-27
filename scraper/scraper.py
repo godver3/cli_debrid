@@ -124,7 +124,7 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
     runtime = result.get('runtime')
     
     if not tmdb_id or runtime is None:
-        logging.warning(f"Missing TMDB ID or runtime for result: {result.get('title', 'Unknown Title')}")
+        logging.debug(f"Missing TMDB ID or runtime for result: {result.get('title', 'Unknown Title')}")
         bitrate = 0
     else:
         bitrate = calculate_bitrate(size, runtime)
@@ -135,6 +135,8 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
         logging.debug(f"  Runtime: {runtime} minutes")
         logging.debug(f"  Calculated Bitrate: {bitrate} Mbps")
     bitrate_score = bitrate * bitrate_bonus
+
+    
 
     result['bitrate'] = bitrate
 
@@ -195,6 +197,7 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)
 
+
 import re
 
 def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
@@ -220,8 +223,7 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
             details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
             runtime = details.get('runtime') if details else None
         else:  # Assume TV show
-            details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-            runtime = details.get('episodeRuntime', [None])[0] if details else None
+            runtime = 30
 
         logging.debug(f"Retrieved runtime for {title}: {runtime} minutes")
 

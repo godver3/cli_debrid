@@ -6,8 +6,6 @@ from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
 from settings import get_setting
 
-TMDB_API_URL = "https://api.themoviedb.org/3"
-TMDB_API_KEY = get_setting('TMDB', 'api_key')
 KNIGHTCRAWLER_URL = get_setting('Knightcrawler', 'url')
 
 def scrape_knightcrawler(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:

@@ -264,7 +264,7 @@ def get_wanted_from_mdblists():
     for show in all_wanted_shows:
         logging.debug(f"Wanted show: {show['title']} ({show['year']}) - IMDB: {show['imdb_id']}, TMDB: {show['tmdb_id']}")
         for season in show.get('seasons', []):
-            logging.info(f"  Season {season['season_number']}: {len(season['episodes'])} episodes")
+            logging.debug(f"  Season {season['season_number']}: {len(season['episodes'])} episodes")
             for episode in season['episodes']:
                 wanted_episodes.append({
                     'imdb_id': show['imdb_id'],
