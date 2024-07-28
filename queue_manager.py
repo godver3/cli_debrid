@@ -253,10 +253,10 @@ class QueueManager:
                                 checked_item = get_media_item_by_id(updated_item['id'])
                                 if checked_item:
                                     self.queues["Checking"].append(checked_item)
-                                    logging.debug(f"Item {checked_item['title']} was a multi-pack result: {result['is_multi_pack']}")
-                                    if result['is_multi_pack']:
+                                    logging.debug(f"Item {checked_item['title']} was a multi-pack result: {result.get('is_multi_pack', False)}")
+                                    if result.get('is_multi_pack', False):
                                         # Process multi-pack for all matching episodes
-                                        self.process_multi_pack(checked_item, magnet)
+                                        self.process_multi_pack(checked_item, magnet, result.get('season_pack', ''))
                                 else:
                                     logging.error(f"Failed to retrieve checked item for ID: {updated_item['id']}")
                                 break
@@ -274,30 +274,28 @@ class QueueManager:
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
-    def process_multi_pack(self, item, magnet):
+    def process_multi_pack(self, item, magnet, season_pack):
         logging.debug(f"Starting process_multi_pack for item: {item['title']} (ID: {item['id']})")
         logging.debug(f"Item details: type={item['type']}, imdb_id={item['imdb_id']}, season_number={item['season_number']}")
+        logging.debug(f"Season pack: {season_pack}")
         
-        # Log the current state of the Wanted queue
+        # Log the current state of the Wanted and Scraping queues
         logging.debug(f"Current Wanted queue size: {len(self.queues['Wanted'])}")
+        logging.debug(f"Current Scraping queue size: {len(self.queues['Scraping'])}")
         
-        # Log details of all items in the Wanted queue
-        logging.debug("Wanted queue contents:")
-        for wanted_item in self.queues["Wanted"]:
-            logging.debug(f"  ID: {wanted_item['id']}, Title: {wanted_item['title']}, Type: {wanted_item.get('type', 'N/A')}, "
-                          f"IMDB ID: {wanted_item.get('imdb_id', 'N/A')}, Season: {wanted_item.get('season_number', 'N/A')}, "
-                          f"Episode: {wanted_item.get('episode_number', 'N/A')}")
+        # Convert season_pack to a list of integers
+        seasons = [int(s.strip()) for s in season_pack.split(',') if s.strip().isdigit()] if season_pack else [item['season_number']]
         
-        # Find all matching episodes in the Wanted queue
+        # Find all matching episodes in the Wanted and Scraping queues
         matching_items = [
-            wanted_item for wanted_item in self.queues["Wanted"]
+            wanted_item for wanted_item in self.queues["Wanted"] + self.queues["Scraping"]
             if (wanted_item['type'] == 'episode' and
                 wanted_item['imdb_id'] == item['imdb_id'] and
-                wanted_item['season_number'] == item['season_number'] and
+                wanted_item['season_number'] in seasons and
                 wanted_item['id'] != item['id'])
         ]
         
-        logging.debug(f"Found {len(matching_items)} matching items in Wanted queue")
+        logging.debug(f"Found {len(matching_items)} matching items in Wanted and Scraping queues")
         
         # Log details of matching items
         for match in matching_items:
@@ -312,14 +310,18 @@ class QueueManager:
             updated_matching_item = get_media_item_by_id(matching_item['id'])
             if updated_matching_item:
                 self.queues["Checking"].append(updated_matching_item)
-                self.queues["Wanted"].remove(matching_item)
+                if matching_item in self.queues["Wanted"]:
+                    self.queues["Wanted"].remove(matching_item)
+                elif matching_item in self.queues["Scraping"]:
+                    self.queues["Scraping"].remove(matching_item)
                 moved_items += 1
-                logging.debug(f"Moved item {matching_item['id']} from Wanted to Checking queue")
+                logging.debug(f"Moved item {matching_item['id']} to Checking queue")
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {matching_item['id']}")
 
         logging.info(f"Processed multi-pack: moved {moved_items} matching episodes to Checking queue")
         logging.debug(f"Updated Wanted queue size: {len(self.queues['Wanted'])}")
+        logging.debug(f"Updated Scraping queue size: {len(self.queues['Scraping'])}")
         logging.debug(f"Updated Checking queue size: {len(self.queues['Checking'])}")
 
     def move_to_wanted(self, item):

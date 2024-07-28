@@ -147,10 +147,18 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
     season_pack = detect_season_pack(torrent_title)
     is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
     is_queried_season_pack = is_multi_pack and str(query_season) in season_pack.split(',')
-
-    # Apply a flat large bonus for multi-packs when requested
-    MULTI_PACK_BONUS = 1000  # This is a large flat bonus
-    multi_pack_score = MULTI_PACK_BONUS if multi and is_queried_season_pack else 0
+    
+    # Calculate the number of seasons in the pack
+    if is_multi_pack and season_pack != 'Complete':
+        num_seasons = len(season_pack.split(','))
+    elif season_pack == 'Complete':
+        num_seasons = 100  # Assign a high value for complete series
+    else:
+        num_seasons = 0
+        
+    # Apply a bonus for multi-packs when requested, scaled by the number of seasons
+    MULTI_PACK_BONUS = 10  # Base bonus
+    multi_pack_score = MULTI_PACK_BONUS * num_seasons if multi and is_queried_season_pack else 0
 
     # Penalize multi-packs when looking for single episodes
     SINGLE_EPISODE_PENALTY = -500  # This is a large flat penalty
@@ -165,12 +173,12 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
         (hdr_score * 2) +
         (size_score / 8) +
         (bitrate_score / 200) +
-        (year_match * 5) +  # Giving more weight to year match
+        (year_match * 5) +
         (season_match * 5) +
         (episode_match * 5) +
         multi_pack_score +
         single_episode_score +
-        filter_score  # This now includes the preferred filter bonus/penalty
+        filter_score
     )
 
     # Create a score breakdown
@@ -178,12 +186,13 @@ def rank_result_key(result: Dict[str, Any], query: str, query_year: int, query_s
         'similarity_score': similarity_score,
         'resolution_score': resolution_score,
         'hdr_score': hdr_score * 2,
-        'size_score': size_score,
-        'bitrate_score': bitrate_score,
-        'year_match': year_match * 10,
+        'size_score': size_score / 8,
+        'bitrate_score': bitrate_score / 200,
+        'year_match': year_match * 5,
         'season_match': season_match * 5,
         'episode_match': episode_match * 5,
         'multi_pack_score': multi_pack_score,
+        'num_seasons': num_seasons,
         'single_episode_score': single_episode_score,
         'filter_score': filter_score,
         'total_score': total_score
