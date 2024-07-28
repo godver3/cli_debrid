@@ -77,17 +77,17 @@ def get_release_date(media_details, media_type):
     
     current_date = datetime.now()
     general_release_date = parse_date(media_details.get('releaseDate'))
-
     if media_type == 'movie':
         releases = media_details.get('releases', {}).get('results', [])
         valid_releases = []
+        all_releases = []
         for release in releases:
-            if release.get('iso_3166_1') == 'US':  # Check if it's a US release
-                for date in release.get('release_dates', []):
-                    if date.get('type') in [4, 5]:
-                        parsed_date = parse_date(date.get('release_date'))
-                        if parsed_date:
-                            valid_releases.append(parsed_date)
+            for date in release.get('release_dates', []):
+                parsed_date = parse_date(date.get('release_date'))
+                if parsed_date:
+                    all_releases.append(parsed_date)
+                    if release.get('iso_3166_1') == 'US' and date.get('type') in [4, 5]:
+                        valid_releases.append(parsed_date)
         
         if valid_releases:
             # Check if all release dates are 2 years or older
@@ -97,16 +97,19 @@ def get_release_date(media_details, media_type):
             # If all releases are newer than 2 years, return the earliest one
             return min(valid_releases).strftime("%Y-%m-%d")
         else:
-            # If no valid US releases of type 4 or 5, check if there are any releases at all
-            all_releases = [parse_date(date.get('release_date')) for release in releases for date in release.get('release_dates', [])]
-            all_releases = [date for date in all_releases if date is not None]
+            # If no valid US releases of type 4 or 5, check for releases more than 6 months old
+            old_releases = [date for date in all_releases if date < current_date - timedelta(days=180)]
             
+            if old_releases:
+                return min(old_releases).strftime("%Y-%m-%d")
+            
+            # If no releases are more than 6 months old, check if there are any releases at all
             if all_releases:
                 # If all releases are 2 years or older, use general release date
                 if all(release < current_date - timedelta(days=730) for release in all_releases):
                     return general_release_date.strftime("%Y-%m-%d") if general_release_date else 'Unknown'
             
-            # If no valid US releases or all releases are newer than 2 years, return Unknown
+            # If no valid releases, return Unknown
             return 'Unknown'
     
     elif media_type == 'tv':
@@ -122,7 +125,7 @@ def get_release_date(media_details, media_type):
     else:
         logging.error(f"Unknown media type: {media_type}")
         return 'Unknown'
-
+        
 def get_overseerr_headers(api_key):
     return {
         'X-Api-Key': api_key,

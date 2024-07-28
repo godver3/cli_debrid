@@ -23,7 +23,7 @@ class ProgramRunner:
             'adding': 5,  # 5 seconds
             'checking': 300,  # 5 minutes
             'sleeping': 900,  # 15 minutes
-            'task_plex_full_scan': 43200,  # 12 hours
+            'task_plex_full_scan': 3600,  # 1 hours
             'task_overseerr_wanted': 60,  # 1 minute
             'task_mdb_list_wanted': 900,  # 15 minutes
             'task_debug_log': 60,  # 1 minute
