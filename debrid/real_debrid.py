@@ -1,10 +1,14 @@
 import requests
+from requests.exceptions import HTTPError
 import json
 import re
 import logging
 from settings import get_setting
 from types import SimpleNamespace
 from time import sleep
+
+class RealDebridUnavailableError(Exception):
+    pass
 
 API_BASE_URL = "https://api.real-debrid.com/rest/1.0"
 api_key = get_setting('RealDebrid', 'api_key')
@@ -84,13 +88,16 @@ def add_to_real_debrid(magnet_link):
         return None
 
     except requests.exceptions.RequestException as e:
+        if isinstance(e, HTTPError) and e.response.status_code == 503:
+            logging.error("Real-Debrid service is unavailable (503 error)")
+            raise RealDebridUnavailableError("Real-Debrid service is unavailable") from e
         logging.error(f"Error adding magnet to Real-Debrid: {str(e)}")
         logging.debug(f"Error details: {e.response.text if e.response else 'No response text available'}")
-        return None
+        raise
 
     except Exception as e:
         logging.error(f"Unexpected error: {str(e)}")
-        return None
+        raise
 
 def logerror(response):
     errors = [

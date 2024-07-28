@@ -41,10 +41,15 @@ class ProgramRunner:
             'sleeping',
             'task_plex_full_scan',
             'task_overseerr_wanted',
-            'task_mdb_list_wanted',
             'task_debug_log',
             'task_refresh_release_dates'
         }
+        
+        # Conditionally enable task_mdb_list_wanted
+        mdb_list_api_key = get_setting('MDBList', 'api_key', '')
+        mdb_list_urls = get_setting('MDBList', 'urls', '')
+        if mdb_list_api_key and mdb_list_urls:
+            self.enabled_tasks.add('task_mdb_list_wanted')
 
     def run_initialization(self):
         logging.info("Running initialization...")

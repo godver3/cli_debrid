@@ -3,11 +3,12 @@ from datetime import datetime, date, timedelta
 import time
 from database import get_all_media_items, update_media_item_state, get_media_item_by_id, add_collected_items
 from scraper.scraper import scrape
-from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet
+from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, RealDebridUnavailableError
 from utilities.plex_functions import get_collected_from_plex
 import pickle
 import json
 from settings import get_setting
+import requests
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -62,7 +63,7 @@ class QueueManager:
         for state in self.queues.keys():
             items = get_all_media_items(state=state)
             self.queues[state] = [dict(row) for row in items]
-        logging.debug(f"Queue contents after update: {self.get_queue_contents()}")
+        #logging.debug(f"Queue contents after update: {self.get_queue_contents()}")
 
     def get_queue_contents(self):
         return {state: list(queue) for state, queue in self.queues.items()}
@@ -238,7 +239,9 @@ class QueueManager:
                         scrape_results = json.loads(scrape_results_str)
                     except json.JSONDecodeError:
                         logging.error(f"Error parsing JSON scrape results for item (ID: {updated_item['id']})")
+                        self.move_to_sleeping(updated_item)
                         return
+
                     for result in scrape_results:
                         title = result.get('title', '')
                         magnet = result.get('magnet', '')
@@ -248,7 +251,18 @@ class QueueManager:
                             logging.debug(f"Cache status for {hash_value}: {cache_status}")
                             if hash_value in cache_status and cache_status[hash_value]:
                                 logging.info(f"Item {updated_item['title']} is cached on Real-Debrid. Adding...")
-                                add_to_real_debrid(magnet)
+                                try:
+                                    add_to_real_debrid(magnet)
+                                except RealDebridUnavailableError:
+                                    logging.error(f"Real-Debrid service is unavailable. Moving item to Sleeping to retry later.")
+                                    self.move_to_sleeping(updated_item)
+                                    return
+                                except Exception as e:
+                                    logging.error(f"Error adding magnet to Real-Debrid: {str(e)}")
+                                    add_to_not_wanted(magnet)
+                                    continue  # Try next result
+
+                                # If we reach here, addition was successful
                                 update_media_item_state(updated_item['id'], 'Checking', filled_by_magnet=magnet)
                                 checked_item = get_media_item_by_id(updated_item['id'])
                                 if checked_item:
@@ -259,20 +273,31 @@ class QueueManager:
                                         self.process_multi_pack(checked_item, magnet, result.get('season_pack', ''))
                                 else:
                                     logging.error(f"Failed to retrieve checked item for ID: {updated_item['id']}")
-                                break
+                                return  # Successfully added, exit the function
                             else:
                                 logging.info(f"Item {updated_item['title']} is not cached on Real-Debrid. Moving to next result.")
                                 add_to_not_wanted(magnet)
                         else:
                             logging.warning(f"Failed to extract hash from magnet link for {updated_item['title']}")
-                    else:
-                        logging.info(f"No cached results found for {updated_item['title']}. Moving back to Wanted.")
-                        self.move_to_wanted(updated_item)
+
+                    # If we've exhausted all results without success, move to sleeping
+                    logging.info(f"No successful results found for {updated_item['title']}. Moving to Sleeping.")
+                    self.move_to_sleeping(updated_item)
                 else:
                     logging.error(f"No scrape results found for {updated_item['title']}.")
-                    self.move_to_wanted(updated_item)
+                    self.move_to_sleeping(updated_item)
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+
+    def move_to_sleeping(self, item):
+        update_media_item_state(item['id'], 'Sleeping')
+        sleeping_item = get_media_item_by_id(item['id'])
+        if sleeping_item:
+            self.queues["Sleeping"].append(sleeping_item)
+            self.sleeping_queue_times[item['id']] = datetime.now()
+            self.wake_counts[item['id']] = self.wake_counts.get(item['id'], 0)  # Initialize or preserve wake count
+        else:
+            logging.error(f"Failed to retrieve sleeping item for ID: {item['id']}")
 
     def process_multi_pack(self, item, magnet, season_pack):
         logging.debug(f"Starting process_multi_pack for item: {item['title']} (ID: {item['id']})")
@@ -288,14 +313,14 @@ class QueueManager:
         
         # Find all matching episodes in the Wanted and Scraping queues
         matching_items = [
-            wanted_item for wanted_item in self.queues["Wanted"] + self.queues["Scraping"]
+            wanted_item for wanted_item in self.queues["Wanted"] + self.queues["Scraping"] + self.queues["Sleeping"]
             if (wanted_item['type'] == 'episode' and
                 wanted_item['imdb_id'] == item['imdb_id'] and
                 wanted_item['season_number'] in seasons and
                 wanted_item['id'] != item['id'])
         ]
         
-        logging.debug(f"Found {len(matching_items)} matching items in Wanted and Scraping queues")
+        logging.debug(f"Found {len(matching_items)} matching items in Wanted, Scraping and Sleeping queues")
         
         # Log details of matching items
         for match in matching_items:
@@ -314,6 +339,8 @@ class QueueManager:
                     self.queues["Wanted"].remove(matching_item)
                 elif matching_item in self.queues["Scraping"]:
                     self.queues["Scraping"].remove(matching_item)
+                elif matching_item in self.queues["Sleeping"]:
+                    self.queues["Sleeping"].remove(matching_item)
                 moved_items += 1
                 logging.debug(f"Moved item {matching_item['id']} to Checking queue")
             else:

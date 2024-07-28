@@ -1,7 +1,7 @@
 import urwid, os
 import configparser
 from typing import List, Dict, Any
-from scraper.scraper import scrape, rank_result_key
+from scraper.scraper import scrape, rank_result_key, parse_size, calculate_bitrate
 from settings import set_setting, get_all_settings
 from utilities.manual_scrape import imdb_id_to_title_and_year
 import logging
@@ -88,6 +88,13 @@ class ScraperTester:
     def format_result(self, result: Dict[str, Any]) -> List[urwid.Widget]:
         title = result.get('title', 'Unknown')
         size = result.get('size', 'Unknown')
+        
+        # Calculate bitrate if it's not already present
+        if 'bitrate' not in result:
+            size_gb = parse_size(size)
+            runtime = result.get('runtime', 0)
+            result['bitrate'] = calculate_bitrate(size_gb, runtime)
+        
         bitrate = result.get('bitrate', 'Unknown')
         scraper = result.get('scraper', 'Unknown')
         score = result.get('score_breakdown', {}).get('total_score', 'N/A')
@@ -113,8 +120,15 @@ class ScraperTester:
 
         # Calculate scores for each result
         for result in self.results:
-            rank_result_key(result, self.title, self.year, self.season, self.episode, self.multi)
-            # The score_breakdown is now directly added to the result by rank_result_key
+            rank_result_key(result, self.results, self.title, self.year, self.season, self.episode, self.multi)
+            # Ensure bitrate is calculated and stored in the result
+            if 'bitrate' not in result:
+                size_gb = parse_size(result.get('size', 0))
+                runtime = result.get('runtime', 0)
+                result['bitrate'] = calculate_bitrate(size_gb, runtime)
+
+        # Sort the results based on the total score
+        self.results.sort(key=lambda x: x.get('score_breakdown', {}).get('total_score', 0), reverse=True)
 
         self.main_loop.widget = self.main_view()
 
