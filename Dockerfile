@@ -17,6 +17,10 @@ RUN chmod +x /entrypoint.sh
 # Set the TERM environment variable for proper terminal attachment
 ENV TERM=xterm
 
+# Comment out unwanted commands in shell initialization files
+RUN sed -i 's/^export LC_ALL=C.UTF-8/# export LC_ALL=C.UTF-8/' /etc/profile && \
+    sed -i 's/^clear/# clear/' /etc/profile
+
 # Make port 5000 available to the world outside this container
 EXPOSE 5000
 

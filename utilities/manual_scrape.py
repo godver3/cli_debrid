@@ -92,7 +92,7 @@ def scrape_sync(imdb_id, title, year, movie_or_episode, season, episode, multi):
         magnet_link = selected_item.get('magnet')
         if magnet_link:
             add_to_real_debrid(magnet_link)
-            sleep(2)
+            #sleep(2)
             os.system('clear')
         else:
             logger.error("No magnet link found for the selected item.")

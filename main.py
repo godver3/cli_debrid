@@ -8,6 +8,7 @@ from utilities.manual_scrape import run_manual_scrape
 from database import verify_database
 import logging_config
 from scraper_tester import run_tester
+import getch
 
 logging_config.setup_logging()
 
@@ -62,7 +63,7 @@ def main_menu():
 
 def main():
     verify_database()
-    
+    os.system('clear')
     # Display all settings
     # display_settings()
     
@@ -73,6 +74,8 @@ def main():
         logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
         run_program()
     else:
+        print("Press any key for Main Menu...")
+        getch.getch()  # Waits for a key press
         main_menu()
 
 if __name__ == "__main__":

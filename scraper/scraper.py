@@ -301,6 +301,13 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
             is_hdr = parsed_info.get('hdr', False)
             result_year = parsed_info.get('year')
 
+            # New title similarity filter
+            parsed_title = parsed_info.get('title', '')
+            title_similarity = similarity(parsed_title, title)
+            if title_similarity < 0.8:
+                logging.debug(f"Filtered out by title similarity: {torrent_title}, similarity: {title_similarity:.2f}")
+                continue
+
             # Apply hard filters
             if any(regex.search(torrent_title) for regex in filter_in_regex):
                 logging.debug(f"Filtered out by filter_in: {torrent_title}")

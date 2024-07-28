@@ -6,8 +6,8 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ${HOME}/cli_debrid/db_contents:/app/db_contents
-      - ${HOME}/cli_debrid/config:/app/config
+      - ${HOME}/cli_debrid/db_content:/app/db_content
+      - ${HOME}/cli_debrid/config.ini:/app/config.ini
     environment:
       - TZ=UTC
     restart: unless-stopped
