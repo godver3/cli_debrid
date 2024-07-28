@@ -15,6 +15,8 @@ from content_checkers.mdb_list import get_wanted_from_mdblists
 import logging
 from manual_blacklist import add_to_blacklist, remove_from_blacklist as remove_from_manual_blacklist, get_blacklist
 from utilities.manual_scrape import imdb_id_to_title_and_year
+import json
+from typing import List, Tuple, Dict
 
 def search_db():
     search_term = input("Enter search term (use % for wildcards): ")
@@ -265,7 +267,33 @@ def manage_blacklist():
         else:
             break
 
+def add_to_blacklist(imdb_id: str, media_type: str):
+    blacklist = get_blacklist()
+    blacklist[imdb_id] = media_type
+    with open('manual_blacklist.json', 'w') as f:
+        json.dump(blacklist, f)
+    logging.info(f"Added {imdb_id} to manual blacklist as {media_type}")
+
+def get_blacklist() -> Dict[str, str]:
+    try:
+        with open('manual_blacklist.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def remove_from_manual_blacklist(imdb_id: str):
+    blacklist = get_blacklist()
+    if imdb_id in blacklist:
+        del blacklist[imdb_id]
+        with open('manual_blacklist.json', 'w') as f:
+            json.dump(blacklist, f)
+        logging.info(f"Removed {imdb_id} from manual blacklist")
+    else:
+        logging.warning(f"{imdb_id} not found in manual blacklist")
+
 def manage_manual_blacklist():
+    os.system('clear')
+
     while True:
         action = questionary.select(
             "Select an action:",
@@ -276,34 +304,39 @@ def manage_manual_blacklist():
                 Choice("Back", "back")
             ]
         ).ask()
+        os.system('clear')
 
         if action == 'view':
             blacklist = get_blacklist()
             if blacklist:
-                for imdb_id in blacklist:
-                    title, year = imdb_id_to_title_and_year(imdb_id)
+                for imdb_id, media_type in blacklist.items():
+                    title, year = imdb_id_to_title_and_year(imdb_id, media_type)
                     if title and year:
-                        print(f"{imdb_id}: {title} ({year})")
+                        print(f"{imdb_id}: {title} ({year}) [{media_type.capitalize()}]")
                     else:
-                        print(f"{imdb_id}: Unable to fetch title and year")
+                        print(f"{imdb_id}: Unable to fetch title and year [{media_type.capitalize()}]")
             else:
                 print("Manual blacklist is empty.")
         
         elif action == 'add':
             imdb_id = questionary.text("Enter IMDb ID to blacklist:").ask()
-            title, year = imdb_id_to_title_and_year(imdb_id)
+            media_type = questionary.select(
+                "Is this a movie or TV show?",
+                choices=[Choice("Movie", "movie"), Choice("TV Show", "episode")]
+            ).ask()
+            title, year = imdb_id_to_title_and_year(imdb_id, media_type)
             if title and year:
                 confirm = questionary.confirm(f"Add '{title} ({year})' to the blacklist?").ask()
                 if confirm:
-                    add_to_blacklist(imdb_id)
-                    print(f"Added {imdb_id}: {title} ({year}) to manual blacklist.")
+                    add_to_blacklist(imdb_id, media_type)
+                    print(f"Added {imdb_id}: {title} ({year}) to manual blacklist as {media_type}.")
                 else:
                     print("Operation cancelled.")
             else:
                 print(f"Unable to fetch title and year for {imdb_id}. Do you still want to add it to the blacklist?")
                 if questionary.confirm("Add to blacklist anyway?").ask():
-                    add_to_blacklist(imdb_id)
-                    print(f"Added {imdb_id} to manual blacklist.")
+                    add_to_blacklist(imdb_id, media_type)
+                    print(f"Added {imdb_id} to manual blacklist as {media_type}.")
                 else:
                     print("Operation cancelled.")
         
@@ -314,12 +347,12 @@ def manage_manual_blacklist():
                 continue
             
             choices = []
-            for imdb_id in blacklist:
-                title, year = imdb_id_to_title_and_year(imdb_id)
+            for imdb_id, media_type in blacklist.items():
+                title, year = imdb_id_to_title_and_year(imdb_id, media_type)
                 if title and year:
-                    choices.append(Choice(f"{imdb_id}: {title} ({year})", imdb_id))
+                    choices.append(Choice(f"{imdb_id}: {title} ({year}) [{media_type.capitalize()}]", imdb_id))
                 else:
-                    choices.append(Choice(f"{imdb_id}: Unable to fetch title and year", imdb_id))
+                    choices.append(Choice(f"{imdb_id}: Unable to fetch title and year [{media_type.capitalize()}]", imdb_id))
             choices.append(Choice("Back", "back"))
             
             selected = questionary.select(
@@ -329,14 +362,15 @@ def manage_manual_blacklist():
             
             if selected != "back":
                 remove_from_manual_blacklist(selected)
-                title, year = imdb_id_to_title_and_year(selected)
+                media_type = blacklist[selected]
+                title, year = imdb_id_to_title_and_year(selected, media_type)
                 if title and year:
-                    print(f"Removed {selected}: {title} ({year}) from manual blacklist.")
+                    print(f"Removed {selected}: {title} ({year}) [{media_type.capitalize()}] from manual blacklist.")
                 else:
-                    print(f"Removed {selected} from manual blacklist.")
+                    print(f"Removed {selected} [{media_type.capitalize()}] from manual blacklist.")
         
         elif action == 'back':
             break
-
+            
 if __name__ == "__main__":
     debug_commands()
