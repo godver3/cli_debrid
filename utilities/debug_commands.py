@@ -245,6 +245,8 @@ def manage_blacklist():
 
         choices = [
             Choice(f"{item['title']} ({item['year']}) - ID: {item['id']}", item['id'])
+            if item['content_type'] == 'movie'
+            else Choice(f"{item['title']} ({item['year']}) S{item['season_number']}E{item['episode_number']} - ID: {item['id']}", item['id'])
             for item in blacklisted_items
         ]
         choices.append(Choice("Back", "back"))

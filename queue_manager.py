@@ -348,7 +348,7 @@ class QueueManager:
             time_in_queue = current_time - self.checking_queue_times[item['id']]
             logging.debug(f"{item['title']} has been in checking queue for {time_in_queue}")
 
-            if time_in_queue > 900:  # 30 minutes = 1800 seconds
+            if time_in_queue > 9000:  # 30 minutes = 1800 seconds
                 magnet = item.get('filled_by_magnet')
                 if magnet:
                     add_to_not_wanted(magnet)
