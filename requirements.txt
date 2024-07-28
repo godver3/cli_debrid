@@ -1,6 +1,5 @@
 aiohttp==3.9.5
 Flask==3.0.3
-getch==1.0
 inquirer==3.3.0
 parse_torrent_title==2.8.1
 PlexAPI==4.15.15
