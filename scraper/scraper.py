@@ -39,9 +39,9 @@ def parse_size(size):
 def detect_season_pack(title: str) -> str:
     # Regular expression to match season patterns
     season_patterns = [
-        r'S(\d+)(?:-S(\d+))?',  # Matches S01 or S01-S03
-        r'Season (\d+)(?:-(\d+))?',  # Matches Season 1 or Season 1-3
-        r'Saison (\d+)(?:-(\d+))?',  # Matches French "Saison 1" or "Saison 1-3"
+        r'S(\d+)(?:\s*-?\s*S?(\d+))?',  # Matches S01, S01-S03, S01 03, S01-03
+        r'Season (\d+)(?:\s*-?\s*(\d+))?',  # Matches Season 1, Season 1-3, Season 1 3
+        r'Saison (\d+)(?:\s*-?\s*(\d+))?',  # Matches French "Saison 1", "Saison 1-3", "Saison 1 3"
     ]
 
     # Check for single episode pattern first
@@ -54,6 +54,8 @@ def detect_season_pack(title: str) -> str:
         if match:
             start_season = int(match.group(1))
             end_season = int(match.group(2)) if match.group(2) else start_season
+            if end_season < start_season:
+                end_season, start_season = start_season, end_season
             return ','.join(str(s) for s in range(start_season, end_season + 1))
 
     # Check for complete series or multiple seasons
