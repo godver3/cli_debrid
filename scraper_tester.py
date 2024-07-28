@@ -36,8 +36,8 @@ class ScraperTester:
         self.score_box = self.create_score_box()
         main_area = urwid.Columns([
             ('weight', 30, urwid.Pile([
-                ('weight', 70, self.settings_view()),
-                ('weight', 30, self.score_box)
+                ('weight', 60, self.settings_view()),
+                ('weight', 40, self.score_box)
             ])),
             ('weight', 70, self.results_list),
         ])
@@ -125,38 +125,56 @@ class ScraperTester:
         elif key in ('up', 'down', 'enter'):
             self.update_score_box()
 
+    def create_score_box(self):
+        self.score_breakdown_text = urwid.Text("Select a result to see score breakdown")
+        self.score_columns = urwid.Columns([])
+        score_pile = urwid.Pile([self.score_breakdown_text, self.score_columns])
+        self.score_box = urwid.LineBox(urwid.Filler(score_pile, valign='top'), title="Score Breakdown")
+        return self.score_box
+
     def update_score_box(self):
         focus_widget, focus_pos = self.results_list.get_focus()
         if isinstance(focus_widget, urwid.AttrMap) and isinstance(focus_widget.original_widget, SelectableColumns):
             try:
                 result = self.results[focus_pos - 2]  # Adjust for header and divider
                 score_breakdown = result.get('score_breakdown', {})
-                breakdown_text = ["Score breakdown:"]
-                for k, v in score_breakdown.items():
-                    breakdown_text.append(f"{k}: {v:.2f}")
                 
-                # Join the text with newlines
-                full_text = "\n".join(breakdown_text)
+                # Create two columns for the score breakdown
+                left_column = []
+                right_column = []
+                for i, (k, v) in enumerate(score_breakdown.items()):
+                    text = f"{k}: {v:.2f}"
+                    if i % 2 == 0:
+                        left_column.append(text)
+                    else:
+                        right_column.append(text)
                 
-                # Update the Text widget inside the LineBox
-                self.score_breakdown_text.set_text(full_text)
+                # Create Text widgets for each column
+                left_text = urwid.Text("\n".join(left_column))
+                right_text = urwid.Text("\n".join(right_column))
                 
-                logging.debug(f"Updated score breakdown: {full_text}")
+                # Update the Columns widget
+                self.score_columns.contents = [
+                    (left_text, self.score_columns.options()),
+                    (right_text, self.score_columns.options())
+                ]
+                
+                # Update the header text
+                self.score_breakdown_text.set_text("Score breakdown:")
+                
+                logging.debug(f"Updated score breakdown: {score_breakdown}")
             except Exception as e:
                 error_message = f"Error updating score breakdown: {str(e)}"
                 self.score_breakdown_text.set_text(error_message)
+                self.score_columns.contents = []
                 logging.error(error_message)
         else:
             self.score_breakdown_text.set_text("Select a result to see score breakdown")
+            self.score_columns.contents = []
 
         # Force a redraw of the main loop
         if hasattr(self, 'main_loop') and self.main_loop is not None:
             self.main_loop.draw_screen()
-
-    def create_score_box(self):
-        self.score_breakdown_text = urwid.Text("Select a result to see score breakdown")
-        self.score_box = urwid.LineBox(urwid.Filler(self.score_breakdown_text, valign='top'), title="Score Breakdown")
-        return self.score_box
         
     def run(self):
         self.refresh_results(None)  # Initial load of results
