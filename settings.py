@@ -56,7 +56,9 @@ class SettingsEditor:
         self.config = load_config()
         self.edits = {}
         self.palette = [
-            ('reversed', 'standout', '')
+            ('reversed', 'standout', ''),
+            ('edit', 'light gray', 'black'),
+            ('edit_focus', 'white', 'dark blue'),
         ]
         self.main_loop = urwid.MainLoop(self.build_main_menu(), self.palette, unhandled_input=self.exit_on_q)
         self.main_loop.run()
@@ -102,11 +104,11 @@ class SettingsEditor:
         self.show_settings("Scraping Settings", [
             ('Scraping', 'enable_4k', '4k enabled? True/False'),
             ('Scraping', 'enable_hdr', 'HDR enabled? True/False'),
-            ('Scraping', 'resolution_bonus', 'Resolution bonus (1-5)'),
-            ('Scraping', 'hdr_bonus', 'HDR bonus (1-5)'),
-            ('Scraping', 'similarity_threshold_bonus', 'Title similarity threshold bonus (1-5)'),
-            ('Scraping', 'file_size_bonus', 'File size bonus (1-5)'),
-            ('Scraping', 'bitrate_bonus', 'Bitrate bonus (1-5)'),
+            ('Scraping', 'resolution_weight', 'Resolution weight (1-5)'),
+            ('Scraping', 'hdr_weight', 'HDR weight (1-5)'),
+            ('Scraping', 'similarity_weight', 'Title similarity weight (1-5)'),
+            ('Scraping', 'size_weight', 'File size weight (1-5)'),
+            ('Scraping', 'bitrate_weight', 'Bitrate weight (1-5)'),
             ('Scraping', 'preferred_filter_in', 'Preferred filter-in terms (comma-separated)'),
             ('Scraping', 'preferred_filter_out', 'Preferred filter-out terms (comma-separated)'),
             ('Scraping', 'filter_in', 'Required filter-in terms (comma-separated)'),
@@ -127,18 +129,20 @@ class SettingsEditor:
 
         for section, key, label_text in settings:
             value = self.config.get(section, key, fallback='')
-            edit = urwid.Edit(f"{label_text}: ", value)
+            edit = urwid.Edit(('edit', f"{label_text}: "), value)
+            edit = urwid.AttrMap(edit, 'edit', 'edit_focus')
             self.edits[(section, key)] = edit
-            widgets.append(urwid.AttrMap(edit, None, focus_map='reversed'))
+            widgets.append(edit)
 
         widgets.append(urwid.Divider())
         widgets.append(urwid.AttrMap(urwid.Button("Back to Main Menu", on_press=self.back_to_main_menu), None, focus_map='reversed'))
 
-        self.main_loop.widget = urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
+        list_box = urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
+        self.main_loop.widget = urwid.Frame(list_box, footer=urwid.Text("Use arrow keys to navigate, Enter to select, q to quit"))
 
     def save_settings(self):
         for (section, key), edit in self.edits.items():
-            value = edit.get_edit_text()
+            value = edit.original_widget.get_edit_text()
             set_setting(section, key, value)
         # Reload config to ensure updates are applied
         self.config = load_config()

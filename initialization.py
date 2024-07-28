@@ -3,6 +3,7 @@ from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from utilities.plex_functions import get_collected_from_plex
 from database import add_wanted_items, add_collected_items, update_media_item_state, get_all_media_items
+from settings import get_setting
 
 def reset_queued_item_status():
     logging.info("Resetting queued item status...")
@@ -47,4 +48,10 @@ def initialize(skip_initial_plex_update=False):
     reset_queued_item_status()
     plex_collection_update(skip_initial_plex_update)
     overseerr_wanted_update()
-    mdblist_wanted_update()
+            
+    # Conditionally run mdblist_wanted_update
+    mdb_list_api_key = get_setting('MDBList', 'api_key', '')
+    mdb_list_urls = get_setting('MDBList', 'urls', '')
+    if mdb_list_api_key and mdb_list_urls:
+        mdblist_wanted_update()
+    
