@@ -423,7 +423,7 @@ def purge_database(content_type=None, state=None):
             params.append(content_type)
 
         if state == 'working':
-            query += ' AND state NOT IN (?, ?)'
+            query += ' AND state NOT IN (?, ?, ?)'
             params.extend(['Wanted', 'Collected', 'Blacklisted'])
         elif state != 'all':
             query += ' AND state = ?'
