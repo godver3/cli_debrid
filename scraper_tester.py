@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 from scraper.scraper import scrape, rank_result_key
 from settings import set_setting, get_all_settings
 from utilities.manual_scrape import imdb_id_to_title_and_year
+import logging
 
 CONFIG_FILE = './config.ini'
 
@@ -99,10 +100,6 @@ class ScraperTester:
             ('weight', 15, urwid.Text(f"{score:.2f}" if isinstance(score, (int, float)) else str(score))),
         ]
 
-    def create_score_box(self):
-        self.score_breakdown_text = urwid.Text("Select a result to see score breakdown")
-        return urwid.LineBox(self.score_breakdown_text, title="Score Breakdown")
-
     def on_setting_change(self, section: str, key: str, widget: urwid.Edit, new_value: str):
         set_setting(section, key, new_value)
         self.config.read(CONFIG_FILE)  # Reload the config
@@ -131,15 +128,36 @@ class ScraperTester:
     def update_score_box(self):
         focus_widget, focus_pos = self.results_list.get_focus()
         if isinstance(focus_widget, urwid.AttrMap) and isinstance(focus_widget.original_widget, SelectableColumns):
-            result = self.results[focus_pos - 2]  # Adjust for header and divider
-            score_breakdown = result.get('score_breakdown', {})
-            breakdown_text = ["Score breakdown:"]
-            for k, v in score_breakdown.items():
-                breakdown_text.append(f"{k}: {v:.2f}")
-            self.score_breakdown_text.set_text("\n".join(breakdown_text))
+            try:
+                result = self.results[focus_pos - 2]  # Adjust for header and divider
+                score_breakdown = result.get('score_breakdown', {})
+                breakdown_text = ["Score breakdown:"]
+                for k, v in score_breakdown.items():
+                    breakdown_text.append(f"{k}: {v:.2f}")
+                
+                # Join the text with newlines
+                full_text = "\n".join(breakdown_text)
+                
+                # Update the Text widget inside the LineBox
+                self.score_breakdown_text.set_text(full_text)
+                
+                logging.debug(f"Updated score breakdown: {full_text}")
+            except Exception as e:
+                error_message = f"Error updating score breakdown: {str(e)}"
+                self.score_breakdown_text.set_text(error_message)
+                logging.error(error_message)
         else:
             self.score_breakdown_text.set_text("Select a result to see score breakdown")
 
+        # Force a redraw of the main loop
+        if hasattr(self, 'main_loop') and self.main_loop is not None:
+            self.main_loop.draw_screen()
+
+    def create_score_box(self):
+        self.score_breakdown_text = urwid.Text("Select a result to see score breakdown")
+        self.score_box = urwid.LineBox(urwid.Filler(self.score_breakdown_text, valign='top'), title="Score Breakdown")
+        return self.score_box
+        
     def run(self):
         self.refresh_results(None)  # Initial load of results
         self.main_loop.run()

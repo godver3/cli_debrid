@@ -8,6 +8,7 @@ services:
     volumes:
       - ${HOME}/cli_debrid/db_content:/app/db_content
       - ${HOME}/cli_debrid/config.ini:/app/config.ini
+      - ${HOME}/cli_debrid/logs:/app/logs
     environment:
       - TZ=UTC
     restart: unless-stopped
