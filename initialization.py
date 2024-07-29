@@ -17,7 +17,10 @@ def reset_queued_item_status():
 
 def plex_collection_update(skip_initial_plex_update):
     if skip_initial_plex_update:
-        logging.info("Skipping initial Plex update due to debug flag.")
+        logging.info("Skipping initial Plex update due to debug flag, completing recently added scan instead.")
+        collected_content = get_collected_from_plex('recent')
+        if collected_content:
+            add_collected_items(collected_content['movies'] + collected_content['episodes'], recent=True)
         return
     logging.info("Updating Plex collection...")
     collected_content = get_collected_from_plex('all')
@@ -52,7 +55,7 @@ def format_item_log(item):
 
 def initialize(skip_initial_plex_update=False):
     logging.debug("Running initial setup...")
-    reset_queued_item_status()
+    #reset_queued_item_status()
     plex_collection_update(skip_initial_plex_update)
     overseerr_wanted_update()
             
