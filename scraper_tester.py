@@ -1,20 +1,21 @@
 import urwid, os
 import configparser
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from scraper.scraper import scrape, rank_result_key, parse_size, calculate_bitrate
 from settings import set_setting, get_all_settings
-from utilities.manual_scrape import imdb_id_to_title_and_year
+from utilities.manual_scrape import imdb_id_to_title_and_year, run_manual_scrape
 import logging
 
 CONFIG_FILE = './config.ini'
 
 class ScraperTester:
-    def __init__(self, imdb_id: str, title: str, year: int, movie_or_episode: str, season: int = None, episode: int = None, multi: bool = False):
+    def __init__(self, imdb_id: str, tmdb_id: str, title: str, year: int, movie_or_episode: str, season: int = None, episode: int = None, multi: bool = False):
         self.config = configparser.ConfigParser()
         self.config.read(CONFIG_FILE)
         self.settings_widgets = {}
         self.results = []
         self.imdb_id = imdb_id
+        self.tmdb_id = tmdb_id
         self.title = title
         self.year = year
         self.movie_or_episode = movie_or_episode
@@ -116,7 +117,7 @@ class ScraperTester:
         self.config.read(CONFIG_FILE)  # Reload the config
 
     def refresh_results(self, button):
-        self.results = scrape(self.imdb_id, self.title, self.year, self.movie_or_episode, self.season, self.episode, self.multi)
+        self.results = scrape(self.imdb_id, self.tmdb_id, self.title, self.year, self.movie_or_episode, self.season, self.episode, self.multi)
 
         # Calculate scores for each result
         for result in self.results:
@@ -201,27 +202,30 @@ class SelectableColumns(urwid.Columns):
     def keypress(self, size, key):
         return key
 
-def scraper_tester(imdb_id: str, title: str, year: int, movie_or_episode: str, season: int = None, episode: int = None, multi: bool = False):
-    ScraperTester(imdb_id, title, year, movie_or_episode, season, episode, multi).run()
+def scraper_tester(imdb_id: str, tmdb_id: str, title: str, year: int, movie_or_episode: str, season: int = None, episode: int = None, multi: bool = False):
+    ScraperTester(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi).run()
 
 def run_tester():
-    imdb_id = input("Enter IMDb ID: ")
-    title = input("Enter title (optional, press Enter to fetch from IMDb ID): ")
-    year = input("Enter year (optional, press Enter to fetch from IMDb ID): ")
-    movie_or_episode = input("Enter type (movie or episode): ")
-    season = input("Enter season number (if applicable): ")
-    episode = input("Enter episode number (if applicable): ")
-    multi = input("Enter multi-pack (if applicable - true or false): ").strip().lower() == 'true'
-
-    if not title or not year:
-        fetched_title, fetched_year = imdb_id_to_title_and_year(imdb_id, movie_or_episode)
-        if not title:
-            title = fetched_title
-        if not year:
-            year = str(fetched_year)
-
+    search_term = input("Enter search term (you can include year, season, and episode, e.g., 'Show Name 2022 S01E05' or 'Show Name 2022 S01' for first episode): ")
+    
+    # Use the run_manual_scrape function to get the details
+    details = run_manual_scrape(search_term, return_details=True)
+    
+    if not details:
+        print("Search cancelled or no results found.")
+        return
+    
+    imdb_id = details['imdb_id']
+    tmdb_id = details['tmdb_id']
+    title = details['title']
+    year = int(details['year'])
+    movie_or_episode = details['movie_or_episode']
+    season = int(details['season']) if details['season'] else None
+    episode = int(details['episode']) if details['episode'] else None
+    multi = False  # We can keep this as False by default, or add a way to specify it in the search term if needed
+    
     os.system('clear')
-    scraper_tester(imdb_id, title, int(year), movie_or_episode, int(season) if season else None, int(episode) if episode else None, multi)
+    scraper_tester(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi)
 
 if __name__ == "__main__":
     run_tester()

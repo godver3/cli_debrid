@@ -1,7 +1,8 @@
 import PTN
 import logging
 import re
-from typing import List, Dict, Any, Tuple
+import requests
+from typing import List, Dict, Any, Tuple, Optional
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .zilean import scrape_zilean
@@ -10,7 +11,7 @@ from .knightcrawler import scrape_knightcrawler
 from .comet import scrape_comet
 from settings import get_setting
 import time
-from content_checkers.overseerr import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes
+from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
@@ -22,6 +23,98 @@ def calculate_bitrate(size_gb, runtime_minutes):
     runtime_seconds = runtime_minutes * 60
     bitrate_mbps = (size_bits / runtime_seconds) / 1000000  # Convert to Mbps
     return round(bitrate_mbps, 2)
+
+def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Optional[Dict[str, Any]]:
+    url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "accept": "application/json"
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logging.error(f"Error fetching TMDB season info: {e}")
+        return None
+
+def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Retrieve episode count and runtime information for given media items.
+    
+    Args:
+    media_items (List[Dict[str, Any]]): List of media items to process.
+    
+    Returns:
+    List[Dict[str, Any]]: List of media items with additional 'episode_count' and 'runtime' fields.
+    """
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    if not overseerr_url or not overseerr_api_key:
+        logging.error("Overseerr URL or API key not set. Please configure in settings.")
+        return []
+
+    cookies = get_overseerr_cookies(overseerr_url)
+    processed_items = []
+
+    for item in media_items:
+        try:
+            if item['media_type'] == 'movie':
+                details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+                if details:
+                    item['episode_count'] = 1
+                    item['runtime'] = details.get('runtime', 100)  # Default to 100 minutes if not available
+                else:
+                    logging.warning(f"Could not fetch details for movie: {item['title']}")
+                    item['episode_count'] = 1
+                    item['runtime'] = 100  # Default value
+            
+            elif item['media_type'] == 'tv':
+                show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+                if show_details:
+                    seasons = show_details.get('seasons', [])
+                    item['episode_count'] = sum(season.get('episodeCount', 0) for season in seasons if season.get('seasonNumber', 0) != 0)
+                    
+                    # Try to get runtime from TMDB API first
+                    tmdb_api_key = get_setting('TMDB', 'api_key')
+                    if tmdb_api_key:
+                        first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
+                        if first_season:
+                            season_info = get_tmdb_season_info(item['tmdb_id'], first_season['seasonNumber'], tmdb_api_key)
+                            if season_info and season_info.get('episodes'):
+                                item['runtime'] = season_info['episodes'][0].get('runtime', 30)
+                            else:
+                                item['runtime'] = 30
+                        else:
+                            item['runtime'] = 30
+                    else:
+                        # Fallback to Overseerr data if TMDB API key is not available
+                        if seasons:
+                            first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
+                            if first_season:
+                                season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], first_season['seasonNumber'], cookies)
+                                first_episode = season_details.get('episodes', [{}])[0]
+                                item['runtime'] = first_episode.get('runtime', 30)
+                            else:
+                                item['runtime'] = 30
+                        else:
+                            item['runtime'] = 30
+                else:
+                    logging.warning(f"Could not fetch details for TV show: {item['title']}")
+                    item['episode_count'] = 1
+                    item['runtime'] = 30  # Default value
+            
+            logging.debug(f"Processed {item['title']}: {item['episode_count']} episodes, {item['runtime']} minutes per episode/movie")
+            processed_items.append(item)
+
+        except Exception as e:
+            logging.error(f"Error processing item {item['title']}: {str(e)}")
+            # Add item with default values in case of error
+            item['episode_count'] = 1
+            item['runtime'] = 30 if item['media_type'] == 'tv' else 100
+            processed_items.append(item)
+
+    return processed_items
 
 def parse_size(size):
     if isinstance(size, (int, float)):
@@ -50,12 +143,17 @@ def detect_season_pack(title: str) -> str:
         r'\bSeason\s+(\d{1,2})(?:\s*-?\s*(\d{1,2}))?\b',  # Matches Season 1, Season 1-3, Season 1 3
         r'\bSaison\s+(\d{1,2})(?:\s*-?\s*(\d{1,2}))?\b',  # Matches French "Saison 1", "Saison 1-3", "Saison 1 3"
         r'\bSeason(?:\s+\d{1,2}){2,}\b',  # Matches "Season 1 2 3 4 5" (at least two numbers)
+        r'\b(?:Seasons|Season)\s+(\d{1,2})\s*-?\s*(\d{1,2})\b',  # Matches "Seasons 1-6", "Season 1-6"
     ]
 
     # Check for single episode pattern first
     episode_pattern = r'\bS\d{1,2}E\d{1,2}\b'
     if re.search(episode_pattern, title, re.IGNORECASE):
         return 'N/A'
+
+    # Check for the specific case mentioned
+    if re.search(r'\b(?:Seasons|Season)\s+1-6\b', title, re.IGNORECASE):
+        return '1,2,3,4,5,6'
 
     for pattern in season_patterns:
         match = re.search(pattern, title, re.IGNORECASE)
@@ -80,6 +178,13 @@ def detect_season_pack(title: str) -> str:
     # Check for complete series or multiple seasons
     if re.search(r'\b(complete series|all seasons)\b', title, re.IGNORECASE):
         return 'Complete'
+
+    # Check for specific ranges like "1-6" in the title
+    range_match = re.search(r'\b(\d{1,2})\s*-\s*(\d{1,2})\b', title)
+    if range_match:
+        start, end = map(int, range_match.groups())
+        if 1 <= start < end <= 50:  # Sanity check
+            return ','.join(str(s) for s in range(start, end + 1))
 
     # If no clear pattern is found, return 'Unknown'
     return 'Unknown'
@@ -180,8 +285,8 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         num_seasons = 0
 
     # Apply a bonus for multi-packs when requested, scaled by the number of seasons
-    MULTI_PACK_BONUS = 5  # Base bonus
-    multi_pack_score = MULTI_PACK_BONUS * num_seasons if multi and is_queried_season_pack else 0
+    MULTI_PACK_BONUS = 10  # Base bonus
+    multi_pack_score = 50+(MULTI_PACK_BONUS * num_seasons) if multi and is_queried_season_pack else 0
     
     # Penalize multi-packs when looking for single episodes
     SINGLE_EPISODE_PENALTY = -25
@@ -226,7 +331,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)
     
-def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     try:
         start_time = time.time()
         all_results = []
@@ -238,20 +343,21 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
         overseerr_api_key = get_setting('Overseerr', 'api_key')
         cookies = get_overseerr_cookies(overseerr_url)
 
-        tmdb_id = imdb_to_tmdb(overseerr_url, overseerr_api_key, f"{imdb_id}")
+        # Get media info for bitrate calculation
+        media_item = {
+            'title': title,
+            'media_type': 'movie' if content_type.lower() == 'movie' else 'tv',
+            'tmdb_id': tmdb_id
+        }
+        enhanced_media_items = get_media_info_for_bitrate([media_item])
+        if enhanced_media_items:
+            episode_count = enhanced_media_items[0]['episode_count']
+            runtime = enhanced_media_items[0]['runtime']
+        else:
+            episode_count = 1
+            runtime = 100 if content_type.lower() == 'movie' else 30
 
-        if not tmdb_id:
-            logging.warning(f"No TMDB ID found for IMDB ID: {imdb_id}")
-            return []
-
-        # Fetch runtime based on content type
-        if content_type.lower() == 'movie':
-            details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-            runtime = details.get('runtime') if details else None
-        else:  # Assume TV show
-            runtime = 30
-
-        logging.debug(f"Retrieved runtime for {title}: {runtime} minutes")
+        logging.debug(f"Retrieved runtime for {title}: {runtime} minutes, Episode count: {episode_count}")
 
         # Get filter terms and minimum size
         filter_in = get_setting('Scraping', 'filter_in', default='').split(',')
@@ -329,6 +435,7 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
         for result in all_results:
             result['tmdb_id'] = tmdb_id
             result['runtime'] = runtime
+            result['episode_count'] = episode_count
 
             torrent_title = result.get('title', '').lower()
             size_gb = parse_size(result.get('size', 0))
@@ -374,18 +481,7 @@ def scrape(imdb_id: str, title: str, year: int, content_type: str, season: int =
             
             # Normalize bitrate calculation
             if content_type.lower() == 'tv':
-                show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-                if show_details:
-                    total_episodes = sum(s['episodeCount'] for s in show_details.get('seasons', []) if s['seasonNumber'] != 0)
-                    if result['scraper'] == 'Torrentio':
-                        # Torrentio already provides per-episode size, no need to adjust
-                        pass
-                    elif result['scraper'] == 'Comet':
-                        # Adjust Comet's size to per-episode
-                        result['size'] = result['size'] / total_episodes
-                    elif result['scraper'] == 'Knightcrawler':
-                        # Knightcrawler doesn't provide season pack info, assume single episode
-                        pass
+                result['size'] = parse_size(result.get('size', 0)) / episode_count
 
             # Calculate bitrate
             size_gb = parse_size(result.get('size', 0))

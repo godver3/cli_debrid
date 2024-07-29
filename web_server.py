@@ -40,7 +40,7 @@ def statistics():
 @app.route('/queues')
 def queues():
     queue_contents = queue_manager.get_queue_contents()
-    logging.debug(f"Queue contents fetched for web display: {queue_contents}")
+    #logging.debug(f"Queue contents fetched for web display: {queue_contents}")
     return render_template('queues.html', queue_contents=queue_contents)
 
 @app.route('/logs')
@@ -69,7 +69,7 @@ def settings():
 @app.route('/api/queue_contents')
 def api_queue_contents():
     contents = queue_manager.get_queue_contents()
-    logging.debug(f"API queue contents: {contents}")
+    #logging.debug(f"API queue contents: {contents}")
     return jsonify(contents)
 
 @app.route('/api/stats')
@@ -109,7 +109,7 @@ def update_stats(processed=0, successful=0, failed=0):
     total_processed += processed
     successful_additions += successful
     failed_additions += failed
-    logging.debug(f"Stats updated - Total: {total_processed}, Successful: {successful_additions}, Failed: {failed_additions}")
+    #logging.debug(f"Stats updated - Total: {total_processed}, Successful: {successful_additions}, Failed: {failed_additions}")
 
 if __name__ == '__main__':
     app.run(debug=True)
