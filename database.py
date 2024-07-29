@@ -196,7 +196,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                         SET release_date = ?, last_updated = ?
                         WHERE id = ?
                     ''', (item.get('release_date'), datetime.now(), existing_item['id']))
-                    logging.info(f"Updated release date for existing item: {normalized_title}")
+                    logging.debug(f"Updated release date for existing item: {normalized_title}")
                     items_updated += 1
                 else:
                     logging.debug(f"Skipping duplicate item: {normalized_title}")
@@ -223,11 +223,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
                         datetime.now()
                     ))
-                logging.info(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title}")
+                logging.debug(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title}")
                 items_added += 1
 
         conn.commit()
-        logging.info(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
+        logging.debug(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
     except Exception as e:
         logging.error(f"Error adding wanted items: {str(e)}")
         conn.rollback()
