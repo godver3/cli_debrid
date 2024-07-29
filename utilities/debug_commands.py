@@ -10,13 +10,14 @@ from database import (
     add_collected_items, add_wanted_items, get_blacklisted_items, remove_from_blacklist
 )
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from content_checkers.overseerr import get_wanted_from_overseerr, map_collected_media_to_wanted
+from content_checkers.overseerr import get_wanted_from_overseerr#, map_collected_media_to_wanted
 from content_checkers.mdb_list import get_wanted_from_mdblists
 import logging
 from manual_blacklist import add_to_blacklist, remove_from_blacklist as remove_from_manual_blacklist, get_blacklist
 from utilities.manual_scrape import imdb_id_to_title_and_year
 import json
 from typing import List, Tuple, Dict
+from metadata.metadata import process_metadata, refresh_release_dates
 
 def search_db():
     search_term = input("Enter search term (use % for wildcards): ")
@@ -199,6 +200,7 @@ def debug_commands():
                 Choice("Purge Database", "purge_db"),
                 Choice("Manage Blacklisted Items", "manage_blacklist"),
                 Choice("Manage Manual Blacklist", "manage_manual_blacklist"),
+                Choice("Refresh release dates", "refresh_release"),
                 Choice("Back to Main Menu", "back")
             ]
         ).ask()
@@ -218,13 +220,17 @@ def debug_commands():
         elif action == 'pull_mdblist':
             wanted_content = get_wanted_from_mdblists()
             if wanted_content:
-                add_wanted_items(wanted_content['movies'] + wanted_content['episodes'])
+                wanted_content_processed = process_metadata(wanted_content)
+                if wanted_content_processed:
+                    add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
         elif action == 'purge_db':
             purge_db()
         elif action == 'get_all_wanted':
             wanted_content = get_wanted_from_overseerr()
             if wanted_content:
-                add_wanted_items(wanted_content['movies'] + wanted_content['episodes'])
+                wanted_content_processed = process_metadata(wanted_content)
+                if wanted_content_processed:
+                    add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
         elif action == 'map_all':
             wanted_content = map_collected_media_to_wanted()
             if wanted_content:
@@ -233,6 +239,8 @@ def debug_commands():
             manage_blacklist()
         elif action == 'manage_manual_blacklist':
             manage_manual_blacklist()
+        elif action == 'refresh_release':
+            refresh_release_dates()
         elif action == 'back':
             os.system('clear')
             break
@@ -247,7 +255,7 @@ def manage_blacklist():
 
         choices = [
             Choice(f"{item['title']} ({item['year']}) - ID: {item['id']}", item['id'])
-            if item['content_type'] == 'movie'
+            if item['type'] == 'movie'
             else Choice(f"{item['title']} ({item['year']}) S{item['season_number']}E{item['episode_number']} - ID: {item['id']}", item['id'])
             for item in blacklisted_items
         ]

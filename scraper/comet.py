@@ -48,20 +48,42 @@ def fetch_data(url: str) -> Dict:
         logging.error(f"Request failed: {str(e)}")
     return {}
 
+def parse_size(title: str) -> float:
+    size_match = re.search(r'💾\s*([\d.]+)\s*(\w+)', title)
+    if size_match:
+        size, unit = size_match.groups()
+        size = float(size)
+        if unit.lower() == 'gb':
+            return size
+        elif unit.lower() == 'mb':
+            return size / 1024
+        elif unit.lower() == 'tb':
+            return size * 1024
+    logging.warning(f"Could not parse size from: {title}")
+    return 0.0
+
 def parse_results(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results = []
     for stream in streams:
         try:
-            title = stream.get('torrentTitle', '')
-            size = stream.get('torrentSize', 0) / (1024 ** 3)  # Convert to GB
-            info_hash = re.search(r'/([a-f0-9]{40})/', stream.get('url', '')).group(1)
-            magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
-            results.append({
-                'title': title,
-                'size': size,
-                'source': 'Comet',
-                'magnet': magnet_link
-            })
+            title = stream.get('title', '')
+            torrent_title = stream.get('torrentTitle', '')
+            name = title.split('\n')[0] if '\n' in title else title
+            size = parse_size(title)
+            info_hash_match = re.search(r'/([a-f0-9]{40})/', stream.get('url', ''))
+            if info_hash_match:
+                info_hash = info_hash_match.group(1)
+                magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
+                results.append({
+                    'title': torrent_title,
+                    'size': size,
+                    'source': 'Comet',
+                    'magnet': magnet_link
+                })
+            else:
+                logging.warning(f"Could not extract info hash from URL: {stream.get('url', '')}")
+                
+        
         except Exception as e:
             logging.error(f"Error parsing result: {str(e)}")
             continue

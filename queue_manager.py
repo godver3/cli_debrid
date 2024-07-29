@@ -178,6 +178,7 @@ class QueueManager:
 
                 results = scrape(
                     item['imdb_id'],
+                    item['tmdb_id'],
                     item['title'],
                     item['year'],
                     item['type'],

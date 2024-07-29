@@ -6,7 +6,8 @@ from settings import get_setting
 from web_server import start_server, update_stats, app, queue_manager as web_queue_manager
 from tabulate import tabulate
 from utilities.plex_functions import get_collected_from_plex
-from content_checkers.overseerr import get_wanted_from_overseerr, get_overseerr_show_details, get_overseerr_movie_details, get_release_date, refresh_release_dates
+from content_checkers.overseerr import get_wanted_from_overseerr 
+from metadata.metadata import get_overseerr_show_details, get_overseerr_movie_details, get_release_date, refresh_release_dates, process_metadata
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
 from flask import request, jsonify
@@ -24,7 +25,7 @@ class ProgramRunner:
             'checking': 300,  # 5 minutes
             'sleeping': 900,  # 15 minutes
             'task_plex_full_scan': 3600,  # 1 hours
-            'task_overseerr_wanted': 60,  # 1 minute
+            'task_overseerr_wanted': 900,  # 15 minute
             'task_mdb_list_wanted': 900,  # 15 minutes
             'task_debug_log': 60,  # 1 minute
             'task_refresh_release_dates': 3600,  # 1 hour
@@ -169,45 +170,17 @@ class ProgramRunner:
         overseerr_url = get_setting('Overseerr', 'url')
         overseerr_api_key = get_setting('Overseerr', 'api_key')
 
+        wanted_item = {
+            'tmdb_id': tmdb_id,
+            'media_type': media_type
+        }
 
-        if media_type == 'movie':
-            movie_details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, None)
-            if movie_details:
-                release_date = get_release_date(movie_details, 'movie')
-                movie_item = {
-                    'imdb_id': movie_details.get('externalIds', {}).get('imdbId', 'Unknown IMDb ID'),
-                    'tmdb_id': tmdb_id,
-                    'title': movie_details.get('title', 'Unknown Title'),
-                    'year': release_date[:4] if release_date != 'Unknown' else 'Unknown Year',
-                    'release_date': release_date
-                }
-                add_wanted_items([movie_item])
-                logging.info(f"Added movie to wanted items: {movie_item['title']}")
-        elif media_type == 'tv':
-            show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, None)
-            if show_details:
-                imdb_id = show_details.get('externalIds', {}).get('imdbId', 'Unknown IMDb ID')
-                show_title = show_details.get('name', 'Unknown Show Title')
-                for season in show_details.get('seasons', []):
-                    season_number = season.get('seasonNumber')
-                    if season_number == 0:
-                        continue  # Skip specials
-                    for episode in season.get('episodes', []):
-                        release_date = get_release_date(episode, 'tv')
-                        episode_item = {
-                            'imdb_id': imdb_id,
-                            'tmdb_id': tmdb_id,
-                            'title': show_title,
-                            'episode_title': episode.get('name', 'Unknown Episode Title'),
-                            'year': release_date[:4] if release_date != 'Unknown' else 'Unknown Year',
-                            'season_number': season_number,
-                            'episode_number': episode.get('episodeNumber', 'Unknown Episode Number'),
-                            'release_date': release_date
-                        }
-                        add_wanted_items([episode_item])
-                logging.info(f"Added TV show episodes to wanted items: {show_title}")
-        else:
-            logging.error(f"Unknown media type: {media_type}")
+        wanted_content = [wanted_item]
+        wanted_content_processed = process_metadata(wanted_content)
+        if wanted_content_processed:
+            add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+            logging.info(f"Processed and added wanted item: {wanted_item}")
+
 
 # Webhook route
 @app.route('/webhook', methods=['POST'])
@@ -237,14 +210,20 @@ def task_plex_full_scan():
 def task_overseerr_wanted():
     wanted_content = get_wanted_from_overseerr()
     if wanted_content:
-        add_wanted_items(wanted_content['movies'] + wanted_content['episodes'])
+        wanted_content_processed = process_metadata(wanted_content)
+        if wanted_content_processed:
+            add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
     return
 
 def task_mdb_list_wanted():
-    wanted_content = get_wanted_from_mdblists()
-    if wanted_content:
-        add_wanted_items(wanted_content['movies'] + wanted_content['episodes'])
-    return
+    mdb_list_api_key = get_setting('MDBList', 'api_key', '')
+    mdb_list_urls = get_setting('MDBList', 'urls', '')
+    if mdb_list_api_key and mdb_list_urls:
+        wanted_content = get_wanted_from_mdblists()
+        if wanted_content:
+            wanted_content_processed = process_metadata(wanted_content)
+            if wanted_content_processed:
+                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
 
 def task_refresh_release_dates():
     refresh_release_dates()

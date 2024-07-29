@@ -158,20 +158,8 @@ def create_database():
 def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
     conn = get_db_connection()
     try:
-        # Get all existing items from the database
-        existing_items = conn.execute('''
-            SELECT imdb_id, type, season_number, episode_number 
-            FROM media_items
-        ''').fetchall()
-        
-        existing_set = set()
-        for item in map(row_to_dict, existing_items):
-            if item['type'] == 'movie':
-                existing_set.add((item['imdb_id'], 'movie'))
-            else:
-                existing_set.add((item['imdb_id'], 'episode', item['season_number'], item['episode_number']))
-
         items_added = 0
+        items_updated = 0
         items_skipped = 0
 
         for item in media_items_batch:
@@ -188,13 +176,33 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
             normalized_title = normalize_string(item.get('title', 'Unknown'))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
             
+            # Check if item exists
             if item_type == 'movie':
-                item_key = (item['imdb_id'], 'movie')
+                existing_item = conn.execute('''
+                    SELECT id, release_date FROM media_items
+                    WHERE imdb_id = ? AND type = 'movie'
+                ''', (item['imdb_id'],)).fetchone()
             else:
-                item_key = (item['imdb_id'], 'episode', item['season_number'], item['episode_number'])
+                existing_item = conn.execute('''
+                    SELECT id, release_date FROM media_items
+                    WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ?
+                ''', (item['imdb_id'], item['season_number'], item['episode_number'])).fetchone()
 
-            if item_key not in existing_set:
-                # Insert new item as Wanted
+            if existing_item:
+                # Item exists, check if release date needs updating
+                if existing_item['release_date'] != item.get('release_date'):
+                    conn.execute('''
+                        UPDATE media_items
+                        SET release_date = ?, last_updated = ?
+                        WHERE id = ?
+                    ''', (item.get('release_date'), datetime.now(), existing_item['id']))
+                    logging.info(f"Updated release date for existing item: {normalized_title}")
+                    items_updated += 1
+                else:
+                    logging.debug(f"Skipping duplicate item: {normalized_title}")
+                    items_skipped += 1
+            else:
+                # Insert new item
                 if item_type == 'movie':
                     conn.execute('''
                         INSERT INTO media_items
@@ -202,7 +210,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date', 'Unknown'), 'Wanted', 'movie', datetime.now()
+                        item.get('release_date'), 'Wanted', 'movie', datetime.now()
                     ))
                 else:
                     conn.execute('''
@@ -211,21 +219,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date', 'Unknown'), 'Wanted', 'episode',
+                        item.get('release_date'), 'Wanted', 'episode',
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
                         datetime.now()
                     ))
-                if item_type == 'movie':
-                    logging.info(f"Adding new movie as Wanted in DB: {normalized_title} ({item.get('year', 'Unknown')})")
-                else:
-                    logging.info(f"Adding new episode as Wanted in DB: {normalized_title} S{item['season_number']}E{item['episode_number']}")
+                logging.info(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title}")
                 items_added += 1
-            else:
-                logging.debug(f"Skipping {'movie' if item_type == 'movie' else 'episode'} as it already exists in DB: {normalized_title}")
-                items_skipped += 1
 
         conn.commit()
-        logging.info(f"Wanted items processing complete. Added: {items_added}")
+        logging.info(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
     except Exception as e:
         logging.error(f"Error adding wanted items: {str(e)}")
         conn.rollback()
@@ -526,14 +528,43 @@ def remove_from_blacklist(item_ids: List[int]):
 def update_release_date_and_state(item_id, release_date, new_state):
     conn = get_db_connection()
     try:
-        conn.execute('''
-            UPDATE media_items
-            SET release_date = ?, state = ?, last_updated = ?
-            WHERE id = ?
-        ''', (release_date, new_state, datetime.now(), item_id))
-        conn.commit()
-        logging.info(f"Updated release date to {release_date} and state to {new_state} for item ID {item_id}")
+        # First, fetch the current item data
+        cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
+        item = cursor.fetchone()
+        
+        if item:
+            conn.execute('''
+                UPDATE media_items
+                SET release_date = ?, state = ?, last_updated = ?
+                WHERE id = ?
+            ''', (release_date, new_state, datetime.now(), item_id))
+            conn.commit()
+            
+            # Create item description based on the type of media
+            if item['type'] == 'episode':
+                item_description = f"{item['title']} S{item['season_number']:02d}E{item['episode_number']:02d}"
+            else:  # movie
+                item_description = f"{item['title']} ({item['year']})"
+            
+            logging.debug(f"Updated release date to {release_date} and state to {new_state} for {item_description}")
+        else:
+            logging.error(f"No item found with ID {item_id}")
     except Exception as e:
         logging.error(f"Error updating release date and state for item ID {item_id}: {str(e)}")
+    finally:
+        conn.close()
+
+def update_year(item_id: int, year: int):
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET year = ?, last_updated = ?
+            WHERE id = ?
+        ''', (year, datetime.now(), item_id))
+        conn.commit()
+        logging.info(f"Updated year to {year} for item ID {item_id}")
+    except Exception as e:
+        logging.error(f"Error updating year for item ID {item_id}: {str(e)}")
     finally:
         conn.close()
