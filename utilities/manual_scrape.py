@@ -59,7 +59,7 @@ def search_overseerr(search_term: str) -> List[Dict[str, Any]]:
 
 def run_manual_scrape(search_term=None, return_details=False):
     if search_term is None:
-        search_term = input("Enter search term (you can include year, season, and episode, e.g., 'Show Name 2022 S01E05' or 'Show Name 2022 S01' for first episode): ")
+        search_term = input("Enter search term (you can include year, season, and/or episode): ")
     search_results = search_overseerr(search_term)
 
     if not search_results:
@@ -83,9 +83,9 @@ def run_manual_scrape(search_term=None, return_details=False):
         
         if movie_or_episode == 'episode':
             if not season:
-                season = input("Enter season number: ")
+                season = input("Enter season number: ") or '1'
             if season and not episode:
-                episode = input("Enter episode number (press Enter for episode 1): ") or '1'
+                episode = input("Enter episode number: ") or '1'
 
         multi = 'false'
 

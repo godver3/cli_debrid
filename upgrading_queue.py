@@ -3,21 +3,10 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any
 import json
 import os
-from database import get_item_state, update_media_item_state
 from scraper.scraper import scrape
-from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, RealDebridUnavailableError, extract_hash_from_magnet
+from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, RealDebridUnavailableError
+from utils import extract_hash_from_magnet, update_media_item_state
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted
-
-# Placeholder functions (to be implemented later)
-def scrape_for_upgrade(item: Dict[str, Any]) -> Dict[str, Any]:
-    # Placeholder implementation
-    logging.info(f"Scraping for upgrade: {item['title']}")
-    return None  # Return None if no upgrade found, or return upgrade details if found
-
-def verify_item_collected(item: Dict[str, Any]) -> bool:
-    # Placeholder implementation
-    logging.info(f"Verifying if item is collected: {item['title']}")
-    return False  # Return True if item is collected, False otherwise
 
 class UpgradingQueue:
     def __init__(self):
@@ -28,30 +17,63 @@ class UpgradingQueue:
         self.queue_file = 'upgrading_queue.json'
         self.load_queue()
 
+    def generate_identifier(self, item: Dict[str, Any]) -> str:
+        if item['type'] == 'movie':
+            return f"movie_{item['imdb_id']}"
+        elif item['type'] == 'episode':
+            return f"episode_{item['imdb_id']}_{item['season_number']}_{item['episode_number']}"
+        else:
+            raise ValueError(f"Unknown item type: {item['type']}")
+
     def add_item(self, item: Dict[str, Any]):
-        if item['id'] not in [i['id'] for i in self.queue]:
+        identifier = self.generate_identifier(item)
+        if identifier not in [self.generate_identifier(i) for i in self.queue]:
             item['last_checked'] = datetime.now()
             self.queue.append(item)
             self.last_checked[item['id']] = datetime.now()
             self.added_time[item['id']] = datetime.now()
-            logging.info(f"Added item {item['title']} (ID: {item['id']}) to UpgradingQueue. Queue size: {len(self.queue)}")
+            logging.info(f"Added item {item['title']} (ID: {identifier}) to UpgradingQueue. Queue size: {len(self.queue)}")
             self.save_queue()
         else:
-            logging.info(f"Item {item['title']} (ID: {item['id']}) already in UpgradingQueue. Skipping. Queue size: {len(self.queue)}")
+            logging.info(f"Item {item['title']} (ID: {identifier}) already in UpgradingQueue. Skipping. Queue size: {len(self.queue)}")
 
-    def remove_item(self, item_id: int):
-        self.queue = [item for item in self.queue if item['id'] != item_id]
-        if item_id in self.last_checked:
-            del self.last_checked[item_id]
-        if item_id in self.added_time:
-            del self.added_time[item_id]
-        if item_id in self.collected_time:
-            del self.collected_time[item_id]
-        logging.info(f"Removed item (ID: {item_id}) from UpgradingQueue")
+    def process_queue(self):
+        current_time = datetime.now()
+        items_to_remove = []
+
+        for item in self.queue:
+            item_id = item['id']
+            identifier = self.generate_identifier(item)
+            time_since_last_check = current_time - self.last_checked[item_id]
+
+            if time_since_last_check >= timedelta(hours=1):
+                self.last_checked[item_id] = current_time
+
+                if item_id not in self.collected_time:
+                    # Check if the item has been collected using get_item_state
+                    item_state = get_item_state(item)
+                    if item_state == "Collected":
+                        self.collected_time[item_id] = current_time
+                        logging.info(f"Item {item['title']} (ID: {identifier}) has been collected. Starting upgrade checks.")
+                else:
+                    # Item has been collected, check for upgrades
+                    time_since_collection = current_time - self.collected_time[item_id]
+                    if time_since_collection <= timedelta(hours=24):
+                        self.check_for_upgrade(item)
+                    else:
+                        # Item has been in the queue for over 24 hours since collection
+                        items_to_remove.append(item_id)
+                        logging.info(f"Item {item['title']} (ID: {identifier}) has been in UpgradingQueue for 24 hours since collection. Removing.")
+
+        for item_id in items_to_remove:
+            self.remove_item(item_id)
+
         self.save_queue()
+        logging.info(f"UpgradingQueue processed. Current items: {len(self.queue)}")
 
     def check_for_upgrade(self, item: Dict[str, Any]):
-        logging.info(f"Checking for upgrade: {item['title']} (ID: {item['id']})")
+        identifier = self.generate_identifier(item)
+        logging.info(f"Checking for upgrade: {item['title']} (ID: {identifier})")
         
         results = scrape(
             item['imdb_id'],
@@ -68,34 +90,35 @@ class UpgradingQueue:
         results = [result for result in results if not is_magnet_not_wanted(result['magnet'])]
 
         if not results:
-            logging.info(f"No valid results found for {item['title']}. Skipping upgrade check.")
+            logging.info(f"No valid results found for {item['title']} (ID: {identifier}). Skipping upgrade check.")
             return
 
         current_magnet = item.get('filled_by_magnet')
         if not current_magnet:
-            logging.warning(f"No current magnet for {item['title']}. Setting to top result.")
+            logging.warning(f"No current magnet for {item['title']} (ID: {identifier}). Setting to top result.")
             self.try_upgrade(item, results[0])
             return
 
         current_index = next((i for i, result in enumerate(results) if result['magnet'] == current_magnet), -1)
 
         if current_index == -1:
-            logging.warning(f"Current magnet not found in results for {item['title']}. Keeping current magnet.")
+            logging.warning(f"Current magnet not found in results for {item['title']} (ID: {identifier}). Keeping current magnet.")
             return
 
         if current_index > 0:
             # We found a better result
-            logging.info(f"Potential upgrade found for {item['title']} from position {current_index} to top result.")
+            logging.info(f"Potential upgrade found for {item['title']} (ID: {identifier}) from position {current_index} to top result.")
             self.try_upgrade(item, results[0])
         else:
-            logging.info(f"No better result found for {item['title']}. Keeping current magnet.")
+            logging.info(f"No better result found for {item['title']} (ID: {identifier}). Keeping current magnet.")
 
     def try_upgrade(self, item: Dict[str, Any], new_result: Dict[str, Any]):
+        identifier = self.generate_identifier(item)
         new_magnet = new_result['magnet']
         hash_value = extract_hash_from_magnet(new_magnet)
         
         if not hash_value:
-            logging.warning(f"Failed to extract hash from magnet link for {item['title']}")
+            logging.warning(f"Failed to extract hash from magnet link for {item['title']} (ID: {identifier})")
             return
 
         try:
@@ -103,7 +126,7 @@ class UpgradingQueue:
             logging.debug(f"Cache status for {hash_value}: {cache_status}")
             
             if hash_value in cache_status and cache_status[hash_value]:
-                logging.info(f"Upgrade for {item['title']} is cached on Real-Debrid. Adding...")
+                logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is cached on Real-Debrid. Adding...")
                 try:
                     add_to_real_debrid(new_magnet)
                 except RealDebridUnavailableError:
@@ -117,56 +140,30 @@ class UpgradingQueue:
                 # If we reach here, addition was successful
                 update_media_item_state(item['id'], 'Checking', filled_by_magnet=new_magnet)
                 item['filled_by_magnet'] = new_magnet
-                logging.info(f"Successfully upgraded {item['title']} to new magnet.")
+                logging.info(f"Successfully upgraded {item['title']} (ID: {identifier}) to new magnet.")
             else:
-                logging.info(f"Upgrade for {item['title']} is not cached on Real-Debrid. Adding to not wanted.")
+                logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is not cached on Real-Debrid. Adding to not wanted.")
                 add_to_not_wanted(new_magnet)
         except Exception as e:
             logging.error(f"Error checking cache status: {str(e)}")
-            
-    def process_queue(self):
-        current_time = datetime.now()
-        items_to_remove = []
 
-        for item in self.queue:
-            item_id = item['id']
-            time_since_last_check = current_time - self.last_checked[item_id]
-
-            if time_since_last_check >= timedelta(hours=1):
-                self.last_checked[item_id] = current_time
-
-                if item_id not in self.collected_time:
-                    # Check if the item has been collected using get_item_state
-                    item_state = get_item_state(item_id)
-                    if item_state == "Collected":
-                        self.collected_time[item_id] = current_time
-                        logging.info(f"Item {item['title']} has been collected. Starting upgrade checks.")
-                else:
-                    # Item has been collected, check for upgrades
-                    time_since_collection = current_time - self.collected_time[item_id]
-                    if time_since_collection <= timedelta(hours=24):
-                        self.check_for_upgrade(item)
-                    else:
-                        # Item has been in the queue for over 24 hours since collection
-                        items_to_remove.append(item_id)
-                        logging.info(f"Item {item['title']} has been in UpgradingQueue for 24 hours since collection. Removing.")
-
-        for item_id in items_to_remove:
-            self.remove_item(item_id)
-
+    def remove_item(self, item_id: int):
+        self.queue = [item for item in self.queue if item['id'] != item_id]
+        if item_id in self.last_checked:
+            del self.last_checked[item_id]
+        if item_id in self.added_time:
+            del self.added_time[item_id]
+        if item_id in self.collected_time:
+            del self.collected_time[item_id]
+        logging.info(f"Removed item (ID: {item_id}) from UpgradingQueue")
         self.save_queue()
-        logging.info(f"UpgradingQueue processed. Current items: {len(self.queue)}")
-
-        
-    def get_queue_contents(self):
-        return self.queue
 
     def save_queue(self):
         queue_data = {
             'queue': [self.item_to_dict(item) for item in self.queue],
-            'last_checked': {str(k): v.isoformat() for k, v in self.last_checked.items()},
-            'added_time': {str(k): v.isoformat() for k, v in self.added_time.items()},
-            'collected_time': {str(k): v.isoformat() for k, v in self.collected_time.items()}
+            'last_checked': {k: v.isoformat() for k, v in self.last_checked.items()},
+            'added_time': {k: v.isoformat() for k, v in self.added_time.items()},
+            'collected_time': {k: v.isoformat() for k, v in self.collected_time.items()}
         }
         temp_file = f"{self.queue_file}.tmp"
         try:
@@ -184,9 +181,9 @@ class UpgradingQueue:
                 with open(self.queue_file, 'r') as f:
                     queue_data = json.load(f)
                 self.queue = [self.dict_to_item(item) for item in queue_data['queue']]
-                self.last_checked = {int(k): datetime.fromisoformat(v) for k, v in queue_data['last_checked'].items()}
-                self.added_time = {int(k): datetime.fromisoformat(v) for k, v in queue_data['added_time'].items()}
-                self.collected_time = {int(k): datetime.fromisoformat(v) for k, v in queue_data['collected_time'].items()}
+                self.last_checked = {k: datetime.fromisoformat(v) for k, v in queue_data['last_checked'].items()}
+                self.added_time = {k: datetime.fromisoformat(v) for k, v in queue_data['added_time'].items()}
+                self.collected_time = {k: datetime.fromisoformat(v) for k, v in queue_data['collected_time'].items()}
                 logging.info(f"Loaded UpgradingQueue from file. Items: {len(self.queue)}")
             except json.JSONDecodeError as e:
                 logging.error(f"Error decoding JSON from {self.queue_file}: {str(e)}")
