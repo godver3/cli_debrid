@@ -55,10 +55,11 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
 - **Plex**: Used as the primary source of information about your current media collection.
 - **Overseerr**: Used to manage and track content requests, and to provide full metadata for content.
 
-## Optional Components
+## Optional Content Sources/Other Settings
 
-- **MDBList**: Can be used as an additional source for content discovery.
+- **MDBList**: Can be used as an additional source for content discovery. Add URLs separated by commas.
 - **TMDB API**: Can be used for detailed episode content like runtimes for enhanced bitrate estimation.
+- **Collected**: Can be used as an additional source. Essentially this is a way to take your current library and flag all items for metadata processing. If you have a season of a show, this will then mark any other seasons/episodes as wanted.
 
 ## Getting Started
 
