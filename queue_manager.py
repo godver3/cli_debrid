@@ -378,6 +378,7 @@ class QueueManager:
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
             self.queues["Sleeping"].append(updated_item)
+            wake_count = self.wake_counts.get(item['id'], 0)  # Get existing count or default to 0
             self.wake_counts[item['id']] = wake_count  # Preserve the wake count
             self.sleeping_queue_times[item['id']] = datetime.now()
             logging.debug(f"Set wake count for {item['title']} (ID: {item['id']}) to {wake_count}")
