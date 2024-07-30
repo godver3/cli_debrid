@@ -24,9 +24,9 @@ class ProgramRunner:
             'adding': 5,  # 5 seconds
             'checking': 300,  # 5 minutes
             'sleeping': 900,  # 15 minutes
-            'upgrading': 3600,  # 1 hour (changed from 21600)
-            'task_plex_full_scan': 3600,  # 1 hours
-            'task_overseerr_wanted': 900,  # 15 minute
+            'upgrading': 300,  # 5 minutes
+            'task_plex_full_scan': 3600,  # 1 hour
+            'task_overseerr_wanted': 900,  # 15 minutes
             'task_mdb_list_wanted': 900,  # 15 minutes
             'task_debug_log': 60,  # 1 minute
             'task_refresh_release_dates': 3600,  # 1 hour
@@ -123,7 +123,7 @@ class ProgramRunner:
 
     def run(self):
         self.run_initialization()
-        #start_server()  # Start the web server
+        start_server()  # Start the web server
 
         while True:
             self.process_queues()
@@ -218,7 +218,7 @@ def process_overseerr_webhook(data):
 def run_program():
     logging.info("Program started")
     runner = ProgramRunner()
-    start_server()  # Start the web server
+    #start_server()  # Start the web server
     runner.run()
 
 def task_plex_full_scan():

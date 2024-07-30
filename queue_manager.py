@@ -272,7 +272,7 @@ class QueueManager:
                                     continue  # Try next result
 
                                 # If we reach here, addition was successful
-                                update_media_item_state(updated_item['id'], 'Checking', filled_by_magnet=magnet)
+                                update_media_item_state(updated_item['id'], 'Checking', filled_by_title=title, filled_by_magnet=magnet)
                                 checked_item = get_media_item_by_id(updated_item['id'])
                                 if checked_item:
                                     self.queues["Checking"].append(checked_item)
@@ -285,7 +285,7 @@ class QueueManager:
                                     logging.debug(f"Item {checked_item['title']} was a multi-pack result: {result.get('is_multi_pack', False)}")
                                     if result.get('is_multi_pack', False):
                                         # Process multi-pack for all matching episodes
-                                        self.process_multi_pack(checked_item, magnet, result.get('season_pack', ''))
+                                        self.process_multi_pack(checked_item, title, magnet, result.get('season_pack', ''))
                                 else:
                                     logging.error(f"Failed to retrieve checked item for ID: {updated_item['id']}")
                                 return  # Successfully added, exit the function
@@ -305,18 +305,20 @@ class QueueManager:
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
-    def process_multi_pack(self, item: Dict[str, Any], magnet: str, season_pack: str):
+    def process_multi_pack(self, item: Dict[str, Any], title: str, magnet: str, season_pack: str):
         logging.debug(f"Starting process_multi_pack for item: {item['title']} (ID: {item['id']})")
         logging.debug(f"Item details: type={item['type']}, imdb_id={item['imdb_id']}, season_number={item['season_number']}")
         logging.debug(f"Season pack: {season_pack}")
-        
+        logging.debug(f"Title: {title}")
+        logging.debug(f"Magnet: {magnet}")
+
         # Log the current state of the Wanted and Scraping queues
         logging.debug(f"Current Wanted queue size: {len(self.queues['Wanted'])}")
         logging.debug(f"Current Scraping queue size: {len(self.queues['Scraping'])}")
-        
+
         # Convert season_pack to a list of integers
         seasons = [int(s.strip()) for s in season_pack.split(',') if s.strip().isdigit()] if season_pack else [item['season_number']]
-        
+
         # Find all matching episodes in the Wanted and Scraping queues
         matching_items = [
             wanted_item for wanted_item in self.queues["Wanted"] + self.queues["Scraping"] + self.queues["Sleeping"]
@@ -325,9 +327,9 @@ class QueueManager:
                 wanted_item['season_number'] in seasons and
                 wanted_item['id'] != item['id'])
         ]
-        
+
         logging.debug(f"Found {len(matching_items)} matching items in Wanted, Scraping and Sleeping queues")
-        
+
         # Log details of matching items
         for match in matching_items:
             logging.debug(f"Matching item: ID={match['id']}, title={match['title']}, type={match['type']}, "
@@ -337,15 +339,15 @@ class QueueManager:
         moved_items = 0
         for matching_item in matching_items:
             logging.debug(f"Updating state for item: {matching_item['id']}")
-            update_media_item_state(matching_item['id'], 'Checking', filled_by_magnet=magnet)
+            update_media_item_state(matching_item['id'], 'Checking', filled_by_title=title, filled_by_magnet=magnet)
             updated_matching_item = get_media_item_by_id(matching_item['id'])
             if updated_matching_item:
                 self.queues["Checking"].append(updated_matching_item)
-                
+
                 # Add to UpgradingQueue
                 self.upgrading_queue.add_item(updated_matching_item)
                 logging.debug(f"Added item {updated_matching_item['title']} to UpgradingQueue")
-                
+
                 if matching_item in self.queues["Wanted"]:
                     self.queues["Wanted"].remove(matching_item)
                 elif matching_item in self.queues["Scraping"]:
@@ -362,16 +364,6 @@ class QueueManager:
         logging.debug(f"Updated Scraping queue size: {len(self.queues['Scraping'])}")
         logging.debug(f"Updated Checking queue size: {len(self.queues['Checking'])}")
         logging.debug(f"Updated UpgradingQueue size: {len(self.upgrading_queue.queue)}")
-        
-    def move_to_sleeping(self, item):
-        update_media_item_state(item['id'], 'Sleeping')
-        sleeping_item = get_media_item_by_id(item['id'])
-        if sleeping_item:
-            self.queues["Sleeping"].append(sleeping_item)
-            self.sleeping_queue_times[item['id']] = datetime.now()
-            self.wake_counts[item['id']] = self.wake_counts.get(item['id'], 0)  # Initialize or preserve wake count
-        else:
-            logging.error(f"Failed to retrieve sleeping item for ID: {item['id']}")
 
     def move_to_wanted(self, item):
         update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None)
