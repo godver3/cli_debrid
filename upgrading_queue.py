@@ -4,8 +4,8 @@ from typing import List, Dict, Any
 import json
 import os
 from scraper.scraper import scrape
-from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, RealDebridUnavailableError
-from utils import extract_hash_from_magnet, update_media_item_state
+from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, RealDebridUnavailableErrorm, extract_hash_from_magnet
+from database import update_media_item_state
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted
 
 class UpgradingQueue:
