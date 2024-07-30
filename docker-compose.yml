@@ -10,7 +10,7 @@ services:
       - ${HOME}/cli_debrid/config.ini:/app/config.ini
       - ${HOME}/cli_debrid/logs:/app/logs
     environment:
-      - TZ=UTC
+      - TZ=America/Edmonton
     restart: unless-stopped
     tty: true
     stdin_open: true
