@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from settings import get_setting
 from database import get_all_media_items, update_release_date_and_state
 
-REQUEST_TIMEOUT = 3  # seconds
+REQUEST_TIMEOUT = 15  # seconds
 
 def get_overseerr_headers(api_key: str) -> Dict[str, str]:
     return {

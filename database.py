@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import unicodedata
 import json
 from manual_blacklist import is_blacklisted
+from upgrading_db import add_to_upgrading, remove_from_upgrading, create_upgrading_table
 
 def get_db_connection():
     conn = sqlite3.connect('db_content/media_items.db')
@@ -149,11 +150,6 @@ def is_metadata_stale(metadata_date_str):
         metadata_date = datetime.strptime(metadata_date_str, '%Y-%m-%d %H:%M:%S')
     
     return (datetime.now() - metadata_date) > timedelta(days=7)
-
-def create_database():
-    create_tables()
-    logging.info("Database created and tables initialized.")
-
 
 def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
     conn = get_db_connection()
@@ -381,8 +377,16 @@ def get_media_item_status(imdb_id=None, tmdb_id=None, title=None, year=None, sea
     finally:
         conn.close()
         
+# Modify the create_database function to include creating the upgrading table
+def create_database():
+    create_tables()
+    create_upgrading_table()
+    logging.info("Database created and tables initialized.")
+
+# Modify the verify_database function to include verifying the upgrading table
 def verify_database():
     create_tables()
+    create_upgrading_table()
     logging.info("Database verified and tables created if not exists.")
 
 def get_all_media_items(state=None, media_type=None):
@@ -444,14 +448,20 @@ def purge_database(content_type=None, state=None):
 def update_media_item_state(item_id, state, filled_by_title=None, filled_by_magnet=None, scrape_results=None):
     conn = get_db_connection()
     try:
-        scrape_results_str = json.dumps(scrape_results) if scrape_results else None  # Convert list to JSON string
+        scrape_results_str = json.dumps(scrape_results) if scrape_results else None
         conn.execute('''
             UPDATE media_items
-            SET state =?, filled_by_title =?, filled_by_magnet =?, scrape_results =?, last_updated =?
-            WHERE id =?
+            SET state = ?, filled_by_title = ?, filled_by_magnet = ?, scrape_results = ?, last_updated = ?
+            WHERE id = ?
         ''', (state, filled_by_title, filled_by_magnet, scrape_results_str, datetime.now(), item_id))
         conn.commit()
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}, filled by to {filled_by_magnet}")
+        
+        # If the state is changing to 'Scraping', add the item to the Upgrading database
+        if state == 'Scraping':
+            item = get_media_item_by_id(item_id)
+            if item:
+                add_to_upgrading(item)
     except Exception as e:
         logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
     finally:

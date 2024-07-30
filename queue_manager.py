@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, date, timedelta
 import time
-from database import get_all_media_items, update_media_item_state, get_media_item_by_id, add_collected_items
+from database import get_all_media_items, update_media_item_state, get_media_item_by_id, add_collected_items, get_media_item_status
 from scraper.scraper import scrape
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, RealDebridUnavailableError
 from utilities.plex_functions import get_collected_from_plex
@@ -9,6 +9,11 @@ import pickle
 import json
 from settings import get_setting
 import requests
+from upgrading_db import get_items_to_check, update_check_count, remove_from_upgrading, add_to_upgrading
+from typing import Dict, Any
+from upgrading_queue import UpgradingQueue
+from not_wanted_magnets import load_not_wanted_magnets, save_not_wanted_magnets, add_to_not_wanted, is_magnet_not_wanted
+from collections import OrderedDict
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -16,57 +21,60 @@ class DateTimeEncoder(json.JSONEncoder):
             return obj.isoformat()
         return super().default(obj)
 
-def load_not_wanted_magnets():
-    try:
-        with open('db_content/not_wanted_magnets.pkl', 'rb') as f:
-            return pickle.load(f)
-    except (EOFError, pickle.UnpicklingError):
-        # If the file is empty or not a valid pickle object, return an empty set
-        return set()
-    except FileNotFoundError:
-        # If the file does not exist, create it and return an empty set
-        with open('db_content/not_wanted_magnets.pkl', 'wb') as f:
-            pickle.dump(set(), f)
-        return set()
-
-def save_not_wanted_magnets(not_wanted_set):
-    with open('db_content/not_wanted_magnets.pkl', 'wb') as f:
-        pickle.dump(not_wanted_set, f)
-
-def add_to_not_wanted(magnet):
-    not_wanted = load_not_wanted_magnets()
-    not_wanted.add(magnet)
-    save_not_wanted_magnets(not_wanted)
-
-def is_magnet_not_wanted(magnet):
-    not_wanted = load_not_wanted_magnets()
-    return magnet in not_wanted
-
 class QueueManager:
-    def __init__(self):
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(QueueManager, cls).__new__(cls)
+            cls._instance.initialize()
+        return cls._instance
+        
+    def initialize(self):
         self.queues = {
             "Wanted": [],
             "Scraping": [],
             "Adding": [],
             "Checking": [],
             "Sleeping": [],
-            "Unreleased": []  # Add Unreleased state
+            "Unreleased": [],  
+            "Blacklisted": []
         }
         self.scraping_cap = 5  # Cap for scraping queue
         self.checking_queue_times = {}
         self.sleeping_queue_times = {}
         self.wake_counts = {}
+        self.upgrading_queue = UpgradingQueue()
         self.update_all_queues()  # Initialize queues on startup
+
 
     def update_all_queues(self):
         logging.debug("Updating all queues")
         for state in self.queues.keys():
-            items = get_all_media_items(state=state)
-            self.queues[state] = [dict(row) for row in items]
-        #logging.debug(f"Queue contents after update: {self.get_queue_contents()}")
+            if state == "Upgrading":
+                self.queues[state] = self.upgrading_queue.get_queue_contents()
+            else:
+                items = get_all_media_items(state=state)
+                self.queues[state] = [dict(row) for row in items]
+
 
     def get_queue_contents(self):
-        return {state: list(queue) for state, queue in self.queues.items()}
+        contents = OrderedDict()
+        
+        # Add Upgrading queue first
+        contents['Upgrading'] = self.upgrading_queue.get_queue_contents()
+        
+        # Add other queues in the specified order
+        for state, queue in self.queues.items():
+            if state == "Sleeping":
+                contents[state] = [
+                    {**item, "wake_count": self.wake_counts.get(item['id'], 0)}
+                    for item in queue
+                ]
+            else:
+                contents[state] = list(queue)
+        
+        return contents
 
     def process_wanted(self):
         logging.debug("Processing wanted queue")
@@ -268,6 +276,12 @@ class QueueManager:
                                 checked_item = get_media_item_by_id(updated_item['id'])
                                 if checked_item:
                                     self.queues["Checking"].append(checked_item)
+                                    
+                                    # Add the item to the UpgradingQueue
+                                    self.upgrading_queue.add_item(checked_item)
+                                    logging.info(f"Added item {checked_item['title']} to UpgradingQueue in QueueManager")
+                                    logging.info(f"Current UpgradingQueue size in QueueManager: {len(self.upgrading_queue.get_queue_contents())}")
+                                    
                                     logging.debug(f"Item {checked_item['title']} was a multi-pack result: {result.get('is_multi_pack', False)}")
                                     if result.get('is_multi_pack', False):
                                         # Process multi-pack for all matching episodes
@@ -275,6 +289,7 @@ class QueueManager:
                                 else:
                                     logging.error(f"Failed to retrieve checked item for ID: {updated_item['id']}")
                                 return  # Successfully added, exit the function
+
                             else:
                                 logging.info(f"Item {updated_item['title']} is not cached on Real-Debrid. Moving to next result.")
                                 add_to_not_wanted(magnet)
@@ -290,17 +305,7 @@ class QueueManager:
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
-    def move_to_sleeping(self, item):
-        update_media_item_state(item['id'], 'Sleeping')
-        sleeping_item = get_media_item_by_id(item['id'])
-        if sleeping_item:
-            self.queues["Sleeping"].append(sleeping_item)
-            self.sleeping_queue_times[item['id']] = datetime.now()
-            self.wake_counts[item['id']] = self.wake_counts.get(item['id'], 0)  # Initialize or preserve wake count
-        else:
-            logging.error(f"Failed to retrieve sleeping item for ID: {item['id']}")
-
-    def process_multi_pack(self, item, magnet, season_pack):
+    def process_multi_pack(self, item: Dict[str, Any], magnet: str, season_pack: str):
         logging.debug(f"Starting process_multi_pack for item: {item['title']} (ID: {item['id']})")
         logging.debug(f"Item details: type={item['type']}, imdb_id={item['imdb_id']}, season_number={item['season_number']}")
         logging.debug(f"Season pack: {season_pack}")
@@ -328,7 +333,7 @@ class QueueManager:
             logging.debug(f"Matching item: ID={match['id']}, title={match['title']}, type={match['type']}, "
                           f"imdb_id={match['imdb_id']}, season={match['season_number']}, episode={match.get('episode_number', 'N/A')}")
 
-        # Move matching items to Checking queue
+        # Move matching items to Checking queue and add to UpgradingQueue
         moved_items = 0
         for matching_item in matching_items:
             logging.debug(f"Updating state for item: {matching_item['id']}")
@@ -336,6 +341,11 @@ class QueueManager:
             updated_matching_item = get_media_item_by_id(matching_item['id'])
             if updated_matching_item:
                 self.queues["Checking"].append(updated_matching_item)
+                
+                # Add to UpgradingQueue
+                self.upgrading_queue.add_item(updated_matching_item)
+                logging.debug(f"Added item {updated_matching_item['title']} to UpgradingQueue")
+                
                 if matching_item in self.queues["Wanted"]:
                     self.queues["Wanted"].remove(matching_item)
                 elif matching_item in self.queues["Scraping"]:
@@ -343,14 +353,25 @@ class QueueManager:
                 elif matching_item in self.queues["Sleeping"]:
                     self.queues["Sleeping"].remove(matching_item)
                 moved_items += 1
-                logging.debug(f"Moved item {matching_item['id']} to Checking queue")
+                logging.debug(f"Moved item {matching_item['id']} to Checking queue and added to UpgradingQueue")
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {matching_item['id']}")
 
-        logging.info(f"Processed multi-pack: moved {moved_items} matching episodes to Checking queue")
+        logging.info(f"Processed multi-pack: moved {moved_items} matching episodes to Checking queue and added to UpgradingQueue")
         logging.debug(f"Updated Wanted queue size: {len(self.queues['Wanted'])}")
         logging.debug(f"Updated Scraping queue size: {len(self.queues['Scraping'])}")
         logging.debug(f"Updated Checking queue size: {len(self.queues['Checking'])}")
+        logging.debug(f"Updated UpgradingQueue size: {len(self.upgrading_queue.queue)}")
+        
+    def move_to_sleeping(self, item):
+        update_media_item_state(item['id'], 'Sleeping')
+        sleeping_item = get_media_item_by_id(item['id'])
+        if sleeping_item:
+            self.queues["Sleeping"].append(sleeping_item)
+            self.sleeping_queue_times[item['id']] = datetime.now()
+            self.wake_counts[item['id']] = self.wake_counts.get(item['id'], 0)  # Initialize or preserve wake count
+        else:
+            logging.error(f"Failed to retrieve sleeping item for ID: {item['id']}")
 
     def move_to_wanted(self, item):
         update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None)

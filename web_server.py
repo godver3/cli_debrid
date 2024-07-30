@@ -5,6 +5,7 @@ from queue_manager import QueueManager
 import logging
 import os
 from settings import get_all_settings, set_setting, get_setting
+from collections import OrderedDict
 
 app = Flask(__name__)
 queue_manager = QueueManager()
@@ -37,11 +38,6 @@ def statistics():
     }
     return render_template('statistics.html', stats=stats)
 
-@app.route('/queues')
-def queues():
-    queue_contents = queue_manager.get_queue_contents()
-    #logging.debug(f"Queue contents fetched for web display: {queue_contents}")
-    return render_template('queues.html', queue_contents=queue_contents)
 
 @app.route('/logs')
 def logs():
@@ -66,10 +62,16 @@ def settings():
 
     return render_template('settings.html', settings=settings)
 
+@app.route('/queues')
+def queues():
+    queue_contents = queue_manager.get_queue_contents()
+    upgrading_queue = queue_contents['Upgrading']
+    logging.info(f"Rendering queues page. UpgradingQueue size: {len(upgrading_queue)}")
+    return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
+
 @app.route('/api/queue_contents')
 def api_queue_contents():
     contents = queue_manager.get_queue_contents()
-    #logging.debug(f"API queue contents: {contents}")
     return jsonify(contents)
 
 @app.route('/api/stats')

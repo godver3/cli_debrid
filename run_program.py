@@ -3,7 +3,7 @@ import time
 from queue_manager import QueueManager
 from initialization import initialize
 from settings import get_setting
-from web_server import start_server, update_stats, app, queue_manager as web_queue_manager
+from web_server import start_server, update_stats, app, queue_manager
 from tabulate import tabulate
 from utilities.plex_functions import get_collected_from_plex
 from content_checkers.overseerr import get_wanted_from_overseerr 
@@ -16,7 +16,7 @@ queue_logger = logging.getLogger('queue_logger')
 
 class ProgramRunner:
     def __init__(self):
-        self.queue_manager = QueueManager()
+        self.queue_manager = queue_manager
         self.tick_counter = 0
         self.task_intervals = {
             'wanted': 5,  # 5 seconds
@@ -24,6 +24,7 @@ class ProgramRunner:
             'adding': 5,  # 5 seconds
             'checking': 300,  # 5 minutes
             'sleeping': 900,  # 15 minutes
+            'upgrading': 3600,  # 1 hour (changed from 21600)
             'task_plex_full_scan': 3600,  # 1 hours
             'task_overseerr_wanted': 900,  # 15 minute
             'task_mdb_list_wanted': 900,  # 15 minutes
@@ -40,6 +41,7 @@ class ProgramRunner:
             'adding',
             'checking',
             'sleeping',
+            'upgrading',
             'task_plex_full_scan',
             'task_overseerr_wanted',
             'task_debug_log',
@@ -88,6 +90,9 @@ class ProgramRunner:
 
         if self.should_run_task('sleeping'):
             self.queue_manager.process_sleeping()
+            
+        if self.should_run_task('upgrading'):
+            self.process_upgrading()
 
         if self.should_run_task('task_plex_full_scan'):
             task_plex_full_scan()
@@ -104,9 +109,6 @@ class ProgramRunner:
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
 
-        # Update the web server's queue manager
-        web_queue_manager.queues = self.queue_manager.queues.copy()
-
     def task_debug_log(self):
         current_time = time.time()
         debug_info = []
@@ -121,32 +123,18 @@ class ProgramRunner:
 
     def run(self):
         self.run_initialization()
-        start_server()  # Start the web server
+        #start_server()  # Start the web server
 
         while True:
             self.process_queues()
-            queue_contents = self.queue_manager.get_queue_contents()
-            self.log_queue_contents(queue_contents)
+            #queue_contents = self.queue_manager.get_queue_contents()
+            #self.log_queue_contents(queue_contents)
             time.sleep(1)  # Main loop runs every second
 
-    def log_queue_contents(self, queue_contents):
-        headers = ["Wanted", "Scraping", "Adding", "Checking", "Sleeping"]
-        max_items = 20
-        table_data = []
-        for i in range(max_items):
-            row = []
-            for queue_name in headers:
-                if i < len(queue_contents[queue_name]):
-                    item = queue_contents[queue_name][i]
-                    if item['type'] == 'movie':
-                        row.append(f"{item['title']} ({item['year']})")
-                    elif item['type'] == 'episode':
-                        row.append(f"{item['title']} S{item['season_number']:02d}E{item['episode_number']:02d}")
-                else:
-                    row.append("")
-            table_data.append(row)
-        log_lines = tabulate(table_data, headers=headers, tablefmt="grid")
-        queue_logger.info(log_lines)
+    def process_upgrading(self):
+        logging.debug("Processing upgrading queue")
+        self.queue_manager.upgrading_queue.process_queue()
+        update_stats(processed=1)  # Update processed count
 
     def process_overseerr_webhook(self, data):
         notification_type = data.get('notification_type')
@@ -181,24 +169,56 @@ class ProgramRunner:
             add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
             logging.info(f"Processed and added wanted item: {wanted_item}")
 
-
-# Webhook route
+# Move the webhook route outside of the class
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
     logging.debug(f"Received webhook: {data}")
     try:
-        runner.process_overseerr_webhook(data)
+        process_overseerr_webhook(data)
         return jsonify({"status": "success"}), 200
     except Exception as e:
         logging.error(f"Error processing webhook: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# Define process_overseerr_webhook as a standalone function
+def process_overseerr_webhook(data):
+    notification_type = data.get('notification_type')
+
+    if notification_type == 'TEST_NOTIFICATION':
+        logging.info("Received test notification from Overseerr")
+        return
+
+    media = data.get('media')
+    if not media:
+        logging.warning("Received webhook without media information")
+        return
+
+    media_type = media.get('media_type')
+    tmdb_id = media.get('tmdbId')
+
+    if not media_type or not tmdb_id:
+        logging.error("Invalid webhook data: missing media_type or tmdbId")
+        return
+
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+
+    wanted_item = {
+        'tmdb_id': tmdb_id,
+        'media_type': media_type
+    }
+
+    wanted_content = [wanted_item]
+    wanted_content_processed = process_metadata(wanted_content)
+    if wanted_content_processed:
+        add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+        logging.info(f"Processed and added wanted item: {wanted_item}")
+
 def run_program():
     logging.info("Program started")
-
-    global runner
     runner = ProgramRunner()
+    start_server()  # Start the web server
     runner.run()
 
 def task_plex_full_scan():

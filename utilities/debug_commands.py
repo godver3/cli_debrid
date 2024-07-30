@@ -6,7 +6,7 @@ from utilities.plex_functions import get_collected_from_plex
 import curses
 from database import (
     get_all_media_items, search_movies, search_tv_shows,
-    purge_database, verify_database,
+    purge_database, verify_database, remove_from_media_items,
     add_collected_items, add_wanted_items, get_blacklisted_items, remove_from_blacklist
 )
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -95,6 +95,7 @@ def view_database_content():
                 Choice("Checking", "Checking"),
                 Choice("Sleeping", "Sleeping"),
                 Choice("Blacklisted", "Blacklisted"),
+                Choice("Upgrading", "Upgrading"),
                 Choice("Back", "back")
             ]
         ).ask()
@@ -184,6 +185,127 @@ def display_results_curses(results, headers):
 
     curses.wrapper(draw_menu)
 
+def delete_database_items():
+    os.system('clear')
+    while True:
+        content_type = questionary.select(
+            "Select content type to delete:",
+            choices=[
+                Choice("Movies", "movie"),
+                Choice("TV Shows", "episode"),
+                Choice("Back", "back")
+            ]
+        ).ask()
+
+        if content_type == 'back':
+            break
+
+        items = get_all_media_items(media_type=content_type)
+
+        if content_type == 'movie':
+            headers = ["ID", "IMDb ID", "Title", "Year", "Release Date", "State", "Type"]
+            item_data = [
+                [str(item['id']), item['imdb_id'], item['title'], str(item['year']), 
+                 str(item['release_date']), item['state'], item['type']] 
+                for item in items
+            ]
+        else:  # TV shows (episodes)
+            headers = ["ID", "IMDb ID", "Title", "Season", "Episode", "Year", "Release Date", "State", "Type"]
+            item_data = [
+                [str(item['id']), item['imdb_id'], item['title'], 
+                 str(item['season_number']), str(item['episode_number']), 
+                 str(item['year']), str(item['release_date']), item['state'], 
+                 item['type']] 
+                for item in items
+            ]
+
+        selected_items = display_results_curses_with_selection(item_data, headers)
+
+        if selected_items:
+            confirm = questionary.confirm(f"Are you sure you want to delete {len(selected_items)} items?").ask()
+            if confirm:
+                for item_id in selected_items:
+                    remove_from_media_items(item_id)
+                logging.info(f"Deleted {len(selected_items)} items from the database.")
+            else:
+                logging.info("Deletion cancelled.")
+
+def display_results_curses_with_selection(results, headers):
+    def draw_menu(stdscr):
+        stdscr.clear()
+        curses.curs_set(0)
+        h, w = stdscr.getmaxyx()
+        current_page = 0
+        items_per_page = h - 3  # Reserve lines for headers, navigation instructions, and selection info
+        selected_items = set()
+        current_row = 0
+
+        def display_page():
+            stdscr.clear()
+            start_index = current_page * items_per_page
+            end_index = start_index + items_per_page
+
+            # Display headers
+            for j, header in enumerate(headers):
+                if sum(col_widths[:j + 1]) <= w:
+                    stdscr.addstr(0, sum(col_widths[:j]), header.ljust(col_widths[j]))
+
+            # Display rows
+            for i, result in enumerate(results[start_index:end_index], start=1):
+                for j, col in enumerate(result):
+                    if sum(col_widths[:j + 1]) <= w:
+                        value = str(col)[:col_widths[j] - 1]  # Truncate if necessary
+                        if i - 1 == current_row:
+                            stdscr.attron(curses.A_REVERSE)
+                        if int(result[0]) in selected_items:
+                            stdscr.attron(curses.A_BOLD)
+                        stdscr.addstr(i, sum(col_widths[:j]), value.ljust(col_widths[j]))
+                        stdscr.attroff(curses.A_REVERSE | curses.A_BOLD)
+
+            # Display navigation instructions and selection info
+            stdscr.addstr(h - 2, 0, "Use UP/DOWN arrows to navigate, SPACE to select, ENTER to confirm, 'q' to quit.")
+            stdscr.addstr(h - 1, 0, f"Selected: {len(selected_items)} items")
+
+            stdscr.refresh()
+
+        # Calculate column widths
+        col_widths = [max(len(str(row[i])) for row in [headers] + results) + 2 for i in range(len(headers))]
+        total_width = sum(col_widths)
+        
+        # Adjust widths if total is greater than window width
+        if total_width > w:
+            for i in range(len(col_widths)):
+                col_widths[i] = int(col_widths[i] * (w / total_width))
+
+        # Main loop
+        while True:
+            display_page()
+            key = stdscr.getch()
+            if key == curses.KEY_DOWN and current_row < min(items_per_page - 1, len(results) - 1 - current_page * items_per_page):
+                current_row += 1
+            elif key == curses.KEY_UP and current_row > 0:
+                current_row -= 1
+            elif key == curses.KEY_NPAGE:  # Page Down
+                if (current_page + 1) * items_per_page < len(results):
+                    current_page += 1
+                    current_row = 0
+            elif key == curses.KEY_PPAGE:  # Page Up
+                if current_page > 0:
+                    current_page -= 1
+                    current_row = 0
+            elif key == ord(' '):  # Space bar
+                item_id = int(results[current_page * items_per_page + current_row][0])
+                if item_id in selected_items:
+                    selected_items.remove(item_id)
+                else:
+                    selected_items.add(item_id)
+            elif key == 10:  # Enter key
+                return list(selected_items)
+            elif key == ord('q'):
+                return []
+
+    return curses.wrapper(draw_menu)
+
 def debug_commands():
     os.system('clear')
     while True:
@@ -197,6 +319,7 @@ def debug_commands():
                 Choice("Get and Add All Collected/Wanted Shows to Wanted", "map_all"),
                 Choice("View Database Content", "view_db"),
                 Choice("Search Database", "search_db"),
+                Choice("Delete Database Items", "delete_db"),  # New option
                 Choice("Purge Database", "purge_db"),
                 Choice("Manage Blacklisted Items", "manage_blacklist"),
                 Choice("Manage Manual Blacklist", "manage_manual_blacklist"),
@@ -205,7 +328,9 @@ def debug_commands():
             ]
         ).ask()
 
-        if action == 'get_all_collected':
+        if action == 'delete_db':
+            delete_database_items()
+        elif action == 'get_all_collected':
             collected_content = get_collected_from_plex('all')
             if collected_content:
                 add_collected_items(collected_content['movies'] + collected_content['episodes'])

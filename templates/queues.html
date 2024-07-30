@@ -1,31 +1,38 @@
 {% extends "base.html" %}
-
 {% block title %}Queues{% endblock %}
-
 {% block content %}
 <div class="container">
     <h2>Queues</h2>
     <div id="queue-contents" class="queue-container">
-    {% for queue_name, items in queue_contents.items() %}
-    <div class="queue">
-        <div class="queue-title" onclick="toggleQueue(this)">
-            <span>{{ queue_name }}</span>
-            <span class="queue-count">{{ items|length }} items</span>
+    {% for queue_name in ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted'] %}
+        {% if queue_name in queue_contents %}
+        <div class="queue">
+            <div class="queue-title" onclick="toggleQueue(this)">
+                <span>{{ queue_name }}</span>
+                <span class="queue-count">{{ queue_contents[queue_name]|length }} items</span>
+            </div>
+            <div class="queue-items">
+            {% for item in queue_contents[queue_name] %}
+            <div class="item">
+                {{ item.title }} ({{ item.year }})
+                {% if item.type == 'episode' %}
+                    S{{ item.season_number }}E{{ item.episode_number }}
+                {% endif %}
+                {% if queue_name == 'Unreleased' %}
+                    - Release Date: {{ item.release_date }}
+                {% elif queue_name == 'Blacklisted' %}
+                    - Reason: {{ item.blacklist_reason }}
+                {% elif queue_name == 'Upgrading' %}
+                    - Current Quality: {{ item.current_quality }}
+                    - Target Quality: {{ item.target_quality }}
+                {% elif queue_name == 'Sleeping' %}
+                    - Wake Count: {{ item.wake_count }}
+                {% endif %}
+            </div>
+            {% endfor %}
+            </div>
         </div>
-        <div class="queue-items">
-        {% for item in items %}
-        <div class="item">
-            {{ item.title }} ({{ item.year }})
-            {% if item.type == 'episode' %}
-                S{{ item.season_number }}E{{ item.episode_number }}
-            {% endif %}
-            {% if queue_name == 'Unreleased' %}
-                - Release Date: {{ item.release_date }}
-            {% endif %}
-        </div>
-        {% endfor %}
-        </div>
-    </div>
+        {% endif %}
     {% endfor %}
     </div>
 </div>
