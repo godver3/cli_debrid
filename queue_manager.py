@@ -373,6 +373,16 @@ class QueueManager:
         else:
             logging.error(f"Failed to retrieve wanted item for ID: {item['id']}")
 
+    def move_to_sleeping(self, item):
+        update_media_item_state(item['id'], 'Sleeping')
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            self.queues["Sleeping"].append(updated_item)
+            self.wake_counts[item['id']] = wake_count  # Preserve the wake count
+            self.sleeping_queue_times[item['id']] = datetime.now()
+            logging.debug(f"Set wake count for {item['title']} (ID: {item['id']}) to {wake_count}")
+        return
+
     def process_checking(self):
         logging.debug("Processing checking queue")
         current_time = time.time()
