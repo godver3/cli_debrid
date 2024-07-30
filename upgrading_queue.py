@@ -225,3 +225,12 @@ class UpgradingQueue:
                     # If parsing fails, keep the original string
                     pass
         return item
+        
+    def get_queue_contents(self) -> List[Dict[str, Any]]:
+        """
+        Returns the current contents of the upgrading queue.
+        
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries representing the items in the queue.
+        """
+        return self.queue

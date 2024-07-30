@@ -206,7 +206,7 @@ def scraper_tester(imdb_id: str, tmdb_id: str, title: str, year: int, movie_or_e
     ScraperTester(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi).run()
 
 def run_tester():
-    search_term = input("Enter search term (you can include year, season, and episode, e.g., 'Show Name 2022 S01E05' or 'Show Name 2022 S01' for first episode): ")
+    search_term = input("Enter search term (you can include year, season, and/or episode): ")
     
     # Use the run_manual_scrape function to get the details
     details = run_manual_scrape(search_term, return_details=True)
