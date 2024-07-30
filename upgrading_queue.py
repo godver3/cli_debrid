@@ -27,13 +27,36 @@ class UpgradingQueue:
 
     def add_item(self, item: Dict[str, Any]):
         identifier = self.generate_identifier(item)
+        
+        # Check if the item is already in the queue
         if identifier not in [self.generate_identifier(i) for i in self.queue]:
-            item['last_checked'] = datetime.now()
-            self.queue.append(item)
-            self.last_checked[identifier] = datetime.now()
-            self.added_time[identifier] = datetime.now()
-            logging.info(f"Added item {item['title']} (ID: {identifier}) to UpgradingQueue. Queue size: {len(self.queue)}")
-            self.save_queue()
+            # Check the age of the item
+            release_date_str = item.get('release_date')
+            if release_date_str:
+                try:
+                    release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                    current_date = datetime.now().date()
+                    age = current_date - release_date
+                    
+                    if age <= timedelta(days=7):
+                        item['last_checked'] = datetime.now()
+                        self.queue.append(item)
+                        self.last_checked[identifier] = datetime.now()
+                        self.added_time[identifier] = datetime.now()
+                        logging.info(f"Added item {item['title']} (ID: {identifier}) to UpgradingQueue. Age: {age.days} days. Queue size: {len(self.queue)}")
+                        self.save_queue()
+                    else:
+                        logging.info(f"Skipped adding item {item['title']} (ID: {identifier}) to UpgradingQueue. Age: {age.days} days (older than 7 days).")
+                except ValueError:
+                    logging.error(f"Invalid release date format for item {item['title']} (ID: {identifier}): {release_date_str}")
+            else:
+                logging.warning(f"No release date found for item {item['title']} (ID: {identifier}). Adding to queue anyway.")
+                item['last_checked'] = datetime.now()
+                self.queue.append(item)
+                self.last_checked[identifier] = datetime.now()
+                self.added_time[identifier] = datetime.now()
+                logging.info(f"Added item {item['title']} (ID: {identifier}) to UpgradingQueue without age check. Queue size: {len(self.queue)}")
+                self.save_queue()
         else:
             logging.info(f"Item {item['title']} (ID: {identifier}) already in UpgradingQueue. Skipping. Queue size: {len(self.queue)}")
 
@@ -43,7 +66,7 @@ class UpgradingQueue:
         for item in self.queue:
             identifier = self.generate_identifier(item)
             time_since_last_check = current_time - self.last_checked.get(identifier, datetime.min)
-            if time_since_last_check >= timedelta(hours=1):
+            if time_since_last_check >= timedelta(minutes=30):
                 self.last_checked[identifier] = current_time
                 if identifier not in self.collected_time:
                     # Check if the item has been collected using get_media_item_status
@@ -57,7 +80,8 @@ class UpgradingQueue:
                     )
                     if item_state == "Collected":
                         self.collected_time[identifier] = current_time
-                        logging.info(f"Item {item['title']} (ID: {identifier}) has been collected. Starting upgrade checks.")
+                        logging.info(f"Item {item['title']} (ID: {identifier}) has been collected. Starting immediate upgrade check.")
+                        self.check_for_upgrade(item)  # Immediate upgrade check
                 else:
                     # Item has been collected, check for upgrades
                     time_since_collection = current_time - self.collected_time[identifier]
@@ -67,6 +91,7 @@ class UpgradingQueue:
                         # Item has been in the queue for over 24 hours since collection
                         items_to_remove.append(identifier)
                         logging.info(f"Item {item['title']} (ID: {identifier}) has been in UpgradingQueue for 24 hours since collection. Removing.")
+
         for identifier in items_to_remove:
             self.remove_item(identifier)
         self.save_queue()
@@ -75,7 +100,7 @@ class UpgradingQueue:
     def check_for_upgrade(self, item: Dict[str, Any]):
         identifier = self.generate_identifier(item)
         logging.info(f"Checking for upgrade: {item['title']} (ID: {identifier})")
-        
+
         results = scrape(
             item['imdb_id'],
             item['tmdb_id'],
@@ -95,58 +120,92 @@ class UpgradingQueue:
             return
 
         current_magnet = item.get('filled_by_magnet')
+        current_title = item.get('filled_by_title', 'Unknown')
         if not current_magnet:
             logging.warning(f"No current magnet for {item['title']} (ID: {identifier}). Setting to top result.")
             self.try_upgrade(item, results[0])
             return
 
-        current_index = next((i for i, result in enumerate(results) if result['magnet'] == current_magnet), -1)
+        # Function to extract the essential part of the magnet link
+        def get_magnet_hash(magnet):
+            return magnet.split('&dn=')[0] if magnet else ''
+
+        current_magnet_hash = get_magnet_hash(current_magnet)
+
+        # Log original release details
+        logging.debug(f"Original release for {item['title']} (ID: {identifier}):")
+        logging.debug(f"Title: {current_title}")
+        logging.debug(f"Magnet hash: {current_magnet_hash}")
+
+        # Log ranked listing of potential upgrades
+        logging.debug(f"Potential upgrades for {item['title']} (ID: {identifier}):")
+        for idx, result in enumerate(results):
+            result_magnet_hash = get_magnet_hash(result['magnet'])
+            result_title = result.get('title', 'Unknown')
+            logging.debug(f"Rank {idx + 1}:")
+            logging.debug(f"  Title: {result_title}")
+            logging.debug(f"  Magnet hash: {result_magnet_hash}")
+            if result_magnet_hash == current_magnet_hash:
+                logging.debug(f"  ** Current release (Rank {idx + 1}) **")
+
+        current_index = next((i for i, result in enumerate(results) if get_magnet_hash(result['magnet']) == current_magnet_hash), -1)
 
         if current_index == -1:
             logging.warning(f"Current magnet not found in results for {item['title']} (ID: {identifier}). Keeping current magnet.")
+            logging.debug("Rationale: Current release not found in new results, possibly due to changes in available releases.")
             return
 
         if current_index > 0:
             # We found a better result
-            logging.info(f"Potential upgrade found for {item['title']} (ID: {identifier}) from position {current_index} to top result.")
+            logging.info(f"Potential upgrade found for {item['title']} (ID: {identifier}) from position {current_index + 1} to top result.")
             self.try_upgrade(item, results[0])
         else:
             logging.info(f"No better result found for {item['title']} (ID: {identifier}). Keeping current magnet.")
+            logging.debug("Rationale: Current release is already the top-ranked result.")
 
     def try_upgrade(self, item: Dict[str, Any], new_result: Dict[str, Any]):
         identifier = self.generate_identifier(item)
         new_magnet = new_result['magnet']
         hash_value = extract_hash_from_magnet(new_magnet)
-        
+
+        logging.debug(f"Attempting upgrade for {item['title']} (ID: {identifier}):")
+        logging.debug(f"New release name: {new_result.get('release_name', 'Unknown')}")
+        logging.debug(f"New magnet: {new_magnet}")
+
         if not hash_value:
             logging.warning(f"Failed to extract hash from magnet link for {item['title']} (ID: {identifier})")
+            logging.debug("Rationale: Unable to process magnet link, cannot proceed with upgrade.")
             return
 
         try:
             cache_status = is_cached_on_rd(hash_value)
             logging.debug(f"Cache status for {hash_value}: {cache_status}")
-            
+
             if hash_value in cache_status and cache_status[hash_value]:
                 logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is cached on Real-Debrid. Adding...")
                 try:
                     add_to_real_debrid(new_magnet)
                 except RealDebridUnavailableError:
                     logging.error(f"Real-Debrid service is unavailable. Skipping upgrade for now.")
+                    logging.debug("Rationale: Real-Debrid service is down, cannot add new magnet.")
                     return
                 except Exception as e:
                     logging.error(f"Error adding magnet to Real-Debrid: {str(e)}")
                     add_to_not_wanted(new_magnet)
+                    logging.debug(f"Rationale: Failed to add magnet to Real-Debrid due to error: {str(e)}")
                     return
 
                 # If we reach here, addition was successful
-                # update_media_item_state(identifier, 'Checking', filled_by_magnet=new_magnet)
                 item['filled_by_magnet'] = new_magnet
                 logging.info(f"Successfully upgraded {item['title']} (ID: {identifier}) to new magnet.")
+                logging.debug("Rationale: New release is higher-ranked and successfully added to Real-Debrid.")
             else:
                 logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is not cached on Real-Debrid. Adding to not wanted.")
                 add_to_not_wanted(new_magnet)
+                logging.debug("Rationale: Potential upgrade is not cached on Real-Debrid, cannot use for instant streaming.")
         except Exception as e:
             logging.error(f"Error checking cache status: {str(e)}")
+            logging.debug(f"Rationale: Failed to check Real-Debrid cache status due to error: {str(e)}")
 
     def remove_item(self, identifier: str):
         self.queue = [item for item in self.queue if self.generate_identifier(item) != identifier]
