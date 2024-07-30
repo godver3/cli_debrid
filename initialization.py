@@ -60,9 +60,10 @@ def initialize(skip_initial_plex_update=False):
     overseerr_wanted_update()
             
     # Conditionally run mdblist_wanted_update
-    mdb_list_api_key = get_setting('MDBList', 'api_key', '')
+    #mdb_list_api_key = get_setting('MDBList', 'api_key', '')
     mdb_list_urls = get_setting('MDBList', 'urls', '')
-    if mdb_list_api_key and mdb_list_urls:
+    #if mdb_list_api_key and mdb_list_urls:
+    if mdb_list_urls:
         mdblist_wanted_update()
         
     refresh_release_dates()

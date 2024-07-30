@@ -46,15 +46,20 @@ class ProgramRunner:
             'task_plex_full_scan',
             'task_overseerr_wanted',
             'task_debug_log',
-            'task_refresh_release_dates',
-            'task_collected_wanted'
+            'task_refresh_release_dates'
         }
         
         # Conditionally enable task_mdb_list_wanted
-        mdb_list_api_key = get_setting('MDBList', 'api_key', '')
+        #mdb_list_api_key = get_setting('MDBList', 'api_key', '')
         mdb_list_urls = get_setting('MDBList', 'urls', '')
-        if mdb_list_api_key and mdb_list_urls:
+        #if mdb_list_api_key and mdb_list_urls:
+        if mdb_list_urls:
             self.enabled_tasks.add('task_mdb_list_wanted')
+
+        collected_content_source = get_setting('Collected Content Source', 'enabled', '')
+        if collected_content_source:
+            self.enabled_tasks.add('task_collected_wanted')
+
 
     def run_initialization(self):
         logging.info("Running initialization...")
@@ -241,9 +246,10 @@ def task_overseerr_wanted():
     return
 
 def task_mdb_list_wanted():
-    mdb_list_api_key = get_setting('MDBList', 'api_key', '')
+    #mdb_list_api_key = get_setting('MDBList', 'api_key', '')
     mdb_list_urls = get_setting('MDBList', 'urls', '')
-    if mdb_list_api_key and mdb_list_urls:
+    #if mdb_list_api_key and mdb_list_urls:
+    if mdb_list_urls:
         wanted_content = get_wanted_from_mdblists()
         if wanted_content:
             wanted_content_processed = process_metadata(wanted_content)

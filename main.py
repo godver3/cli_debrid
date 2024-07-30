@@ -1,16 +1,9 @@
 import os
 import logging
 import requests
-from questionary import select
-from run_program import run_program
-from settings import SettingsEditor, get_setting, load_config, save_config, CONFIG_FILE
-from utilities.debug_commands import debug_commands
-from utilities.manual_scrape import run_manual_scrape
-from database import verify_database
-import logging_config
-from scraper_tester import run_tester
-
-logging_config.setup_logging()
+import configparser
+import inspect
+from settings import SettingsEditor, get_setting, load_config, save_config, CONFIG_FILE, ensure_settings_file
 
 # Ensure logs directory exists
 if not os.path.exists('logs'):
@@ -27,83 +20,18 @@ for log_file in ['debug.log', 'info.log', 'queue.log']:
 if not os.path.exists('db_content'):
     os.makedirs('db_content')
 
-# Ensure settings file exists and populate with default keys dynamically
-def ensure_settings_file():
-    default_settings = {
-        'Plex': {
-            'url': '',
-            'token': ''
-        },
-        'Overseerr': {
-            'url': '',
-            'api_key': ''
-        },
-        'RealDebrid': {
-            'api_key': ''
-        },
-        'Torrentio': {
-            'enabled': False
-        },
-        'Zilean': {
-            'url': '',
-            'enabled': False
-        },
-        'Knightcrawler': {
-            'url': '',
-            'enabled': False
-        },
-        'Comet': {
-            'url': '',
-            'enabled': False
-        },
-        'MDBList': {
-            'api_key': '',
-            'urls': ''
-        },
-        'Trakt': {
-            'client_id': '',
-            'client_secret': ''
-        },
-        'TMDB': {
-            'api_key': ''
-        },
-        'Queue': {
-            'wake_limit': ''
-        },
-        'Scraping': {
-            'enable_4k': False,
-            'enable_hdr': False,
-            'resolution_bonus': '',
-            'hdr_bonus': '',
-            'similarity_threshold_bonus': '',
-            'file_size_bonus': '',
-            'bitrate_bonus': '',
-            'preferred_filter_in': '',
-            'preferred_filter_out': '',
-            'filter_in': '',
-            'filter_out': '',
-            'min_size_gb': ''
-        },
-        'Debug': {
-            'logging_level': 'INFO',
-            'skip_initial_plex_update': False,
-            'skip_menu': False
-        }
-    }
-
-    if not os.path.exists(CONFIG_FILE):
-        config = load_config()
-
-        for section, settings in default_settings.items():
-            if not config.has_section(section):
-                config.add_section(section)
-            for key, value in settings.items():
-                if not config.has_option(section, key):
-                    config.set(section, key, str(value) if isinstance(value, bool) else value)
-        
-        save_config(config)
-
+# Ensure settings file exists and populate with default keys
 ensure_settings_file()
+
+from questionary import select
+from run_program import run_program
+from utilities.debug_commands import debug_commands
+from utilities.manual_scrape import run_manual_scrape
+from database import verify_database
+import logging_config
+from scraper_tester import run_tester
+
+logging_config.setup_logging()
 
 def get_version():
     try:

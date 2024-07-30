@@ -12,11 +12,11 @@ def get_mdblist_urls() -> List[str]:
         return []
     return [url.strip() for url in mdblist_urls.split(',')]
 
-def fetch_items_from_mdblist(url: str, api_key: str) -> List[Dict[str, Any]]:
-    headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Accept': 'application/json'
-    }
+def fetch_items_from_mdblist(url: str) -> List[Dict[str, Any]]:
+    #headers = {
+        #'Authorization': f'Bearer {api_key}',
+        #'Accept': 'application/json'
+    #}
     if not url.endswith('/json'):
         url += '/json'
 
@@ -40,17 +40,17 @@ def assign_media_type(item: Dict[str, Any]) -> str:
         return 'movie'
 
 def get_wanted_from_mdblists() -> List[Dict[str, Any]]:
-    mdblist_api_key = get_setting('MDBList', 'api_key')
+    #mdblist_api_key = get_setting('MDBList', 'api_key')
 
-    if not mdblist_api_key:
-        logging.error("MDBList API key not set. Please configure in settings.")
-        return []
+    #if not mdblist_api_key:
+        #logging.error("MDBList API key not set. Please configure in settings.")
+        #return []
 
     url_list = get_mdblist_urls()
     all_wanted_items = []
 
     for url in url_list:
-        items = fetch_items_from_mdblist(url, mdblist_api_key)
+        items = fetch_items_from_mdblist(url) #, mdblist_api_key)
         for item in items:
             imdb_id = item.get('imdb_id')
             if not imdb_id:
