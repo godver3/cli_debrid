@@ -134,6 +134,10 @@ Please contribute through either Issues or by submitting code.
 
 cli_debrid will always be free for anyone to use.
 
+## Caveat
+
+I'll include a caveat that this project was built almost entirely using AI (though I have a bit of experience working with code in the past). I would say I learned a fair bit through the process and overall enjoyed getting to this point. That said, I'll do what I can to fix things, but cli_debrid is built almost entirely on spaghetti and probably has lots of brow-raising content. Apologies in advance real devs who decide to look under the hood.
+
 ## To Do
 
 - Add uncached management options
