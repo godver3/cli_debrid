@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import logging
+import inspect
 
 CONFIG_FILE = './config.ini'
 
@@ -17,25 +18,20 @@ def save_config(config):
     with open(CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
 
-def get_setting(section, option, default=None):
+def get_setting(section, option, default=''):
     config = configparser.ConfigParser()
-    config.read('config.ini')  # Ensure this path is correct
-    if config.has_option(section, option):
-        raw_value = config.get(section, option)
-
-        if raw_value.strip() == '':
-            logging.debug(f"Empty value found for {section}.{option}, using default: {default}")
+    config.read(CONFIG_FILE)
+    try:
+        value = config.get(section, option)
+        if value is None or value.strip() == '':
+            logging.debug(f"Empty or None value found for {section}.{option}, using default: {default}")
             return default
-
-        if raw_value.lower() in ['true', 'yes', '1']:
-            value = True
-        elif raw_value.lower() in ['false', 'no', '0']:
-            value = False
-        else:
-            value = raw_value
-
+        if value.lower() in ['true', 'yes', '1']:
+            return True
+        elif value.lower() in ['false', 'no', '0']:
+            return False
         return value
-    else:
+    except (configparser.NoSectionError, configparser.NoOptionError):
         logging.debug(f"Setting not found - Section: {section}, Option: {option}, using default: {default}")
         return default
 
@@ -46,10 +42,46 @@ def set_setting(section, key, value):
     config.set(section, key, value)
     save_config(config)
 
-def get_all_settings(section):
-    config = configparser.ConfigParser()
-    config.read(CONFIG_FILE)
-    return dict(config[section])
+def get_all_settings():
+    from settings import SettingsEditor
+
+    all_settings = []
+    methods = [
+        'show_required_settings',
+        'show_additional_settings',
+        'show_scraping_settings',
+        'show_debug_settings'
+    ]
+
+    for method_name in methods:
+        method = getattr(SettingsEditor, method_name)
+        source = inspect.getsource(method)
+        start = source.index('[')
+        end = source.rindex(']') + 1
+        settings_list = eval(source[start:end])
+        all_settings.extend(settings_list)
+
+    return all_settings
+
+def ensure_settings_file():
+    config = load_config()
+    all_settings = get_all_settings()
+
+    for section, key, _ in all_settings:
+        if not config.has_section(section):
+            config.add_section(section)
+        if not config.has_option(section, key) or not config.get(section, key).strip():
+            # Set a default value
+            default_value = ''
+            if key == 'enabled':
+                default_value = 'False'
+            elif key == 'logging_level':
+                default_value = 'INFO'
+            elif key == 'wake_limit':
+                default_value = '3'
+            config.set(section, key, default_value)
+
+    save_config(config)
 
 class SettingsEditor:
     def __init__(self):
@@ -86,16 +118,15 @@ class SettingsEditor:
 
     def show_additional_settings(self, button):
         self.show_settings("Additional Settings", [
-            ('Zilean', 'url', 'Zilean URL'),
-            ('Zilean', 'enabled', 'Zilean enabled? True/False'),
+            # Disabling Zilean for now
+            #('Zilean', 'url', 'Zilean URL'),
+            #('Zilean', 'enabled', 'Zilean enabled? True/False'),
             ('Knightcrawler', 'url', 'Knightcrawler URL'),
             ('Knightcrawler', 'enabled', 'Knightcrawler enabled? (True/False)'),
             ('Comet', 'url', 'Comet URL'),
             ('Comet', 'enabled', 'Comet enabled? True/False'),
-            ('MDBList', 'api_key', 'MDB API Key'),
             ('MDBList', 'urls', 'MDB List URLs'),
-            ('Trakt', 'client_id', 'Trakt Client ID'),
-            ('Trakt', 'client_secret', 'Trakt Client Secret'),
+            ('Collected Content Source', 'enabled', 'Enable collected content source? True/False'),
             ('TMDB', 'api_key', 'TMDB API Key'),
             ('Queue', 'wake_limit', 'Enter number of times to wake items before blacklisting')
         ])
