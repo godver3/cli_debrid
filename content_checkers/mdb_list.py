@@ -13,10 +13,10 @@ def get_mdblist_urls() -> List[str]:
     return [url.strip() for url in mdblist_urls.split(',')]
 
 def fetch_items_from_mdblist(url: str) -> List[Dict[str, Any]]:
-    #headers = {
+    headers = {
         #'Authorization': f'Bearer {api_key}',
-        #'Accept': 'application/json'
-    #}
+        'Accept': 'application/json'
+    }
     if not url.endswith('/json'):
         url += '/json'
 
