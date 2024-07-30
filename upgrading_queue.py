@@ -5,16 +5,16 @@ import json
 import os
 from scraper.scraper import scrape
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, RealDebridUnavailableError, extract_hash_from_magnet
-from database import update_media_item_state
+from database import get_media_item_status
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted
 
 class UpgradingQueue:
     def __init__(self):
         self.queue: List[Dict[str, Any]] = []
-        self.last_checked: Dict[int, datetime] = {}
-        self.added_time: Dict[int, datetime] = {}
-        self.collected_time: Dict[int, datetime] = {}
-        self.queue_file = 'db_content/upgrading_queue.json'
+        self.last_checked: Dict[str, datetime] = {}
+        self.added_time: Dict[str, datetime] = {}
+        self.collected_time: Dict[str, datetime] = {}
+        self.queue_file = 'upgrading_queue.json'
         self.load_queue()
 
     def generate_identifier(self, item: Dict[str, Any]) -> str:
@@ -30,8 +30,8 @@ class UpgradingQueue:
         if identifier not in [self.generate_identifier(i) for i in self.queue]:
             item['last_checked'] = datetime.now()
             self.queue.append(item)
-            self.last_checked[item['id']] = datetime.now()
-            self.added_time[item['id']] = datetime.now()
+            self.last_checked[identifier] = datetime.now()
+            self.added_time[identifier] = datetime.now()
             logging.info(f"Added item {item['title']} (ID: {identifier}) to UpgradingQueue. Queue size: {len(self.queue)}")
             self.save_queue()
         else:
@@ -40,34 +40,35 @@ class UpgradingQueue:
     def process_queue(self):
         current_time = datetime.now()
         items_to_remove = []
-
         for item in self.queue:
-            item_id = item['id']
             identifier = self.generate_identifier(item)
-            time_since_last_check = current_time - self.last_checked[item_id]
-
+            time_since_last_check = current_time - self.last_checked.get(identifier, datetime.min)
             if time_since_last_check >= timedelta(hours=1):
-                self.last_checked[item_id] = current_time
-
-                if item_id not in self.collected_time:
-                    # Check if the item has been collected using get_item_state
-                    item_state = get_item_state(item)
+                self.last_checked[identifier] = current_time
+                if identifier not in self.collected_time:
+                    # Check if the item has been collected using get_media_item_status
+                    item_state = get_media_item_status(
+                        imdb_id=item['imdb_id'],
+                        tmdb_id=item['tmdb_id'],
+                        title=item['title'],
+                        year=item['year'],
+                        season_number=item.get('season_number'),
+                        episode_number=item.get('episode_number')
+                    )
                     if item_state == "Collected":
-                        self.collected_time[item_id] = current_time
+                        self.collected_time[identifier] = current_time
                         logging.info(f"Item {item['title']} (ID: {identifier}) has been collected. Starting upgrade checks.")
                 else:
                     # Item has been collected, check for upgrades
-                    time_since_collection = current_time - self.collected_time[item_id]
+                    time_since_collection = current_time - self.collected_time[identifier]
                     if time_since_collection <= timedelta(hours=24):
                         self.check_for_upgrade(item)
                     else:
                         # Item has been in the queue for over 24 hours since collection
-                        items_to_remove.append(item_id)
+                        items_to_remove.append(identifier)
                         logging.info(f"Item {item['title']} (ID: {identifier}) has been in UpgradingQueue for 24 hours since collection. Removing.")
-
-        for item_id in items_to_remove:
-            self.remove_item(item_id)
-
+        for identifier in items_to_remove:
+            self.remove_item(identifier)
         self.save_queue()
         logging.info(f"UpgradingQueue processed. Current items: {len(self.queue)}")
 
@@ -138,7 +139,7 @@ class UpgradingQueue:
                     return
 
                 # If we reach here, addition was successful
-                update_media_item_state(item['id'], 'Checking', filled_by_magnet=new_magnet)
+                # update_media_item_state(identifier, 'Checking', filled_by_magnet=new_magnet)
                 item['filled_by_magnet'] = new_magnet
                 logging.info(f"Successfully upgraded {item['title']} (ID: {identifier}) to new magnet.")
             else:
@@ -147,15 +148,15 @@ class UpgradingQueue:
         except Exception as e:
             logging.error(f"Error checking cache status: {str(e)}")
 
-    def remove_item(self, item_id: int):
-        self.queue = [item for item in self.queue if item['id'] != item_id]
-        if item_id in self.last_checked:
-            del self.last_checked[item_id]
-        if item_id in self.added_time:
-            del self.added_time[item_id]
-        if item_id in self.collected_time:
-            del self.collected_time[item_id]
-        logging.info(f"Removed item (ID: {item_id}) from UpgradingQueue")
+    def remove_item(self, identifier: str):
+        self.queue = [item for item in self.queue if self.generate_identifier(item) != identifier]
+        if identifier in self.last_checked:
+            del self.last_checked[identifier]
+        if identifier in self.added_time:
+            del self.added_time[identifier]
+        if identifier in self.collected_time:
+            del self.collected_time[identifier]
+        logging.info(f"Removed item (ID: {identifier}) from UpgradingQueue")
         self.save_queue()
 
     def save_queue(self):
@@ -225,7 +226,7 @@ class UpgradingQueue:
                     # If parsing fails, keep the original string
                     pass
         return item
-        
+
     def get_queue_contents(self) -> List[Dict[str, Any]]:
         """
         Returns the current contents of the upgrading queue.
