@@ -39,6 +39,10 @@ def get_setting(section, option, default=''):
 def validate_url(url):
     if not url.startswith(('http://', 'https://')):
         url = 'http://' + url
+    
+    # Remove trailing slash
+    url = url.rstrip('/')
+    
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError("Invalid URL")
