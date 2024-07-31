@@ -79,10 +79,11 @@ class QueueManager:
     def process_wanted(self):
         logging.debug("Processing wanted queue")
         current_date = datetime.now().date()
-        seasons_in_scraping = set()
-        # Get seasons already in Scraping queue
-        for item in self.queues["Scraping"]:
-            seasons_in_scraping.add((item['imdb_id'], item['season_number']))
+        seasons_in_queues = set()
+        # Get seasons already in Scraping or Adding queue
+        for queue_name in ["Scraping", "Adding"]:
+            for item in self.queues[queue_name]:
+                seasons_in_queues.add((item['imdb_id'], item['season_number']))
         
         items_to_move = []
         items_to_unreleased = []
@@ -105,17 +106,17 @@ class QueueManager:
                     if len(self.queues["Scraping"]) + len(items_to_move) >= self.scraping_cap:
                         logging.debug(f"Scraping cap reached. Keeping {item['title']} in Wanted queue.")
                         break  # Exit the loop as we've reached the cap
-                    # Check if we're already scraping an item from this season
+                    # Check if we're already processing an item from this season
                     season_key = (item['imdb_id'], item['season_number'])
-                    if season_key in seasons_in_scraping:
-                        logging.debug(f"Already scraping an item from season {item['season_number']} of {item['imdb_id']}. Keeping {item['title']} in Wanted queue.")
+                    if season_key in seasons_in_queues:
+                        logging.debug(f"Already processing an item from season {item['season_number']} of {item['imdb_id']}. Keeping {item['title']} in Wanted queue.")
                         continue
                     if item['type'] == 'episode':
                         logging.info(f"Item {item['title']} S{item['season_number']}E{item['episode_number']} has been released. Marking for move to Scraping.")
                     else:
                         logging.info(f"Item {item['title']} ({item['year']}) has been released. Marking for move to Scraping.")
                     items_to_move.append(item)
-                    seasons_in_scraping.add(season_key)
+                    seasons_in_queues.add(season_key)
             except ValueError as e:
                 logging.error(f"Error processing release date for item {item['title']}: {str(e)}")
                 logging.error(f"Item details: {json.dumps(item, indent=2, cls=DateTimeEncoder)}")
@@ -430,6 +431,7 @@ class QueueManager:
         current_time = datetime.now()
         wake_limit = int(get_setting("Queue", "wake_limit", default=3))
         sleep_duration = timedelta(minutes=30)
+        one_week_ago = current_time - timedelta(days=7)
 
         items_to_wake = []
         items_to_blacklist = []
@@ -447,7 +449,11 @@ class QueueManager:
             logging.debug(f"Item {item['title']} (ID: {item_id}) has been asleep for {time_asleep}")
             logging.debug(f"Current wake count for item {item['title']} (ID: {item_id}): {self.wake_counts[item_id]}")
 
-            if time_asleep >= sleep_duration:
+            release_date = item.get('release_date')
+            if release_date and datetime.strptime(release_date, '%Y-%m-%d') < one_week_ago:
+                items_to_blacklist.append(item)
+                logging.debug(f"Adding {item['title']} (ID: {item_id}) to items_to_blacklist list due to old release date")
+            elif time_asleep >= sleep_duration:
                 self.wake_counts[item_id] += 1
                 logging.debug(f"Incremented wake count for {item['title']} (ID: {item_id}) to {self.wake_counts[item_id]}")
 

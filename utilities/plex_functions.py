@@ -82,7 +82,7 @@ def get_collected_from_plex(request='all'):
         collected_content = {'movies': [], 'episodes': []}
         missing_guid_items = {'movies': [], 'episodes': []}
         current_time = datetime.now()
-        time_limit = current_time - timedelta(minutes=60)
+        time_limit = current_time - timedelta(minutes=240)
         logging.debug(f"Current time: {current_time}")
         logging.debug(f"Time limit: {time_limit}")
         logging.debug(f"Time window: {current_time - time_limit}")
