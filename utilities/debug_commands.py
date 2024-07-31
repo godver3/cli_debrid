@@ -318,7 +318,6 @@ def debug_commands():
                 Choice("Get and Add All Wanted from Overseerr", "get_all_wanted"),
                 Choice("Get and Add All Wanted from MDB List", "pull_mdblist"),
                 Choice("Get and Add All Wanted from Collected", "get_wanted_collected"),
-                Choice("Get and Add All Collected/Wanted Shows to Wanted", "map_all"),
                 Choice("View Database Content", "view_db"),
                 Choice("Search Database", "search_db"),
                 Choice("Delete Database Items", "delete_db"),  # New option
@@ -364,10 +363,6 @@ def debug_commands():
                 wanted_content_processed = process_metadata(wanted_content)
                 if wanted_content_processed:
                     add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
-        elif action == 'map_all':
-            wanted_content = map_collected_media_to_wanted()
-            if wanted_content:
-                add_wanted_items(wanted_content['episodes'])
         elif action == 'manage_blacklist':
             manage_blacklist()
         elif action == 'manage_manual_blacklist':
