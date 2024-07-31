@@ -40,6 +40,18 @@ Allows you to manually initiate scraping for specific content, useful for testin
 
 Provides various debugging tools and logs to help diagnose issues and monitor the software's performance.
 
+## Detailed Queue Operations
+<details>
+<summary>Queue Processing Intervals</summary>
+CLI Debrid processes different queues at various intervals to optimize performance and resource usage. Here are the default processing intervals for each queue:
+
+Wanted Queue: Every 5 seconds
+Scraping Queue: Every 5 seconds
+Adding Queue: Every 5 seconds
+Checking Queue: Every 5 minutes (300 seconds)
+Sleeping Queue: Every 15 minutes (900 seconds)
+Upgrading Queue: Every 5 minutes (300 seconds)
+
 ## Philosophy
 
 ### Database and "I Know What I Got"
