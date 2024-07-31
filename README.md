@@ -248,3 +248,4 @@ I'll include a caveat that this project was built almost entirely using AI (thou
 - Add uncached management options
 - Allow settings to be edited through the webUI
 - Allow program control through the webUI
+- Review for async program options (currently only running scraping itself as async, RD operations could likely run async as well)
