@@ -265,10 +265,10 @@ def add_collected_items(media_items_batch, recent=False):
                 if item_type == 'episode':
                     conn.execute('''
                         UPDATE media_items
-                        SET tmdb_id = ?, title = ?, year = ?, release_date = ?, state = ?, episode_title = ?, last_updated = ?, metadata_updated = ?, scrape_results = ?
+                        SET tmdb_id = ?, title = ?, year = ?, release_date = COALESCE(?, release_date), state = ?, episode_title = ?, last_updated = ?, metadata_updated = ?, scrape_results = ?
                         WHERE id = ?
                     ''', (
-                        item.get('tmdb_id'), normalized_title, item.get('year'), item.get('release_date', 'Unknown'), 'Collected',
+                        item.get('tmdb_id'), normalized_title, item.get('year'), item.get('release_date'), 'Collected',
                         item.get('episode_title', ''), datetime.now(), datetime.now(), item.get('scrape_results', None), item_id
                     ))
                     logging.debug(f"Updating episode in DB: {normalized_title} S{item['season_number']}E{item['episode_number']}")
@@ -277,10 +277,10 @@ def add_collected_items(media_items_batch, recent=False):
                 else:
                     conn.execute('''
                         UPDATE media_items
-                        SET tmdb_id = ?, title = ?, year = ?, release_date = ?, state = ?, last_updated = ?, metadata_updated = ?, scrape_results = ?
+                        SET tmdb_id = ?, title = ?, year = ?, release_date = COALESCE(?, release_date), state = ?, last_updated = ?, metadata_updated = ?, scrape_results = ?
                         WHERE id = ?
                     ''', (
-                        item.get('tmdb_id'), normalized_title, item.get('year'), item.get('release_date', 'Unknown'), 'Collected',
+                        item.get('tmdb_id'), normalized_title, item.get('year'), item.get('release_date'), 'Collected',
                         datetime.now(), datetime.now(), item.get('scrape_results', None), item_id
                     ))
                     logging.debug(f"Updating movie in DB: {normalized_title}")
@@ -295,7 +295,7 @@ def add_collected_items(media_items_batch, recent=False):
                         (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, scrape_results)
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ''', (
-                        item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'), item.get('release_date', 'Unknown'), 'Collected', 'episode',
+                        item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'), item.get('release_date'), 'Collected', 'episode',
                         item['season_number'], item['episode_number'], item.get('episode_title', ''), datetime.now(), datetime.now(), item.get('scrape_results', None)
                     ))
                     logging.info(f"Adding new episode to DB: {normalized_title} S{item['season_number']}E{item['episode_number']}")
@@ -305,7 +305,7 @@ def add_collected_items(media_items_batch, recent=False):
                         (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, scrape_results)
                         VALUES (?,?,?,?,?,?,?,?,?,?)
                     ''', (
-                        item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'), item.get('release_date', 'Unknown'), 'Collected', 'movie',
+                        item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'), item.get('release_date'), 'Collected', 'movie',
                         datetime.now(), datetime.now(), item.get('scrape_results', None)
                     ))
                     logging.info(f"Adding new movie to DB: {normalized_title}")
