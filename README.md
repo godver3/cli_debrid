@@ -52,6 +52,7 @@ Checking Queue: Every 5 minutes (300 seconds)
 Sleeping Queue: Every 15 minutes (900 seconds)
 Upgrading Queue: Every 5 minutes (300 seconds)
 
+<<<<<<< HEAD
 </details>
 <details>
 <summary>Additional Tasks and Their Intervals</summary>
@@ -121,6 +122,8 @@ Supports test notifications from Overseerr
 </details>
 These detailed queue operations ensure that CLI Debrid efficiently manages your media collection, continuously seeking improvements and handling various scenarios that may arise during the content acquisition process.
 
+=======
+>>>>>>> b3f1e0e4332a3e952583df6235b0ed6d8667160b
 ## Philosophy
 
 ### Database and "I Know What I Got"
