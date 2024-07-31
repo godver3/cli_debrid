@@ -45,34 +45,33 @@ Provides various debugging tools and logs to help diagnose issues and monitor th
 <summary>Queue Processing Intervals</summary>
 CLI Debrid processes different queues at various intervals to optimize performance and resource usage. Here are the default processing intervals for each queue:
 
-Wanted Queue: Every 5 seconds
-Scraping Queue: Every 5 seconds
-Adding Queue: Every 5 seconds
-Checking Queue: Every 5 minutes (300 seconds)
-Sleeping Queue: Every 15 minutes (900 seconds)
-Upgrading Queue: Every 5 minutes (300 seconds)
+- Wanted Queue: Every 5 seconds - Moves items to either Scraping or Unreleased queues
+- Scraping Queue: Every 5 seconds - Searches for items and moves into Adding or Sleeping (if not found)
+- Adding Queue: Every 5 seconds - Adds items to Real Debrid or moves into Sleeping (if failed)
+- Checking Queue: Every 5 minutes (300 seconds) - Runs a Plex Recently Added scan and marks items as Collected if found. If an item isn't found for 6 hours move the item back into Wanted and mark the magnet as unwanted
+- Sleeping Queue: Every 15 minutes (900 seconds) - Details below, used for items that have not yet been scraped successfully
+- Upgrading Queue: Every 5 minutes (300 seconds) - Checks for items eligible for upgrades every 5 minutes
 
-<<<<<<< HEAD
 </details>
 <details>
 <summary>Additional Tasks and Their Intervals</summary>
 
-Full Plex Scan: Every 1 hour (3600 seconds)
-Overseerr Wanted Content Check: Every 15 minutes (900 seconds)
-MDBList Wanted Content Check: Every 15 minutes (900 seconds)
-Debug Log: Every 1 minute (60 seconds)
-Refresh Release Dates: Every 1 hour (3600 seconds)
-Collected Wanted Content Check: Every 24 hours (86400 seconds)
+- Full Plex Scan: Every 1 hour (3600 seconds)
+- Overseerr Wanted Content Check: Every 15 minutes (900 seconds)
+- MDBList Wanted Content Check: Every 15 minutes (900 seconds)
+- Debug Log: Every 1 minute (60 seconds)
+- Refresh Release Dates: Every 1 hour (3600 seconds)
+- Collected Wanted Content Check: Every 24 hours (86400 seconds)
 
 </details>
 <details>
 <summary>Upgrading Queue Criteria</summary>
 Items are added to the Upgrading Queue when:
 
-They are successfully added to Real-Debrid and moved to the Checking Queue.
-They are part of a multi-pack result (e.g., a full season of a TV show).
+- They are successfully added to Real-Debrid and moved to the Checking Queue.
+- They were released within the past week
 
-The Upgrading Queue is processed every 5 minutes to check for potential quality upgrades for recently added content.
+Items in the Upgrading Queue are processed every 60 minutes to check for potential quality upgrades for recently added content.
 </details>
 <details>
 <summary>Sleep and Wake Mechanism</summary>
@@ -89,8 +88,8 @@ Items with a release date older than one week are also moved to the Blacklisted 
 <summary>Blacklisting</summary>
 Items are blacklisted (moved to the Blacklisted state) when:
 
-They exceed the wake limit in the Sleeping Queue
-Their release date is more than one week old
+- They exceed the wake limit in the Sleeping Queue
+- Their release date is more than one week old and weren't found on first scrape
 
 Blacklisted items are no longer processed by the queue system.
 </details>
@@ -120,10 +119,7 @@ Processes the webhook data and adds new items to the Wanted Queue
 Supports test notifications from Overseerr
 
 </details>
-These detailed queue operations ensure that CLI Debrid efficiently manages your media collection, continuously seeking improvements and handling various scenarios that may arise during the content acquisition process.
 
-=======
->>>>>>> b3f1e0e4332a3e952583df6235b0ed6d8667160b
 ## Philosophy
 
 ### Database and "I Know What I Got"
