@@ -121,10 +121,6 @@ class UpgradingQueue:
 
         current_magnet = item.get('filled_by_magnet')
         current_title = item.get('filled_by_title', 'Unknown')
-        if not current_magnet:
-            logging.warning(f"No current magnet for {item['title']} (ID: {identifier}). Setting to top result.")
-            self.try_upgrade(item, results[0])
-            return
 
         # Function to extract the essential part of the magnet link
         def get_magnet_hash(magnet):
@@ -151,11 +147,9 @@ class UpgradingQueue:
         current_index = next((i for i, result in enumerate(results) if get_magnet_hash(result['magnet']) == current_magnet_hash), -1)
 
         if current_index == -1:
-            logging.warning(f"Current magnet not found in results for {item['title']} (ID: {identifier}). Keeping current magnet.")
-            logging.debug("Rationale: Current release not found in new results, possibly due to changes in available releases.")
-            return
-
-        if current_index > 0:
+            logging.info(f"Current magnet not found in results for {item['title']} (ID: {identifier}). Attempting upgrade to top result.")
+            self.try_upgrade(item, results[0])
+        elif current_index > 0:
             # We found a better result
             logging.info(f"Potential upgrade found for {item['title']} (ID: {identifier}) from position {current_index + 1} to top result.")
             self.try_upgrade(item, results[0])
@@ -166,10 +160,13 @@ class UpgradingQueue:
     def try_upgrade(self, item: Dict[str, Any], new_result: Dict[str, Any]):
         identifier = self.generate_identifier(item)
         new_magnet = new_result['magnet']
+        new_title = new_result.get('title', 'Unknown')
         hash_value = extract_hash_from_magnet(new_magnet)
 
         logging.debug(f"Attempting upgrade for {item['title']} (ID: {identifier}):")
-        logging.debug(f"New release name: {new_result.get('release_name', 'Unknown')}")
+        logging.debug(f"Current title: {item.get('filled_by_title', 'Unknown')}")
+        logging.debug(f"Current magnet: {item.get('filled_by_magnet', 'Unknown')}")
+        logging.debug(f"New title: {new_title}")
         logging.debug(f"New magnet: {new_magnet}")
 
         if not hash_value:
@@ -196,8 +193,15 @@ class UpgradingQueue:
                     return
 
                 # If we reach here, addition was successful
+                old_magnet = item['filled_by_magnet']
+                old_title = item['filled_by_title']
                 item['filled_by_magnet'] = new_magnet
-                logging.info(f"Successfully upgraded {item['title']} (ID: {identifier}) to new magnet.")
+                item['filled_by_title'] = new_title
+                logging.info(f"Successfully upgraded {item['title']} (ID: {identifier}):")
+                logging.info(f"Old title: {old_title}")
+                logging.info(f"New title: {new_title}")
+                logging.info(f"Old magnet: {old_magnet}")
+                logging.info(f"New magnet: {new_magnet}")
                 logging.debug("Rationale: New release is higher-ranked and successfully added to Real-Debrid.")
             else:
                 logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is not cached on Real-Debrid. Adding to not wanted.")

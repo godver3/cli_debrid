@@ -50,9 +50,7 @@ class ProgramRunner:
         }
         
         # Conditionally enable task_mdb_list_wanted
-        #mdb_list_api_key = get_setting('MDBList', 'api_key', '')
         mdb_list_urls = get_setting('MDBList', 'urls', '')
-        #if mdb_list_api_key and mdb_list_urls:
         if mdb_list_urls:
             self.enabled_tasks.add('task_mdb_list_wanted')
 
