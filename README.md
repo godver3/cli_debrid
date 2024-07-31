@@ -43,7 +43,8 @@ Provides various debugging tools and logs to help diagnose issues and monitor th
 ## Detailed Queue Operations
 <details>
 <summary>Queue Processing Intervals</summary>
-CLI Debrid processes different queues at various intervals to optimize performance and resource usage. Here are the default processing intervals for each queue:
+<br>
+cli_debrid processes different queues at various intervals to optimize performance and resource usage. Here are the default processing intervals for each queue:
 
 - Wanted Queue: Every 5 seconds - Moves items to either Scraping or Unreleased queues
 - Scraping Queue: Every 5 seconds - Searches for items and moves into Adding or Sleeping (if not found)
@@ -55,6 +56,8 @@ CLI Debrid processes different queues at various intervals to optimize performan
 </details>
 <details>
 <summary>Additional Tasks and Their Intervals</summary>
+<br>
+Additional task information:
 
 - Full Plex Scan: Every 1 hour (3600 seconds)
 - Overseerr Wanted Content Check: Every 15 minutes (900 seconds)
@@ -66,6 +69,7 @@ CLI Debrid processes different queues at various intervals to optimize performan
 </details>
 <details>
 <summary>Upgrading Queue Criteria</summary>
+<br>
 Items are added to the Upgrading Queue when:
 
 - They are successfully added to Real-Debrid and moved to the Checking Queue.
@@ -75,17 +79,19 @@ Items in the Upgrading Queue are processed every 60 minutes to check for potenti
 </details>
 <details>
 <summary>Sleep and Wake Mechanism</summary>
+<br>
 Items in the Sleeping Queue use a wake count system:
 
-Initial sleep duration: 30 minutes
-After each sleep cycle, the wake count for the item is incremented
-Default wake limit: 3 attempts (configurable in settings)
-If an item reaches the wake limit, it's moved to the Blacklisted state
-Items with a release date older than one week are also moved to the Blacklisted state
+- Initial sleep duration: 30 minutes
+- After each sleep cycle, the wake count for the item is incremented
+- Default wake limit: 3 attempts (configurable in settings)
+- If an item reaches the wake limit, it's moved to the Blacklisted state
+- Items with a release date older than one week are also moved to the Blacklisted state
 
 </details>
 <details>
 <summary>Blacklisting</summary>
+<br>
 Items are blacklisted (moved to the Blacklisted state) when:
 
 - They exceed the wake limit in the Sleeping Queue
@@ -95,16 +101,17 @@ Blacklisted items are no longer processed by the queue system.
 </details>
 <details>
 <summary>Multi-pack Processing</summary>
+<br>
 When a multi-pack result (e.g., a full season) is found:
 
-The original item is moved to the Checking Queue
-All matching episodes in the Wanted, Scraping, and Sleeping queues are also moved to the Checking Queue
-All moved items are added to the Upgrading Queue for potential future upgrades
+- The original item is moved to the Checking Queue
+- All matching episodes in the Wanted, Scraping, and Sleeping queues are also moved to the Checking Queue
+- All moved items are added to the Upgrading Queue for potential future upgrades
 
 </details>
 <details>
 <summary>Real-Debrid Integration</summary>
-
+<br>
 Items in the Adding Queue are checked for cache status on Real-Debrid
 If an item is cached, it's added to Real-Debrid and moved to the Checking Queue
 If Real-Debrid is unavailable, the item is moved to the Sleeping Queue to retry later
@@ -112,11 +119,11 @@ If Real-Debrid is unavailable, the item is moved to the Sleeping Queue to retry 
 </details>
 <details>
 <summary>Webhook Support</summary>
-CLI Debrid supports webhooks from Overseerr:
+<br>
+cli_debrid supports webhooks from Overseerr:
 
-Receives notifications for new content requests
-Processes the webhook data and adds new items to the Wanted Queue
-Supports test notifications from Overseerr
+- Receives notifications for new content requests
+- Processes the webhook data and adds new items to the Wanted Queue
 
 </details>
 
