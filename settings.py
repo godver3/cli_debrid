@@ -5,6 +5,7 @@ import subprocess
 import sys
 import logging
 import inspect
+from urllib.parse import urlparse
 
 CONFIG_FILE = './config.ini'
 
@@ -35,12 +36,32 @@ def get_setting(section, option, default=''):
         logging.debug(f"Setting not found - Section: {section}, Option: {option}, using default: {default}")
         return default
 
+def validate_url(url):
+    if not url.startswith(('http://', 'https://')):
+        url = 'http://' + url
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("Invalid URL")
+    return url
+
 def set_setting(section, key, value):
     config = load_config()
     if not config.has_section(section):
         config.add_section(section)
+    
+    # List of keys that should be treated as URLs
+    url_keys = ['url']  # Add more keys here if needed, e.g., ['url', 'api_url', 'webhook_url']
+    
+    if key in url_keys:
+        try:
+            value = validate_url(value)
+        except ValueError:
+            logging.error(f"Invalid URL provided for {section}.{key}: {value}")
+            return False
+
     config.set(section, key, value)
     save_config(config)
+    return True
 
 def get_all_settings():
     from settings import SettingsEditor
@@ -91,6 +112,7 @@ class SettingsEditor:
             ('reversed', 'standout', ''),
             ('edit', 'light gray', 'black'),
             ('edit_focus', 'white', 'dark blue'),
+            ('error', 'light red', 'black'),
         ]
         self.main_loop = urwid.MainLoop(self.build_main_menu(), self.palette, unhandled_input=self.exit_on_q)
         self.main_loop.run()
@@ -174,9 +196,24 @@ class SettingsEditor:
     def save_settings(self):
         for (section, key), edit in self.edits.items():
             value = edit.original_widget.get_edit_text()
-            set_setting(section, key, value)
+            if not set_setting(section, key, value):
+                self.show_error(f"Invalid URL for {section}.{key}: {value}")
         # Reload config to ensure updates are applied
         self.config = load_config()
+
+    def show_error(self, message):
+        self.main_loop.widget = urwid.Overlay(
+            urwid.LineBox(urwid.Pile([
+                urwid.Text(('error', message)),
+                urwid.Button('OK', on_press=self.close_error)
+            ])),
+            self.main_loop.widget,
+            'center', ('relative', 50),
+            'middle', ('relative', 20)
+        )
+
+    def close_error(self, button):
+        self.main_loop.widget = self.main_loop.widget.bottom_w
 
     def back_to_main_menu(self, button):
         self.save_settings()

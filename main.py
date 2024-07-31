@@ -3,7 +3,7 @@ import logging
 import requests
 import configparser
 import inspect
-from settings import SettingsEditor, get_setting, load_config, save_config, CONFIG_FILE, ensure_settings_file
+from settings import SettingsEditor, get_setting, load_config, save_config, CONFIG_FILE, ensure_settings_file, set_setting
 
 # Ensure logs directory exists
 if not os.path.exists('logs'):
@@ -80,6 +80,28 @@ def check_required_settings():
 
     return errors
 
+def prompt_for_required_settings():
+    config = load_config()
+    required_settings = [
+        ('Plex', 'url', 'Enter Plex URL: '),
+        ('Plex', 'token', 'Enter Plex Token: '),
+        ('Overseerr', 'url', 'Enter Overseerr URL: '),
+        ('Overseerr', 'api_key', 'Enter Overseerr API Key: '),
+        ('RealDebrid', 'api_key', 'Enter Real-Debrid API Key: '),
+    ]
+
+    print("Welcome to the initial setup! Please enter required settings:")
+    for section, key, prompt in required_settings:
+        if not config.has_section(section):
+            config.add_section(section)
+        if not config.has_option(section, key) or not config.get(section, key).strip():
+            value = input(prompt)
+            set_setting(section, key, value)
+
+    set_setting('Torrentio', 'enabled', 'True')
+
+    print("Initial setup complete!")
+
 def main_menu():
     logging.debug("Main menu started")
     logging.debug("Debug logging started")
@@ -151,6 +173,12 @@ def main():
     # Display all settings
     # display_settings()
     
+    # Check if required settings are in place
+    errors = check_required_settings()
+    if errors:
+        print("Some required settings are missing. Starting initial setup...")
+        prompt_for_required_settings()
+
     # Check for the debug flag
     skip_menu = get_setting('Debug', 'skip_menu', default=False)
     
