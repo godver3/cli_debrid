@@ -2,9 +2,12 @@ import json
 import os
 import logging
 
-BLACKLIST_FILE = 'db_content/manual_blacklist.json'
+# Update the path to include the db_content folder
+BLACKLIST_FILE = os.path.join('db_content', 'manual_blacklist.json')
 
 def load_blacklist():
+    os.makedirs(os.path.dirname(BLACKLIST_FILE), exist_ok=True)
+
     if not os.path.exists(BLACKLIST_FILE):
         return set()
     try:
