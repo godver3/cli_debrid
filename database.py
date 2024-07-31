@@ -323,8 +323,8 @@ def add_collected_items(media_items_batch, recent=False):
                     title, state = "Unknown", "Unknown"
 
                 if state == 'Collected':
-                    conn.execute('DELETE FROM media_items WHERE id = ?', (item_id,))
-                    logging.info(f"Removing Collected item from DB: ID {item_id}, {title}")
+                    conn.execute('UPDATE media_items SET state = ?, last_updated = ? WHERE id = ?', ('Wanted', datetime.now(), item_id))
+                    logging.info(f"Moving {item_type} back to Wanted state: ID {item_id}, {title}")
                 else:
                     logging.debug(f"Keeping item in DB (status not Collected): ID {item_id}, {title}, Status: {state}")
 
