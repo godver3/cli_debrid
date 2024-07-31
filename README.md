@@ -206,9 +206,10 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
 
 ### Post-Setup
 
-- Monitor the logs at `${HOME}/cli_debrid/logs` to ensure everything is running smoothly.
-- Use the web interface to monitor queue status and statistics.
-- Adjust settings as needed to optimize performance and results for your specific setup.
+- Monitor the logs at `${HOME}/cli_debrid/logs` - shout out to "lnav" as a great log viewer
+- Check the content of your queues in the webUI
+- Use the web interface to monitor queue status and statistics. The statistics screen is essentially nonsense right now, but it's fun to look at
+- Adjust settings as needed to scrape for exactly the results you want
 
 ### Updating
 
@@ -229,6 +230,14 @@ Please contribute through either Issues or by submitting code.
 ## License
 
 cli_debrid will always be free for anyone to use.
+
+## Acknowledgements
+
+Thanks to:
+
+- Various other projects that have come before this one, and likely do things better in many ways
+- The original creator of plex_debrid
+- Helpful communities of content creators
 
 ## Caveat
 
