@@ -17,6 +17,11 @@ def fetch_items_from_mdblist(url: str) -> List[Dict[str, Any]]:
         #'Authorization': f'Bearer {api_key}',
         'Accept': 'application/json'
     }
+
+    # Ensure the URL starts with 'https://'
+    if not url.startswith('http://') and not url.startswith('https://'):
+        url = 'https://' + url
+
     if not url.endswith('/json'):
         url += '/json'
 
