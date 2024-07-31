@@ -25,7 +25,9 @@ The core functionality of the software. When started, it:
 
 ### Settings
 
-A comprehensive settings menu allows you to configure:
+*The webUI settings menu is not currently functional. Settings must be configured through either editing the config.ini file, or through the terminal menu*
+
+A settings menu allows you to configure:
 
 - Required settings (Plex, Overseerr, Real-Debrid)
 - Additional settings (Optional scrapers, MDBList, etc.)
@@ -190,11 +192,17 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
    docker-compose up -d
    ```
 
-4. Access the web interface (note - only accessible when the program has been started):
+4. Connect to the container to run the program, adjust settings, test scraping:
+
+   ```
+   docker attach cli_debrid
+   ```
+
+5. Access the web interface (note - only accessible when the program has been started):
    Open a web browser and navigate to `http://your-server-ip:5000`
 
-5. Configure additional settings:
-   Edit the `config.ini` file to configure additional settings such as scrapers, MDBList integration, and scraping preferences.
+6. Configure additional settings:
+   Edit the `config.ini` file or edit settings in termainl to configure additional settings such as scrapers, MDBList integration, and scraping preferences.
 
 ### Post-Setup
 
