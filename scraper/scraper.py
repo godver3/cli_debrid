@@ -516,7 +516,22 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Sort results
         sorting_start = time.time()
-        sorted_results = sorted(filtered_results, key=lambda x: rank_result_key(x, filtered_results, title, year, season, episode, multi))
+        
+        def stable_rank_key(x):
+            # First, use the rank_result_key function
+            primary_key = rank_result_key(x, filtered_results, title, year, season, episode, multi)
+            
+            # Then, use a tuple of stable secondary keys
+            secondary_keys = (
+                x.get('scraper', ''),  # Scraper name
+                x.get('title', ''),    # Torrent title
+                x.get('size', 0),      # Size
+                x.get('seeders', 0)    # Seeders
+            )
+            
+            return (primary_key, secondary_keys)
+
+        sorted_results = sorted(filtered_results, key=stable_rank_key)
         logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
         
         logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
