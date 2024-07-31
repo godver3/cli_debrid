@@ -136,6 +136,8 @@ class SettingsEditor:
         self.show_settings("Required Settings", [
             ('Plex', 'url', 'Plex URL'),
             ('Plex', 'token', 'Plex Token'),
+            ('Plex', 'movie_libraries', 'List of movie libraries, separated by commas'),
+            ('Plex', 'shows_libraries', 'List of shows libraries, separated by commas'),
             ('Overseerr', 'url', 'Overseerr URL'),
             ('Overseerr', 'api_key', 'Overseerr API Key'),
             ('RealDebrid', 'api_key', 'Real-Debrid API Key'),
