@@ -122,7 +122,6 @@ class UpgradingQueue:
         current_magnet = item.get('filled_by_magnet')
         current_title = item.get('filled_by_title', 'Unknown')
 
-        # Function to extract the essential part of the magnet link
         def get_magnet_hash(magnet):
             return magnet.split('&dn=')[0] if magnet else ''
 
@@ -146,18 +145,20 @@ class UpgradingQueue:
 
         current_index = next((i for i, result in enumerate(results) if get_magnet_hash(result['magnet']) == current_magnet_hash), -1)
 
+        uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None')
+
         if current_index == -1:
             logging.info(f"Current magnet not found in results for {item['title']} (ID: {identifier}). Attempting upgrade to top result.")
-            self.try_upgrade(item, results[0])
+            self.try_upgrade(item, results[0], uncached_handling)
         elif current_index > 0:
             # We found a better result
             logging.info(f"Potential upgrade found for {item['title']} (ID: {identifier}) from position {current_index + 1} to top result.")
-            self.try_upgrade(item, results[0])
+            self.try_upgrade(item, results[0], uncached_handling)
         else:
             logging.info(f"No better result found for {item['title']} (ID: {identifier}). Keeping current magnet.")
             logging.debug("Rationale: Current release is already the top-ranked result.")
 
-    def try_upgrade(self, item: Dict[str, Any], new_result: Dict[str, Any]):
+    def try_upgrade(self, item: Dict[str, Any], new_result: Dict[str, Any], uncached_handling: str):
         identifier = self.generate_identifier(item)
         new_magnet = new_result['magnet']
         new_title = new_result.get('title', 'Unknown')
@@ -168,6 +169,7 @@ class UpgradingQueue:
         logging.debug(f"Current magnet: {item.get('filled_by_magnet', 'Unknown')}")
         logging.debug(f"New title: {new_title}")
         logging.debug(f"New magnet: {new_magnet}")
+        logging.debug(f"Uncached content handling: {uncached_handling}")
 
         if not hash_value:
             logging.warning(f"Failed to extract hash from magnet link for {item['title']} (ID: {identifier})")
@@ -178,8 +180,12 @@ class UpgradingQueue:
             cache_status = is_cached_on_rd(hash_value)
             logging.debug(f"Cache status for {hash_value}: {cache_status}")
 
-            if hash_value in cache_status and cache_status[hash_value]:
-                logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is cached on Real-Debrid. Adding...")
+            is_cached = hash_value in cache_status and cache_status[hash_value]
+            
+            if is_cached or uncached_handling in ['Hybrid', 'Full']:
+                if not is_cached:
+                    logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is not cached, but {uncached_handling} mode allows uncached content.")
+                
                 try:
                     add_to_real_debrid(new_magnet)
                 except RealDebridUnavailableError:
@@ -202,11 +208,10 @@ class UpgradingQueue:
                 logging.info(f"New title: {new_title}")
                 logging.info(f"Old magnet: {old_magnet}")
                 logging.info(f"New magnet: {new_magnet}")
-                logging.debug("Rationale: New release is higher-ranked and successfully added to Real-Debrid.")
+                logging.debug(f"Rationale: New release is higher-ranked and {'cached' if is_cached else 'uncached but allowed'} on Real-Debrid.")
             else:
-                logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is not cached on Real-Debrid. Adding to not wanted.")
-                add_to_not_wanted(new_magnet)
-                logging.debug("Rationale: Potential upgrade is not cached on Real-Debrid, cannot use for instant streaming.")
+                logging.info(f"Upgrade for {item['title']} (ID: {identifier}) is not cached on Real-Debrid and uncached content is not allowed. Skipping upgrade.")
+                logging.debug("Rationale: Potential upgrade is not cached on Real-Debrid and uncached content handling is set to 'None'.")
         except Exception as e:
             logging.error(f"Error checking cache status: {str(e)}")
             logging.debug(f"Rationale: Failed to check Real-Debrid cache status due to error: {str(e)}")

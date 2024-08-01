@@ -87,6 +87,18 @@ def get_all_settings():
         all_settings.extend(settings_list)
 
     return all_settings
+    
+def get_scraping_settings():
+    all_settings = get_all_settings()
+    scraping_settings = {}
+    
+    for section, key, label in all_settings:
+        if section == 'Scraping':
+            # Get the current value from the config file
+            value = get_setting('Scraping', key)
+            scraping_settings[key] = (label, value)
+    
+    return scraping_settings
 
 def ensure_settings_file():
     config = load_config()
@@ -146,17 +158,17 @@ class SettingsEditor:
 
     def show_additional_settings(self, button):
         self.show_settings("Additional Settings", [
-            # Disabling Zilean for now
-            #('Zilean', 'url', 'Zilean URL'),
-            #('Zilean', 'enabled', 'Zilean enabled? True/False'),
-            ('Knightcrawler', 'url', 'Knightcrawler URL'),
-            ('Knightcrawler', 'enabled', 'Knightcrawler enabled? (True/False)'),
+            ('Zilean', 'url', 'Zilean URL'),
+            ('Zilean', 'enabled', 'Zilean enabled? True/False'),
+            #('Knightcrawler', 'url', 'Knightcrawler URL'),
+            #('Knightcrawler', 'enabled', 'Knightcrawler enabled? (True/False)'),
             ('Comet', 'url', 'Comet URL'),
             ('Comet', 'enabled', 'Comet enabled? True/False'),
             ('MDBList', 'urls', 'MDB List URLs'),
             ('Collected Content Source', 'enabled', 'Enable collected content source? True/False'),
             ('TMDB', 'api_key', 'TMDB API Key'),
-            ('Queue', 'wake_limit', 'Enter number of times to wake items before blacklisting')
+            ('Queue', 'wake_limit', 'Enter number of times to wake items before blacklisting'),
+            ('Scraping', 'uncached_content_handling', 'Uncached content handling (None/Hybrid/Full)')
         ])
 
     def show_scraping_settings(self, button):

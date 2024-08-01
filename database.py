@@ -479,7 +479,7 @@ def remove_from_media_items(item_id):
         conn.close()
 
 def get_title_by_imdb_id(imdb_id: str) -> str:
-    logging.info(f"Looking up title for IMDb ID: {imdb_id}")
+    logging.debug(f"Looking up title for IMDb ID: {imdb_id}")
     conn = get_db_connection()
     cursor = conn.execute('''
         SELECT title FROM media_items WHERE imdb_id = ?

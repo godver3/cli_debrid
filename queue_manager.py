@@ -252,6 +252,10 @@ class QueueManager:
                         self.move_to_sleeping(updated_item)
                         return
 
+                    uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None')
+                    first_uncached_added = False
+                    cached_added = False
+
                     for result in scrape_results:
                         title = result.get('title', '')
                         magnet = result.get('magnet', '')
@@ -259,10 +263,16 @@ class QueueManager:
                         if hash_value:
                             cache_status = is_cached_on_rd(hash_value)
                             logging.debug(f"Cache status for {hash_value}: {cache_status}")
-                            if hash_value in cache_status and cache_status[hash_value]:
-                                logging.info(f"Item {updated_item['title']} is cached on Real-Debrid. Adding...")
+                            is_cached = hash_value in cache_status and cache_status[hash_value]
+
+                            if is_cached or (uncached_handling != 'None' and not first_uncached_added):
                                 try:
                                     add_to_real_debrid(magnet)
+                                    if is_cached:
+                                        cached_added = True
+                                    else:
+                                        first_uncached_added = True
+                                        logging.info(f"Added uncached content for {updated_item['title']}")
                                 except RealDebridUnavailableError:
                                     logging.error(f"Real-Debrid service is unavailable. Moving item to Sleeping to retry later.")
                                     self.move_to_sleeping(updated_item)
@@ -270,36 +280,30 @@ class QueueManager:
                                 except Exception as e:
                                     logging.error(f"Error adding magnet to Real-Debrid: {str(e)}")
                                     add_to_not_wanted(magnet)
-                                    continue  # Try next result
+                                    continue
 
-                                # If we reach here, addition was successful
                                 update_media_item_state(updated_item['id'], 'Checking', filled_by_title=title, filled_by_magnet=magnet)
                                 checked_item = get_media_item_by_id(updated_item['id'])
                                 if checked_item:
                                     self.queues["Checking"].append(checked_item)
-                                    
-                                    # Add the item to the UpgradingQueue
                                     self.upgrading_queue.add_item(checked_item)
                                     logging.info(f"Added item {checked_item['title']} to UpgradingQueue in QueueManager")
-                                    logging.info(f"Current UpgradingQueue size in QueueManager: {len(self.upgrading_queue.get_queue_contents())}")
-                                    
                                     logging.debug(f"Item {checked_item['title']} was a multi-pack result: {result.get('is_multi_pack', False)}")
                                     if result.get('is_multi_pack', False):
-                                        # Process multi-pack for all matching episodes
                                         self.process_multi_pack(checked_item, title, magnet, result.get('season_pack', ''))
                                 else:
                                     logging.error(f"Failed to retrieve checked item for ID: {updated_item['id']}")
-                                return  # Successfully added, exit the function
 
+                                if uncached_handling == 'None' or (uncached_handling == 'Hybrid' and cached_added):
+                                    return
                             else:
-                                logging.info(f"Item {updated_item['title']} is not cached on Real-Debrid. Moving to next result.")
-                                add_to_not_wanted(magnet)
+                                logging.info(f"Skipping uncached content for {updated_item['title']}")
                         else:
                             logging.warning(f"Failed to extract hash from magnet link for {updated_item['title']}")
 
-                    # If we've exhausted all results without success, move to sleeping
-                    logging.info(f"No successful results found for {updated_item['title']}. Moving to Sleeping.")
-                    self.move_to_sleeping(updated_item)
+                    if not (cached_added or first_uncached_added):
+                        logging.info(f"No suitable results found for {updated_item['title']}. Moving to Sleeping.")
+                        self.move_to_sleeping(updated_item)
                 else:
                     logging.error(f"No scrape results found for {updated_item['title']}.")
                     self.move_to_sleeping(updated_item)

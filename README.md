@@ -198,6 +198,9 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
    docker attach cli_debrid
    ```
 
+Ctrl-P then Ctrl-Q to detach from the container rather than exiting the script.
+
+
 5. Access the web interface (note - only accessible when the program has been started):
    Open a web browser and navigate to `http://your-server-ip:5000`
 

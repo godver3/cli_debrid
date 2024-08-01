@@ -11,7 +11,7 @@ from .knightcrawler import scrape_knightcrawler
 from .comet import scrape_comet
 from settings import get_setting
 import time
-from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes
+from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes, get_episode_count_for_seasons, get_all_season_episode_counts
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
@@ -69,7 +69,7 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
                     item['episode_count'] = 1
                     item['runtime'] = 100  # Default value
             
-            elif item['media_type'] == 'tv':
+            elif item['media_type'] == 'episode':
                 show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
                 if show_details:
                     seasons = show_details.get('seasons', [])
@@ -111,7 +111,7 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
             logging.error(f"Error processing item {item['title']}: {str(e)}")
             # Add item with default values in case of error
             item['episode_count'] = 1
-            item['runtime'] = 30 if item['media_type'] == 'tv' else 100
+            item['runtime'] = 30 if item['media_type'] == 'episode' else 100
             processed_items.append(item)
 
     return processed_items
@@ -145,16 +145,22 @@ def detect_season_pack(title: str) -> str:
         r'\bSeason(?:\s+\d{1,2}){2,}\b',  # Matches "Season 1 2 3 4 5" (at least two numbers)
         r'\b(?:Seasons|Season)\s+(\d{1,2})\s*-?\s*(\d{1,2})\b',  # Matches "Seasons 1-6", "Season 1-6"
     ]
-
+    
     # Check for single episode pattern first
-    episode_pattern = r'\bS\d{1,2}E\d{1,2}\b'
-    if re.search(episode_pattern, title, re.IGNORECASE):
+    episode_pattern = r'\bS(\d{1,2})E(\d{1,2})(?:-E?(\d{1,2}))?\b'
+    episode_match = re.search(episode_pattern, title, re.IGNORECASE)
+    if episode_match:
+        season = int(episode_match.group(1))
+        start_ep = int(episode_match.group(2))
+        end_ep = int(episode_match.group(3)) if episode_match.group(3) else start_ep
+        if end_ep - start_ep > 5:  # Assume it's a season pack if more than 5 episodes
+            return str(season)
         return 'N/A'
-
+    
     # Check for the specific case mentioned
     if re.search(r'\b(?:Seasons|Season)\s+1-6\b', title, re.IGNORECASE):
         return '1,2,3,4,5,6'
-
+    
     for pattern in season_patterns:
         match = re.search(pattern, title, re.IGNORECASE)
         if match:
@@ -174,18 +180,18 @@ def detect_season_pack(title: str) -> str:
                     return ','.join(str(s) for s in range(start_season, end_season + 1))
                 else:
                     return str(start_season)
-
+    
     # Check for complete series or multiple seasons
     if re.search(r'\b(complete series|all seasons)\b', title, re.IGNORECASE):
         return 'Complete'
-
+    
     # Check for specific ranges like "1-6" in the title
     range_match = re.search(r'\b(\d{1,2})\s*-\s*(\d{1,2})\b', title)
     if range_match:
         start, end = map(int, range_match.groups())
         if 1 <= start < end <= 50:  # Sanity check
             return ','.join(str(s) for s in range(start, end + 1))
-
+    
     # If no clear pattern is found, return 'Unknown'
     return 'Unknown'
 
@@ -220,12 +226,16 @@ def extract_title_and_se(torrent_name: str) -> Tuple[str, int, int]:
     episode = parsed.get('episode')
     return title, season, episode
 
-def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], query: str, query_year: int, query_season: int, query_episode: int, multi: bool) -> Tuple:
+def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], query: str, query_year: int, query_season: int, query_episode: int, multi: bool, content_type: str) -> Tuple:
     torrent_title = result.get('title', '')
     parsed = result.get('parsed_info', {})
     extracted_title = parsed.get('title', torrent_title)
     torrent_year = parsed.get('year')
     torrent_season, torrent_episode = parsed.get('season'), parsed.get('episode')
+
+    # Add debug logging for content type
+    #logging.debug(f"Processing result: {torrent_title}")
+    #logging.debug(f"Content type: {content_type}")
 
     # Get user-defined weights
     resolution_weight = int(get_setting('Scraping', 'resolution_weight', default=3))
@@ -309,6 +319,27 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         filter_score
     )
 
+    # Content type matching score
+    content_type_score = 0
+    if content_type.lower() == 'movie':
+        #logging.debug(f"Applying movie logic for: {torrent_title}")
+        if re.search(r'(s\d{2}|e\d{2})', torrent_title, re.IGNORECASE):
+            content_type_score = -500
+            #logging.debug(f"Penalized TV pattern in movie: {torrent_title}, score: {content_type_score}")
+    elif content_type.lower() == 'episode':
+        #logging.debug(f"Applying TV show logic for: {torrent_title}")
+        if not re.search(r'(s\d{2}|e\d{2})', torrent_title, re.IGNORECASE):
+            content_type_score = -500
+            #logging.debug(f"Penalized non-TV pattern: {torrent_title}, score: {content_type_score}")
+        if re.search(r'\b(19|20)\d{2}\b', torrent_title) and not re.search(r'(season|episode|s\d{2}|e\d{2})', torrent_title, re.IGNORECASE):
+            content_type_score -= 250
+            #logging.debug(f"Additional movie-like penalty: {torrent_title}, total score: {content_type_score}")
+    else:
+        logging.warning(f"Unknown content type: {content_type} for result: {torrent_title}")
+
+    # Add content_type_score to the total score
+    total_score += content_type_score
+
     # Create a score breakdown
     score_breakdown = {
         'similarity_score': weighted_similarity,
@@ -325,6 +356,9 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'total_score': total_score
     }
 
+    # Add content_type_score to the score breakdown
+    score_breakdown['content_type_score'] = content_type_score
+
     # Add the score breakdown to the result
     result['score_breakdown'] = score_breakdown
 
@@ -337,7 +371,15 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         all_results = []
 
         logging.debug(f"Starting scraping for: {title} ({year})")
+        #logging.debug(f"Input content_type: {content_type}")
+        
+        # Ensure content_type is correctly set
+        if content_type.lower() not in ['movie', 'episode']:
+            logging.warning(f"Invalid content_type: {content_type}. Defaulting to 'movie'.")
+            content_type = 'movie'
 
+        
+        
         # Get TMDB ID and runtime once for all results
         overseerr_url = get_setting('Overseerr', 'url')
         overseerr_api_key = get_setting('Overseerr', 'api_key')
@@ -346,7 +388,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Get media info for bitrate calculation
         media_item = {
             'title': title,
-            'media_type': 'movie' if content_type.lower() == 'movie' else 'tv',
+            'media_type': 'movie' if content_type.lower() == 'movie' else 'episode',
             'tmdb_id': tmdb_id
         }
         enhanced_media_items = get_media_info_for_bitrate([media_item])
@@ -356,6 +398,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         else:
             episode_count = 1
             runtime = 100 if content_type.lower() == 'movie' else 30
+
+        # Pre-calculate episode counts for TV shows
+        season_episode_counts = {}
+        if content_type.lower() == 'episode':
+            season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+
 
         logging.debug(f"Retrieved runtime for {title}: {runtime} minutes, Episode count: {episode_count}")
 
@@ -471,6 +519,23 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 logging.debug(f"Filtered out by year: {torrent_title}, year: {result_year}")
                 continue
 
+            # New season-specific filtering for episodes
+            if content_type.lower() == 'episode' and season is not None:
+                season_pack = detect_season_pack(torrent_title)
+                if season_pack == 'N/A':  # Single episode
+                    episode_season = re.search(r'S(\d{2})E\d{2}', torrent_title, re.IGNORECASE)
+                    if episode_season and int(episode_season.group(1)) != season:
+                        logging.debug(f"Filtered out wrong season: {torrent_title}, season: {episode_season.group(1)}, expected: {season}")
+                        continue
+                elif season_pack != 'Unknown' and season_pack != 'Complete':
+                    seasons = [int(s) for s in season_pack.split(',')]
+                    if season not in seasons:
+                        logging.debug(f"Filtered out wrong season pack: {torrent_title}, seasons: {season_pack}, expected: {season}")
+                        continue
+                elif season_pack == 'Unknown':
+                    logging.debug(f"Filtered out unknown season pack: {torrent_title}")
+                    continue
+
             # Apply preferred filters (these don't exclude results, but affect ranking)
             preferred_in_bonus = sum(preferred_filter_bonus for term in preferred_filter_in if term in torrent_title)
             preferred_out_penalty = sum(preferred_filter_bonus for term in preferred_filter_out if term in torrent_title)
@@ -479,14 +544,47 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             result['parsed_info'] = parsed_info
             filtered_results.append(result)
             
-            # Normalize bitrate calculation
-            if content_type.lower() == 'tv':
-                result['size'] = parse_size(result.get('size', 0)) / episode_count
+            original_size_gb = parse_size(result.get('size', 0))
+            
+            if content_type.lower() == 'episode':
+                season_pack = detect_season_pack(result.get('title', ''))
 
-            # Calculate bitrate
-            size_gb = parse_size(result.get('size', 0))
+                if season_pack == 'N/A':  # Single episode
+                    normalized_episode_count = 1
+                    size_gb = original_size_gb
+                elif season_pack == 'Complete':  # Complete series
+                    normalized_episode_count = sum(season_episode_counts.values())
+                    size_gb = original_size_gb / normalized_episode_count
+                elif season_pack != 'Unknown':  # Specific season or range of seasons
+                    seasons = [int(s) for s in season_pack.split(',')]
+                    normalized_episode_count = sum(season_episode_counts.get(s, 0) for s in seasons)
+                    size_gb = original_size_gb / normalized_episode_count
+                else:  # Unknown - default to single season
+                    normalized_episode_count = season_episode_counts.get(season, 1)
+                    size_gb = original_size_gb / normalized_episode_count
+            else:
+                # Movie logic
+                size_gb = original_size_gb
+                normalized_episode_count = 1
+                season_pack = 'N/A'  # Set to N/A for movies
+
             bitrate = calculate_bitrate(size_gb, runtime)
             result['bitrate'] = bitrate
+
+            # Add the one-liner logging here
+            if content_type.lower() == 'episode':
+                logging.debug(f"Result: {result.get('title', 'Unknown')} | "
+                             f"Type: TV Show | "
+                             f"Season Pack: {season_pack} | "
+                             f"Episodes: {normalized_episode_count} | "
+                             f"Total Size: {original_size_gb:.2f} GB | "
+                             f"Size per Episode: {size_gb:.2f} GB | "
+                             f"Estimated Bitrate: {bitrate:.2f} Mbps")
+            else:
+                logging.debug(f"Result: {result.get('title', 'Unknown')} | "
+                             f"Type: Movie | "
+                             f"Total Size: {original_size_gb:.2f} GB | "
+                             f"Estimated Bitrate: {bitrate:.2f} Mbps")
 
             result['parsed_info'] = parsed_info
             filtered_results.append(result)
@@ -516,10 +614,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Sort results
         sorting_start = time.time()
-        
+                    
         def stable_rank_key(x):
-            # First, use the rank_result_key function
-            primary_key = rank_result_key(x, filtered_results, title, year, season, episode, multi)
+            # First, use the rank_result_key function with content_type
+            primary_key = rank_result_key(x, filtered_results, title, year, season, episode, multi, content_type)
             
             # Then, use a tuple of stable secondary keys
             secondary_keys = (
