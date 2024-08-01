@@ -46,6 +46,8 @@ def check_required_settings():
 
     plex_url = get_setting('Plex', 'url')
     plex_token = get_setting('Plex', 'token')
+    plex_movies = get_setting('Plex', 'movie_libraries')
+    plex_shows = get_setting('Plex', 'shows_libraries')
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')
     realdebrid_api_key = get_setting('RealDebrid', 'api_key')
@@ -55,6 +57,8 @@ def check_required_settings():
 
     if not plex_url or not plex_token:
         errors.append("Plex URL or token is missing.")
+    if not plex_movies or not plex_shows:
+        errors.append("No Plex libraries provided.")
     if not overseerr_url or not overseerr_api_key:
         errors.append("Overseerr URL or API key is missing.")
     if not realdebrid_api_key:
