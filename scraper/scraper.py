@@ -277,9 +277,9 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     weighted_bitrate = normalized_bitrate * bitrate_weight
 
     # Existing logic for year, season, and episode matching
-    year_match = 2 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
-    season_match = 1 if query_season == torrent_season else 0
-    episode_match = 1 if query_episode == torrent_episode else 0
+    year_match = 5 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
+    season_match = 5 if query_season == torrent_season else 0
+    episode_match = 5 if query_episode == torrent_episode else 0
 
     # Multi-pack handling
     season_pack = detect_season_pack(torrent_title)
@@ -492,14 +492,53 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             is_hdr = parsed_info.get('hdr', False)
             result_year = parsed_info.get('year')
 
-            # New title similarity filter
+            # Title similarity filter
             parsed_title = parsed_info.get('title', '')
             title_similarity = similarity(parsed_title, title)
-            if title_similarity < 0.8:
-                logging.debug(f"Filtered out by title similarity: {torrent_title}, similarity: {title_similarity:.2f}")
-                continue
 
-            # Apply hard filters
+            # Movie-specific filtering
+            if content_type.lower() == 'movie':
+                if title_similarity < 0.8 or (result_year and result_year != year):
+                    logging.debug(f"Filtered out movie: {torrent_title}, similarity: {title_similarity:.2f}, year: {result_year}")
+                    continue
+
+            # TV show filtering
+            elif content_type.lower() == 'episode' and season is not None:
+                season_pack = detect_season_pack(torrent_title)
+
+                if season_pack == 'N/A':  # Single episode
+                    episode_season = re.search(r'S(\d{2})E\d{2}', torrent_title, re.IGNORECASE)
+                    if episode_season and int(episode_season.group(1)) != season:
+                        logging.debug(f"Filtered out wrong season: {torrent_title}, season: {episode_season.group(1)}, expected: {season}")
+                        continue
+
+                elif season_pack != 'Unknown' and season_pack != 'Complete':
+                    seasons = [int(s) for s in season_pack.split(',')]
+                    if season not in seasons:
+                        logging.debug(f"Filtered out wrong season pack: {torrent_title}, seasons: {season_pack}, expected: {season}")
+                        continue
+
+                elif season_pack == 'Unknown':
+                    logging.debug(f"Filtered out unknown season pack: {torrent_title}")
+                    continue
+
+                if multi:
+                    # Multi-episode search
+                    if season_pack == 'N/A' or (season_pack != 'Complete' and str(season) not in season_pack.split(',')):
+                        logging.debug(f"Filtered out for multi-episode search: {torrent_title}, season pack: {season_pack}")
+                        continue
+                else:
+                    # Single episode search
+                    if season_pack != 'N/A':
+                        logging.debug(f"Filtered out season pack for single episode search: {torrent_title}")
+                        continue
+                    
+                    expected_pattern = f'S{season:02d}E{episode:02d}'
+                    if expected_pattern not in torrent_title.upper():
+                        logging.debug(f"Filtered out non-matching episode: {torrent_title}, expected: {expected_pattern}")
+                        continue
+
+            # Apply common filters
             if any(regex.search(torrent_title) for regex in filter_in_regex):
                 logging.debug(f"Filtered out by filter_in: {torrent_title}")
                 continue
@@ -515,26 +554,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             if not enable_hdr and is_hdr:
                 logging.debug(f"Filtered out by HDR: {torrent_title}")
                 continue
-            if year and result_year and year != result_year:
-                logging.debug(f"Filtered out by year: {torrent_title}, year: {result_year}")
-                continue
-
-            # New season-specific filtering for episodes
-            if content_type.lower() == 'episode' and season is not None:
-                season_pack = detect_season_pack(torrent_title)
-                if season_pack == 'N/A':  # Single episode
-                    episode_season = re.search(r'S(\d{2})E\d{2}', torrent_title, re.IGNORECASE)
-                    if episode_season and int(episode_season.group(1)) != season:
-                        logging.debug(f"Filtered out wrong season: {torrent_title}, season: {episode_season.group(1)}, expected: {season}")
-                        continue
-                elif season_pack != 'Unknown' and season_pack != 'Complete':
-                    seasons = [int(s) for s in season_pack.split(',')]
-                    if season not in seasons:
-                        logging.debug(f"Filtered out wrong season pack: {torrent_title}, seasons: {season_pack}, expected: {season}")
-                        continue
-                elif season_pack == 'Unknown':
-                    logging.debug(f"Filtered out unknown season pack: {torrent_title}")
-                    continue
 
             # Apply preferred filters (these don't exclude results, but affect ranking)
             preferred_in_bonus = sum(preferred_filter_bonus for term in preferred_filter_in if term in torrent_title)
