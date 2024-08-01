@@ -85,6 +85,8 @@ def prompt_for_required_settings():
     required_settings = [
         ('Plex', 'url', 'Enter Plex URL: '),
         ('Plex', 'token', 'Enter Plex Token: '),
+        ('Plex', 'movie_libraries', 'List of movie libraries, separated by commas'),
+        ('Plex', 'shows_libraries', 'List of shows libraries, separated by commas'),
         ('Overseerr', 'url', 'Enter Overseerr URL: '),
         ('Overseerr', 'api_key', 'Enter Overseerr API Key: '),
         ('RealDebrid', 'api_key', 'Enter Real-Debrid API Key: '),
