@@ -7,6 +7,7 @@ from scraper.scraper import scrape
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, RealDebridUnavailableError, extract_hash_from_magnet
 from database import get_media_item_status
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted
+from settings import get_setting
 
 class UpgradingQueue:
     def __init__(self):
