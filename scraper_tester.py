@@ -2,7 +2,7 @@ import urwid, os
 import configparser
 from typing import List, Dict, Any, Optional
 from scraper.scraper import scrape, rank_result_key, parse_size, calculate_bitrate
-from settings import set_setting, get_all_settings
+from settings import set_setting, get_scraping_settings
 from utilities.manual_scrape import imdb_id_to_title_and_year, run_manual_scrape
 import logging
 
@@ -18,7 +18,8 @@ class ScraperTester:
         self.tmdb_id = tmdb_id
         self.title = title
         self.year = year
-        self.movie_or_episode = movie_or_episode
+        self.movie_or_episode = 'movie' if movie_or_episode.lower() == 'movie' else 'episode'
+        logging.debug(f"ScraperTester initialized with movie_or_episode: {self.movie_or_episode}")
         self.season = season
         self.episode = episode
         self.multi = multi
@@ -48,22 +49,22 @@ class ScraperTester:
     def settings_view(self):
         widgets = [urwid.Text(('header', "Scraping Settings")), urwid.Divider()]
 
-        scraping_settings = get_all_settings('Scraping')
+        scraping_settings = get_scraping_settings()
 
-        for key, value in scraping_settings.items():
+        for key, (label, value) in scraping_settings.items():
             if key.startswith('enable_'):
-                if isinstance(value, str):
-                    state = value.lower() == 'true'
-                elif isinstance(value, bool):
+                if isinstance(value, bool):
                     state = value
+                elif isinstance(value, str):
+                    state = value.lower() == 'true'
                 else:
                     state = False
-                checkbox = urwid.CheckBox(key, state=state)
+                checkbox = urwid.CheckBox(label, state=state)
                 urwid.connect_signal(checkbox, 'change', self.on_checkbox_change, user_args=['Scraping', key])
                 self.settings_widgets[('Scraping', key)] = checkbox
                 widgets.append(urwid.AttrMap(checkbox, None, focus_map='reversed'))
             else:
-                edit = urwid.Edit(f"{key}: ", str(value))
+                edit = urwid.Edit(f"{label}: ", str(value))
                 urwid.connect_signal(edit, 'change', self.on_setting_change, user_args=['Scraping', key])
                 self.settings_widgets[('Scraping', key)] = edit
                 widgets.append(urwid.AttrMap(edit, None, focus_map='reversed'))
@@ -71,8 +72,7 @@ class ScraperTester:
         widgets.append(urwid.Divider())
         widgets.append(urwid.AttrMap(urwid.Button("Refresh Results", on_press=self.refresh_results), None, focus_map='reversed'))
 
-        return urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
-
+        return urwid.ListBox(urwid.SimpleFocusListWalker(widgets))        
     def results_view(self):
         header = urwid.AttrMap(urwid.Columns([
             ('weight', 40, urwid.Text("Name")),
@@ -117,11 +117,15 @@ class ScraperTester:
         self.config.read(CONFIG_FILE)  # Reload the config
 
     def refresh_results(self, button):
+        logging.debug(f"Refreshing results with movie_or_episode: {self.movie_or_episode}")
         self.results = scrape(self.imdb_id, self.tmdb_id, self.title, self.year, self.movie_or_episode, self.season, self.episode, self.multi)
+
+        # Determine content type
+        content_type = 'movie' if self.movie_or_episode.lower() == 'movie' else 'episode'
 
         # Calculate scores for each result
         for result in self.results:
-            rank_result_key(result, self.results, self.title, self.year, self.season, self.episode, self.multi)
+            rank_result_key(result, self.results, self.title, self.year, self.season, self.episode, self.multi, self.movie_or_episode)
             # Ensure bitrate is calculated and stored in the result
             if 'bitrate' not in result:
                 size_gb = parse_size(result.get('size', 0))
@@ -207,14 +211,14 @@ def scraper_tester(imdb_id: str, tmdb_id: str, title: str, year: int, movie_or_e
 
 def run_tester():
     search_term = input("Enter search term (you can include year, season, and/or episode): ")
-    
+
     # Use the run_manual_scrape function to get the details
     details = run_manual_scrape(search_term, return_details=True)
-    
+
     if not details:
         print("Search cancelled or no results found.")
         return
-    
+
     imdb_id = details['imdb_id']
     tmdb_id = details['tmdb_id']
     title = details['title']
@@ -222,8 +226,11 @@ def run_tester():
     movie_or_episode = details['movie_or_episode']
     season = int(details['season']) if details['season'] else None
     episode = int(details['episode']) if details['episode'] else None
-    multi = False  # We can keep this as False by default, or add a way to specify it in the search term if needed
-    
+    multi = details['multi'].lower() == 'true'  # Convert the 'multi' string to a boolean
+
+    logging.debug(f"movie_or_episode set to: {movie_or_episode}")
+    logging.debug(f"multi set to: {multi}")
+
     os.system('clear')
     scraper_tester(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi)
 

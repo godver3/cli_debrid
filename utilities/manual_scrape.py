@@ -79,21 +79,33 @@ def run_manual_scrape(search_term=None, return_details=False):
         tmdb_id = str(details.get('id', ''))
         title = details.get('title') if result['mediaType'] == 'movie' else details.get('name', '')
         year = details.get('releaseDate', '')[:4] if result['mediaType'] == 'movie' else details.get('firstAirDate', '')[:4]
-        movie_or_episode = 'movie' if result['mediaType'] == 'movie' else 'episode'
-        
-        if movie_or_episode == 'episode':
+
+        if result['mediaType'] == 'movie':
+            movie_or_episode = 'movie'
+        else:
+            movie_or_episode = 'episode'
+
+        if movie_or_episode == 'movie':
+            season = None
+            episode = None
+            multi = 'false'
+        elif movie_or_episode == 'episode':
             if not season:
                 season = input("Enter season number: ") or '1'
             if season and not episode:
                 episode = input("Enter episode number: ") or '1'
-
-        multi = 'false'
+            multi_choice = input("Multi-episode wanted? (y/n): ").lower()
+            multi = 'true' if multi_choice in ['y', 'm'] else 'false'
 
         print(f"\nSelected: {title} ({year})")
-        if season:
-            print(f"Season: {season}")
-        if episode:
-            print(f"Episode: {episode}")
+        print(f"Media Type: {movie_or_episode}")
+        if movie_or_episode == 'episode':
+            if season:
+                print(f"Season: {season}")
+            if episode:
+                print(f"Episode: {episode}")
+            print(f"Multi-episode: {multi}")
+
         confirm = input("Is this correct? (y/n): ").lower()
         if confirm == 'y':
             if return_details:
@@ -103,8 +115,8 @@ def run_manual_scrape(search_term=None, return_details=False):
                     'title': title,
                     'year': year,
                     'movie_or_episode': movie_or_episode,
-                    'season': season,
-                    'episode': episode,
+                    'season': season if movie_or_episode == 'episode' else None,
+                    'episode': episode if movie_or_episode == 'episode' else None,
                     'multi': multi
                 }
             else:
@@ -189,9 +201,19 @@ def imdb_id_to_title_and_year(imdb_id: str, movie_or_episode: str) -> Tuple[str,
     return "", 0
 
 def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi):
-    season = int(season) if season.strip() else None
-    episode = int(episode) if season is not None and episode.strip() else None
-    year = int(year) if year.strip() else None
+    # Convert season and episode to int if they're not None
+    season = int(season) if season is not None else None
+    episode = int(episode) if episode is not None else None
+    
+    # Convert year to int if it's not None
+    year = int(year) if year is not None else None
+    
+    # Convert multi to boolean
+    multi = multi.lower() == 'true' if isinstance(multi, str) else bool(multi)
+
+    # Log the input parameters for debugging
+    logger.debug(f"Scrape parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, " +
+                 f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}")
     
     # Unpack all returned values, but only use the first one (results)
     scrape_result = scrape(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi)
@@ -242,7 +264,7 @@ def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode
     else:
         logger.error("No item selected.")
         os.system('clear')
-
+        
 def parse_season_episode(search_term: str) -> Tuple[str, str]:
     season_episode_match = re.search(r'\b[Ss](\d+)(?:[Ee](\d+))?\b', search_term)
     if season_episode_match:

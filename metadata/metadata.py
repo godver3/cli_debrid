@@ -382,3 +382,38 @@ def refresh_release_dates():
                 logging.warning(f"Could not fetch details for {item['title']}")
         except Exception as e:
             logging.error(f"Error processing item {item['title']}: {str(e)}")
+
+def get_episode_count_for_seasons(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, seasons: List[int], cookies: requests.cookies.RequestsCookieJar) -> int:
+    total_episodes = 0
+    
+    for season_number in seasons:
+        season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, season_number, cookies)
+        if season_details:
+            total_episodes += len(season_details.get('episodes', []))
+        else:
+            logging.warning(f"Could not fetch details for season {season_number} of show with TMDB ID: {tmdb_id}")
+
+    logging.debug(f"Total episodes for TMDB ID {tmdb_id}, seasons {seasons}: {total_episodes}")
+    return total_episodes
+
+def get_all_season_episode_counts(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: requests.cookies.RequestsCookieJar) -> Dict[int, int]:
+    episode_counts = {}
+    show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+    
+    if not show_details:
+        logging.warning(f"Could not fetch show details for TMDB ID: {tmdb_id}")
+        return episode_counts
+
+    for season in show_details.get('seasons', []):
+        season_number = season.get('seasonNumber')
+        if season_number == 0:
+            continue  # Skip special seasons
+
+        season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, season_number, cookies)
+        if season_details:
+            episode_counts[season_number] = len(season_details.get('episodes', []))
+        else:
+            logging.warning(f"Could not fetch details for season {season_number} of show with TMDB ID: {tmdb_id}")
+
+    logging.debug(f"Episode counts for TMDB ID {tmdb_id}: {episode_counts}")
+    return episode_counts
