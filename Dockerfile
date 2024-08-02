@@ -12,7 +12,8 @@ RUN pip install -r requirements.txt
 
 # Create necessary directories and files
 RUN mkdir -p logs db_content && \
-    touch logs/debug.log logs/info.log logs/queue.log
+    touch logs/debug.log logs/info.log logs/queue.log && \
+    touch config.ini
 
 # Make the entrypoint script executable
 COPY entrypoint.sh /entrypoint.sh
