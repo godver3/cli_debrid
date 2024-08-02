@@ -7,7 +7,7 @@ import logging
 import inspect
 from urllib.parse import urlparse
 
-CONFIG_FILE = './config.ini'
+CONFIG_FILE = './config/config.ini'
 
 def load_config():
     config = configparser.ConfigParser()

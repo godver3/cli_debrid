@@ -4,6 +4,7 @@ import requests
 import configparser
 import inspect
 from settings import SettingsEditor, get_setting, load_config, save_config, CONFIG_FILE, ensure_settings_file, set_setting
+from database import verify_database
 
 # Ensure logs directory exists
 if not os.path.exists('logs'):
@@ -22,12 +23,12 @@ if not os.path.exists('db_content'):
 
 # Ensure settings file exists and populate with default keys
 ensure_settings_file()
+verify_database()
 
 from questionary import select
 from run_program import run_program
 from utilities.debug_commands import debug_commands
 from utilities.manual_scrape import run_manual_scrape
-from database import verify_database
 import logging_config
 from scraper_tester import run_tester
 
@@ -96,7 +97,8 @@ def prompt_for_required_settings():
         ('RealDebrid', 'api_key', 'Enter Real-Debrid API Key: '),
     ]
 
-    print("Welcome to the initial setup! Please enter required settings:")
+    print("Welcome to the initial setup! Please enter to edit required settings:")
+    wait_for_valid_key()  # Waits for a valid key press
     for section, key, prompt in required_settings:
         if not config.has_section(section):
             config.add_section(section)
@@ -174,6 +176,11 @@ def wait_for_valid_key():
             break
 
 def main():
+    # Ensure db_content directory exists
+    if not os.path.exists('db_content'):
+        os.makedirs('db_content')
+        logging.info("Created db_content directory.")
+
     verify_database()
     os.system('clear')
     # Display all settings

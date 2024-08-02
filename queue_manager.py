@@ -29,7 +29,7 @@ class QueueManager:
             cls._instance = super(QueueManager, cls).__new__(cls)
             cls._instance.initialize()
         return cls._instance
-        
+
     def initialize(self):
         self.queues = {
             "Wanted": [],
@@ -37,7 +37,7 @@ class QueueManager:
             "Adding": [],
             "Checking": [],
             "Sleeping": [],
-            "Unreleased": [],  
+            "Unreleased": [],
             "Blacklisted": []
         }
         self.scraping_cap = 5  # Cap for scraping queue
@@ -46,7 +46,6 @@ class QueueManager:
         self.wake_counts = {}
         self.upgrading_queue = UpgradingQueue()
         self.update_all_queues()  # Initialize queues on startup
-
 
     def update_all_queues(self):
         logging.debug("Updating all queues")
