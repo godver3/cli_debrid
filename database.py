@@ -1,3 +1,4 @@
+import os
 from sqlite3 import Row
 import sqlite3
 from typing import Dict, Any, List
@@ -9,7 +10,9 @@ from manual_blacklist import is_blacklisted
 from upgrading_db import add_to_upgrading, remove_from_upgrading, create_upgrading_table
 
 def get_db_connection():
-    conn = sqlite3.connect('db_content/media_items.db')
+    db_path = os.path.join('db_content', 'media_items.db')
+    logging.debug(f"Connecting to database at {db_path}")
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -23,30 +26,36 @@ def row_to_dict(row: Row) -> Dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 def create_tables():
+    logging.info("Creating tables...")
     conn = get_db_connection()
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS media_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            imdb_id TEXT,
-            tmdb_id TEXT,
-            title TEXT,
-            year INTEGER,
-            release_date DATE,
-            state TEXT,
-            type TEXT,
-            episode_title TEXT,
-            season_number INTEGER,
-            episode_number INTEGER,
-            filled_by_title TEXT,
-            filled_by_magnet TEXT,
-            last_updated TIMESTAMP,
-            metadata_updated TIMESTAMP,
-            sleep_cycles INTEGER DEFAULT 0,
-            last_checked TIMESTAMP,
-            scrape_results TEXT,
-            UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number)
-        )
-    ''')
+
+    try:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS media_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                imdb_id TEXT,
+                tmdb_id TEXT,
+                title TEXT,
+                year INTEGER,
+                release_date DATE,
+                state TEXT,
+                type TEXT,
+                episode_title TEXT,
+                season_number INTEGER,
+                episode_number INTEGER,
+                filled_by_title TEXT,
+                filled_by_magnet TEXT,
+                last_updated TIMESTAMP,
+                metadata_updated TIMESTAMP,
+                sleep_cycles INTEGER DEFAULT 0,
+                last_checked TIMESTAMP,
+                scrape_results TEXT,
+                UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number)
+            )
+        ''')
+
+    except Exception as e:
+        logging.error(f"Error creating media_items table: {str(e)}")
     
     # Add new columns if they don't exist
     cursor = conn.cursor()
@@ -385,9 +394,21 @@ def create_database():
 
 # Modify the verify_database function to include verifying the upgrading table
 def verify_database():
+    logging.info("Starting database verification...")
     create_tables()
     create_upgrading_table()
-    logging.info("Database verified and tables created if not exists.")
+    
+    # Verify that the tables were actually created
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='media_items'")
+    if cursor.fetchone():
+        logging.info("media_items table exists.")
+    else:
+        logging.error("media_items table does not exist!")
+    conn.close()
+    
+    logging.info("Database verification complete.")
 
 def get_all_media_items(state=None, media_type=None):
     conn = get_db_connection()

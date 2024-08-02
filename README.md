@@ -177,13 +177,19 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
          - "5000:5000"
        volumes:
          - ${HOME}/cli_debrid/db_content:/app/db_content
-         - ${HOME}/cli_debrid/config.ini:/app/config.ini
+         - ${HOME}/cli_debrid/config:/app/config
          - ${HOME}/cli_debrid/logs:/app/logs
        environment:
          - TZ=America/Edmonton
        restart: unless-stopped
        tty: true
        stdin_open: true
+       command: >
+         sh -c "
+           mkdir -p ${HOME}/cli_debrid &&
+           touch ${HOME}/cli_debrid/config.ini &&
+           exec /entrypoint.sh
+         "
    ```
 
 3. Start the container:
