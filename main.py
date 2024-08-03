@@ -88,17 +88,23 @@ def check_required_settings():
 def prompt_for_required_settings():
     config = load_config()
     required_settings = [
-        ('Plex', 'url', 'Enter Plex URL: '),
+        ('Plex', 'url', 'Enter Plex URL (i.e. 192.168.1.51:32400): '),
         ('Plex', 'token', 'Enter Plex Token: '),
-        ('Plex', 'movie_libraries', 'List of movie libraries, separated by commas'),
-        ('Plex', 'shows_libraries', 'List of shows libraries, separated by commas'),
-        ('Overseerr', 'url', 'Enter Overseerr URL: '),
+        ('Plex', 'movie_libraries', 'List of movie libraries, separated by commas: '),
+        ('Plex', 'shows_libraries', 'List of shows libraries, separated by commas: '),
+        ('Overseerr', 'url', 'Enter Overseerr URL (i.e. 192.168.1.51:5055): '),
         ('Overseerr', 'api_key', 'Enter Overseerr API Key: '),
         ('RealDebrid', 'api_key', 'Enter Real-Debrid API Key: '),
     ]
 
-    print("Welcome to the initial setup! Please enter to edit required settings:")
-    wait_for_valid_key()  # Waits for a valid key press
+    print("Welcome to the initial setup! Press enter to edit required settings:")
+    while True:
+        key_press = input()
+        if key_press == '':
+            break
+        else:
+            os.system('clear')
+            print("Welcome to the initial setup! Press enter to edit required settings:")
     for section, key, prompt in required_settings:
         if not config.has_section(section):
             config.add_section(section)
@@ -166,14 +172,13 @@ def main_menu():
         logging.debug("Returned to main menu.")
 
 def wait_for_valid_key():
-    ignored_keys = {'export LANG=C.UTF-8', 'export LC_ALL=C.UTF-8', 'clear'}
     while True:
-        key_press = input().strip()
-        if key_press in ignored_keys:
-            os.system('clear')
-            print("Press any key for Main Menu...")
-        else:
+        key_press = input()
+        if key_press == '':
             break
+        else:
+            os.system('clear')
+            print("Press Enter to continue to Main Menu...")
 
 def main():
     # Ensure db_content directory exists
@@ -199,8 +204,14 @@ def main():
         logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
         run_program()
     else:
-        print("Press any key for Main Menu...")
-        wait_for_valid_key()  # Waits for a valid key press
+        print("Press Enter to continue to Main Menu...")
+        while True:
+            key_press = input()
+            if key_press == '':
+                break
+            else:
+                os.system('clear')
+                print("Press Enter to continue to Main Menu...")
         main_menu()
 
 if __name__ == "__main__":

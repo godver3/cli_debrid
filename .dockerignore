@@ -60,3 +60,10 @@ logs
 *.json
 update.sh
 db_content
+content_checkers/*backup*
+scraper/debug_scraper.py
+dangling.sh
+imdb_to_tmdb.py
+old_functions.txt
+scraper_framework.py
+upgrading_simulation.py

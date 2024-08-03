@@ -43,7 +43,7 @@ class ScraperTester:
             ])),
             ('weight', 70, self.results_list),
         ])
-        footer = urwid.Text(('footer', "Press 'q' to quit"))
+        #footer = urwid.Text(('footer', "Press 'q' to quit"))
         return urwid.Frame(main_area, footer=footer)
 
     def settings_view(self):
@@ -71,8 +71,13 @@ class ScraperTester:
 
         widgets.append(urwid.Divider())
         widgets.append(urwid.AttrMap(urwid.Button("Refresh Results", on_press=self.refresh_results), None, focus_map='reversed'))
+        widgets.append(urwid.AttrMap(urwid.Button("Quit", on_press=self.quit_program), None, focus_map='reversed'))
 
         return urwid.ListBox(urwid.SimpleFocusListWalker(widgets))        
+
+    def quit_program(self, button):
+        raise urwid.ExitMainLoop()
+
     def results_view(self):
         header = urwid.AttrMap(urwid.Columns([
             ('weight', 40, urwid.Text("Name")),
@@ -138,10 +143,10 @@ class ScraperTester:
         self.main_loop.widget = self.main_view()
 
     def handle_input(self, key):
-        if key in ('q', 'Q'):
-            raise urwid.ExitMainLoop()
+        #if key in ('q', 'Q'):
+            #raise urwid.ExitMainLoop()
             
-        elif key in ('up', 'down', 'enter'):
+        if key in ('up', 'down', 'enter'):
             self.update_score_box()
 
     def create_score_box(self):
