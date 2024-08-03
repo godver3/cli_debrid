@@ -7,6 +7,7 @@ from web_server import start_server, update_stats, app, queue_manager
 from tabulate import tabulate
 from utilities.plex_functions import get_collected_from_plex
 from content_checkers.overseerr import get_wanted_from_overseerr 
+from content_checkers.collected import get_wanted_from_collected
 from metadata.metadata import get_overseerr_show_details, get_overseerr_movie_details, get_release_date, refresh_release_dates, process_metadata
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
