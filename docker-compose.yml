@@ -6,9 +6,9 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ${HOME}/cli_debrid/db_content:/app/db_content
-      - ${HOME}/cli_debrid/config:/app/config
-      - ${HOME}/cli_debrid/logs:/app/logs
+      - ./db_content:/app/db_content
+      - ./config:/app/config
+      - ./logs:/app/logs
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped
