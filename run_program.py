@@ -32,6 +32,7 @@ class ProgramRunner:
             'task_debug_log': 60,  # 1 minute
             'task_refresh_release_dates': 3600,  # 1 hour
             'task_collected_wanted': 86400, # 24 hours
+            'task_trakt_wanted': 900, # 15 minutes
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -47,7 +48,7 @@ class ProgramRunner:
             'task_plex_full_scan',
             'task_overseerr_wanted',
             'task_debug_log',
-            'task_refresh_release_dates'
+            'task_refresh_release_dates',
         }
         
         # Conditionally enable task_mdb_list_wanted
@@ -58,6 +59,11 @@ class ProgramRunner:
         collected_content_source = get_setting('Collected Content Source', 'enabled', '')
         if collected_content_source:
             self.enabled_tasks.add('task_collected_wanted')
+            
+        trakt_enabled = get_setting('Trakt', 'user_watchlist_enabled', '')
+        trakt_urls = get_setting('Trakt', 'trakt_lists', '')
+        if trakt_enabled or trakt_urls:
+            self.enabled_tasks.add('task_trakt_wanted')        
 
 
     def run_initialization(self):
@@ -114,6 +120,9 @@ class ProgramRunner:
 
         if self.should_run_task('task_collected_wanted'):
             task_collected_wanted()
+            
+        if self.should_run_task('task_trakt_wanted'):
+            tast_trakt_wanted()
 
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
@@ -262,6 +271,12 @@ def task_collected_wanted():
         if wanted_content_processed:
             add_wanted_items(wanted_content_processed['episodes'])
 
+def task_trakt_wanted():
+    wanted_content = get_wanted_from_trakt()
+    if wanted_content:
+        wanted_content_processed = process_metadata(wanted_content)
+        if wanted_content_processed:
+            add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
 
 def task_refresh_release_dates():
     refresh_release_dates()

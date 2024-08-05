@@ -5,7 +5,11 @@ import subprocess
 import sys
 import logging
 import inspect
+import time
 from urllib.parse import urlparse
+from trakt import init
+import trakt.core
+import io
 
 CONFIG_FILE = './config/config.ini'
 
@@ -146,30 +150,40 @@ class SettingsEditor:
 
     def show_required_settings(self, button):
         self.show_settings("Required Settings", [
-            ('Plex', 'url', 'Plex URL'),
-            ('Plex', 'token', 'Plex Token'),
-            ('Plex', 'movie_libraries', 'List of movie libraries, separated by commas'),
-            ('Plex', 'shows_libraries', 'List of shows libraries, separated by commas'),
-            ('Overseerr', 'url', 'Overseerr URL'),
-            ('Overseerr', 'api_key', 'Overseerr API Key'),
-            ('RealDebrid', 'api_key', 'Real-Debrid API Key'),
-            ('Torrentio', 'enabled', 'Torrentio enabled? (Must configure at least one scraper in Additional Settings if not Torrentio) True/False')
+            ('Plex', 'url', 'Plex - Plex URL'),
+            ('Plex', 'token', 'Plex - Plex Token'),
+            ('Plex', 'movie_libraries', 'Plex - List of movie libraries, separated by commas'),
+            ('Plex', 'shows_libraries', 'Plex - List of shows libraries, separated by commas'),
+            ('Overseerr', 'url', 'Overseerr - Overseerr URL'),
+            ('Overseerr', 'api_key', 'Overseerr - Overseerr API Key'),
+            ('RealDebrid', 'api_key', 'RealDebrid - Real-Debrid API Key'),
+            ('Torrentio', 'enabled', 'Torrentio - Torrentio enabled? (Must configure at least one scraper in Additional Settings if not Torrentio) True/False')
         ])
 
     def show_additional_settings(self, button):
         self.show_settings("Additional Settings", [
-            ('Zilean', 'url', 'Zilean URL'),
-            ('Zilean', 'enabled', 'Zilean enabled? True/False'),
+            ('Zilean', 'url', 'Zilean - Zilean URL'),
+            ('Zilean', 'enabled', 'Zilean - Zilean enabled? True/False'),
             #('Knightcrawler', 'url', 'Knightcrawler URL'),
             #('Knightcrawler', 'enabled', 'Knightcrawler enabled? (True/False)'),
-            ('Comet', 'url', 'Comet URL'),
-            ('Comet', 'enabled', 'Comet enabled? True/False'),
-            ('MDBList', 'urls', 'MDB List URLs'),
-            ('Collected Content Source', 'enabled', 'Enable collected content source? True/False'),
-            ('TMDB', 'api_key', 'TMDB API Key'),
-            ('Queue', 'wake_limit', 'Enter number of times to wake items before blacklisting'),
-            ('Scraping', 'uncached_content_handling', 'Uncached content handling (None/Hybrid/Full)')
+            ('Comet', 'url', 'Comet - Comet URL'),
+            ('Comet', 'enabled', 'Comet - Comet enabled? True/False'),
+            ('MDBList', 'urls', 'MDBList - MDB List URLs'),
+            ('Collected Content Source', 'enabled', 'Collected - Enable collected content source? True/False'),
+            ('TMDB', 'api_key', 'TMDB - TMDB API Key'),
+            ('Queue', 'wake_limit', 'Queue - Enter number of times to wake items before blacklisting'),
+            ('Scraping', 'uncached_content_handling', 'Scraping - Uncached content handling (None/Hybrid/Full)'),
+            ('Trakt', 'client_id', 'Trakt - Enter Trakt client ID'),
+            ('Trakt', 'client_secret', 'Trakt - Enter Trakt client secret'),
+            ('Trakt', 'user_watchlist_enabled', 'Trakt - Enable your watchlist as a content source? True/False (Requires auth. below)'),
+            ('Trakt', 'trakt_lists', 'Trakt - Add any other Trakt lists as content sources (comma-separated)')
+            #('Trakt', 'oauth_token', 'Trakt - oauth_token - Do not change - set by authorization below'),
+            #('Trakt', 'refresh_token', 'Trakt - refresh_token - Do not change - set by authorization below')
         ])
+        # Add Trakt OAuth button
+        self.main_loop.widget.body.body.insert(-2, urwid.AttrMap(
+            urwid.Button("Authorize Trakt", on_press=self.start_trakt_oauth),
+            None, focus_map='reversed'))
 
     def show_scraping_settings(self, button):
         self.show_settings("Scraping Settings", [
@@ -189,10 +203,51 @@ class SettingsEditor:
         
     def show_debug_settings(self, button):
         self.show_settings("Debug Settings", [
-            ('Debug', 'logging_level', 'Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)'),
-            ('Debug', 'skip_initial_plex_update', 'Skip Plex initial collection scan (True/False)'),
-            ('Debug', 'skip_menu', 'Skip menu? (True/False)')
+            ('Debug', 'logging_level', 'Logging - Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)'),
+            ('Debug', 'skip_initial_plex_update', 'Queue - Skip Plex initial collection scan (True/False)'),
+            ('Debug', 'skip_menu', 'Queue - Skip menu? (True/False)')
         ])
+
+    def start_trakt_oauth(self, button):
+        # Save the current urwid screen
+        saved_screen = self.main_loop.screen
+
+        # Temporarily suspend urwid
+        self.main_loop.screen.stop()
+
+        print("\nStarting Trakt Authorization Process")
+        print("====================================")
+
+        # Get existing client ID and secret
+        client_id = get_setting('Trakt', 'client_id')
+        client_secret = get_setting('Trakt', 'client_secret')
+
+        trakt.core.AUTH_METHOD = trakt.core.DEVICE_AUTH
+        trakt.APPLICATION_ID = client_id
+
+        # Set the CONFIG_PATH to ./config/.pytrakt.json
+        trakt.core.CONFIG_PATH = './config/.pytrakt.json'
+
+        try:
+            # Initialize Trakt
+            trakt.core.OAUTH_CLIENT_ID = client_id
+            trakt.core.OAUTH_CLIENT_SECRET = client_secret
+            logging.debug("Initializing Trakt...")
+            auth = trakt.init(store=True, client_id=client_id, client_secret=client_secret)
+            logging.debug("Trakt initialized successfully.")
+            success_message = "Trakt authorization completed successfully."
+
+        except Exception as e:
+            logging.exception("Error during Trakt authorization")
+            success_message = f"Error during Trakt authorization: {str(e)}"
+
+        print(success_message)
+        print("\nPress Enter to return to the settings menu...")
+        input()
+
+        # Resume urwid
+        self.main_loop.screen = saved_screen
+        self.main_loop.screen.start()
 
     def show_settings(self, title, settings):
         self.edits = {}
