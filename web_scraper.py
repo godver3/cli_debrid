@@ -1,9 +1,10 @@
 import logging
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from settings import get_setting
 import requests
 from scraper.scraper import scrape
 from debrid.real_debrid import extract_hash_from_magnet, add_to_real_debrid
+import re
 
 def search_overseerr(search_term: str) -> List[Dict[str, Any]]:
     overseerr_url = get_setting('Overseerr', 'url')
@@ -34,12 +35,25 @@ def search_overseerr(search_term: str) -> List[Dict[str, Any]]:
         logging.error(f"Error searching Overseerr: {e}")
         return []
 
+def parse_search_term(search_term: str) -> Tuple[str, int, int]:
+    # Match patterns like "S01E01", "s01e01", "1x01", "01x01"
+    match = re.search(r'(?:s|S)?(\d+)(?:e|E|x)(\d+)', search_term)
+    if match:
+        season = int(match.group(1))
+        episode = int(match.group(2))
+        base_title = re.sub(r'(?:s|S)?(\d+)(?:e|E|x)(\d+)', '', search_term).strip()
+        return base_title, season, episode
+    return search_term, None, None
+
 def web_scrape(search_term: str) -> Dict[str, Any]:
     logging.info(f"Starting web scrape for search term: {search_term}")
     
-    search_results = search_overseerr(search_term)
+    base_title, season, episode = parse_search_term(search_term)
+    logging.info(f"Parsed search term: title='{base_title}', season={season}, episode={episode}")
+    
+    search_results = search_overseerr(base_title)
     if not search_results:
-        logging.warning(f"No results found for search term: {search_term}")
+        logging.warning(f"No results found for search term: {base_title}")
         return {"error": "No results found"}
 
     logging.info(f"Found results: {search_results}")
@@ -50,7 +64,9 @@ def web_scrape(search_term: str) -> Dict[str, Any]:
                 "id": result['id'],
                 "title": result.get('title') or result.get('name', ''),
                 "year": result.get('releaseDate', '')[:4] if result.get('mediaType') == 'movie' else result.get('firstAirDate', '')[:4],
-                "media_type": result.get('mediaType', '')
+                "media_type": result.get('mediaType', ''),
+                "season": season,
+                "episode": episode
             }
             for result in search_results
         ]
@@ -75,26 +91,31 @@ def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
         logging.error(f"Error fetching media details: {e}")
         return {}
 
-def process_media_selection(media_id: str, title: str, year: str, media_type: str) -> List[Dict[str, Any]]:
-    logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}")
+def parse_season_episode(search_term: str) -> Tuple[int, int, bool]:
+    # Match patterns like "S01E01", "s01e01", "S01", "s01"
+    match = re.search(r'[Ss](\d+)(?:[Ee](\d+))?', search_term)
+    if match:
+        season = int(match.group(1))
+        episode = int(match.group(2)) if match.group(2) else 1
+        multi = not bool(match.group(2))  # If episode is not specified, set multi to True
+        return season, episode, multi
+    return 1, 1, True  # Default to S01E01 with multi=True if no match
+
+def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int]) -> List[Dict[str, Any]]:
+    logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}")
 
     details = get_media_details(media_id, media_type)
     imdb_id = details.get('externalIds', {}).get('imdbId', '')
     tmdb_id = str(details.get('id', ''))
 
-    season, episode = None, None
-    if media_type == 'tv':
-        # For simplicity, we're setting season and episode to 1
-        # You might want to add logic to handle multiple seasons/episodes
-        season, episode = 1, 1
-
-    multi = 'false'  # Set to 'false' for simplicity
+    scraper_media_type = 'episode' if media_type == 'tv' else 'movie'
+    multi = season is None or episode is None
 
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
-                 f"media_type={media_type}, season={season}, episode={episode}, multi={multi}")
+                 f"media_type={scraper_media_type}, season={season}, episode={episode}, multi={str(multi).lower()}")
 
     # Call the scraper function
-    scrape_results = scrape(imdb_id, tmdb_id, title, int(year), media_type, season, episode, multi)
+    scrape_results = scrape(imdb_id, tmdb_id, title, int(year), scraper_media_type, season, episode, str(multi).lower())
 
     logging.info(f"Scrape results: {scrape_results}")
 

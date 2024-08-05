@@ -365,6 +365,24 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)
     
+def deduplicate_results(results):
+    unique_results = {}
+    for result in results:
+        # Create a unique identifier using the magnet link
+        magnet = result.get('magnet', '')
+        if magnet:
+            unique_id = magnet
+        else:
+            # Fallback to title and size if magnet is not available
+            unique_id = f"{result['title']}_{result['size']}"
+        
+        # If this is a new unique_id, add it to our results
+        # If it's a duplicate, keep the result with more complete information
+        if unique_id not in unique_results or len(result) > len(unique_results[unique_id]):
+            unique_results[unique_id] = result
+    
+    return list(unique_results.values())
+    
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     try:
         start_time = time.time()
@@ -477,6 +495,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         overseerr_api_key = get_setting('Overseerr', 'api_key')
         cookies = get_overseerr_cookies(overseerr_url)
 
+        logging.debug(f"Total results before deduplication: {len(all_results)}")
+        all_results = deduplicate_results(all_results)
+        logging.debug(f"Total results after deduplication: {len(all_results)}")
+
         # Filter results
         filtering_start = time.time()
         filtered_results = []
@@ -561,7 +583,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             result['filter_score'] = preferred_in_bonus - preferred_out_penalty
             result['parsed_info'] = parsed_info
-            filtered_results.append(result)
+            #filtered_results.append(result)
             
             original_size_gb = parse_size(result.get('size', 0))
             
@@ -651,8 +673,13 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         sorted_results = sorted(filtered_results, key=stable_rank_key)
         logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
         
+        # Final deduplication
+        logging.debug(f"Total results before final deduplication: {len(sorted_results)}")
+        final_results = deduplicate_results(sorted_results)
+        logging.debug(f"Total results after final deduplication: {len(final_results)}")
+        
         logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
-        return sorted_results
+        return final_results
 
     except Exception as e:
         logging.error(f"Unexpected error in scrape function for {title} ({year}): {str(e)}", exc_info=True)

@@ -33,7 +33,7 @@
                             <td>{{ item.year }}</td>
                             <td>{{ item.media_type }}</td>
                             <td>
-                                <form action="{{ url_for('scraper') }}" method="post">
+                                <form action="{{ url_for('select_media') }}" method="post">
                                     <input type="hidden" name="media_id" value="{{ item.id }}">
                                     <input type="hidden" name="title" value="{{ item.title }}">
                                     <input type="hidden" name="year" value="{{ item.year }}">
@@ -53,20 +53,19 @@
                         <tr>
                             <th>Name</th>
                             <th>Size</th>
-                            <th>Source</th>
+                            <th>Seeders</th>
                             <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for torrent in torrent_results %}
                         <tr>
-                            <td>{{ torrent.title }}</td>
+                            <td>{{ torrent.name }}</td>
                             <td>{{ torrent.size }}</td>
-                            <td>{{ torrent.source }}</td>
+                            <td>{{ torrent.seeders }}</td>
                             <td>
-                                <form action="{{ url_for('scraper') }}" method="post">
+                                <form action="{{ url_for('add_torrent') }}" method="post">
                                     <input type="hidden" name="torrent_index" value="{{ loop.index0 }}">
-                                    <input type="hidden" name="magnet_link" value="{{ torrent.magnet }}">
                                     <button type="submit">Add to Real-Debrid</button>
                                 </form>
                             </td>

@@ -116,11 +116,144 @@ function refreshCurrentPage() {
     }
 }
 
+function searchMedia(event) {
+    event.preventDefault();
+    const searchTerm = document.querySelector('input[name="search_term"]').value;
+    fetch('/scraper', {  // Changed from '/search' to '/scraper'
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `search_term=${encodeURIComponent(searchTerm)}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            displaySearchResults(data.results);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayError('An error occurred while searching.');
+    });
+}
+
+function selectMedia(mediaId, title, year, mediaType, season, episode) {
+    let formData = new FormData();
+    formData.append('media_id', mediaId);
+    formData.append('title', title);
+    formData.append('year', year);
+    formData.append('media_type', mediaType);
+    if (season !== null) formData.append('season', season);
+    if (episode !== null) formData.append('episode', episode);
+
+    fetch('/select_media', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            displayTorrentResults(data.torrent_results, title, year);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayError('An error occurred while selecting media.');
+    });
+}
+
+function addToRealDebrid(magnetLink) {
+    fetch('/add_to_real_debrid', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `magnet_link=${encodeURIComponent(magnetLink)}`
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            displaySuccess(data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayError('An error occurred while adding to Real-Debrid.');
+    });
+}
+
+function displayError(message) {
+    const resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = `<p style="color: red;">${message}</p>`;
+}
+
+function displaySuccess(message) {
+    const resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = `<p style="color: green;">${message}</p>`;
+}
+
+function displaySearchResults(results) {
+    const resultsDiv = document.getElementById('results');
+    let html = '<h3>Search Results</h3><table border="1"><thead><tr><th>Title</th><th>Year</th><th>Type</th><th>Action</th></tr></thead><tbody>';
+    for (let item of results) {
+        html += `
+            <tr>
+                <td>${item.title}</td>
+                <td>${item.year}</td>
+                <td>${item.media_type}</td>
+                <td>
+                    <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'})">Select</button>
+                </td>
+            </tr>
+        `;
+    }
+    html += '</tbody></table>';
+    resultsDiv.innerHTML = html;
+}
+
+function displayTorrentResults(results, title, year) {
+    const resultsDiv = document.getElementById('results');
+    let html = `<h3>Torrent Results for ${title} (${year})</h3><table border="1"><thead><tr><th>Name</th><th>Size</th><th>Source</th><th>Action</th></tr></thead><tbody>`;
+    for (let torrent of results) {
+        html += `
+            <tr>
+                <td>${torrent.title}</td>
+                <td>${torrent.size}</td>
+                <td>${torrent.source}</td>
+                <td>
+                    <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button>
+                </td>
+            </tr>
+        `;
+    }
+    html += '</tbody></table>';
+    resultsDiv.innerHTML = html;
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     loadDarkModePreference();
     
     // Set up auto-refresh
     setInterval(refreshCurrentPage, 5000);  // Refresh every 5 seconds
+
+
+    // Add event listener for search form
+    const searchForm = document.getElementById('search-form');
+    if (searchForm) {
+        searchForm.addEventListener('submit', searchMedia);
+    }
 
     // Initial refresh
     refreshCurrentPage();

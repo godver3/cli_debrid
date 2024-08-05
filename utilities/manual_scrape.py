@@ -200,64 +200,90 @@ def imdb_id_to_title_and_year(imdb_id: str, movie_or_episode: str) -> Tuple[str,
 
     return "", 0
 
+import logging
+from collections import Counter
+
 def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi):
-    # Convert season and episode to int if they're not None
+    logger = logging.getLogger(__name__)
+    
+    # Convert input parameters
     season = int(season) if season is not None else None
     episode = int(episode) if episode is not None else None
-    
-    # Convert year to int if it's not None
     year = int(year) if year is not None else None
-    
-    # Convert multi to boolean
     multi = multi.lower() == 'true' if isinstance(multi, str) else bool(multi)
 
-    # Log the input parameters for debugging
-    logger.debug(f"Scrape parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, " +
+    logger.debug(f"Scrape parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
                  f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}")
-    
-    # Unpack all returned values, but only use the first one (results)
+
+    # Call the scrape function
     scrape_result = scrape(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi)
+    
+    # Log the type and structure of scrape_result
     logger.debug(f"Type of scrape_result: {type(scrape_result)}")
-    logger.debug(f"Content of scrape_result: {scrape_result}")
-    
     if isinstance(scrape_result, tuple):
-        results = scrape_result[0]
-    else:
+        logger.debug(f"Length of scrape_result tuple: {len(scrape_result)}")
+    
+    # Ensure we're using the deduplicated results
+    if isinstance(scrape_result, tuple) and len(scrape_result) > 1:
+        results = scrape_result[1]  # Use the second element which should be the deduplicated results
+        logger.debug("Using the second element of the tuple as deduplicated results")
+    elif isinstance(scrape_result, list):
         results = scrape_result
-    
-    logger.debug(f"Type of results: {type(results)}")
-    logger.debug(f"Content of results: {results}")
-    
-    if not results:
-        logger.error("No results found.")
+        logger.debug("scrape_result is a list, using it directly")
+    else:
+        logger.error(f"Unexpected scrape_result format: {type(scrape_result)}")
         return
-    
-    if not isinstance(results, list):
-        logger.error(f"Unexpected results format. Expected list, got {type(results)}")
-        return
-    
+
+    logger.debug(f"Number of results received from scrape: {len(results)}")
+
+    # Log details about potential duplicates
+    title_counter = Counter(result.get('title') for result in results if isinstance(result, dict))
+    logger.debug("Potential duplicates based on title:")
+    for title, count in title_counter.items():
+        if count > 1:
+            logger.debug(f"  '{title}': {count} occurrences")
+
+    magnet_counter = Counter(result.get('magnet') for result in results if isinstance(result, dict) and result.get('magnet'))
+    logger.debug("Potential duplicates based on magnet link:")
+    for magnet, count in magnet_counter.items():
+        if count > 1:
+            logger.debug(f"  '{magnet[:50]}...': {count} occurrences")
+
     processed_results = []
-    for result in results:
+    for index, result in enumerate(results):
         if isinstance(result, dict):
             magnet_link = result.get('magnet')
             if magnet_link:
                 result['hash'] = extract_hash_from_magnet(magnet_link)
                 processed_results.append(result)
+                logger.debug(f"Processed result {index}: title='{result.get('title')}', "
+                             f"size='{result.get('size')}', magnet='{magnet_link[:50]}...'")
+            else:
+                logger.debug(f"Skipped result {index} due to missing magnet link")
         elif isinstance(result, str):
-            logger.warning(f"Result is a string: {result}")
+            logger.warning(f"Result {index} is a string: {result}")
         else:
-            logger.warning(f"Unexpected result format: {type(result)}")
-    
+            logger.warning(f"Unexpected result format for index {index}: {type(result)}")
+
+    logger.debug(f"Number of processed results: {len(processed_results)}")
+
     if not processed_results:
         logger.error("No valid results found after processing.")
         return
-    
+
+    # Log details about the results being passed to display_results
+    logger.debug("Results being passed to display_results:")
+    for index, result in enumerate(processed_results):
+        logger.debug(f"  Result {index}: title='{result.get('title')}', "
+                     f"size='{result.get('size')}', magnet='{result.get('magnet')[:50]}...'")
+
     selected_item = display_results(processed_results)
     if selected_item:
+        logger.debug(f"Selected item: title='{selected_item.get('title')}', "
+                     f"size='{selected_item.get('size')}', magnet='{selected_item.get('magnet')[:50]}...'")
         magnet_link = selected_item.get('magnet')
         if magnet_link:
             add_to_real_debrid(magnet_link)
-            #sleep(2)
             os.system('clear')
         else:
             logger.error("No magnet link found for the selected item.")
