@@ -13,6 +13,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from content_checkers.overseerr import get_wanted_from_overseerr#, map_collected_media_to_wanted
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.collected import get_wanted_from_collected
+from content_checkers.trakt import get_wanted_from_trakt
 import logging
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, manage_manual_blacklist
 from utilities.manual_scrape import imdb_id_to_title_and_year
@@ -318,6 +319,7 @@ def debug_commands():
                 Choice("Get and Add All Wanted from Overseerr", "get_all_wanted"),
                 Choice("Get and Add All Wanted from MDB List", "pull_mdblist"),
                 Choice("Get and Add All Wanted from Collected", "get_wanted_collected"),
+                Choice("Get and Add All Wanted from Trakt", "get_trakt"),
                 Choice("View Database Content", "view_db"),
                 Choice("Search Database", "search_db"),
                 Choice("Delete Database Items", "delete_db"),  # New option
@@ -355,6 +357,12 @@ def debug_commands():
                 wanted_content_processed = process_metadata(wanted_content)
                 if wanted_content_processed:
                     add_wanted_items(wanted_content_processed['episodes'])
+        elif action == 'get_trakt':
+            wanted_content = get_wanted_from_trakt()
+            if wanted_content:
+                wanted_content_processed = process_metadata(wanted_content)
+                if wanted_content_processed:
+                    add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
         elif action == 'purge_db':
             purge_db()
         elif action == 'get_all_wanted':
