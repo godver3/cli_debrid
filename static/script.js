@@ -140,7 +140,7 @@ function searchMedia(event) {
     });
 }
 
-function selectMedia(mediaId, title, year, mediaType, season, episode) {
+function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
     let formData = new FormData();
     formData.append('media_id', mediaId);
     formData.append('title', title);
@@ -148,6 +148,7 @@ function selectMedia(mediaId, title, year, mediaType, season, episode) {
     formData.append('media_type', mediaType);
     if (season !== null) formData.append('season', season);
     if (episode !== null) formData.append('episode', episode);
+    formData.append('multi', multi);
 
     fetch('/select_media', {
         method: 'POST',
@@ -214,7 +215,7 @@ function displaySearchResults(results) {
                 <td>${item.year}</td>
                 <td>${item.media_type}</td>
                 <td>
-                    <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'})">Select</button>
+                    <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'}, ${item.multi})">Select</button>
                 </td>
             </tr>
         `;

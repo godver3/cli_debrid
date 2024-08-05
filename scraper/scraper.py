@@ -365,22 +365,67 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)
     
-def deduplicate_results(results):
+def trim_magnet(magnet: str) -> str:
+    return magnet.split('&dn=')[0] if '&dn=' in magnet else magnet
+
+def round_size(size: str) -> int:
+    try:
+        # Convert size to float and round to nearest whole number
+        return round(float(size))
+    except ValueError:
+        # If size can't be converted to float, return 0
+        return 0
+
+def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     unique_results = {}
-    for result in results:
-        # Create a unique identifier using the magnet link
+    title_size_map = {}
+
+    for index, result in enumerate(results):
         magnet = result.get('magnet', '')
+        title = result.get('title', '').lower()  # Convert to lowercase for case-insensitive comparison
+        size = result.get('size', '')
+        rounded_size = round_size(size)
+
+        # First check: Use magnet link
         if magnet:
-            unique_id = magnet
+            trimmed_magnet = trim_magnet(magnet)
+            unique_id = trimmed_magnet
+            logging.debug(f"Result {index}: Using trimmed magnet as primary unique ID for '{title}'")
+            logging.debug(f"Trimmed Magnet: {trimmed_magnet[:50]}...")
         else:
-            # Fallback to title and size if magnet is not available
-            unique_id = f"{result['title']}_{result['size']}"
-        
-        # If this is a new unique_id, add it to our results
-        # If it's a duplicate, keep the result with more complete information
-        if unique_id not in unique_results or len(result) > len(unique_results[unique_id]):
+            unique_id = f"{title}_{rounded_size}"
+            logging.debug(f"Result {index}: No magnet link. Using title and rounded size as primary unique ID for '{title}'")
+
+        is_duplicate = False
+
+        # Check for duplicates using magnet or title_size
+        if unique_id in unique_results:
+            is_duplicate = True
+            existing_result = unique_results[unique_id]
+            logging.debug(f"Result {index}: Duplicate found for '{title}' using primary ID")
+        elif f"{title}_{rounded_size}" in title_size_map:
+            is_duplicate = True
+            existing_result = title_size_map[f"{title}_{rounded_size}"]
+            logging.debug(f"Result {index}: Duplicate found for '{title}' using secondary check (title and rounded size)")
+
+        if is_duplicate:
+            logging.debug(f"Existing: '{existing_result.get('title')}', New: '{title}'")
+            if len(result) > len(existing_result):
+                unique_results[unique_id] = result
+                title_size_map[f"{title}_{rounded_size}"] = result
+                logging.debug(f"Result {index}: Replaced with new result (more information)")
+            elif len(result) == len(existing_result) and result.get('seeders', 0) > existing_result.get('seeders', 0):
+                unique_results[unique_id] = result
+                title_size_map[f"{title}_{rounded_size}"] = result
+                logging.debug(f"Result {index}: Replaced with new result (more seeders)")
+            else:
+                logging.debug(f"Result {index}: Kept existing result")
+        else:
             unique_results[unique_id] = result
-    
+            title_size_map[f"{title}_{rounded_size}"] = result
+            logging.debug(f"Result {index}: Added new unique result '{title}'")
+
+    logging.debug(f"Deduplication complete. Original count: {len(results)}, Deduplicated count: {len(unique_results)}")
     return list(unique_results.values())
     
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
@@ -655,7 +700,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Sort results
         sorting_start = time.time()
-                    
+               
+        # Deduplication before sorting
+        deduplicated_results = deduplicate_results(filtered_results)
+        logging.debug(f"Total results after deduplication: {len(deduplicated_results)}")
+               
         def stable_rank_key(x):
             # First, use the rank_result_key function with content_type
             primary_key = rank_result_key(x, filtered_results, title, year, season, episode, multi, content_type)
@@ -670,14 +719,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             
             return (primary_key, secondary_keys)
 
-        sorted_results = sorted(filtered_results, key=stable_rank_key)
+        final_results = sorted(deduplicated_results, key=stable_rank_key)
         logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
-        
-        # Final deduplication
-        logging.debug(f"Total results before final deduplication: {len(sorted_results)}")
-        final_results = deduplicate_results(sorted_results)
-        logging.debug(f"Total results after final deduplication: {len(final_results)}")
-        
+               
+        logging.debug(f"Total results in final output: {len(final_results)}")
         logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
         return final_results
 

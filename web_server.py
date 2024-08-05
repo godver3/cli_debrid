@@ -18,8 +18,8 @@ app.secret_key = '9683650475'
 queue_manager = QueueManager()
 
 # Disable Werkzeug request logging
-#log = logging.getLogger('werkzeug')
-#log.disabled = True
+log = logging.getLogger('werkzeug')
+log.disabled = True
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -72,13 +72,22 @@ def select_media():
         media_type = request.form.get('media_type')
         season = request.form.get('season')
         episode = request.form.get('episode')
+        multi = request.form.get('multi', 'false').lower() == 'true'
 
         season = int(season) if season and season.isdigit() else None
         episode = int(episode) if episode and episode.isdigit() else None
 
-        logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}")
+        # Adjust multi and episode based on season
+        if media_type == 'tv' and season is not None:
+            if episode is None:
+                episode = 1
+                multi = True
+            else:
+                multi = False
 
-        torrent_results = process_media_selection(media_id, title, year, media_type, season, episode)
+        logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}")
+
+        torrent_results = process_media_selection(media_id, title, year, media_type, season, episode, multi)
         
         return jsonify({'torrent_results': torrent_results})
     except Exception as e:
