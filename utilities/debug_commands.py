@@ -13,7 +13,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from content_checkers.overseerr import get_wanted_from_overseerr#, map_collected_media_to_wanted
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.collected import get_wanted_from_collected
-from content_checkers.trakt import get_wanted_from_trakt
+from content_checkers.trakt import get_wanted_from_trakt, ensure_trakt_auth
 import logging
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, manage_manual_blacklist
 from utilities.manual_scrape import imdb_id_to_title_and_year
@@ -327,6 +327,7 @@ def debug_commands():
                 Choice("Manage Blacklisted Items", "manage_blacklist"),
                 Choice("Manage Manual Blacklist", "manage_manual_blacklist"),
                 Choice("Refresh release dates", "refresh_release"),
+                Choice("Check and refresh Trakt auth token", "refresh_trakt"),
                 Choice("Back to Main Menu", "back")
             ]
         ).ask()
@@ -375,6 +376,8 @@ def debug_commands():
             manage_blacklist()
         elif action == 'manage_manual_blacklist':
             manage_manual_blacklist()
+        elif action == 'refresh_trakt':
+            ensure_trakt_auth()
         elif action == 'refresh_release':
             refresh_release_dates()
         elif action == 'back':
