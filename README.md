@@ -184,12 +184,6 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
        restart: unless-stopped
        tty: true
        stdin_open: true
-       command: >
-         sh -c "
-           mkdir -p ${HOME}/cli_debrid &&
-           touch ${HOME}/cli_debrid/config.ini &&
-           exec /entrypoint.sh
-         "
    ```
 
 3. Start the container:
