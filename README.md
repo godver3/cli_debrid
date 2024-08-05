@@ -176,9 +176,9 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
        ports:
          - "5000:5000"
        volumes:
-         - ${HOME}/cli_debrid/db_content:/app/db_content
-         - ${HOME}/cli_debrid/config:/app/config
-         - ${HOME}/cli_debrid/logs:/app/logs
+         - ./cli_debrid/db_content:/app/db_content
+         - ./cli_debrid/config:/app/config
+         - ./cli_debrid/logs:/app/logs
        environment:
          - TZ=America/Edmonton
        restart: unless-stopped
