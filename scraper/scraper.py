@@ -539,7 +539,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         continue
 
             # Apply common filters
-            if any(regex.search(torrent_title) for regex in filter_in_regex):
+            if not any(regex.search(torrent_title) for regex in filter_in_regex) and filter_in_regex:
                 logging.debug(f"Filtered out by filter_in: {torrent_title}")
                 continue
             if any(regex.search(torrent_title) for regex in filter_out_regex):
