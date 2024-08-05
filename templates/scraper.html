@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Scraper{% endblock %}
+
+{% block content %}
+    <div id="scraper-container">
+        <form id="search-form" action="{{ url_for('scraper') }}" method="post">
+            <input type="text" name="search_term" placeholder="Enter search term" required>
+            <button type="submit">Search</button>
+        </form>
+        <div id="results">
+            {% if error %}
+                <p style="color: red;">{{ error }}</p>
+            {% endif %}
+            {% if success_message %}
+                <p style="color: green;">{{ success_message }}</p>
+            {% endif %}
+            {% if results %}
+                <h3>Search Results</h3>
+                <table border="1">
+                    <thead>
+                        <tr>
+                            <th>Title</th>
+                            <th>Year</th>
+                            <th>Type</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in results %}
+                        <tr>
+                            <td>{{ item.title }}</td>
+                            <td>{{ item.year }}</td>
+                            <td>{{ item.media_type }}</td>
+                            <td>
+                                <form action="{{ url_for('scraper') }}" method="post">
+                                    <input type="hidden" name="media_id" value="{{ item.id }}">
+                                    <input type="hidden" name="title" value="{{ item.title }}">
+                                    <input type="hidden" name="year" value="{{ item.year }}">
+                                    <input type="hidden" name="media_type" value="{{ item.media_type }}">
+                                    <button type="submit">Select</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+            {% if torrent_results %}
+                <h3>Torrent Results for {{ selected_media.title }} ({{ selected_media.year }})</h3>
+                <table border="1">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Size</th>
+                            <th>Source</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for torrent in torrent_results %}
+                        <tr>
+                            <td>{{ torrent.title }}</td>
+                            <td>{{ torrent.size }}</td>
+                            <td>{{ torrent.source }}</td>
+                            <td>
+                                <form action="{{ url_for('scraper') }}" method="post">
+                                    <input type="hidden" name="torrent_index" value="{{ loop.index0 }}">
+                                    <input type="hidden" name="magnet_link" value="{{ torrent.magnet }}">
+                                    <button type="submit">Add to Real-Debrid</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

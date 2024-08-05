@@ -56,9 +56,8 @@ function refreshCurrentPage() {
         updateQueueContents();
     } else if (window.location.pathname === '/logs') {
         updateLogs();
-    } else if (window.location.pathname === '/scraper') {
-        // Don't auto-refresh the scraper page
     }
+    // We've removed the else if for '/scraper' as it's now handled in the HTML file
 }
 
 function toggleQueue(element) {

@@ -69,7 +69,10 @@ class ProgramRunner:
     def run_initialization(self):
         logging.info("Running initialization...")
         skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
-        initialize(skip_initial_plex_update)
+        
+        disable_initialization = get_setting('Debug', 'disable_initialization', '')
+        if not(disable_initialization):
+            initialize(skip_initial_plex_update)
         logging.info("Initialization complete")
 
     def should_run_task(self, task_name):
@@ -122,7 +125,7 @@ class ProgramRunner:
             task_collected_wanted()
             
         if self.should_run_task('task_trakt_wanted'):
-            tast_trakt_wanted()
+            task_trakt_wanted()
 
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
