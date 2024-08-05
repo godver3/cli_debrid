@@ -250,6 +250,8 @@ class SettingsEditor:
         self.main_loop.screen = saved_screen
         self.main_loop.screen.start()
 
+
+
     def show_settings(self, title, settings):
         self.edits = {}
         widgets = [urwid.Text(title), urwid.Divider()]

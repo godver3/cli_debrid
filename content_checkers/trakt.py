@@ -5,6 +5,8 @@ import json
 from typing import List, Dict, Any
 from urllib.parse import urlparse, parse_qs
 from settings import get_setting
+import trakt.core
+import time
 
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
@@ -144,7 +146,41 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
     return processed_items
 
+def ensure_trakt_auth():
+    logging.info("Starting Trakt authentication check")
+    
+    # Load config if not already loaded
+    trakt.core.load_config()
+    logging.debug("Trakt configuration loaded")
+    
+    current_time = int(time.time())
+    
+    if trakt.core.OAUTH_EXPIRES_AT is None:
+        logging.warning("OAUTH_EXPIRES_AT is None, token may have never been set")
+    elif current_time > trakt.core.OAUTH_EXPIRES_AT:
+        logging.info("Token has expired, attempting to refresh")
+    else:
+        logging.info("Token is still valid. Expires in %s seconds", trakt.core.OAUTH_EXPIRES_AT - current_time)
+        return trakt.core.OAUTH_TOKEN
+    
+    try:
+        logging.info("Validating/refreshing token")
+        trakt.core._validate_token(trakt.core.CORE)
+        logging.info("Token successfully refreshed. New expiration: %s", trakt.core.OAUTH_EXPIRES_AT)
+        return trakt.core.OAUTH_TOKEN
+    except Exception as e:
+        logging.error("Failed to refresh Trakt token: %s", str(e), exc_info=True)
+        # Handle the error (e.g., prompt for re-authorization)
+        return None
+
 def get_wanted_from_trakt() -> List[Dict[str, Any]]:
+    logging.info("Preparing to make Trakt API call")
+    access_token = ensure_trakt_auth()
+    if access_token is None:
+        logging.error("Failed to obtain a valid Trakt access token")
+        raise Exception("Failed to obtain a valid Trakt access token")
+    logging.info("Successfully obtained valid access token")
+
     all_wanted_items = []
 
     # Fetch watchlist if enabled
