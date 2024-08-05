@@ -150,6 +150,7 @@ def ensure_trakt_auth():
     logging.info("Starting Trakt authentication check")
     
     # Load config if not already loaded
+    trakt.core.CONFIG_PATH = './config/.pytrakt.json'
     trakt.core.load_config()
     logging.debug("Trakt configuration loaded")
     
