@@ -56,6 +56,8 @@ function refreshCurrentPage() {
         updateQueueContents();
     } else if (window.location.pathname === '/logs') {
         updateLogs();
+    } else if (window.location.pathname === '/scraper') {
+        // Don't auto-refresh the scraper page
     }
 }
 

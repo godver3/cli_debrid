@@ -6,6 +6,7 @@ import logging
 import os
 from settings import get_all_settings, set_setting, get_setting
 from collections import OrderedDict
+from utilities.manual_scrape import run_manual_scrape
 
 app = Flask(__name__)
 queue_manager = QueueManager()
@@ -38,6 +39,14 @@ def statistics():
     }
     return render_template('statistics.html', stats=stats)
 
+@app.route('/scraper', methods=['GET', 'POST'])
+def scraper():
+    if request.method == 'POST':
+        search_term = request.form.get('search_term')
+        if search_term:
+            result = run_manual_scrape(search_term, return_details=True)
+            return render_template('scraper.html', result=result)
+    return render_template('scraper.html')
 
 @app.route('/logs')
 def logs():

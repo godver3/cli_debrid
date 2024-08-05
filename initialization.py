@@ -78,7 +78,7 @@ def initialize(skip_initial_plex_update=False):
     trakt_enabled = get_setting('Trakt', 'user_watchlist_enabled', '')
     trakt_urls = get_setting('Trakt', 'trakt_lists', '')
     if trakt_enabled or trakt_urls:
-        trakt_wanted_update()
+        get_wanted_from_trakt()
         
     refresh_release_dates()
 

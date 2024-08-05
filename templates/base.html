@@ -15,15 +15,14 @@
                 <li><a href="{{ url_for('queues') }}">Queues</a></li>
                 <li><a href="{{ url_for('logs') }}">Logs</a></li>
                 <li><a href="{{ url_for('settings') }}">Settings</a></li>
+                <li><a href="{{ url_for('scraper') }}">Scraper</a></li>
             </ul>
         </nav>
         <button id="darkModeToggle" onclick="toggleDarkMode()"><span id="darkModeIcon">🌙</span></button>
     </header>
-
     <main>
         {% block content %}{% endblock %}
     </main>
-
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
