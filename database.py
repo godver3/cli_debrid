@@ -11,7 +11,6 @@ from upgrading_db import add_to_upgrading, remove_from_upgrading, create_upgradi
 
 def get_db_connection():
     db_path = os.path.join('db_content', 'media_items.db')
-    logging.debug(f"Connecting to database at {db_path}")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn

@@ -1,3 +1,4 @@
+import os
 import logging
 import time
 from queue_manager import QueueManager
@@ -23,18 +24,25 @@ class ProgramRunner:
             'wanted': 5,  # 5 seconds
             'scraping': 5,  # 5 seconds
             'adding': 5,  # 5 seconds
-            'checking': 300,  # 5 minutes
+            'checking': 30,  # 5 minutes
             'sleeping': 900,  # 15 minutes
             'upgrading': 300,  # 5 minutes
             'task_plex_full_scan': 3600,  # 1 hour
             'task_overseerr_wanted': 900,  # 15 minutes
             'task_mdb_list_wanted': 900,  # 15 minutes
-            'task_debug_log': 60,  # 1 minute
+            'task_debug_log': 30,  # 30 seconds
             'task_refresh_release_dates': 3600,  # 1 hour
             'task_collected_wanted': 86400, # 24 hours
+            'task_process_folder': 60, #1 minutes
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
+        self.folders_to_process = []
+        self.rd_mount_location = get_setting('RealDebrid', 'mount_location', '')
+        if not self.rd_mount_location:
+            logging.warning("RealDebrid mount location not set in settings")
+        else:
+            logging.info(f"RealDebrid mount location: {self.rd_mount_location}")
         
         # List of enabled tasks
         self.enabled_tasks = {
@@ -44,10 +52,11 @@ class ProgramRunner:
             'checking',
             'sleeping',
             'upgrading',
-            'task_plex_full_scan',
-            'task_overseerr_wanted',
+            #'task_plex_full_scan',
+            #'task_overseerr_wanted',
             'task_debug_log',
-            'task_refresh_release_dates'
+            #'task_refresh_release_dates',
+            'task_process_folder'
         }
         
         # Conditionally enable task_mdb_list_wanted
@@ -63,7 +72,7 @@ class ProgramRunner:
     def run_initialization(self):
         logging.info("Running initialization...")
         skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
-        initialize(skip_initial_plex_update)
+        #initialize(skip_initial_plex_update)
         logging.info("Initialization complete")
 
     def should_run_task(self, task_name):
@@ -78,45 +87,23 @@ class ProgramRunner:
     def process_queues(self):
         self.queue_manager.update_all_queues()
 
-        if self.should_run_task('wanted'):
-            self.queue_manager.process_wanted()
-            update_stats(processed=1)  # Update processed count
-
-        if self.should_run_task('scraping'):
-            self.queue_manager.process_scraping()
-            update_stats(processed=1)  # Update processed count
-
-        if self.should_run_task('adding'):
-            self.queue_manager.process_adding()
-            update_stats(processed=1, successful=1)  # Update processed and successful counts
-
-        if self.should_run_task('checking'):
-            self.queue_manager.process_checking()
-            update_stats(processed=1)  # Update processed count
-
-        if self.should_run_task('sleeping'):
-            self.queue_manager.process_sleeping()
-            
-        if self.should_run_task('upgrading'):
-            self.process_upgrading()
-
-        if self.should_run_task('task_plex_full_scan'):
-            task_plex_full_scan()
-
-        if self.should_run_task('task_overseerr_wanted'):
-            task_overseerr_wanted()
-
-        if self.should_run_task('task_mdb_list_wanted'):
-            task_mdb_list_wanted()
-
-        if self.should_run_task('task_refresh_release_dates'):
-            task_refresh_release_dates()
-
-        if self.should_run_task('task_collected_wanted'):
-            task_collected_wanted()
-
-        if self.should_run_task('task_debug_log'):
-            self.task_debug_log()
+        for task in self.enabled_tasks:
+            if self.should_run_task(task):
+                if task == 'task_process_folder':
+                    self.task_process_folder()
+                elif task == 'task_debug_log':
+                    self.task_debug_log()
+                elif task == 'checking':
+                    # Pass the folders_to_process to the checking queue
+                    self.queue_manager.process_checking(self.folders_to_process)
+                    self.folders_to_process = []  # Clear the list after processing
+                elif task in ['wanted', 'scraping', 'adding', 'sleeping', 'upgrading']:
+                    getattr(self.queue_manager, f"process_{task}")()
+                elif hasattr(self, task):
+                    getattr(self, task)()
+                else:
+                    logging.warning(f"Unknown task: {task}")
+                update_stats(processed=1)
 
     def task_debug_log(self):
         current_time = time.time()
@@ -178,6 +165,15 @@ class ProgramRunner:
             add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
             logging.info(f"Processed and added wanted item: {wanted_item}")
 
+    def task_process_folder(self):
+        if self.folders_to_process:
+            logging.debug("Folders waiting to be processed:")
+            for i, folder in enumerate(self.folders_to_process, 1):
+                full_path = os.path.join(self.rd_mount_location, folder)
+                logging.debug(f"{i}. {full_path}")
+        else:
+            logging.debug("No folders in the processing queue")
+
 # Move the webhook route outside of the class
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -188,6 +184,26 @@ def webhook():
         return jsonify({"status": "success"}), 200
     except Exception as e:
         logging.error(f"Error processing webhook: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/webhook/folder_ready', methods=['POST'])
+def folder_ready_webhook():
+    data = request.json
+    logging.debug(f"Received folder ready webhook: {data}")
+    try:
+        folder_path = data.get('folder_path')
+        if not folder_path:
+            raise ValueError("Missing folder_path in webhook data")
+        
+        full_path = os.path.join(runner.rd_mount_location, folder_path)
+        if not os.path.exists(full_path):
+            raise ValueError(f"Folder does not exist: {full_path}")
+        
+        runner.folders_to_process.append(folder_path)
+        logging.info(f"Folder added for processing: {full_path}")
+        return jsonify({"status": "success", "message": f"Folder {folder_path} added to processing queue"}), 200
+    except Exception as e:
+        logging.error(f"Error processing folder ready webhook: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # Define process_overseerr_webhook as a standalone function
@@ -225,6 +241,7 @@ def process_overseerr_webhook(data):
         logging.info(f"Processed and added wanted item: {wanted_item}")
 
 def run_program():
+    global runner
     logging.info("Program started")
     runner = ProgramRunner()
     #start_server()  # Start the web server
@@ -261,7 +278,6 @@ def task_collected_wanted():
         wanted_content_processed = process_metadata(wanted_content)
         if wanted_content_processed:
             add_wanted_items(wanted_content_processed['episodes'])
-
 
 def task_refresh_release_dates():
     refresh_release_dates()
