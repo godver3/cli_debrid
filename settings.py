@@ -204,8 +204,9 @@ class SettingsEditor:
     def show_debug_settings(self, button):
         self.show_settings("Debug Settings", [
             ('Debug', 'logging_level', 'Logging - Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)'),
-            ('Debug', 'skip_initial_plex_update', 'Queue - Skip Plex initial collection scan (True/False)'),
-            ('Debug', 'skip_menu', 'Queue - Skip menu? (True/False)')
+            ('Debug', 'skip_initial_plex_update', 'Menu - Skip Plex initial collection scan (True/False)'),
+            ('Debug', 'skip_menu', 'Menu - Skip menu? (True/False)'),
+            ('Debug', 'disable_initialization', 'Menu - Disable initialization tasks? (True/False)')
         ])
 
     def start_trakt_oauth(self, button):

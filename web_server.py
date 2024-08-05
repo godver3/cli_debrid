@@ -6,14 +6,15 @@ import logging
 import os
 from settings import get_all_settings, set_setting, get_setting
 from collections import OrderedDict
-from utilities.manual_scrape import run_manual_scrape
+from web_scraper import web_scrape, process_media_selection, process_torrent_selection
+from debrid.real_debrid import add_to_real_debrid
 
 app = Flask(__name__)
 queue_manager = QueueManager()
 
 # Disable Werkzeug request logging
-log = logging.getLogger('werkzeug')
-log.disabled = True
+#log = logging.getLogger('werkzeug')
+#log.disabled = True
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,6 +24,7 @@ start_time = time.time()
 total_processed = 0
 successful_additions = 0
 failed_additions = 0
+
 
 @app.route('/')
 def index():
@@ -41,12 +43,67 @@ def statistics():
 
 @app.route('/scraper', methods=['GET', 'POST'])
 def scraper():
+    logging.info(f"Scraper route accessed with method: {request.method}")
+    error = None
+    results = None
+    selected_media = None
+    torrent_results = None
+
     if request.method == 'POST':
-        search_term = request.form.get('search_term')
-        if search_term:
-            result = run_manual_scrape(search_term, return_details=True)
-            return render_template('scraper.html', result=result)
-    return render_template('scraper.html')
+        logging.info("POST request received")
+        
+        if 'search_term' in request.form:
+            search_term = request.form.get('search_term')
+            logging.info(f"Received search term: {search_term}")
+            
+            if search_term:
+                logging.info(f"Performing search for term: {search_term}")
+                result = web_scrape(search_term)
+                logging.info(f"Search result: {result}")
+                if 'error' in result:
+                    error = result['error']
+                else:
+                    results = result.get('results', [])
+            else:
+                logging.error("No search term provided")
+                error = "No search term provided"
+        
+        elif 'media_id' in request.form:
+            media_id = request.form.get('media_id')
+            title = request.form.get('title')
+            year = request.form.get('year')
+            media_type = request.form.get('media_type')
+            logging.info(f"Media selected: {media_id}, {title}, {year}, {media_type}")
+            
+            selected_media = {
+                'id': media_id,
+                'title': title,
+                'year': year,
+                'media_type': media_type
+            }
+            
+            # Process media selection and get torrent results
+            torrent_results = process_media_selection(media_id, title, year, media_type)
+            logging.info(f"Torrent results: {torrent_results}")
+
+        elif 'torrent_index' in request.form:
+            torrent_index = int(request.form.get('torrent_index'))
+            magnet_link = request.form.get('magnet_link')
+            logging.info(f"Torrent selected: index {torrent_index}")
+
+            # Add the selected torrent to Real-Debrid
+            result = add_to_real_debrid(magnet_link)
+            if result:
+                logging.info("Torrent added to Real-Debrid successfully")
+                return render_template('scraper.html', success_message="Torrent added to Real-Debrid successfully")
+            else:
+                logging.error("Failed to add torrent to Real-Debrid")
+                error = "Failed to add torrent to Real-Debrid"
+
+    return render_template('scraper.html', error=error, results=results, selected_media=selected_media, torrent_results=torrent_results)
+
+
+
 
 @app.route('/logs')
 def logs():
