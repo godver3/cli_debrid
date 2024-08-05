@@ -43,8 +43,8 @@ class ScraperTester:
             ])),
             ('weight', 70, self.results_list),
         ])
-        #footer = urwid.Text(('footer', "Press 'q' to quit"))
-        return urwid.Frame(main_area, footer=footer)
+        #footer = urwid.Text(('footer', "Scraper tester"))
+        return urwid.Frame(main_area)
 
     def settings_view(self):
         widgets = [urwid.Text(('header', "Scraping Settings")), urwid.Divider()]
