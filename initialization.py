@@ -2,6 +2,7 @@ import logging
 from metadata.metadata import refresh_release_dates, process_metadata
 from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.mdb_list import get_wanted_from_mdblists
+from content_checkers.trakt import get_wanted_from_trakt
 from utilities.plex_functions import get_collected_from_plex
 from database import add_wanted_items, add_collected_items, update_media_item_state, get_all_media_items
 from settings import get_setting
@@ -44,6 +45,15 @@ def mdblist_wanted_update():
         wanted_content_processed = process_metadata(wanted_content)
         if wanted_content_processed:
             add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+            
+def mdblist_wanted_update():
+    logging.info("Updating Trakt wanted items...")
+    
+    wanted_content = get_wanted_from_trakt()
+    if wanted_content:
+        wanted_content_processed = process_metadata(wanted_content)
+        if wanted_content_processed:
+            add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
 
 def format_item_log(item):
     if item['type'] == 'movie':
@@ -60,11 +70,15 @@ def initialize(skip_initial_plex_update=False):
     overseerr_wanted_update()
             
     # Conditionally run mdblist_wanted_update
-    #mdb_list_api_key = get_setting('MDBList', 'api_key', '')
     mdb_list_urls = get_setting('MDBList', 'urls', '')
-    #if mdb_list_api_key and mdb_list_urls:
     if mdb_list_urls:
         mdblist_wanted_update()
+    
+    # Conditionally run trakt_wanted_update
+    trakt_enabled = get_setting('Trakt', 'user_watchlist_enabled', '')
+    trakt_urls = get_setting('Trakt', 'trakt_lists', '')
+    if trakt_enabled or trakt_urls:
+        trakt_wanted_update()
         
     refresh_release_dates()
 
