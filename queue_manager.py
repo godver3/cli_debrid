@@ -1,3 +1,4 @@
+import os
 import logging
 from datetime import datetime, date, timedelta
 import time
@@ -10,7 +11,7 @@ import json
 from settings import get_setting
 import requests
 from upgrading_db import get_items_to_check, update_check_count, remove_from_upgrading, add_to_upgrading
-from typing import Dict, Any
+from typing import Dict, Any, List
 from upgrading_queue import UpgradingQueue
 from not_wanted_magnets import load_not_wanted_magnets, save_not_wanted_magnets, add_to_not_wanted, is_magnet_not_wanted
 from collections import OrderedDict
@@ -46,9 +47,14 @@ class QueueManager:
         self.wake_counts = {}
         self.upgrading_queue = UpgradingQueue()
         self.update_all_queues()  # Initialize queues on startup
+        self.rd_mount_location = get_setting('RealDebrid', 'mount_location', '')
+        if not self.rd_mount_location:
+            logging.warning("RealDebrid mount location not set in settings")
+        else:
+            logging.info(f"RealDebrid mount location: {self.rd_mount_location}")
 
     def update_all_queues(self):
-        logging.debug("Updating all queues")
+        #logging.debug("Updating all queues")
         for state in self.queues.keys():
             if state == "Upgrading":
                 self.queues[state] = self.upgrading_queue.get_queue_contents()
@@ -388,46 +394,127 @@ class QueueManager:
             logging.debug(f"Set wake count for {item['title']} (ID: {item['id']}) to {wake_count}")
         return
 
-    def process_checking(self):
+    def process_checking(self, folders_to_process: List[str]):
         logging.debug("Processing checking queue")
-        current_time = time.time()
-
-        # Process collected content from Plex
-        collected_content = get_collected_from_plex('recent')
-        if collected_content:
-            add_collected_items(collected_content['movies'] + collected_content['episodes'], recent=True)
+        
+        for folder in folders_to_process:
+            self.process_folder(folder)
 
         # Process items in the Checking queue
+        current_time = time.time()
         items_to_remove = []
         for item in self.queues['Checking']:
             if item['id'] not in self.checking_queue_times:
                 self.checking_queue_times[item['id']] = current_time
-            
+
             time_in_queue = current_time - self.checking_queue_times[item['id']]
             logging.debug(f"{item['title']} has been in checking queue for {time_in_queue}")
 
             if time_in_queue > 3600:  # 1 hour
-                magnet = item.get('filled_by_magnet')
-                if magnet:
-                    add_to_not_wanted(magnet)
-                    logging.info(f"Marked magnet as unwanted for item: {item['title']}")
-
-                update_media_item_state(item['id'], 'Wanted', filled_by_magnet=None)
-                logging.info(f"Moving item back to Wanted: {item['title']}")
-                self.queues['Wanted'].append(item)
+                self.handle_timeout(item)
                 items_to_remove.append(item)
-                del self.checking_queue_times[item['id']]
 
         # Remove processed items from the Checking queue
         for item in items_to_remove:
             self.queues['Checking'].remove(item)
-
-        # Clean up checking_queue_times for items no longer in the Checking queue
-        for item_id in list(self.checking_queue_times.keys()):
-            if item_id not in [item['id'] for item in self.queues['Checking']]:
-                del self.checking_queue_times[item_id]
+            del self.checking_queue_times[item['id']]
 
         logging.debug(f"Finished processing checking queue. Remaining items: {len(self.queues['Checking'])}")
+
+    def process_folder(self, folder: str):
+        logging.debug(f"Processing folder: {folder}")
+
+        # Remove the mount location prefix and prepend '/'
+        relative_path = '/' + folder.replace(self.rd_mount_location, '').lstrip('/')
+        logging.debug(f"Relative path: {relative_path}")
+
+        # Construct the full path
+        full_path = os.path.join(self.rd_mount_location, folder.lstrip('/'))
+
+        # Find the largest file in the folder
+        largest_file = self.find_largest_file(full_path)
+        if not largest_file:
+            logging.warning(f"No files found in folder: {full_path}")
+            return
+
+        # Construct the original path for FUSE translation
+        original_path = os.path.join(relative_path, largest_file)
+        logging.debug(f"Original path for FUSE translation: {original_path}")
+
+        # Find matching item in the Checking queue
+        matching_item = self.find_matching_item(os.path.basename(relative_path))
+        if not matching_item:
+            logging.warning(f"No matching item found for file: {os.path.basename(relative_path)}")
+            return
+
+        # Construct the translated path
+        translated_path = self.construct_translated_path(matching_item, largest_file)
+
+        # Send FUSE translation request
+        self.send_fuse_translation(original_path, translated_path)
+
+        # Update item state to 'Collected'
+        self.mark_item_as_collected(matching_item)
+
+    def find_largest_file(self, path: str) -> str:
+        if os.path.isfile(path):
+            return os.path.basename(path)
+        
+        largest_size = 0
+        largest_file = None
+        try:
+            for file in os.listdir(path):
+                file_path = os.path.join(path, file)
+                if os.path.isfile(file_path):
+                    file_size = os.path.getsize(file_path)
+                    if file_size > largest_size:
+                        largest_size = file_size
+                        largest_file = file
+        except Exception as e:
+            logging.error(f"Error when finding largest file in {path}: {str(e)}")
+        
+        return largest_file
+
+    def find_matching_item(self, file_name: str) -> Dict[str, Any]:
+        for item in self.queues['Checking']:
+            if item['filled_by_title'] in file_name:
+                return item
+        return None
+
+    def construct_translated_path(self, item: Dict[str, Any], file_name: str) -> str:
+        title = item['title']
+        year = item['year']
+        imdb_id = item['imdb_id']
+        file_name_without_ext, ext = os.path.splitext(file_name)
+        return f"/Films/{title} ({year}) - {{{imdb_id}}}/{title} ({year}) - {{{imdb_id}}} - [{file_name_without_ext}]{ext}"
+
+    def send_fuse_translation(self, original: str, translated: str):
+        url = "http://localhost:6000/add_translation"
+        data = {
+            "original": original,
+            "translated": translated
+        }
+        try:
+            response = requests.post(url, json=data)
+            response.raise_for_status()
+            logging.info(f"FUSE translation added: {original} -> {translated}")
+        except requests.RequestException as e:
+            logging.error(f"Error sending FUSE translation request: {str(e)}")
+
+    def mark_item_as_collected(self, item: Dict[str, Any]):
+        update_media_item_state(item['id'], 'Collected')
+        self.queues['Checking'].remove(item)
+        logging.info(f"Marked item as Collected: {item['title']}")
+
+    def handle_timeout(self, item: Dict[str, Any]):
+        magnet = item.get('filled_by_magnet')
+        if magnet:
+            self.add_to_not_wanted(magnet)
+            logging.info(f"Marked magnet as unwanted for item: {item['title']}")
+
+        update_media_item_state(item['id'], 'Wanted', filled_by_magnet=None)
+        logging.info(f"Moving item back to Wanted: {item['title']}")
+        self.queues['Wanted'].append(item)
 
     def process_sleeping(self):
         logging.debug("Processing sleeping queue")

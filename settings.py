@@ -168,7 +168,8 @@ class SettingsEditor:
             ('Collected Content Source', 'enabled', 'Enable collected content source? True/False'),
             ('TMDB', 'api_key', 'TMDB API Key'),
             ('Queue', 'wake_limit', 'Enter number of times to wake items before blacklisting'),
-            ('Scraping', 'uncached_content_handling', 'Uncached content handling (None/Hybrid/Full)')
+            ('Scraping', 'uncached_content_handling', 'Uncached content handling (None/Hybrid/Full)'),
+            ('RealDebrid', 'mount_location', 'Location of Zurg mount (i.e. /mnt/zurg)'),
         ])
 
     def show_scraping_settings(self, button):
