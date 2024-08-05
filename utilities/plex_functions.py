@@ -77,7 +77,7 @@ def get_collected_from_plex(request='all'):
         plex_url = get_setting('Plex', 'url')
         plex_token = get_setting('Plex', 'token')
         
-        # Parse library names, assuming they are comma-separated
+        # Parse library names or section numbers, assuming they are comma-separated
         movie_libraries = [lib.strip() for lib in get_setting('Plex', 'movie_libraries', '').split(',') if lib.strip()]
         show_libraries = [lib.strip() for lib in get_setting('Plex', 'shows_libraries', '').split(',') if lib.strip()]
         
@@ -100,66 +100,87 @@ def get_collected_from_plex(request='all'):
             if progress % 10 < (current - 1) / total * 100 % 10:
                 logging.debug(f"{item_type} progress: {current}/{total} ({progress:.1f}%)")
 
+        def get_library_section(plex, library_identifier):
+            if library_identifier.isdigit():
+                # If it's a number, treat it as a section ID
+                section = next((section for section in plex.library.sections() if str(section.key) == library_identifier), None)
+                if section:
+                    return section
+                else:
+                    logging.error(f"No library found with section ID: {library_identifier}")
+                    return None
+            else:
+                # If it's not a number, treat it as a library name
+                try:
+                    return plex.library.section(library_identifier)
+                except:
+                    logging.error(f"No library found with name: {library_identifier}")
+                    return None
+
         if request == 'recent':
             logging.info("Gathering recently added from Plex")
 
             # Fetch recently added movies from all specified movie libraries
-            for library_name in movie_libraries:
+            for library_identifier in movie_libraries:
                 try:
-                    movies_section = plex.library.section(library_name)
-                    recent_movies = movies_section.recentlyAdded()
-                    logging.debug(f"Number of recent movies found in '{library_name}': {len(recent_movies)}")
-                    for i, movie in enumerate(recent_movies, start=1):
-                        if movie.addedAt >= time_limit:
-                            process_movie(movie, collected_content, missing_guid_items)
-                            log_progress(i, len(recent_movies), f"Recent movies in '{library_name}'")
-                        else:
-                            logging.debug(f"Skipping movie {movie.title} due to time limit")
+                    movies_section = get_library_section(plex, library_identifier)
+                    if movies_section:
+                        recent_movies = movies_section.recentlyAdded()
+                        logging.debug(f"Number of recent movies found in '{movies_section.title}': {len(recent_movies)}")
+                        for i, movie in enumerate(recent_movies, start=1):
+                            if movie.addedAt >= time_limit:
+                                process_movie(movie, collected_content, missing_guid_items)
+                                log_progress(i, len(recent_movies), f"Recent movies in '{movies_section.title}'")
+                            else:
+                                logging.debug(f"Skipping movie {movie.title} due to time limit")
                 except Exception as e:
-                    logging.error(f"Error processing movie library '{library_name}': {str(e)}")
+                    logging.error(f"Error processing movie library '{library_identifier}': {str(e)}")
 
             # Fetch recently added TV shows from all specified show libraries
-            for library_name in show_libraries:
+            for library_identifier in show_libraries:
                 try:
-                    shows_section = plex.library.section(library_name)
-                    recent_shows = shows_section.recentlyAdded()
-                    logging.debug(f"Number of recent shows found in '{library_name}': {len(recent_shows)}")
-                    for i, show in enumerate(recent_shows, start=1):
-                        recent_episodes = [ep for ep in show.episodes() if ep.addedAt >= time_limit]
-                        logging.debug(f"Processing show: {show.title}, Recent episodes: {len(recent_episodes)}")
-                        for episode in recent_episodes:
-                            process_episode(show, episode, collected_content, missing_guid_items)
-                        log_progress(i, len(recent_shows), f"Recent shows in '{library_name}'")
+                    shows_section = get_library_section(plex, library_identifier)
+                    if shows_section:
+                        recent_shows = shows_section.recentlyAdded()
+                        logging.debug(f"Number of recent shows found in '{shows_section.title}': {len(recent_shows)}")
+                        for i, show in enumerate(recent_shows, start=1):
+                            recent_episodes = [ep for ep in show.episodes() if ep.addedAt >= time_limit]
+                            logging.debug(f"Processing show: {show.title}, Recent episodes: {len(recent_episodes)}")
+                            for episode in recent_episodes:
+                                process_episode(show, episode, collected_content, missing_guid_items)
+                            log_progress(i, len(recent_shows), f"Recent shows in '{shows_section.title}'")
                 except Exception as e:
-                    logging.error(f"Error processing TV show library '{library_name}': {str(e)}")
+                    logging.error(f"Error processing TV show library '{library_identifier}': {str(e)}")
 
         else:
             logging.info("Gathering all collected from Plex")
             # Fetch all movies from all specified movie libraries
-            for library_name in movie_libraries:
+            for library_identifier in movie_libraries:
                 try:
-                    movies_section = plex.library.section(library_name)
-                    movies = movies_section.all()
-                    logging.debug(f"Number of movies found in '{library_name}': {len(movies)}")
-                    for i, movie in enumerate(movies, start=1):
-                        process_movie(movie, collected_content, missing_guid_items)
-                        log_progress(i, len(movies), f"Movies in '{library_name}'")
+                    movies_section = get_library_section(plex, library_identifier)
+                    if movies_section:
+                        movies = movies_section.all()
+                        logging.debug(f"Number of movies found in '{movies_section.title}': {len(movies)}")
+                        for i, movie in enumerate(movies, start=1):
+                            process_movie(movie, collected_content, missing_guid_items)
+                            log_progress(i, len(movies), f"Movies in '{movies_section.title}'")
                 except Exception as e:
-                    logging.error(f"Error processing movie library '{library_name}': {str(e)}")
+                    logging.error(f"Error processing movie library '{library_identifier}': {str(e)}")
 
             # Fetch all TV shows from all specified show libraries
-            for library_name in show_libraries:
+            for library_identifier in show_libraries:
                 try:
-                    shows_section = plex.library.section(library_name)
-                    shows = shows_section.all()
-                    logging.debug(f"Number of shows found in '{library_name}': {len(shows)}")
-                    for i, show in enumerate(shows, start=1):
-                        all_episodes = show.episodes()
-                        for episode in all_episodes:
-                            process_episode(show, episode, collected_content, missing_guid_items)
-                        log_progress(i, len(shows), f"Shows in '{library_name}'")
+                    shows_section = get_library_section(plex, library_identifier)
+                    if shows_section:
+                        shows = shows_section.all()
+                        logging.debug(f"Number of shows found in '{shows_section.title}': {len(shows)}")
+                        for i, show in enumerate(shows, start=1):
+                            all_episodes = show.episodes()
+                            for episode in all_episodes:
+                                process_episode(show, episode, collected_content, missing_guid_items)
+                            log_progress(i, len(shows), f"Shows in '{shows_section.title}'")
                 except Exception as e:
-                    logging.error(f"Error processing TV show library '{library_name}': {str(e)}")
+                    logging.error(f"Error processing TV show library '{library_identifier}': {str(e)}")
 
         logging.debug(f"Collection complete: {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes collected.")
         logging.debug(f"Content collected: {collected_content}")
