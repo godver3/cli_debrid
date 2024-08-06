@@ -27,7 +27,7 @@ def load_config():
 
 def deserialize_config(config):
     if isinstance(config, dict):
-        return {k: deserialize_config(v) for k, v in config.items()}
+        return {k: deserialize_config(v) for k, v in config.items() if not k.isdigit()}
     elif isinstance(config, list):
         if config and isinstance(config[0], list) and len(config[0]) == 2:
             # This is likely a preferred filter list
@@ -39,7 +39,7 @@ def deserialize_config(config):
 def save_config(config):
     def serialize(obj):
         if isinstance(obj, dict):
-            return {k: serialize(v) for k, v in obj.items()}
+            return {k: serialize(v) for k, v in obj.items() if not k.isdigit()}
         elif isinstance(obj, list):
             return [serialize(item) for item in obj]
         elif isinstance(obj, tuple):
@@ -49,7 +49,7 @@ def save_config(config):
             return obj
 
     serialized_config = serialize(config)
-    
+
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, 'w') as config_file:
         json.dump(serialized_config, config_file, indent=2)
@@ -340,12 +340,21 @@ class ScrapingSettingsEditor:
         for version_name, settings in versions.items():
             clean_settings = {}
             for key, value in settings.items():
-                if isinstance(value, urwid.Edit):
-                    clean_settings[key] = value.edit_text
-                elif isinstance(value, urwid.IntEdit):
-                    clean_settings[key] = int(value.edit_text)
-                elif isinstance(value, urwid.CheckBox):
-                    clean_settings[key] = value.state
+                if isinstance(value, urwid.Widget):
+                    if isinstance(value, urwid.Edit):
+                        clean_settings[key] = value.edit_text
+                    elif isinstance(value, urwid.IntEdit):
+                        try:
+                            clean_settings[key] = int(value.edit_text)
+                        except ValueError:
+                            clean_settings[key] = 0  # Default to 0 if invalid
+                    elif isinstance(value, urwid.CheckBox):
+                        clean_settings[key] = value.state
+                elif isinstance(value, list):
+                    clean_settings[key] = [
+                        (item[0], int(item[1])) if isinstance(item, tuple) else item
+                        for item in value
+                    ]
                 else:
                     clean_settings[key] = value
             clean_versions[version_name] = clean_settings
@@ -419,7 +428,12 @@ class ScrapingSettingsEditor:
         ]
 
         for key, value in settings.items():
-            if key == 'max_resolution':
+            if key in ['resolution_weight', 'hdr_weight', 'similarity_weight', 'size_weight', 'bitrate_weight']:
+                caption = f"{key.replace('_', ' ').title()}: "
+                edit = urwid.IntEdit(caption, value)
+                urwid.connect_signal(edit, 'change', lambda widget, new_text, user_data=key: self.on_weight_change(new_text, user_data))
+                widgets.append(urwid.AttrMap(edit, None, focus_map='edit_focus'))
+            elif key == 'max_resolution':
                 widgets.append(urwid.Text("Max Resolution:"))
                 radio_buttons = []
                 for option in self.resolution_options:
@@ -489,6 +503,15 @@ class ScrapingSettingsEditor:
         else:
             self.versions[self.current_version][key] = new_edit_text
         self.save_versions()
+
+    def on_weight_change(self, new_text, key):
+        try:
+            new_value = int(new_text)
+            self.versions[self.current_version][key] = new_value
+            self.save_versions()
+        except ValueError:
+            # Ignore invalid input
+            pass
 
     def back_to_main_menu(self, button):
         self.main_loop.widget = self.main_loop.original_widget
@@ -587,7 +610,7 @@ class FilterListEditor:
         else:
             # Ensure all items are strings for non-weighted lists
             self.value = [str(item) for item in self.value]
-        
+
         self.scraping_editor.versions[self.scraping_editor.current_version][self.key] = self.value
         self.scraping_editor.save_versions()
 
