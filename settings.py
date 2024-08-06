@@ -19,15 +19,40 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as config_file:
             try:
-                return json.load(config_file)
+                config = json.load(config_file)
+                return deserialize_config(config)
             except json.JSONDecodeError:
                 logging.error(f"Error decoding JSON from {CONFIG_FILE}. Using empty config.")
     return {}
 
+def deserialize_config(config):
+    if isinstance(config, dict):
+        return {k: deserialize_config(v) for k, v in config.items()}
+    elif isinstance(config, list):
+        if config and isinstance(config[0], list) and len(config[0]) == 2:
+            # This is likely a preferred filter list
+            return [tuple(item) for item in config]
+        return [deserialize_config(item) for item in config]
+    else:
+        return config
+
 def save_config(config):
+    def serialize(obj):
+        if isinstance(obj, dict):
+            return {k: serialize(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [serialize(item) for item in obj]
+        elif isinstance(obj, tuple):
+            # Handle tuples (used for preferred filters)
+            return list(obj)
+        else:
+            return obj
+
+    serialized_config = serialize(config)
+    
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, 'w') as config_file:
-        json.dump(config, config_file, indent=2)
+        json.dump(serialized_config, config_file, indent=2)
 
 def validate_url(url):
     if not url:
@@ -87,15 +112,15 @@ def validate_url(url):
         return ''
 
 def get_scraping_settings():
-    all_settings = get_all_settings()
+    config = load_config()
     scraping_settings = {}
-    
-    for section, key, label in all_settings:
-        if section == 'Scraping':
-            # Get the current value from the config file
-            value = get_setting('Scraping', key)
-            scraping_settings[key] = (label, value)
-    
+
+    versions = config.get('Scraping', {}).get('versions', {})
+    for version, settings in versions.items():
+        for key, value in settings.items():
+            label = f"{version.capitalize()} - {key.replace('_', ' ').title()}"
+            scraping_settings[f"{version}_{key}"] = (label, value)
+
     return scraping_settings
 
 def ensure_settings_file():
@@ -531,6 +556,41 @@ class FilterListEditor:
         self.is_weighted = key.startswith('preferred_filter') or key == 'preferred_filter_out'
         self.show_list()
 
+    def on_term_change(self, new_text, index):
+        if self.is_weighted:
+            current_item = self.value[index]
+            if isinstance(current_item, tuple):
+                self.value[index] = (new_text, current_item[1])
+            else:
+                self.value[index] = (new_text, 1)
+        else:
+            self.value[index] = new_text
+        self.save_changes()
+
+    def on_weight_change(self, new_text, index):
+        if self.is_weighted:
+            try:
+                new_weight = int(new_text)
+                current_item = self.value[index]
+                if isinstance(current_item, tuple):
+                    self.value[index] = (current_item[0], new_weight)
+                else:
+                    self.value[index] = (str(current_item), new_weight)
+                self.save_changes()
+            except ValueError:
+                pass  # Ignore invalid input
+
+    def save_changes(self):
+        if self.is_weighted:
+            # Ensure all items are tuples with both term and weight
+            self.value = [(str(item[0]), int(item[1])) if isinstance(item, tuple) else (str(item), 1) for item in self.value]
+        else:
+            # Ensure all items are strings for non-weighted lists
+            self.value = [str(item) for item in self.value]
+        
+        self.scraping_editor.versions[self.scraping_editor.current_version][self.key] = self.value
+        self.scraping_editor.save_versions()
+
     def show_list(self):
         widgets = [
             urwid.Text(f"Editing {self.key.replace('_', ' ').title()}"),
@@ -569,30 +629,6 @@ class FilterListEditor:
                 ('weight', 1, urwid.Button("Remove", on_press=self.remove_item, user_data=index))
             ])
 
-    def on_term_change(self, new_text, index):
-        if self.is_weighted:
-            current_item = self.value[index]
-            if isinstance(current_item, tuple):
-                self.value[index] = (new_text, current_item[1])
-            else:
-                self.value[index] = (new_text, 1)
-        else:
-            self.value[index] = new_text
-        self.save_changes()
-
-    def on_weight_change(self, new_text, index):
-        if self.is_weighted:
-            try:
-                new_weight = int(new_text)
-                current_item = self.value[index]
-                if isinstance(current_item, tuple):
-                    self.value[index] = (current_item[0], new_weight)
-                else:
-                    self.value[index] = (current_item, new_weight)
-                self.save_changes()
-            except ValueError:
-                pass  # Ignore invalid input
-
     def add_new_item(self, button):
         if self.is_weighted:
             self.value.append(("", 1))
@@ -605,10 +641,6 @@ class FilterListEditor:
         del self.value[index]
         self.save_changes()
         self.show_list()
-
-    def save_changes(self):
-        self.scraping_editor.versions[self.scraping_editor.current_version][self.key] = self.value
-        self.scraping_editor.save_versions()
 
     def back_to_version_edit(self, button):
         self.scraping_editor.edit_version(None, self.scraping_editor.current_version)
