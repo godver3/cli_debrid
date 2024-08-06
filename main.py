@@ -62,8 +62,6 @@ def check_required_settings():
         errors.append("Overseerr URL or API key is missing.")
     if not realdebrid_api_key:
         errors.append("Real-Debrid API key is missing.")
-    if not (torrentio_enabled or knightcrawler_enabled or comet_enabled):
-        errors.append("At least one scraper (Torrentio, Knightcrawler, Comet) must be enabled.")
 
     try:
         if plex_url and plex_token:

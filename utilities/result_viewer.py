@@ -18,10 +18,10 @@ def display_results(results: List[Dict]):
             stdscr.clear()
 
             # Calculate column widths
-            name_width = width - 85  # Adjust this value to allocate space for other columns
+            name_width = width - 95  # Adjust this value to allocate space for other columns
 
             # Display header
-            stdscr.addstr(0, 0, "Name".ljust(name_width) + "Size/File".ljust(15) + "Source".ljust(15) + "Est. Bitrate".ljust(15))
+            stdscr.addstr(0, 0, "Name".ljust(name_width) + "Size/File".ljust(15) + "Source".ljust(25) + "Est. Bitrate".ljust(15))
             stdscr.addstr(1, 0, "-" * (width - 1))
 
             # Display results
@@ -32,7 +32,7 @@ def display_results(results: List[Dict]):
                 stdscr.addstr(i - start_pos + 2, 0,
                               truncate_string(result.get('title', 'N/A'), name_width) +
                               f"{result.get('size', 0):.2f} GB".ljust(15) +
-                              truncate_string(result.get('source', 'N/A'), 15) +
+                              truncate_string(result.get('source', 'N/A'), 25) +
                               f"{result.get('bitrate', 0):.2f} mbps".ljust(15))
                 if i == current_pos:
                     stdscr.attroff(curses.A_REVERSE)
