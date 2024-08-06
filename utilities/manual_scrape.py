@@ -9,6 +9,7 @@ from debrid.real_debrid import add_to_real_debrid, extract_hash_from_magnet
 from settings import get_setting
 from metadata.metadata import imdb_to_tmdb
 import os
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ def run_manual_scrape(search_term=None, return_details=False):
                     'multi': multi
                 }
             else:
+                # Pass the version parameter
                 manual_scrape(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi)
                 return
         else:
@@ -200,12 +202,9 @@ def imdb_id_to_title_and_year(imdb_id: str, movie_or_episode: str) -> Tuple[str,
 
     return "", 0
 
-import logging
-from collections import Counter
-
-def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi):
+def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi, version):
     logger = logging.getLogger(__name__)
-    
+
     # Convert input parameters
     season = int(season) if season is not None else None
     episode = int(episode) if episode is not None else None
@@ -213,16 +212,17 @@ def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode
     multi = multi.lower() == 'true' if isinstance(multi, str) else bool(multi)
 
     logger.debug(f"Scrape parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
-                 f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}")
+                 f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, "
+                 f"version={version}")
 
-    # Call the scrape function
-    scrape_result = scrape(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi)
-    
+    # Call the scrape function with the version
+    scrape_result = scrape(imdb_id, tmdb_id, title, year, movie_or_episode, version, season, episode, multi)
+
     # Log the type and structure of scrape_result
     logger.debug(f"Type of scrape_result: {type(scrape_result)}")
     if isinstance(scrape_result, tuple):
         logger.debug(f"Length of scrape_result tuple: {len(scrape_result)}")
-    
+
     # Ensure we're using the deduplicated results
     if isinstance(scrape_result, tuple) and len(scrape_result) > 1:
         results = scrape_result[1]  # Use the second element which should be the deduplicated results
@@ -299,7 +299,15 @@ def parse_season_episode(search_term: str) -> Tuple[str, str]:
         return season, episode
     return '', ''
 
-
 def manual_scrape(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi):
-    # Your existing manual_scrape function remains unchanged
-    scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi)
+    # Get the scraping versions from settings
+    scraping_versions = get_setting('Scraping', 'versions', default={})
+
+    # Prompt the user to choose a version or use the default
+    version = input(f"Enter the scraping version to use (available versions: {', '.join(scraping_versions.keys())}) [default: '1080p']: ") or '1080p'
+
+    # Log the version being used
+    logging.info(f"Using scraping version: {version}")
+
+    # Call scrape_sync with the version
+    scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi, version)

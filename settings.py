@@ -43,11 +43,18 @@ def validate_url(url):
 def get_setting(section, key, default=''):
     config = load_config()
     value = config.get(section, {}).get(key, default)
+    
+    if key.lower() == 'enabled':
+        if isinstance(value, str):
+            return value.lower() == 'true'
+        return bool(value)
+    
     if key.lower().endswith('url'):
         validated_url = validate_url(value)
         if validated_url != value:
             logging.debug(f"URL validation changed value for {section}.{key}: '{value}' -> '{validated_url}'")
         return validated_url
+    
     return value
 
 def set_setting(section, key, value):
@@ -108,12 +115,6 @@ def ensure_settings_file():
             'api_key': ''
         },
         'Torrentio': {
-            'enabled': 'False'
-        },
-        'Knightcrawler': {
-            'enabled': 'False'
-        },
-        'Comet': {
             'enabled': 'False'
         },
         'Debug': {
