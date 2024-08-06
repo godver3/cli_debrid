@@ -16,6 +16,67 @@ def get_overseerr_headers(api_key: str) -> Dict[str, str]:
 def get_url(base_url: str, endpoint: str) -> str:
     return f"{base_url}{endpoint}"
 
+def get_year_from_imdb_id(imdb_id: str) -> Optional[int]:
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+
+    if not overseerr_url or not overseerr_api_key:
+        logging.error("Overseerr URL or API key not set. Please configure in settings.")
+        return None
+
+    # Check the content type and convert IMDb ID to TMDB ID
+    tmdb_id, media_type = get_tmdb_id_and_media_type(overseerr_url, overseerr_api_key, imdb_id)
+    if not tmdb_id or not media_type:
+        logging.warning(f"Could not determine TMDB ID and media type for IMDb ID {imdb_id}.")
+        return None
+
+    # Fetch details based on the media type
+    if media_type == 'movie':
+        details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, get_overseerr_cookies(overseerr_url))
+    elif media_type == 'tv':
+        details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, get_overseerr_cookies(overseerr_url))
+    else:
+        logging.error(f"Unknown media type: {media_type} for IMDb ID {imdb_id}.")
+        return None
+
+    if not details:
+        logging.warning(f"Could not fetch details for TMDB ID {tmdb_id} with media type {media_type}.")
+        return None
+
+    # Extract and return the release year
+    if media_type == 'movie':
+        release_date = parse_date(details.get('releaseDate'))
+    elif media_type == 'tv':
+        release_date = parse_date(details.get('firstAirDate'))
+    else:
+        release_date = None
+
+    if release_date:
+        return release_date.year
+    else:
+        logging.warning(f"No release date found for item with TMDB ID {tmdb_id}.")
+        return None
+
+def get_tmdb_id_and_media_type(overseerr_url: str, overseerr_api_key: str, imdb_id: str) -> (Optional[int], Optional[str]):
+    headers = get_overseerr_headers(overseerr_api_key)
+    search_url = f"{overseerr_url}/api/v1/search?query=imdb%3A{imdb_id}"
+
+    try:
+        response = requests.get(search_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+        if data['results']:
+            result = data['results'][0]  # Assume the first result is the correct one
+            return result.get('id'), result.get('mediaType')
+        else:
+            logging.warning(f"No results found for IMDb ID: {imdb_id}")
+            return None, None
+    except requests.RequestException as e:
+        logging.error(f"Error converting IMDb ID to TMDB ID: {e}")
+        return None, None
+
+
 def parse_date(date_str: Optional[str]) -> Optional[datetime]:
     if date_str is None:
         return None
