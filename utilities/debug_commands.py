@@ -117,20 +117,20 @@ def view_database_content():
         items = get_all_media_items(state=queue, media_type=content_type)
 
         if content_type == 'movie':
-            headers = ["ID", "IMDb ID", "Title", "Year", "Release Date", "State", "Type", "Metadata Updated"]
+            headers = ["ID", "IMDb ID", "Title", "Year", "Release Date", "State", "Type", "Version"]
             item_data = [
                 [str(item['id']), item['imdb_id'], item['title'], str(item['year']), 
                  str(item['release_date']), item['state'], item['type'], 
-                 str(item['metadata_updated'])] 
+                 str(item['version'])] 
                 for item in items
             ]
         else:  # TV shows (episodes)
-            headers = ["ID", "IMDb ID", "Title", "Season", "Episode", "Year", "Release Date", "State", "Type", "Metadata Updated"]
+            headers = ["ID", "IMDb ID", "Title", "Season", "Episode", "Year", "Release Date", "State", "Type", "Version"]
             item_data = [
                 [str(item['id']), item['imdb_id'], item['title'], 
                  str(item['season_number']), str(item['episode_number']), 
                  str(item['year']), str(item['release_date']), item['state'], 
-                 item['type'], str(item['metadata_updated'])] 
+                 item['type'], str(item['version'])] 
                 for item in items
             ]
 
@@ -150,13 +150,13 @@ def display_results_curses(results, headers):
 
             # Display headers
             for j, header in enumerate(headers):
-                if sum(col_widths[:j + 1]) <= w:
+                if j < len(col_widths) and sum(col_widths[:j + 1]) <= w:
                     stdscr.addstr(0, sum(col_widths[:j]), header.ljust(col_widths[j]))
 
             # Display rows
             for i, result in enumerate(results[start_index:end_index], start=1):
                 for j, col in enumerate(result):
-                    if sum(col_widths[:j + 1]) <= w:
+                    if j < len(col_widths) and sum(col_widths[:j + 1]) <= w:
                         value = str(col)[:col_widths[j] - 1]  # Truncate if necessary
                         stdscr.addstr(i, sum(col_widths[:j]), value.ljust(col_widths[j]))
 
@@ -167,12 +167,16 @@ def display_results_curses(results, headers):
 
         # Calculate column widths
         col_widths = [max(len(str(row[i])) for row in [headers] + results) + 2 for i in range(len(headers))]
-        total_width = sum(col_widths)
         
+        # Ensure col_widths doesn't exceed the number of columns in the data
+        col_widths = col_widths[:min(len(col_widths), len(results[0]))]
+        
+        total_width = sum(col_widths)
+
         # Adjust widths if total is greater than window width
         if total_width > w:
-            for i in range(len(col_widths)):
-                col_widths[i] = int(col_widths[i] * (w / total_width))
+            scaling_factor = w / total_width
+            col_widths = [max(int(width * scaling_factor), 1) for width in col_widths]
 
         # Main loop
         while True:

@@ -14,6 +14,21 @@ from settings import get_setting
 import time
 from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes, get_episode_count_for_seasons, get_all_season_episode_counts
 
+def is_regex(pattern):
+    """Check if a pattern is likely to be a regex."""
+    return any(char in pattern for char in r'.*?+^$()[]{}|\\')
+
+def smart_search(pattern, text):
+    """Perform either regex search or simple string matching."""
+    if is_regex(pattern):
+        try:
+            return re.search(pattern, text, re.IGNORECASE) is not None
+        except re.error:
+            # If regex is invalid, fall back to simple string matching
+            return pattern.lower() in text.lower()
+    else:
+        return pattern.lower() in text.lower()
+
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
@@ -319,17 +334,17 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Apply preferred_filter_in bonus
     preferred_filter_in_breakdown = {}
-    for term, weight in version_settings.get('preferred_filter_in', []):
-        if term.lower() in torrent_title_lower:
+    for pattern, weight in version_settings.get('preferred_filter_in', []):
+        if smart_search(pattern, torrent_title):
             preferred_filter_score += weight
-            preferred_filter_in_breakdown[term] = weight
+            preferred_filter_in_breakdown[pattern] = weight
 
     # Apply preferred_filter_out penalty
     preferred_filter_out_breakdown = {}
-    for term, weight in version_settings.get('preferred_filter_out', []):
-        if term.lower() in torrent_title_lower:
+    for pattern, weight in version_settings.get('preferred_filter_out', []):
+        if smart_search(pattern, torrent_title):
             preferred_filter_score -= weight
-            preferred_filter_out_breakdown[term] = -weight
+            preferred_filter_out_breakdown[pattern] = -weight
 
     # Combine scores
     total_score = (
@@ -518,10 +533,10 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         if size_gb < min_size_gb:
             continue
 
-        # Apply custom filters
-        if filter_in and not any(term.lower() in torrent_title.lower() for term in filter_in):
+        # Apply custom filters with smart matching
+        if filter_in and not any(smart_search(pattern, torrent_title) for pattern in filter_in):
             continue
-        if filter_out and any(term.lower() in torrent_title.lower() for term in filter_out):
+        if filter_out and any(smart_search(pattern, torrent_title) for pattern in filter_out):
             continue
 
         # Handle multi-episode releases
