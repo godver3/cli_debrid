@@ -198,17 +198,18 @@ def detect_season_pack(title: str) -> str:
 def get_resolution_rank(quality: str) -> int:
     quality = quality.lower()
     parsed = PTN.parse(quality)
-    resolution = parsed.get('resolution')
+    resolution = parsed.get('resolution', '').lower()
+    
     if resolution:
-        if '4k' in resolution.lower() or '2160p' in resolution.lower():
+        if compare_resolutions(resolution, '2160p') >= 0:
+            return 4
+        elif compare_resolutions(resolution, '1080p') >= 0:
             return 3
-        elif '1080p' in resolution.lower():
+        elif compare_resolutions(resolution, '720p') >= 0:
             return 2
-        elif '720p' in resolution.lower():
+        elif compare_resolutions(resolution, 'sd') >= 0:
             return 1
-        elif '480p' in resolution.lower():
-            return -50
-    return -100  # For unknown resolutions, assign the lowest rank
+    return 0  # For unknown resolutions
 
 def extract_season_episode(text: str) -> Tuple[int, int]:
     season_episode_pattern = r'S(\d+)(?:E(\d+))?'
@@ -243,7 +244,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
     resolution_score = get_resolution_rank(torrent_title)
-    hdr_score = 1 if 'HDR' in torrent_title.upper() else 0
+    hdr_score = 1 if 'HDR' in torrent_title.upper() and version_settings.get('enable_hdr', True) else 0
     size = parse_size(result.get('size', 0))
     runtime = result.get('runtime', 0)
     bitrate = result.get('bitrate', 0)  # Use pre-calculated bitrate
@@ -305,14 +306,18 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     torrent_title_lower = torrent_title.lower()
 
     # Apply preferred_filter_in bonus
+    preferred_filter_in_breakdown = {}
     for term, weight in version_settings.get('preferred_filter_in', []):
         if term.lower() in torrent_title_lower:
             preferred_filter_score += weight
+            preferred_filter_in_breakdown[term] = weight
 
     # Apply preferred_filter_out penalty
+    preferred_filter_out_breakdown = {}
     for term, weight in version_settings.get('preferred_filter_out', []):
         if term.lower() in torrent_title_lower:
             preferred_filter_score -= weight
+            preferred_filter_out_breakdown[term] = -weight
 
     # Combine scores
     total_score = (
@@ -327,7 +332,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         multi_pack_score +
         single_episode_score +
         filter_score +
-        preferred_filter_score  # Add the preferred filter score
+        preferred_filter_score
     )
 
     # Content type matching score
@@ -348,11 +353,11 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Create a score breakdown
     score_breakdown = {
-        'similarity_score': weighted_similarity,
-        'resolution_score': weighted_resolution,
-        'hdr_score': weighted_hdr,
-        'size_score': weighted_size,
-        'bitrate_score': weighted_bitrate,
+        'similarity_score': round(weighted_similarity, 2),
+        'resolution_score': round(weighted_resolution, 2),
+        'hdr_score': round(weighted_hdr, 2) if version_settings.get('enable_hdr', True) else 0,
+        'size_score': round(weighted_size, 2),
+        'bitrate_score': round(weighted_bitrate, 2),
         'year_match': year_match * 5,
         'season_match': season_match * 5,
         'episode_match': episode_match * 5,
@@ -360,8 +365,24 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'single_episode_score': single_episode_score,
         'filter_score': filter_score,
         'preferred_filter_score': preferred_filter_score,
+        'preferred_filter_in_breakdown': preferred_filter_in_breakdown,
+        'preferred_filter_out_breakdown': preferred_filter_out_breakdown,
         'content_type_score': content_type_score,
-        'total_score': total_score
+        'total_score': round(total_score, 2)
+    }
+
+    # Add version-specific information
+    score_breakdown['version'] = {
+        'max_resolution': version_settings.get('max_resolution', 'Not specified'),
+        'enable_hdr': version_settings.get('enable_hdr', True),
+        'weights': {
+            'resolution': resolution_weight,
+            'hdr': hdr_weight,
+            'similarity': similarity_weight,
+            'size': size_weight,
+            'bitrate': bitrate_weight
+        },
+        'min_size_gb': version_settings.get('min_size_gb', 0.01)
     }
 
     # Add the score breakdown to the result
@@ -372,6 +393,28 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     
 def trim_magnet(magnet: str) -> str:
     return magnet.split('&dn=')[0] if '&dn=' in magnet else magnet
+
+def compare_resolutions(res1: str, res2: str) -> int:
+    resolution_order = {
+        '2160p': 4, 'uhd': 4,
+        '1080p': 3,
+        '720p': 2,
+        'sd': 1
+    }
+    
+    res1 = res1.lower()
+    res2 = res2.lower()
+    
+    # Handle '4k' as '2160p'
+    if res1 == '4k':
+        res1 = '2160p'
+    if res2 == '4k':
+        res2 = '2160p'
+    
+    val1 = resolution_order.get(res1, 0)
+    val2 = resolution_order.get(res2, 0)
+    
+    return val1 - val2
 
 def round_size(size: str) -> int:
     try:
@@ -439,14 +482,13 @@ def filter_results(all_results: List[Dict[str, Any]], tmdb_id: str, title: str, 
     filter_in = version_settings.get('filter_in', [])
     filter_out = version_settings.get('filter_out', [])
     min_size_gb = float(version_settings.get('min_size_gb', 0.01))
-    enable_4k = version_settings.get('enable_hdr', True)
+    max_resolution = version_settings.get('max_resolution', '2160p').lower()
     enable_hdr = version_settings.get('enable_hdr', True)
     preferred_filter_bonus = 50
 
     logging.debug(f"Filter in terms: {filter_in}")
     logging.debug(f"Filter out terms: {filter_out}")
     logging.debug(f"Minimum size (GB): {min_size_gb}")
-    logging.debug(f"Enable 4K: {enable_4k}")
     logging.debug(f"Enable HDR: {enable_hdr}")
 
     filter_in = [term.strip().lower() for term in filter_in if isinstance(term, str) and term.strip()]
@@ -472,6 +514,16 @@ def filter_results(all_results: List[Dict[str, Any]], tmdb_id: str, title: str, 
         # Title similarity filter
         parsed_title = parsed_info.get('title', '')
         title_similarity = similarity(parsed_title, title)
+
+        # Resolution filtering
+        if compare_resolutions(resolution, max_resolution) > 0:
+            logging.debug(f"Filtered out by resolution: {torrent_title}, resolution: {resolution}, max allowed: {max_resolution}")
+            continue
+
+        # HDR filtering
+        if not enable_hdr and is_hdr:
+            logging.debug(f"Filtered out by HDR: {torrent_title}")
+            continue
 
         # Movie-specific filtering
         if content_type.lower() == 'movie':
@@ -524,12 +576,6 @@ def filter_results(all_results: List[Dict[str, Any]], tmdb_id: str, title: str, 
             continue
         if size_gb < min_size_gb:
             logging.debug(f"Filtered out by size: {torrent_title}, size: {size_gb} GB")
-            continue
-        if not enable_4k and ('4k' in resolution or '2160p' in resolution):
-            logging.debug(f"Filtered out by 4K: {torrent_title}")
-            continue
-        if not enable_hdr and is_hdr:
-            logging.debug(f"Filtered out by HDR: {torrent_title}")
             continue
 
         # Apply preferred filters (these don't exclude results, but affect ranking)
