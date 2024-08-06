@@ -226,23 +226,19 @@ def extract_title_and_se(torrent_name: str) -> Tuple[str, int, int]:
     episode = parsed.get('episode')
     return title, season, episode
 
-def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], query: str, query_year: int, query_season: int, query_episode: int, multi: bool, content_type: str) -> Tuple:
+def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], query: str, query_year: int, query_season: int, query_episode: int, multi: bool, content_type: str, version_settings: Dict[str, Any]) -> Tuple:
     torrent_title = result.get('title', '')
     parsed = result.get('parsed_info', {})
     extracted_title = parsed.get('title', torrent_title)
     torrent_year = parsed.get('year')
     torrent_season, torrent_episode = parsed.get('season'), parsed.get('episode')
 
-    # Add debug logging for content type
-    #logging.debug(f"Processing result: {torrent_title}")
-    #logging.debug(f"Content type: {content_type}")
-
     # Get user-defined weights
-    resolution_weight = int(get_setting('Scraping', 'resolution_weight', default=3))
-    hdr_weight = int(get_setting('Scraping', 'hdr_weight', default=3))
-    similarity_weight = int(get_setting('Scraping', 'similarity_weight', default=3))
-    size_weight = int(get_setting('Scraping', 'size_weight', default=3))
-    bitrate_weight = int(get_setting('Scraping', 'bitrate_weight', default=3))
+    resolution_weight = int(version_settings.get('resolution_weight', 3))
+    hdr_weight = int(version_settings.get('hdr_weight', 3))
+    similarity_weight = int(version_settings.get('similarity_weight', 3))
+    size_weight = int(version_settings.get('size_weight', 3))
+    bitrate_weight = int(version_settings.get('bitrate_weight', 3))
 
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
@@ -297,12 +293,26 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     # Apply a bonus for multi-packs when requested, scaled by the number of seasons
     MULTI_PACK_BONUS = 10  # Base bonus
     multi_pack_score = 50+(MULTI_PACK_BONUS * num_seasons) if multi and is_queried_season_pack else 0
-    
+
     # Penalize multi-packs when looking for single episodes
     SINGLE_EPISODE_PENALTY = -25
     single_episode_score = SINGLE_EPISODE_PENALTY if not multi and is_multi_pack and query_episode is not None else 0
 
     filter_score = result.get('filter_score', 0)
+
+    # Implement preferred filtering logic
+    preferred_filter_score = 0
+    torrent_title_lower = torrent_title.lower()
+
+    # Apply preferred_filter_in bonus
+    for term, weight in version_settings.get('preferred_filter_in', []):
+        if term.lower() in torrent_title_lower:
+            preferred_filter_score += weight
+
+    # Apply preferred_filter_out penalty
+    for term, weight in version_settings.get('preferred_filter_out', []):
+        if term.lower() in torrent_title_lower:
+            preferred_filter_score -= weight
 
     # Combine scores
     total_score = (
@@ -316,24 +326,20 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         (episode_match * 5) +
         multi_pack_score +
         single_episode_score +
-        filter_score
+        filter_score +
+        preferred_filter_score  # Add the preferred filter score
     )
 
     # Content type matching score
     content_type_score = 0
     if content_type.lower() == 'movie':
-        #logging.debug(f"Applying movie logic for: {torrent_title}")
         if re.search(r'(s\d{2}|e\d{2})', torrent_title, re.IGNORECASE):
             content_type_score = -500
-            #logging.debug(f"Penalized TV pattern in movie: {torrent_title}, score: {content_type_score}")
     elif content_type.lower() == 'episode':
-        #logging.debug(f"Applying TV show logic for: {torrent_title}")
         if not re.search(r'(s\d{2}|e\d{2})', torrent_title, re.IGNORECASE):
             content_type_score = -500
-            #logging.debug(f"Penalized non-TV pattern: {torrent_title}, score: {content_type_score}")
         if re.search(r'\b(19|20)\d{2}\b', torrent_title) and not re.search(r'(season|episode|s\d{2}|e\d{2})', torrent_title, re.IGNORECASE):
             content_type_score -= 250
-            #logging.debug(f"Additional movie-like penalty: {torrent_title}, total score: {content_type_score}")
     else:
         logging.warning(f"Unknown content type: {content_type} for result: {torrent_title}")
 
@@ -353,11 +359,10 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'multi_pack_score': multi_pack_score,
         'single_episode_score': single_episode_score,
         'filter_score': filter_score,
+        'preferred_filter_score': preferred_filter_score,
+        'content_type_score': content_type_score,
         'total_score': total_score
     }
-
-    # Add content_type_score to the score breakdown
-    score_breakdown['content_type_score'] = content_type_score
 
     # Add the score breakdown to the result
     result['score_breakdown'] = score_breakdown
@@ -428,21 +433,171 @@ def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     logging.debug(f"Deduplication complete. Original count: {len(results)}, Deduplicated count: {len(unique_results)}")
     return list(unique_results.values())
     
-def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+def filter_results(all_results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str, season: int, episode: int, multi: bool, version_settings: Dict[str, Any], runtime: int, episode_count: int, season_episode_counts: Dict[int, int]) -> List[Dict[str, Any]]:
+    logging.debug(f"Filtering results with the following settings: {version_settings}")
+
+    filter_in = version_settings.get('filter_in', [])
+    filter_out = version_settings.get('filter_out', [])
+    min_size_gb = float(version_settings.get('min_size_gb', 0.01))
+    enable_4k = version_settings.get('enable_hdr', True)
+    enable_hdr = version_settings.get('enable_hdr', True)
+    preferred_filter_bonus = 50
+
+    logging.debug(f"Filter in terms: {filter_in}")
+    logging.debug(f"Filter out terms: {filter_out}")
+    logging.debug(f"Minimum size (GB): {min_size_gb}")
+    logging.debug(f"Enable 4K: {enable_4k}")
+    logging.debug(f"Enable HDR: {enable_hdr}")
+
+    filter_in = [term.strip().lower() for term in filter_in if isinstance(term, str) and term.strip()]
+    filter_out = [term.strip().lower() for term in filter_out if isinstance(term, str) and term.strip()]
+
+    # Compile regular expressions for filter out terms
+    filter_out_regex = [re.compile(r'\b{}\b'.format(re.escape(term)), re.IGNORECASE) for term in filter_out]
+    filter_in_regex = [re.compile(r'\b{}\b'.format(re.escape(term)), re.IGNORECASE) for term in filter_in]
+
+    filtered_results = []
+    for result in all_results:
+        result['tmdb_id'] = tmdb_id
+        result['runtime'] = runtime
+        result['episode_count'] = episode_count
+
+        torrent_title = result.get('title', '').lower()
+        size_gb = parse_size(result.get('size', 0))
+        parsed_info = PTN.parse(torrent_title)
+        resolution = parsed_info.get('resolution', '').lower()
+        is_hdr = parsed_info.get('hdr', False)
+        result_year = parsed_info.get('year')
+
+        # Title similarity filter
+        parsed_title = parsed_info.get('title', '')
+        title_similarity = similarity(parsed_title, title)
+
+        # Movie-specific filtering
+        if content_type.lower() == 'movie':
+            if title_similarity < 0.8 or (result_year and result_year != year):
+                logging.debug(f"Filtered out movie: {torrent_title}, similarity: {title_similarity:.2f}, year: {result_year}")
+                continue
+
+        # TV show filtering
+        elif content_type.lower() == 'episode' and season is not None:
+            season_pack = detect_season_pack(torrent_title)
+
+            if season_pack == 'N/A':  # Single episode
+                episode_season = re.search(r'S(\d{2})E\d{2}', torrent_title, re.IGNORECASE)
+                if episode_season and int(episode_season.group(1)) != season:
+                    logging.debug(f"Filtered out wrong season: {torrent_title}, season: {episode_season.group(1)}, expected: {season}")
+                    continue
+
+            elif season_pack != 'Unknown' and season_pack != 'Complete':
+                seasons = [int(s) for s in season_pack.split(',')]
+                if season not in seasons:
+                    logging.debug(f"Filtered out wrong season pack: {torrent_title}, seasons: {season_pack}, expected: {season}")
+                    continue
+
+            elif season_pack == 'Unknown':
+                logging.debug(f"Filtered out unknown season pack: {torrent_title}")
+                continue
+
+            if multi:
+                # Multi-episode search
+                if season_pack == 'N/A' or (season_pack != 'Complete' and str(season) not in season_pack.split(',')):
+                    logging.debug(f"Filtered out for multi-episode search: {torrent_title}, season pack: {season_pack}")
+                    continue
+            else:
+                # Single episode search
+                if season_pack != 'N/A':
+                    logging.debug(f"Filtered out season pack for single episode search: {torrent_title}")
+                    continue
+
+                expected_pattern = f'S{season:02d}E{episode:02d}'
+                if expected_pattern not in torrent_title.upper():
+                    logging.debug(f"Filtered out non-matching episode: {torrent_title}, expected: {expected_pattern}")
+                    continue
+
+        # Apply common filters
+        if not any(regex.search(torrent_title) for regex in filter_in_regex) and filter_in_regex:
+            logging.debug(f"Filtered out by filter_in: {torrent_title}")
+            continue
+        if any(regex.search(torrent_title) for regex in filter_out_regex):
+            logging.debug(f"Filtered out by filter_out: {torrent_title}")
+            continue
+        if size_gb < min_size_gb:
+            logging.debug(f"Filtered out by size: {torrent_title}, size: {size_gb} GB")
+            continue
+        if not enable_4k and ('4k' in resolution or '2160p' in resolution):
+            logging.debug(f"Filtered out by 4K: {torrent_title}")
+            continue
+        if not enable_hdr and is_hdr:
+            logging.debug(f"Filtered out by HDR: {torrent_title}")
+            continue
+
+        # Apply preferred filters (these don't exclude results, but affect ranking)
+        preferred_in_bonus = sum(preferred_filter_bonus for term in filter_in if term in torrent_title)
+        preferred_out_penalty = sum(preferred_filter_bonus for term in filter_out if term in torrent_title)
+
+        result['filter_score'] = preferred_in_bonus - preferred_out_penalty
+        result['parsed_info'] = parsed_info
+
+        original_size_gb = parse_size(result.get('size', 0))
+
+        if content_type.lower() == 'episode':
+            season_pack = detect_season_pack(result.get('title', ''))
+
+            if season_pack == 'N/A':  # Single episode
+                normalized_episode_count = 1
+                size_gb = original_size_gb
+            elif season_pack == 'Complete':  # Complete series
+                normalized_episode_count = sum(season_episode_counts.values())
+                size_gb = original_size_gb / normalized_episode_count
+            elif season_pack != 'Unknown':  # Specific season or range of seasons
+                seasons = [int(s) for s in season_pack.split(',')]
+                normalized_episode_count = sum(season_episode_counts.get(s, 0) for s in seasons)
+                size_gb = original_size_gb / normalized_episode_count
+            else:  # Unknown - default to single season
+                normalized_episode_count = season_episode_counts.get(season, 1)
+                size_gb = original_size_gb / normalized_episode_count
+        else:
+            # Movie logic
+            size_gb = original_size_gb
+            normalized_episode_count = 1
+            season_pack = 'N/A'  # Set to N/A for movies
+
+        bitrate = calculate_bitrate(size_gb, runtime)
+        result['bitrate'] = bitrate
+
+        # Add the one-liner logging here
+        if content_type.lower() == 'episode':
+            logging.debug(f"Result: {result.get('title', 'Unknown')} | "
+                         f"Type: TV Show | "
+                         f"Season Pack: {season_pack} | "
+                         f"Episodes: {normalized_episode_count} | "
+                         f"Total Size: {original_size_gb:.2f} GB | "
+                         f"Size per Episode: {size_gb:.2f} GB | "
+                         f"Estimated Bitrate: {bitrate:.2f} Mbps")
+        else:
+            logging.debug(f"Result: {result.get('title', 'Unknown')} | "
+                         f"Type: Movie | "
+                         f"Total Size: {original_size_gb:.2f} GB | "
+                         f"Estimated Bitrate: {bitrate:.2f} Mbps")
+
+        result['parsed_info'] = parsed_info
+        filtered_results.append(result)
+
+    return filtered_results
+
+def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     try:
         start_time = time.time()
         all_results = []
 
-        logging.debug(f"Starting scraping for: {title} ({year})")
-        #logging.debug(f"Input content_type: {content_type}")
-        
+        logging.debug(f"Starting scraping for: {title} ({year}), Version: {version}")
+
         # Ensure content_type is correctly set
         if content_type.lower() not in ['movie', 'episode']:
             logging.warning(f"Invalid content_type: {content_type}. Defaulting to 'movie'.")
             content_type = 'movie'
 
-        
-        
         # Get TMDB ID and runtime once for all results
         overseerr_url = get_setting('Overseerr', 'url')
         overseerr_api_key = get_setting('Overseerr', 'api_key')
@@ -467,27 +622,15 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         if content_type.lower() == 'episode':
             season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, tmdb_id, cookies)
 
-
         logging.debug(f"Retrieved runtime for {title}: {runtime} minutes, Episode count: {episode_count}")
 
-        # Get filter terms and minimum size
-        filter_in = get_setting('Scraping', 'filter_in', default='').split(',')
-        filter_out = get_setting('Scraping', 'filter_out', default='').split(',')
-        preferred_filter_in = get_setting('Scraping', 'preferred_filter_in', default='').split(',')
-        preferred_filter_out = get_setting('Scraping', 'preferred_filter_out', default='').split(',')
-        min_size_gb = float(get_setting('Scraping', 'min_size_gb', default=0.01))
-        enable_4k = get_setting('Scraping', 'enable_4k', default='True')
-        enable_hdr = get_setting('Scraping', 'enable_hdr', default='True')
-        preferred_filter_bonus = 50
-        filter_in = [term.strip().lower() for term in filter_in if term.strip()]
-        filter_out = [term.strip().lower() for term in filter_out if term.strip()]
-
-        preferred_filter_in = [term.strip().lower() for term in preferred_filter_in if term.strip()]
-        preferred_filter_out = [term.strip().lower() for term in preferred_filter_out if term.strip()]
-
-        # Compile regular expressions for filter out terms
-        filter_out_regex = [re.compile(r'\b{}\b'.format(re.escape(term)), re.IGNORECASE) for term in filter_out]
-        filter_in_regex = [re.compile(r'\b{}\b'.format(re.escape(term)), re.IGNORECASE) for term in filter_in]
+        # Parse scraping settings based on version
+        scraping_versions = get_setting('Scraping', 'versions', {})
+        version_settings = scraping_versions.get(version, None)
+        if version_settings is None:
+            logging.warning(f"Version {version} not found in settings. Using default settings.")
+            version_settings = {}
+        logging.debug(f"Using version settings: {version_settings}")
 
         # Run scrapers concurrently using ThreadPoolExecutor
         def run_scraper(scraper_func, scraper_name):
@@ -535,147 +678,13 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         logging.debug(f"Total scraping time: {time.time() - scraping_start:.2f} seconds")
         logging.debug(f"Total results before filtering: {len(all_results)}")
 
-        # Get Overseerr details
-        overseerr_url = get_setting('Overseerr', 'url')
-        overseerr_api_key = get_setting('Overseerr', 'api_key')
-        cookies = get_overseerr_cookies(overseerr_url)
-
-        logging.debug(f"Total results before deduplication: {len(all_results)}")
+        # Deduplicate results before filtering
         all_results = deduplicate_results(all_results)
         logging.debug(f"Total results after deduplication: {len(all_results)}")
 
         # Filter results
-        filtering_start = time.time()
-        filtered_results = []
-        for result in all_results:
-            result['tmdb_id'] = tmdb_id
-            result['runtime'] = runtime
-            result['episode_count'] = episode_count
-
-            torrent_title = result.get('title', '').lower()
-            size_gb = parse_size(result.get('size', 0))
-            parsed_info = PTN.parse(torrent_title)
-            resolution = parsed_info.get('resolution', '').lower()
-            is_hdr = parsed_info.get('hdr', False)
-            result_year = parsed_info.get('year')
-
-            # Title similarity filter
-            parsed_title = parsed_info.get('title', '')
-            title_similarity = similarity(parsed_title, title)
-
-            # Movie-specific filtering
-            if content_type.lower() == 'movie':
-                if title_similarity < 0.8 or (result_year and result_year != year):
-                    logging.debug(f"Filtered out movie: {torrent_title}, similarity: {title_similarity:.2f}, year: {result_year}")
-                    continue
-
-            # TV show filtering
-            elif content_type.lower() == 'episode' and season is not None:
-                season_pack = detect_season_pack(torrent_title)
-
-                if season_pack == 'N/A':  # Single episode
-                    episode_season = re.search(r'S(\d{2})E\d{2}', torrent_title, re.IGNORECASE)
-                    if episode_season and int(episode_season.group(1)) != season:
-                        logging.debug(f"Filtered out wrong season: {torrent_title}, season: {episode_season.group(1)}, expected: {season}")
-                        continue
-
-                elif season_pack != 'Unknown' and season_pack != 'Complete':
-                    seasons = [int(s) for s in season_pack.split(',')]
-                    if season not in seasons:
-                        logging.debug(f"Filtered out wrong season pack: {torrent_title}, seasons: {season_pack}, expected: {season}")
-                        continue
-
-                elif season_pack == 'Unknown':
-                    logging.debug(f"Filtered out unknown season pack: {torrent_title}")
-                    continue
-
-                if multi:
-                    # Multi-episode search
-                    if season_pack == 'N/A' or (season_pack != 'Complete' and str(season) not in season_pack.split(',')):
-                        logging.debug(f"Filtered out for multi-episode search: {torrent_title}, season pack: {season_pack}")
-                        continue
-                else:
-                    # Single episode search
-                    if season_pack != 'N/A':
-                        logging.debug(f"Filtered out season pack for single episode search: {torrent_title}")
-                        continue
-                    
-                    expected_pattern = f'S{season:02d}E{episode:02d}'
-                    if expected_pattern not in torrent_title.upper():
-                        logging.debug(f"Filtered out non-matching episode: {torrent_title}, expected: {expected_pattern}")
-                        continue
-
-            # Apply common filters
-            if not any(regex.search(torrent_title) for regex in filter_in_regex) and filter_in_regex:
-                logging.debug(f"Filtered out by filter_in: {torrent_title}")
-                continue
-            if any(regex.search(torrent_title) for regex in filter_out_regex):
-                logging.debug(f"Filtered out by filter_out: {torrent_title}")
-                continue
-            if size_gb < min_size_gb:
-                logging.debug(f"Filtered out by size: {torrent_title}, size: {size_gb} GB")
-                continue
-            if not enable_4k and ('4k' in resolution or '2160p' in resolution):
-                logging.debug(f"Filtered out by 4K: {torrent_title}")
-                continue
-            if not enable_hdr and is_hdr:
-                logging.debug(f"Filtered out by HDR: {torrent_title}")
-                continue
-
-            # Apply preferred filters (these don't exclude results, but affect ranking)
-            preferred_in_bonus = sum(preferred_filter_bonus for term in preferred_filter_in if term in torrent_title)
-            preferred_out_penalty = sum(preferred_filter_bonus for term in preferred_filter_out if term in torrent_title)
-
-            result['filter_score'] = preferred_in_bonus - preferred_out_penalty
-            result['parsed_info'] = parsed_info
-            #filtered_results.append(result)
-            
-            original_size_gb = parse_size(result.get('size', 0))
-            
-            if content_type.lower() == 'episode':
-                season_pack = detect_season_pack(result.get('title', ''))
-
-                if season_pack == 'N/A':  # Single episode
-                    normalized_episode_count = 1
-                    size_gb = original_size_gb
-                elif season_pack == 'Complete':  # Complete series
-                    normalized_episode_count = sum(season_episode_counts.values())
-                    size_gb = original_size_gb / normalized_episode_count
-                elif season_pack != 'Unknown':  # Specific season or range of seasons
-                    seasons = [int(s) for s in season_pack.split(',')]
-                    normalized_episode_count = sum(season_episode_counts.get(s, 0) for s in seasons)
-                    size_gb = original_size_gb / normalized_episode_count
-                else:  # Unknown - default to single season
-                    normalized_episode_count = season_episode_counts.get(season, 1)
-                    size_gb = original_size_gb / normalized_episode_count
-            else:
-                # Movie logic
-                size_gb = original_size_gb
-                normalized_episode_count = 1
-                season_pack = 'N/A'  # Set to N/A for movies
-
-            bitrate = calculate_bitrate(size_gb, runtime)
-            result['bitrate'] = bitrate
-
-            # Add the one-liner logging here
-            if content_type.lower() == 'episode':
-                logging.debug(f"Result: {result.get('title', 'Unknown')} | "
-                             f"Type: TV Show | "
-                             f"Season Pack: {season_pack} | "
-                             f"Episodes: {normalized_episode_count} | "
-                             f"Total Size: {original_size_gb:.2f} GB | "
-                             f"Size per Episode: {size_gb:.2f} GB | "
-                             f"Estimated Bitrate: {bitrate:.2f} Mbps")
-            else:
-                logging.debug(f"Result: {result.get('title', 'Unknown')} | "
-                             f"Type: Movie | "
-                             f"Total Size: {original_size_gb:.2f} GB | "
-                             f"Estimated Bitrate: {bitrate:.2f} Mbps")
-
-            result['parsed_info'] = parsed_info
-            filtered_results.append(result)
-
-        logging.debug(f"Filtering took {time.time() - filtering_start:.2f} seconds")
+        filtered_results = filter_results(all_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts)
+        logging.debug(f"Filtering took {time.time() - scraping_start:.2f} seconds")
         logging.debug(f"Total results after filtering: {len(filtered_results)}")
 
         # Add is_multi_pack information to each result
@@ -700,15 +709,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Sort results
         sorting_start = time.time()
-               
-        # Deduplication before sorting
-        deduplicated_results = deduplicate_results(filtered_results)
-        logging.debug(f"Total results after deduplication: {len(deduplicated_results)}")
-               
+
         def stable_rank_key(x):
-            # First, use the rank_result_key function with content_type
-            primary_key = rank_result_key(x, filtered_results, title, year, season, episode, multi, content_type)
-            
+            # First, use the rank_result_key function with content_type and version_settings
+            primary_key = rank_result_key(x, filtered_results, title, year, season, episode, multi, content_type, version_settings)
+
             # Then, use a tuple of stable secondary keys
             secondary_keys = (
                 x.get('scraper', ''),  # Scraper name
@@ -716,12 +721,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 x.get('size', 0),      # Size
                 x.get('seeders', 0)    # Seeders
             )
-            
+
             return (primary_key, secondary_keys)
 
-        final_results = sorted(deduplicated_results, key=stable_rank_key)
+        final_results = sorted(filtered_results, key=stable_rank_key)
         logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
-               
+
         logging.debug(f"Total results in final output: {len(final_results)}")
         logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
         return final_results
