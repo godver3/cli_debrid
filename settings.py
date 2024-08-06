@@ -210,7 +210,10 @@ class SettingsEditor:
             ('Trakt', 'client_id', 'Trakt - Enter Trakt client ID'),
             ('Trakt', 'client_secret', 'Trakt - Enter Trakt client secret'),
             ('Trakt', 'user_watchlist_enabled', 'Trakt - Enable your watchlist as a content source? True/False (Requires auth. below)'),
-            ('Trakt', 'trakt_lists', 'Trakt - Add any other Trakt lists as content sources (comma-separated)')
+            ('Trakt', 'trakt_lists', 'Trakt - Add any other Trakt lists as content sources (comma-separated)'),
+            ('Jackett', 'enabled', 'Jackett - Jackett enabled? True/False'),
+            ('Jackett', 'url', 'Jackett - Jackett URL'),
+            ('Jackett', 'api', 'Jackett - Jackett API')
             #('Trakt', 'oauth_token', 'Trakt - oauth_token - Do not change - set by authorization below'),
             #('Trakt', 'refresh_token', 'Trakt - refresh_token - Do not change - set by authorization below')
         ])

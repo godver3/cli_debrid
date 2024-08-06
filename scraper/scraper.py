@@ -9,6 +9,7 @@ from .zilean import scrape_zilean
 from .torrentio import scrape_torrentio
 from .knightcrawler import scrape_knightcrawler
 from .comet import scrape_comet
+from .jackett import scrape_jackett
 from settings import get_setting
 import time
 from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes, get_episode_count_for_seasons, get_all_season_episode_counts
@@ -636,9 +637,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Define scrapers and check if they are enabled
         all_scrapers = [
             (scrape_zilean, 'Zilean'),
-            (scrape_knightcrawler, 'Knightcrawler'),
+            #(scrape_knightcrawler, 'Knightcrawler'),
             (scrape_torrentio, 'Torrentio'),
-            (scrape_comet, 'Comet')
+            (scrape_comet, 'Comet'),
+            (scrape_jackett, 'Jackett')
         ]
 
         # Filter scrapers based on their enabled status in settings

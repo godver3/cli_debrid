@@ -36,14 +36,24 @@ def add_to_real_debrid(magnet_link):
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/x-www-form-urlencoded'
     }
-
     try:
         rate_limited()
-        # Step 1: Add magnet
-        magnet_data = {'magnet': magnet_link}
-        magnet_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
-        magnet_response.raise_for_status()
-        torrent_id = magnet_response.json()['id']
+        # Step 1: Add magnet or torrent file
+        if 'magnet:?xt=urn:btih:' in magnet_link:
+            magnet_data = {'magnet': magnet_link}
+            torrent_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
+        else:
+            torrent = requests.get(magnet_link, allow_redirects=False, timeout=float(60))
+            if torrent.status_code != 200:
+                sleep(1)
+                torrent = requests.get(magnet_link, allow_redirects=False, timeout=float(60))
+                if torrent.status_code != 200:
+                    torrent.raise_for_status()
+                    return False
+            torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent)
+
+        torrent_response.raise_for_status()
+        torrent_id = torrent_response.json()['id']
 
         rate_limited()
         # Step 2: Get torrent info
@@ -75,7 +85,7 @@ def add_to_real_debrid(magnet_link):
             links_info = links_response.json()
 
             if links_info['status'] == 'downloaded':
-                logging.info(f"Successfully added magnet to Real-Debrid. Torrent ID: {torrent_id}")
+                logging.info(f"Successfully added torrent to Real-Debrid. Torrent ID: {torrent_id}")
                 return links_info['links']
             elif links_info['status'] in ['magnet_error', 'error', 'virus', 'dead']:
                 logging.error(f"Torrent processing failed. Status: {links_info['status']}")
