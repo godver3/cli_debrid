@@ -10,88 +10,75 @@ from urllib.parse import urlparse
 from trakt import init
 import trakt.core
 import io
+import json
+import copy
 
-CONFIG_FILE = './config/config.ini'
+CONFIG_FILE = './config/config.json'
 
 def load_config():
-    config = configparser.ConfigParser()
     if os.path.exists(CONFIG_FILE):
-        config.read(CONFIG_FILE)
-    return config
+        with open(CONFIG_FILE, 'r') as config_file:
+            try:
+                return json.load(config_file)
+            except json.JSONDecodeError:
+                logging.error(f"Error decoding JSON from {CONFIG_FILE}. Using empty config.")
+    return {}
 
 def save_config(config):
-    with open(CONFIG_FILE, 'w') as configfile:
-        config.write(configfile)
-
-def get_setting(section, option, default=''):
-    config = configparser.ConfigParser()
-    config.read(CONFIG_FILE)
-    try:
-        value = config.get(section, option)
-        if value is None or value.strip() == '':
-            logging.debug(f"Empty or None value found for {section}.{option}, using default: {default}")
-            return default
-        if value.lower() in ['true', 'yes', '1']:
-            return True
-        elif value.lower() in ['false', 'no', '0']:
-            return False
-        return value
-    except (configparser.NoSectionError, configparser.NoOptionError):
-        logging.debug(f"Setting not found - Section: {section}, Option: {option}, using default: {default}")
-        return default
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+    with open(CONFIG_FILE, 'w') as config_file:
+        json.dump(config, config_file, indent=2)
 
 def validate_url(url):
+    if not url:
+        return ''
     if not url.startswith(('http://', 'https://')):
-        url = 'http://' + url
-    
-    # Remove trailing slash
-    url = url.rstrip('/')
-    
-    parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
-        raise ValueError("Invalid URL")
-    return url
+        url = f'http://{url}'
+    try:
+        result = urlparse(url)
+        return url if all([result.scheme, result.netloc]) else ''
+    except:
+        return ''
+
+def get_setting(section, key, default=''):
+    config = load_config()
+    value = config.get(section, {}).get(key, default)
+    if key.lower().endswith('url'):
+        validated_url = validate_url(value)
+        if validated_url != value:
+            logging.debug(f"URL validation changed value for {section}.{key}: '{value}' -> '{validated_url}'")
+        return validated_url
+    return value
 
 def set_setting(section, key, value):
     config = load_config()
-    if not config.has_section(section):
-        config.add_section(section)
-    
-    # List of keys that should be treated as URLs
-    url_keys = ['url']  # Add more keys here if needed, e.g., ['url', 'api_url', 'webhook_url']
-    
-    if key in url_keys:
-        try:
-            value = validate_url(value)
-        except ValueError:
-            logging.error(f"Invalid URL provided for {section}.{key}: {value}")
-            return False
-
-    config.set(section, key, value)
+    if section not in config:
+        config[section] = {}
+    if key.lower().endswith('url'):  # Check if the key ends with 'url' (case-insensitive)
+        value = validate_url(value)
+    config[section][key] = value
     save_config(config)
-    return True
 
 def get_all_settings():
-    from settings import SettingsEditor
+    return load_config()
 
-    all_settings = []
-    methods = [
-        'show_required_settings',
-        'show_additional_settings',
-        'show_scraping_settings',
-        'show_debug_settings'
-    ]
+def validate_url(url):
+    if not url:
+        logging.debug(f"Empty URL provided")
+        return ''
+    if not url.startswith(('http://', 'https://')):
+        url = f'http://{url}'
+    try:
+        result = urlparse(url)
+        if all([result.scheme, result.netloc]):
+            return url
+        else:
+            logging.warning(f"Invalid URL structure: {url}")
+            return ''
+    except Exception as e:
+        logging.error(f"Error parsing URL {url}: {str(e)}")
+        return ''
 
-    for method_name in methods:
-        method = getattr(SettingsEditor, method_name)
-        source = inspect.getsource(method)
-        start = source.index('[')
-        end = source.rindex(']') + 1
-        settings_list = eval(source[start:end])
-        all_settings.extend(settings_list)
-
-    return all_settings
-    
 def get_scraping_settings():
     all_settings = get_all_settings()
     scraping_settings = {}
@@ -106,21 +93,41 @@ def get_scraping_settings():
 
 def ensure_settings_file():
     config = load_config()
-    all_settings = get_all_settings()
+    default_settings = {
+        'Plex': {
+            'url': '',
+            'token': '',
+            'movie_libraries': '',
+            'shows_libraries': ''
+        },
+        'Overseerr': {
+            'url': '',
+            'api_key': ''
+        },
+        'RealDebrid': {
+            'api_key': ''
+        },
+        'Torrentio': {
+            'enabled': 'False'
+        },
+        'Knightcrawler': {
+            'enabled': 'False'
+        },
+        'Comet': {
+            'enabled': 'False'
+        },
+        'Debug': {
+            'skip_menu': 'False',
+            'logging_level': 'INFO'
+        }
+    }
 
-    for section, key, _ in all_settings:
-        if not config.has_section(section):
-            config.add_section(section)
-        if not config.has_option(section, key) or not config.get(section, key).strip():
-            # Set a default value
-            default_value = ''
-            if key == 'enabled':
-                default_value = 'False'
-            elif key == 'logging_level':
-                default_value = 'INFO'
-            elif key == 'wake_limit':
-                default_value = '3'
-            config.set(section, key, default_value)
+    for section, settings in default_settings.items():
+        if section not in config:
+            config[section] = {}
+        for key, default_value in settings.items():
+            if key not in config[section] or not config[section][key]:
+                config[section][key] = default_value
 
     save_config(config)
 
@@ -135,6 +142,7 @@ class SettingsEditor:
             ('error', 'light red', 'black'),
         ]
         self.main_loop = urwid.MainLoop(self.build_main_menu(), self.palette, unhandled_input=self.exit_on_q)
+        self.main_loop.original_widget = self.main_loop.widget
         self.main_loop.run()
 
     def build_main_menu(self):
@@ -186,20 +194,7 @@ class SettingsEditor:
             None, focus_map='reversed'))
 
     def show_scraping_settings(self, button):
-        self.show_settings("Scraping Settings", [
-            ('Scraping', 'enable_4k', '4k enabled? True/False'),
-            ('Scraping', 'enable_hdr', 'HDR enabled? True/False'),
-            ('Scraping', 'resolution_weight', 'Resolution weight (1-5)'),
-            ('Scraping', 'hdr_weight', 'HDR weight (1-5)'),
-            ('Scraping', 'similarity_weight', 'Title similarity weight (1-5)'),
-            ('Scraping', 'size_weight', 'File size weight (1-5)'),
-            ('Scraping', 'bitrate_weight', 'Bitrate weight (1-5)'),
-            ('Scraping', 'preferred_filter_in', 'Preferred filter-in terms (comma-separated)'),
-            ('Scraping', 'preferred_filter_out', 'Preferred filter-out terms (comma-separated)'),
-            ('Scraping', 'filter_in', 'Required filter-in terms (comma-separated)'),
-            ('Scraping', 'filter_out', 'Required filter-out terms (comma-separated)'),
-            ('Scraping', 'min_size_gb', 'Minimum file size in GB (e.g., 0.01)')
-        ])
+        ScrapingSettingsEditor(self.main_loop).show_versions_menu()
         
     def show_debug_settings(self, button):
         self.show_settings("Debug Settings", [
@@ -250,15 +245,13 @@ class SettingsEditor:
         self.main_loop.screen = saved_screen
         self.main_loop.screen.start()
 
-
-
     def show_settings(self, title, settings):
         self.edits = {}
         widgets = [urwid.Text(title), urwid.Divider()]
 
         for section, key, label_text in settings:
-            value = self.config.get(section, key, fallback='')
-            edit = urwid.Edit(('edit', f"{label_text}: "), value)
+            value = get_setting(section, key, '')
+            edit = urwid.Edit(('edit', f"{label_text}: "), str(value))
             edit = urwid.AttrMap(edit, 'edit', 'edit_focus')
             self.edits[(section, key)] = edit
             widgets.append(edit)
@@ -272,8 +265,7 @@ class SettingsEditor:
     def save_settings(self):
         for (section, key), edit in self.edits.items():
             value = edit.original_widget.get_edit_text()
-            if not set_setting(section, key, value):
-                self.show_error(f"Invalid URL for {section}.{key}: {value}")
+            set_setting(section, key, value)
         # Reload config to ensure updates are applied
         self.config = load_config()
 
@@ -299,6 +291,326 @@ class SettingsEditor:
         if key in ('q', 'Q'):
             self.save_settings()
             raise urwid.ExitMainLoop()
+
+class ScrapingSettingsEditor:
+    def __init__(self, main_loop):
+        self.main_loop = main_loop
+        self.current_version = None
+        self.versions = self.load_versions()
+        self.resolution_options = ['2160p', '1080p', '720p', 'SD']
+        self.previous_widget = None
+
+    def load_versions(self):
+        versions = get_setting('Scraping', 'versions', {})
+        if not versions:
+            versions = {'Default': self.get_default_settings()}
+            self.save_versions(versions)
+        return versions
+
+    def save_versions(self, versions=None):
+        if versions is None:
+            versions = self.versions
+        clean_versions = {}
+        for version_name, settings in versions.items():
+            clean_settings = {}
+            for key, value in settings.items():
+                if isinstance(value, urwid.Edit):
+                    clean_settings[key] = value.edit_text
+                elif isinstance(value, urwid.IntEdit):
+                    clean_settings[key] = int(value.edit_text)
+                elif isinstance(value, urwid.CheckBox):
+                    clean_settings[key] = value.state
+                else:
+                    clean_settings[key] = value
+            clean_versions[version_name] = clean_settings
+        set_setting('Scraping', 'versions', clean_versions)
+
+    def get_default_settings(self):
+        return {
+            'enable_hdr': False,
+            'max_resolution': '1080p',
+            'resolution_weight': 3,
+            'hdr_weight': 3,
+            'similarity_weight': 3,
+            'size_weight': 3,
+            'bitrate_weight': 3,
+            'preferred_filter_in': [],
+            'preferred_filter_out': [],
+            'filter_in': [],
+            'filter_out': [],
+            'min_size_gb': 0.01
+        }
+
+    def show_versions_menu(self, button=None):
+        menu_items = [
+            urwid.Text("Scraping Settings Versions"),
+            urwid.Divider(),
+            urwid.AttrMap(urwid.Button("Add New Version", on_press=self.add_new_version), None, focus_map='reversed'),
+        ]
+
+        for version_name in self.versions.keys():
+            menu_items.append(urwid.Columns([
+                ('weight', 6, urwid.AttrMap(urwid.Button(version_name, on_press=self.edit_version, user_data=version_name), None, focus_map='reversed')),
+                ('weight', 2, urwid.AttrMap(urwid.Button("Duplicate", on_press=self.duplicate_version, user_data=version_name), None, focus_map='reversed')),
+                ('weight', 2, urwid.AttrMap(urwid.Button("Rename", on_press=self.rename_version, user_data=version_name), None, focus_map='reversed')),
+                ('weight', 2, urwid.AttrMap(urwid.Button("Delete", on_press=self.delete_version, user_data=version_name), None, focus_map='reversed')),
+            ]))
+
+        menu_items.append(urwid.Divider())
+        menu_items.append(urwid.AttrMap(urwid.Button("Back to Main Menu", on_press=self.back_to_main_menu), None, focus_map='reversed'))
+
+        list_box = urwid.ListBox(urwid.SimpleFocusListWalker(menu_items))
+        self.main_loop.widget = urwid.Frame(list_box, footer=urwid.Text("Use arrow keys to navigate, Enter to select"))
+
+    def add_new_version(self, button):
+        self.edit_version_name(None)
+
+    def duplicate_version(self, button, version_name):
+        new_name = f"{version_name}_copy"
+        counter = 1
+        while new_name in self.versions:
+            new_name = f"{version_name}_copy_{counter}"
+            counter += 1
+        self.versions[new_name] = copy.deepcopy(self.versions[version_name])
+        self.save_versions()
+        self.show_versions_menu()
+
+    def delete_version(self, button, version_name):
+        if len(self.versions) > 1:
+            del self.versions[version_name]
+            self.save_versions()
+            self.show_versions_menu()
+        else:
+            self.show_error("Cannot delete the last version")
+
+    def edit_version(self, button, version_name):
+        self.current_version = version_name
+        settings = self.versions[version_name]
+
+        widgets = [
+            urwid.Text(f"Editing Version: {version_name}"),
+            urwid.Divider(),
+        ]
+
+        for key, value in settings.items():
+            if key == 'max_resolution':
+                widgets.append(urwid.Text("Max Resolution:"))
+                radio_buttons = []
+                for option in self.resolution_options:
+                    radio = urwid.RadioButton(radio_buttons, option, state=(option == value),
+                                              on_state_change=self.on_resolution_change)
+                    widgets.append(urwid.AttrMap(radio, None, focus_map='reversed'))
+            elif isinstance(value, bool):
+                checkbox = urwid.CheckBox(key.replace('_', ' ').title(), state=value,
+                                          on_state_change=self.on_checkbox_change)
+                widgets.append(urwid.AttrMap(checkbox, None, focus_map='reversed'))
+            elif isinstance(value, (int, float)):
+                caption = f"{key.replace('_', ' ').title()}: "
+                if isinstance(value, int):
+                    edit = urwid.IntEdit(caption, str(value))
+                else:
+                    edit = urwid.Edit(caption, str(value))
+                urwid.connect_signal(edit, 'change', self.on_edit_change, user_args=[key])
+                widgets.append(urwid.AttrMap(edit, None, focus_map='edit_focus'))
+            elif isinstance(value, list):
+                widgets.append(urwid.Text(f"{key.replace('_', ' ').title()}:"))
+                if value:
+                    for item in value:
+                        if isinstance(item, tuple):
+                            widgets.append(urwid.Text(f"  - {item[0]} (weight: {item[1]})"))
+                        else:
+                            widgets.append(urwid.Text(f"  - {item}"))
+                else:
+                    widgets.append(urwid.Text("  (empty)"))
+                widgets.append(urwid.AttrMap(
+                    urwid.Button("Edit List", on_press=self.edit_filter_list, user_data=(key, value)),
+                    None, focus_map='reversed'
+                ))
+            else:
+                edit = urwid.Edit(f"{key.replace('_', ' ').title()}: ", str(value))
+                urwid.connect_signal(edit, 'change', self.on_edit_change, user_args=[key])
+                widgets.append(urwid.AttrMap(edit, None, focus_map='edit_focus'))
+
+        widgets.extend([
+            urwid.Divider(),
+            urwid.AttrMap(urwid.Button("Back", on_press=self.show_versions_menu), None, focus_map='reversed'),
+        ])
+
+        list_box = urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
+        self.main_loop.widget = urwid.Frame(list_box)
+
+    def on_checkbox_change(self, checkbox, new_state):
+        key = checkbox.label.lower().replace(' ', '_')
+        self.versions[self.current_version][key] = new_state
+        self.save_versions()
+
+    def on_resolution_change(self, radio_button, new_state):
+        if new_state:
+            self.versions[self.current_version]['max_resolution'] = radio_button.label
+            self.save_versions()
+
+    def on_edit_change(self, edit, new_edit_text, key):
+        if key in ['resolution_weight', 'hdr_weight', 'similarity_weight', 'size_weight', 'bitrate_weight']:
+            try:
+                self.versions[self.current_version][key] = int(new_edit_text)
+            except ValueError:
+                pass  # Ignore invalid input
+        elif key == 'min_size_gb':
+            try:
+                self.versions[self.current_version][key] = float(new_edit_text)
+            except ValueError:
+                pass  # Ignore invalid input
+        else:
+            self.versions[self.current_version][key] = new_edit_text
+        self.save_versions()
+
+    def back_to_main_menu(self, button):
+        self.main_loop.widget = self.main_loop.original_widget
+
+    def edit_filter_list(self, button, user_data):
+        key, value = user_data
+        FilterListEditor(self.main_loop, self, key, value)
+
+    def rename_version(self, button, version_name):
+        self.edit_version_name(version_name)
+
+    def edit_version_name(self, version_name):
+        name_edit = urwid.Edit("Version name: ", version_name or "")
+        save_button = urwid.Button("Save", on_press=self.save_version_name, user_data=(name_edit, version_name))
+        cancel_button = urwid.Button("Cancel", on_press=self.show_versions_menu)
+
+        pile = urwid.Pile([
+            name_edit,
+            urwid.Divider(),
+            urwid.Columns([('pack', save_button), ('pack', cancel_button)])
+        ])
+
+        self.main_loop.widget = urwid.Filler(urwid.LineBox(pile))
+
+    def save_version_name(self, button, user_data):
+        name_edit, old_name = user_data
+        new_name = name_edit.edit_text.strip()
+
+        if not new_name:
+            self.show_error("Version name cannot be empty")
+            return
+
+        if old_name and old_name in self.versions:
+            self.versions[new_name] = self.versions.pop(old_name)
+        else:
+            self.versions[new_name] = self.get_default_settings()
+
+        self.save_versions()
+        self.edit_version(None, new_name)
+
+    def save_filter_list(self, key, new_value):
+        self.versions[self.current_version][key] = new_value
+        self.save_versions()
+        self.edit_version(None, self.current_version)
+
+    def show_error(self, message):
+        self.previous_widget = self.main_loop.widget
+        error_widget = urwid.LineBox(urwid.Pile([
+            urwid.Text(('error', message)),
+            urwid.Button('OK', on_press=self.close_error)
+        ]))
+        self.main_loop.widget = urwid.Overlay(error_widget, self.previous_widget,
+                                              align='center', width=('relative', 50),
+                                              valign='middle', height=('relative', 20))
+
+    def close_error(self, button):
+        self.main_loop.widget = self.previous_widget
+
+class FilterListEditor:
+    def __init__(self, main_loop, scraping_editor, key, value):
+        self.main_loop = main_loop
+        self.scraping_editor = scraping_editor
+        self.key = key
+        self.value = value
+        self.is_weighted = key.startswith('preferred_filter') or key == 'preferred_filter_out'
+        self.show_list()
+
+    def show_list(self):
+        widgets = [
+            urwid.Text(f"Editing {self.key.replace('_', ' ').title()}"),
+            urwid.Divider(),
+        ]
+
+        for index, item in enumerate(self.value):
+            widgets.append(self.create_item_widget(item, index))
+
+        widgets.extend([
+            urwid.Divider(),
+            urwid.AttrMap(urwid.Button("Add New Item", on_press=self.add_new_item), None, focus_map='reversed'),
+            urwid.AttrMap(urwid.Button("Back", on_press=self.back_to_version_edit), None, focus_map='reversed'),
+        ])
+
+        list_box = urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
+        self.main_loop.widget = urwid.Frame(list_box)
+
+    def create_item_widget(self, item, index):
+        if self.is_weighted:
+            term, weight = item if isinstance(item, tuple) else (str(item), 1)
+            term_edit = urwid.Edit("Term: ", str(term))
+            weight_edit = urwid.IntEdit("Weight: ", str(weight))
+            urwid.connect_signal(term_edit, 'change', lambda w, text: self.on_term_change(text, index))
+            urwid.connect_signal(weight_edit, 'change', lambda w, text: self.on_weight_change(text, index))
+            return urwid.Columns([
+                ('weight', 4, term_edit),
+                ('weight', 2, weight_edit),
+                ('weight', 1, urwid.Button("Remove", on_press=self.remove_item, user_data=index))
+            ])
+        else:
+            term_edit = urwid.Edit("Term: ", str(item))
+            urwid.connect_signal(term_edit, 'change', lambda w, text: self.on_term_change(text, index))
+            return urwid.Columns([
+                ('weight', 6, term_edit),
+                ('weight', 1, urwid.Button("Remove", on_press=self.remove_item, user_data=index))
+            ])
+
+    def on_term_change(self, new_text, index):
+        if self.is_weighted:
+            current_item = self.value[index]
+            if isinstance(current_item, tuple):
+                self.value[index] = (new_text, current_item[1])
+            else:
+                self.value[index] = (new_text, 1)
+        else:
+            self.value[index] = new_text
+        self.save_changes()
+
+    def on_weight_change(self, new_text, index):
+        if self.is_weighted:
+            try:
+                new_weight = int(new_text)
+                current_item = self.value[index]
+                if isinstance(current_item, tuple):
+                    self.value[index] = (current_item[0], new_weight)
+                else:
+                    self.value[index] = (current_item, new_weight)
+                self.save_changes()
+            except ValueError:
+                pass  # Ignore invalid input
+
+    def add_new_item(self, button):
+        if self.is_weighted:
+            self.value.append(("", 1))
+        else:
+            self.value.append("")
+        self.save_changes()
+        self.show_list()
+
+    def remove_item(self, button, index):
+        del self.value[index]
+        self.save_changes()
+        self.show_list()
+
+    def save_changes(self):
+        self.scraping_editor.versions[self.scraping_editor.current_version][self.key] = self.value
+        self.scraping_editor.save_versions()
+
+    def back_to_version_edit(self, button):
+        self.scraping_editor.edit_version(None, self.scraping_editor.current_version)
 
 if __name__ == "__main__":
     SettingsEditor()

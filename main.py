@@ -77,7 +77,7 @@ def check_required_settings():
 
     try:
         if overseerr_url and overseerr_api_key:
-            response = requests.get(overseerr_url, headers={'X-Api-Key': overseerr_api_key})
+            response = requests.get(f"{overseerr_url}/api/v1/status", headers={'X-Api-Key': overseerr_api_key})
             if response.status_code != 200:
                 errors.append("Overseerr URL or API key is not reachable.")
     except Exception as e:
@@ -86,7 +86,6 @@ def check_required_settings():
     return errors
 
 def prompt_for_required_settings():
-    config = load_config()
     required_settings = [
         ('Plex', 'url', 'Enter Plex URL (i.e. 192.168.1.51:32400): '),
         ('Plex', 'token', 'Enter Plex Token: '),
@@ -105,16 +104,17 @@ def prompt_for_required_settings():
         else:
             os.system('clear')
             print("Welcome to the initial setup! Press enter to edit required settings:")
+    
     for section, key, prompt in required_settings:
-        if not config.has_section(section):
-            config.add_section(section)
-        if not config.has_option(section, key) or not config.get(section, key).strip():
+        value = get_setting(section, key)
+        if not value:
             value = input(prompt)
             set_setting(section, key, value)
 
     set_setting('Torrentio', 'enabled', 'True')
 
     print("Initial setup complete!")
+
 
 def main_menu():
     logging.debug("Main menu started")
@@ -194,24 +194,18 @@ def main():
     # Check if required settings are in place
     errors = check_required_settings()
     if errors:
-        print("Some required settings are missing. Starting initial setup...")
+        print("Starting initial setup...")
         prompt_for_required_settings()
 
     # Check for the debug flag
-    skip_menu = get_setting('Debug', 'skip_menu', default=False)
-    
+    skip_menu = get_setting('Debug', 'skip_menu', 'False').lower() == 'true'
+
     if skip_menu:
         logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
         run_program()
     else:
         print("Press Enter to continue to Main Menu...")
-        while True:
-            key_press = input()
-            if key_press == '':
-                break
-            else:
-                os.system('clear')
-                print("Press Enter to continue to Main Menu...")
+        input()
         main_menu()
 
 if __name__ == "__main__":
