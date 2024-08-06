@@ -8,6 +8,7 @@ import unicodedata
 import json
 from manual_blacklist import is_blacklisted
 from upgrading_db import add_to_upgrading, remove_from_upgrading, create_upgrading_table
+from settings import get_setting
 
 def get_db_connection():
     db_path = os.path.join('db_content', 'media_items.db')
@@ -23,6 +24,65 @@ def normalize_string(input_str):
 
 def row_to_dict(row: Row) -> Dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+def migrate_media_items_table():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Step 1: Create a new table with the desired structure
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS media_items_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                imdb_id TEXT,
+                tmdb_id TEXT,
+                title TEXT,
+                year INTEGER,
+                release_date DATE,
+                state TEXT,
+                type TEXT,
+                episode_title TEXT,
+                season_number INTEGER,
+                episode_number INTEGER,
+                filled_by_title TEXT,
+                filled_by_magnet TEXT,
+                last_updated TIMESTAMP,
+                metadata_updated TIMESTAMP,
+                sleep_cycles INTEGER DEFAULT 0,
+                last_checked TIMESTAMP,
+                scrape_results TEXT,
+                version TEXT,
+                UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
+            )
+        ''')
+
+        # Step 2: Copy data from the old table to the new one
+        cursor.execute('''
+            INSERT INTO media_items_new 
+            (imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
+             season_number, episode_number, filled_by_title, filled_by_magnet, 
+             last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, version)
+            SELECT 
+                imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
+                season_number, episode_number, filled_by_title, filled_by_magnet, 
+                last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, 
+                COALESCE(version, 'default')
+            FROM media_items
+        ''')
+
+        # Step 3: Drop the old table
+        cursor.execute('DROP TABLE media_items')
+
+        # Step 4: Rename the new table to the original name
+        cursor.execute('ALTER TABLE media_items_new RENAME TO media_items')
+
+        conn.commit()
+        logging.info("Successfully migrated media_items table to include version in unique constraint.")
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"Error during media_items table migration: {str(e)}")
+    finally:
+        conn.close()
 
 def create_tables():
     logging.info("Creating tables...")
@@ -54,17 +114,9 @@ def create_tables():
             )
         ''')
 
-        # Add new columns if they don't exist
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(media_items)")
-        columns = [column[1] for column in cursor.fetchall()]
-
-        if 'version' not in columns:
-            conn.execute('ALTER TABLE media_items ADD COLUMN version TEXT')
-
         conn.commit()
     except Exception as e:
-        logging.error(f"Error creating or updating media_items table: {str(e)}")
+        logging.error(f"Error creating media_items table: {str(e)}")
     finally:
         conn.close()
 
@@ -185,27 +237,31 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                 # Check if item exists for this version
                 if item_type == 'movie':
                     existing_item = conn.execute('''
-                        SELECT id, release_date FROM media_items
+                        SELECT id, release_date, state FROM media_items
                         WHERE imdb_id = ? AND type = 'movie' AND version = ?
                     ''', (item['imdb_id'], version)).fetchone()
                 else:
                     existing_item = conn.execute('''
-                        SELECT id, release_date FROM media_items
+                        SELECT id, release_date, state FROM media_items
                         WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND version = ?
                     ''', (item['imdb_id'], item['season_number'], item['episode_number'], version)).fetchone()
 
                 if existing_item:
-                    # Item exists, check if release date needs updating
-                    if existing_item['release_date'] != item.get('release_date'):
-                        conn.execute('''
-                            UPDATE media_items
-                            SET release_date = ?, last_updated = ?
-                            WHERE id = ?
-                        ''', (item.get('release_date'), datetime.now(), existing_item['id']))
-                        logging.debug(f"Updated release date for existing item: {normalized_title} (Version: {version})")
-                        items_updated += 1
+                    # Item exists, check if we need to update
+                    if existing_item['state'] != 'Collected':
+                        if existing_item['release_date'] != item.get('release_date'):
+                            conn.execute('''
+                                UPDATE media_items
+                                SET release_date = ?, last_updated = ?, state = ?
+                                WHERE id = ?
+                            ''', (item.get('release_date'), datetime.now(), 'Wanted', existing_item['id']))
+                            logging.debug(f"Updated release date for existing item: {normalized_title} (Version: {version})")
+                            items_updated += 1
+                        else:
+                            logging.debug(f"Skipping update for existing item: {normalized_title} (Version: {version})")
+                            items_skipped += 1
                     else:
-                        logging.debug(f"Skipping duplicate item: {normalized_title} (Version: {version})")
+                        logging.debug(f"Skipping update for collected item: {normalized_title} (Version: {version})")
                         items_skipped += 1
                 else:
                     # Insert new item
