@@ -35,7 +35,8 @@ def process_movie(movie, collected_content, missing_guid_items):
             'tmdb_id': tmdb_id,
             'title': movie.title,
             'year': movie.year,
-            'addedAt': movie.addedAt
+            'addedAt': movie.addedAt,
+            'location': movie.locations[0] if movie.locations else None  # Add this line
         })
     except Exception as e:
         logging.error(f"Error processing movie {movie.title}: {str(e)}")
@@ -63,7 +64,8 @@ def process_episode(show, episode, collected_content, missing_guid_items):
             'year': show.year,
             'season_number': episode.seasonNumber,
             'episode_number': episode.index,
-            'addedAt': episode.addedAt
+            'addedAt': episode.addedAt,
+            'location': episode.locations[0] if episode.locations else None  # Add this line
         }
 
         collected_content['episodes'].append(episode_info)
