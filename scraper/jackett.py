@@ -12,6 +12,7 @@ JACKETT_FILTER = "!status:failing,test:passed"
 
 def scrape_jackett(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
     if not JACKETT_URL:
+        logging.info("Jackett disabled")
         return []
 
     title = get_title_by_imdb_id(imdb_id)

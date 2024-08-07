@@ -9,13 +9,14 @@ from .zilean import scrape_zilean
 from .torrentio import scrape_torrentio
 from .knightcrawler import scrape_knightcrawler
 from .comet import scrape_comet
+from .prowlarr import scrape_prowlarr
 from .jackett import scrape_jackett
 from settings import get_setting
 import time
 from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes, get_episode_count_for_seasons, get_all_season_episode_counts
 
 def detect_hdr(title: str) -> bool:
-    hdr_terms = ['HDR', 'DV', 'DOVI', 'DOLBY VISION', 'HDR10+', 'HDR10', 'HLG']
+    hdr_terms = ['HDR', 'DV', 'DOVI', 'DOLBY VISION', 'DOLBY.VISION', 'HDR10+', 'HDR10plus', 'HDR10', 'HLG']
     return any(term in title.upper() for term in hdr_terms)
 
 def is_regex(pattern):
@@ -739,7 +740,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 logging.debug(f"Starting {scraper_name} scraper")
                 scraper_results = scraper_func(imdb_id, content_type, season, episode)
                 if isinstance(scraper_results, tuple):
-                    _, scraper_results = scraper_results
+                    *_, scraper_results = scraper_results
                 for item in scraper_results:
                     item['scraper'] = scraper_name
                     item['title'] = normalize_title(item.get('title', ''))  # Add normalized title
@@ -750,25 +751,19 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 logging.error(f"Error in {scraper_name} scraper: {str(e)}")
                 return []
 
-        # Define scrapers and check if they are enabled
+        # Define scrapers
         all_scrapers = [
             (scrape_zilean, 'Zilean'),
             #(scrape_knightcrawler, 'Knightcrawler'),
             (scrape_torrentio, 'Torrentio'),
             (scrape_comet, 'Comet'),
-            (scrape_jackett, 'Jackett')
-        ]
-
-        # Filter scrapers based on their enabled status in settings
-        scrapers = [
-            (scraper_func, scraper_name.lower())
-            for scraper_func, scraper_name in all_scrapers
-            if get_setting(scraper_name, 'enabled', default=False)
+            (scrape_jackett, 'Jackett'),
+            (scrape_prowlarr, 'Prowlarr')
         ]
 
         scraping_start = time.time()
-        with ThreadPoolExecutor(max_workers=len(scrapers)) as executor:
-            future_to_scraper = {executor.submit(run_scraper, scraper_func, scraper_name): scraper_name for scraper_func, scraper_name in scrapers}
+        with ThreadPoolExecutor(max_workers=len(all_scrapers)) as executor:
+            future_to_scraper = {executor.submit(run_scraper, scraper_func, scraper_name): scraper_name for scraper_func, scraper_name in all_scrapers}
             for future in as_completed(future_to_scraper):
                 scraper_name = future_to_scraper[future]
                 try:

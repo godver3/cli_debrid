@@ -3,10 +3,16 @@ import requests
 import re
 from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
+from settings import get_setting
 
 TORRENTIO_URL = "https://torrentio.strem.fun"
+TORRENTIO_ENABLED = get_setting('Torrentio', 'enabled')
 
 def scrape_torrentio(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
+    if not TORRENTIO_ENABLED:
+        logging.info("Torrentio disabled")
+        return []
+
     try:
         url = construct_url(imdb_id, content_type, season, episode)
         #logging.info(f"Fetching Torrentio data from URL: {url}")
