@@ -45,54 +45,52 @@ def calculate_bitrate(size_gb, runtime_minutes):
     bitrate_mbps = (size_bits / runtime_seconds) / 1000000  # Convert to Mbps
     return round(bitrate_mbps, 2)
 
-import re
-import logging
-
 def detect_resolution(title: str) -> str:
     logging.debug(f"Detecting resolution for title: '{title}'")
     resolution_patterns = [
-        (r'(?i)(?:^|\D)(2160p|4k|uhd)(?:$|\D)', '2160p'),
+        (r'(?i)(?:^|\D)(2160p|(?:[^\w]|^)4k|uhd)(?:$|\D)', '2160p'),
         (r'(?i)(?:^|\D)(1080p|fhd)(?:$|\D)', '1080p'),
-        (r'(?i)(?:^|\D)(720p|hd)(?:$|\D)', '720p'),
-        (r'(?i)(?:^|\D)(480p|sd)(?:$|\D)', '480p'),
+        (r'(?i)(?:^|\D)(720p)(?:$|\D)', '720p'),
+        (r'(?i)(?:^|\D)(480p)(?:$|\D)', '480p'),
     ]
     title_lower = title.lower()
     
-    # First, try to match the exact patterns
+    detected_resolutions = []
+    
+    # Check for all resolution patterns
     for pattern, res in resolution_patterns:
-        match = re.search(pattern, title_lower)
-        if match:
-            logging.debug(f"Matched exact pattern '{pattern}' in title. Detected resolution: {res}")
-            return res
-    logging.debug("No exact pattern match found.")
+        if re.search(pattern, title_lower):
+            detected_resolutions.append(res)
+            logging.debug(f"Matched pattern '{pattern}' in title. Detected resolution: {res}")
     
-    # If no exact match, look for numbers followed by 'p'
-    p_match = re.search(r'(\d+)p', title_lower)
-    if p_match:
-        p_value = int(p_match.group(1))
-        logging.debug(f"Found '{p_value}p' in title.")
+    # Look for numbers followed by 'p'
+    p_matches = re.findall(r'(\d+)p', title_lower)
+    for p_value in p_matches:
+        p_value = int(p_value)
         if p_value >= 2160:
-            logging.debug("Categorized as 2160p")
-            return '2160p'
+            detected_resolutions.append('2160p')
         elif p_value >= 1080:
-            logging.debug("Categorized as 1080p")
-            return '1080p'
+            detected_resolutions.append('1080p')
         elif p_value >= 720:
-            logging.debug("Categorized as 720p")
-            return '720p'
+            detected_resolutions.append('720p')
         elif p_value >= 480:
-            logging.debug("Categorized as 480p")
-            return '480p'
-    else:
-        logging.debug("No 'Xp' pattern found in title.")
+            detected_resolutions.append('480p')
+        logging.debug(f"Found '{p_value}p' in title. Categorized as {detected_resolutions[-1]}")
     
-    # If still no match, look for '4k' or 'uhd'
+    # Look for '4k' or 'uhd', even if part of another word
     if '4k' in title_lower or 'uhd' in title_lower:
+        detected_resolutions.append('2160p')
         logging.debug("Found '4k' or 'uhd' in title. Categorized as 2160p")
-        return '2160p'
     
-    logging.debug("No resolution detected. Returning 'unknown'")
-    return 'unknown'
+    if detected_resolutions:
+        # Sort resolutions and pick the lowest
+        resolution_order = ['480p', '720p', '1080p', '2160p']
+        lowest_resolution = min(detected_resolutions, key=lambda x: resolution_order.index(x))
+        logging.debug(f"Multiple resolutions detected: {detected_resolutions}. Choosing lowest: {lowest_resolution}")
+        return lowest_resolution
+    else:
+        logging.debug("No resolution detected. Returning 'unknown'")
+        return 'unknown'
 
 # Update parse_torrent_info to use our detect_resolution function
 def parse_torrent_info(title: str) -> Dict[str, Any]:
@@ -568,8 +566,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
     def resolution_filter(result_resolution):
         if result_resolution == 'unknown':
-            logging.debug(f"Unknown resolution found for result, allowing it to pass")
-            return True
+            logging.debug(f"Unknown resolution found for result, filtering out")
+            return False
         logging.debug(f"Comparing resolutions: result={result_resolution}, max={max_resolution}")
         comparison = compare_resolutions(result_resolution, max_resolution)
         logging.debug(f"Resolution comparison result: {comparison}")
@@ -579,7 +577,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             return comparison == 0
         elif resolution_wanted == '>=':
             return comparison >= 0
-        return True  # If the operator is invalid, allow the result to pass
+        logging.warning(f"Invalid resolution_wanted operator: {resolution_wanted}. Filtering out result.")
+        return False  # If the operator is invalid, filter out the result
 
     for result in results:
         original_title = result.get('title', '')
