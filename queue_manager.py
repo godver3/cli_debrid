@@ -347,8 +347,8 @@ class QueueManager:
                                 if checked_item:
                                     checked_item_identifier = self.generate_identifier(checked_item)
                                     self.queues["Checking"].append(checked_item)
-                                    self.upgrading_queue.add_item(checked_item)
-                                    #logging.info(f"Added item {checked_item_identifier} to UpgradingQueue")
+                                    #Disable upgrading queue for now
+                                    #self.upgrading_queue.add_item(checked_item)
                                     logging.debug(f"Item {checked_item_identifier} was a multi-pack result: {result.get('is_multi_pack', False)}")
                                     if result.get('is_multi_pack', False):
                                         self.process_multi_pack(checked_item, title, magnet, result.get('season_pack', ''))
@@ -413,10 +413,10 @@ class QueueManager:
             if updated_matching_item:
                 self.queues["Checking"].append(updated_matching_item)
 
-                # Add to UpgradingQueue
-                self.upgrading_queue.add_item(updated_matching_item)
-                updated_matching_item_identifier = self.generate_identifier(updated_matching_item)
-                logging.debug(f"Added item {updated_matching_item_identifier} to UpgradingQueue")
+                # Disable UpgradingQueue for now
+                #self.upgrading_queue.add_item(updated_matching_item)
+                #updated_matching_item_identifier = self.generate_identifier(updated_matching_item)
+                #logging.debug(f"Added item {updated_matching_item_identifier} to UpgradingQueue")
 
                 if matching_item in self.queues["Wanted"]:
                     self.queues["Wanted"].remove(matching_item)
@@ -425,11 +425,11 @@ class QueueManager:
                 elif matching_item in self.queues["Sleeping"]:
                     self.queues["Sleeping"].remove(matching_item)
                 moved_items += 1
-                logging.debug(f"Moved item {matching_item_identifier} to Checking queue and added to UpgradingQueue")
+                logging.debug(f"Moved item {matching_item_identifier} to Checking queue") #and added to UpgradingQueue")
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {matching_item['id']}")
 
-        logging.info(f"Processed multi-pack: moved {moved_items} matching episodes to Checking queue and added to UpgradingQueue")
+        logging.info(f"Processed multi-pack: moved {moved_items} matching episodes to Checking queue") #and added to UpgradingQueue")
         logging.debug(f"Updated Wanted queue size: {len(self.queues['Wanted'])}")
         logging.debug(f"Updated Scraping queue size: {len(self.queues['Scraping'])}")
         logging.debug(f"Updated Checking queue size: {len(self.queues['Checking'])}")

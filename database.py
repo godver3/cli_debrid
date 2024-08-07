@@ -302,14 +302,14 @@ def add_collected_items(media_items_batch, recent=False):
         processed_items = set()
 
         # Get all existing items from the database
-        existing_items = conn.execute('SELECT id, imdb_id, type, season_number, episode_number, state, version FROM media_items').fetchall()
+        existing_items = conn.execute('SELECT id, imdb_id, type, season_number, episode_number, state, version, filled_by_title FROM media_items').fetchall()
         existing_ids = {}
         for row in map(row_to_dict, existing_items):
             if row['type'] == 'movie':
                 key = (row['imdb_id'], 'movie', row['version'])
             else:
                 key = (row['imdb_id'], 'episode', row['season_number'], row['episode_number'], row['version'])
-            existing_ids[key] = (row['id'], row['state'])
+            existing_ids[key] = (row['id'], row['state'], row['filled_by_title'])
 
         # Get all versions from settings
         scraping_versions = get_setting('Scraping', 'versions', {})
@@ -332,7 +332,19 @@ def add_collected_items(media_items_batch, recent=False):
 
                 if item_key in existing_ids:
                     # Update existing item
-                    item_id, current_state = existing_ids[item_key]
+                    item_id, current_state, filled_by_title = existing_ids[item_key]
+
+                    # New logging
+                    plex_folder = os.path.basename(os.path.dirname(item.get('location', '')))
+                    logging.debug(f"Comparing existing item in DB with Plex item:")
+                    logging.debug(f"  DB Item: {normalized_title} (ID: {item_id}, State: {current_state}, Version: {version})")
+                    logging.debug(f"  DB Filled By Title: {filled_by_title}")
+                    logging.debug(f"  Plex Folder: {plex_folder}")
+                    if filled_by_title and filled_by_title.strip() == plex_folder.strip():
+                        logging.debug(f"  Match found: DB Filled By Title matches Plex Folder")
+                    else:
+                        logging.debug(f"  No match: DB Filled By Title does not match Plex Folder")
+
                     if item_type == 'episode':
                         conn.execute('''
                             UPDATE media_items
@@ -384,7 +396,7 @@ def add_collected_items(media_items_batch, recent=False):
 
         # Remove items not in the batch if not recent
         if not recent:
-            items_to_check = set(id for id, _ in existing_ids.values()) - processed_items
+            items_to_check = set(id for id, _, _ in existing_ids.values()) - processed_items
             for item_id in items_to_check:
                 # Fetch the title, state, and version before deciding what to do
                 item_info = conn.execute('SELECT title, state, version FROM media_items WHERE id = ?', (item_id,)).fetchone()
