@@ -20,9 +20,9 @@ class UpgradingQueue:
 
     def generate_identifier(self, item: Dict[str, Any]) -> str:
         if item['type'] == 'movie':
-            return f"movie_{item['imdb_id']}"
+            return f"movie_{item['imdb_id']}_{item.get('version', 'Unknown')}"
         elif item['type'] == 'episode':
-            return f"episode_{item['imdb_id']}_{item['season_number']}_{item['episode_number']}"
+            return f"episode_{item['imdb_id']}_{item['season_number']}_{item['episode_number']}_{item.get('version', 'Unknown')}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
 
@@ -108,6 +108,7 @@ class UpgradingQueue:
             item['title'],
             item['year'],
             item['type'],
+            item.get('version', 'Unknown'),  # Include version in scrape call
             item.get('season_number'),
             item.get('episode_number'),
             False  # Set multi to False during upgrades
@@ -274,17 +275,18 @@ class UpgradingQueue:
             os.rename(self.queue_file, f"{self.queue_file}.bak")
         self.save_queue()
 
-    @staticmethod
-    def item_to_dict(item: Dict[str, Any]) -> Dict[str, Any]:
+    def item_to_dict(self, item: Dict[str, Any]) -> Dict[str, Any]:
         """Convert an item to a JSON-serializable dictionary."""
         serializable_item = item.copy()
         for key, value in serializable_item.items():
             if isinstance(value, datetime):
                 serializable_item[key] = value.isoformat()
+        # Ensure version is included
+        if 'version' not in serializable_item:
+            serializable_item['version'] = 'Unknown'
         return serializable_item
 
-    @staticmethod
-    def dict_to_item(item_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def dict_to_item(self, item_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a dictionary to an item, parsing datetime strings."""
         item = item_dict.copy()
         for key, value in item.items():
@@ -294,6 +296,9 @@ class UpgradingQueue:
                 except ValueError:
                     # If parsing fails, keep the original string
                     pass
+        # Ensure version is included
+        if 'version' not in item:
+            item['version'] = 'Unknown'
         return item
 
     def get_queue_contents(self) -> List[Dict[str, Any]]:

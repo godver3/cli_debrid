@@ -72,7 +72,7 @@ class ProgramRunner:
         skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
         
         disable_initialization = get_setting('Debug', 'disable_initialization', '')
-        if not(disable_initialization):
+        if disable_initialization == "False":
             initialize(skip_initial_plex_update)
         logging.info("Initialization complete")
 

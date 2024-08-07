@@ -79,7 +79,8 @@ def get_setting(section, key, default=''):
         if validated_url != value:
             logging.debug(f"URL validation changed value for {section}.{key}: '{value}' -> '{validated_url}'")
         return validated_url
-    
+    logging.debug(f"Returning {value} for {key}")
+
     return value
 
 def set_setting(section, key, value):
@@ -204,8 +205,8 @@ class SettingsEditor:
             ('Jackett', 'url', 'Jackett - Jackett URL'),
             ('Jackett', 'api', 'Jackett - Jackett API'),
             ('Jackett', 'enabled_indexers', 'Jackett - Comma-separated list of enabled Indexers (blank for all)'),
-            ('Prowlarr', 'url', 'Jackett - Jackett URL'),
-            ('Prowlarr', 'api', 'Jackett - Jackett API')
+            ('Prowlarr', 'url', 'Prowlarr - Jackett URL'),
+            ('Prowlarr', 'api', 'Prowlarr - Jackett API')
         ])
 
     def show_content_settings(self, button):
