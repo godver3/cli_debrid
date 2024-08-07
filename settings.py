@@ -327,6 +327,7 @@ class ScrapingSettingsEditor:
         self.current_version = None
         self.versions = self.load_versions()
         self.resolution_options = ['2160p', '1080p', '720p', 'SD']
+        self.resolution_wanted_options = ['<=', '==', '>=']
         self.previous_widget = None
 
     def load_versions(self):
@@ -367,6 +368,7 @@ class ScrapingSettingsEditor:
         return {
             'enable_hdr': False,
             'max_resolution': '1080p',
+            'resolution_wanted': '<=',
             'resolution_weight': 3,
             'hdr_weight': 3,
             'similarity_weight': 3,
@@ -437,11 +439,18 @@ class ScrapingSettingsEditor:
                 urwid.connect_signal(edit, 'change', lambda widget, new_text, user_data=key: self.on_weight_change(new_text, user_data))
                 widgets.append(urwid.AttrMap(edit, None, focus_map='edit_focus'))
             elif key == 'max_resolution':
-                widgets.append(urwid.Text("Max Resolution:"))
+                widgets.append(urwid.Text("Resolution:"))
                 radio_buttons = []
                 for option in self.resolution_options:
                     radio = urwid.RadioButton(radio_buttons, option, state=(option == value),
                                               on_state_change=self.on_resolution_change)
+                    widgets.append(urwid.AttrMap(radio, None, focus_map='reversed'))
+            elif key == 'resolution_wanted':                  
+                widgets.append(urwid.Text("Resolution Symbol:"))
+                radio_buttons = []
+                for option in self.resolution_wanted_options:
+                    radio = urwid.RadioButton(radio_buttons, option, state=(option == value),
+                                              on_state_change=self.on_resolution_wanted_change)
                     widgets.append(urwid.AttrMap(radio, None, focus_map='reversed'))
             elif isinstance(value, bool):
                 checkbox = urwid.CheckBox(key.replace('_', ' ').title(), state=value,
@@ -481,6 +490,11 @@ class ScrapingSettingsEditor:
 
         list_box = urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
         self.main_loop.widget = urwid.Frame(list_box)
+
+    def on_resolution_wanted_change(self, radio_button, new_state):
+        if new_state:
+            self.versions[self.current_version]['resolution_wanted'] = radio_button.label
+            self.save_versions()
 
     def on_checkbox_change(self, checkbox, new_state):
         key = checkbox.label.lower().replace(' ', '_')

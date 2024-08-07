@@ -69,8 +69,8 @@ def parse_search_term(search_term: str) -> Tuple[str, Optional[int], Optional[in
         return base_title, season, episode, year, multi
     return search_term_without_year, None, None, year, True  # Default to multi=True if no season/episode specified
 
-def web_scrape(search_term: str) -> Dict[str, Any]:
-    logging.info(f"Starting web scrape for search term: {search_term}")
+def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
+    logging.info(f"Starting web scrape for search term: {search_term}, version: {version}")
     
     base_title, season, episode, year, multi = parse_search_term(search_term)
     logging.info(f"Parsed search term: title='{base_title}', season={season}, episode={episode}, year={year}, multi={multi}")
@@ -96,6 +96,43 @@ def web_scrape(search_term: str) -> Dict[str, Any]:
             for result in search_results
         ]
     }
+
+def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str) -> List[Dict[str, Any]]:
+    logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
+
+    details = get_media_details(media_id, media_type)
+    imdb_id = details.get('externalIds', {}).get('imdbId', '')
+    tmdb_id = str(details.get('id', ''))
+
+    movie_or_episode = 'episode' if media_type == 'tv' else 'movie'
+
+    # Adjust multi flag based on season and episode
+    if movie_or_episode == 'movie':
+        multi = False
+    elif season is not None and episode is None:
+        multi = True
+    # If both season and episode are specified, keep the passed multi value
+
+    logging.info(f"Adjusted scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
+                 f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
+
+    # Call the scraper function with the version parameter
+    scrape_results = scrape(imdb_id, tmdb_id, title, int(year), movie_or_episode, version, season, episode, multi)
+
+    # Process the results
+    processed_results = []
+    for result in scrape_results:
+        if isinstance(result, dict):
+            magnet_link = result.get('magnet')
+            if magnet_link:
+                result['hash'] = extract_hash_from_magnet(magnet_link)
+                processed_results.append(result)
+
+    return processed_results
+
+def get_available_versions():
+    scraping_versions = get_setting('Scraping', 'versions', default={})
+    return list(scraping_versions.keys())
 
 def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
     overseerr_url = get_setting('Overseerr', 'url')
@@ -126,39 +163,6 @@ def parse_season_episode(search_term: str) -> Tuple[int, int, bool]:
         return season, episode, multi
     return 1, 1, True  # Default to S01E01 with multi=True if no match
     
-def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool) -> List[Dict[str, Any]]:
-    logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}")
-
-    details = get_media_details(media_id, media_type)
-    imdb_id = details.get('externalIds', {}).get('imdbId', '')
-    tmdb_id = str(details.get('id', ''))
-
-    movie_or_episode = 'episode' if media_type == 'tv' else 'movie'
-
-    # Adjust multi flag based on season and episode
-    if movie_or_episode == 'movie':
-        multi = False
-    elif season is not None and episode is None:
-        multi = True
-    # If both season and episode are specified, keep the passed multi value
-
-    logging.info(f"Adjusted scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
-                 f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}")
-
-    # Call the scraper function
-    scrape_results = scrape(imdb_id, tmdb_id, title, int(year), movie_or_episode, season, episode, multi)
-
-    # Process the results
-    processed_results = []
-    for result in scrape_results:
-        if isinstance(result, dict):
-            magnet_link = result.get('magnet')
-            if magnet_link:
-                result['hash'] = extract_hash_from_magnet(magnet_link)
-                processed_results.append(result)
-
-    return processed_results
-
 def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     logging.info(f"Processing torrent selection: {torrent_index}")
     

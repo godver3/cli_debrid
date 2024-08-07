@@ -14,7 +14,7 @@
             <div class="queue-items">
             {% for item in queue_contents[queue_name] %}
             <div class="item">
-                {{ item.title }} ({{ item.year }})
+                {{ item.title }} ({{ item.year }}) - Version: {{ item.version }}
                 {% if item.type == 'episode' %}
                     S{{ item.season_number }}E{{ item.episode_number }}
                 {% endif %}
@@ -25,6 +25,10 @@
                 {% elif queue_name == 'Upgrading' %}
                     - Current Quality: {{ item.current_quality }}
                     - Target Quality: {{ item.target_quality }}
+                    - Time Added: {{ item.time_added|datetime }}
+                    - Upgrades Found: {{ item.upgrades_found }}
+                {% elif queue_name == 'Checking' %}
+                    - Time Added: {{ item.time_added|datetime }}
                 {% elif queue_name == 'Sleeping' %}
                     - Wake Count: {{ item.wake_count }}
                 {% endif %}
