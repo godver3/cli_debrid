@@ -148,93 +148,93 @@ class QueueManager:
         logging.debug(f"Total items in Scraping queue: {len(self.queues['Scraping'])}")
         logging.debug(f"Remaining items in Wanted queue: {len(self.queues['Wanted'])}")
 
-def process_scraping(self):
-    logging.debug(f"Processing scraping queue. Items: {len(self.queues['Scraping'])}")
-    if self.queues["Scraping"]:
-        item = self.queues["Scraping"].pop(0)
-        try:
-            # Check if the release date is today or earlier
-            if item['release_date'] == 'Unknown':
-                logging.info(f"Item {item['title']} (Version: {item['version']}) has an unknown release date. Moving back to Wanted queue.")
-                self.move_to_wanted(item)
-                return
-
+    def process_scraping(self):
+        logging.debug(f"Processing scraping queue. Items: {len(self.queues['Scraping'])}")
+        if self.queues["Scraping"]:
+            item = self.queues["Scraping"].pop(0)
             try:
-                release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
-                today = date.today()
-
-                if release_date > today:
-                    logging.info(f"Item {item['title']} (Version: {item['version']}) has a future release date ({release_date}). Moving back to Wanted queue.")
+                # Check if the release date is today or earlier
+                if item['release_date'] == 'Unknown':
+                    logging.info(f"Item {item['title']} (Version: {item['version']}) has an unknown release date. Moving back to Wanted queue.")
                     self.move_to_wanted(item)
                     return
-            except ValueError:
-                logging.warning(f"Item {item['title']} (Version: {item['version']}) has an invalid release date format: {item['release_date']}. Moving back to Wanted queue.")
-                self.move_to_wanted(item)
-                return
 
-            is_multi_pack = any(
-                wanted_item['type'] == 'episode' and
-                wanted_item['season_number'] == item['season_number'] and
-                wanted_item['id'] != item['id']
-                for wanted_item in self.queues["Wanted"]
-            )
+                try:
+                    release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+                    today = date.today()
 
-            if item['type'] == 'episode':
-                logging.info(f"Scraping for {item['title']} S{item['season_number']}E{item['episode_number']} ({item['year']}) - Version: {item['version']}")
-            else:
-                logging.info(f"Scraping for {item['title']} ({item['year']}) - Version: {item['version']}")
+                    if release_date > today:
+                        logging.info(f"Item {item['title']} (Version: {item['version']}) has a future release date ({release_date}). Moving back to Wanted queue.")
+                        self.move_to_wanted(item)
+                        return
+                except ValueError:
+                    logging.warning(f"Item {item['title']} (Version: {item['version']}) has an invalid release date format: {item['release_date']}. Moving back to Wanted queue.")
+                    self.move_to_wanted(item)
+                    return
 
-            results = scrape(
-                item['imdb_id'],
-                item['tmdb_id'],
-                item['title'],
-                item['year'],
-                item['type'],
-                item['version'],
-                item.get('season_number'),
-                item.get('episode_number'),
-                is_multi_pack
-            )
+                is_multi_pack = any(
+                    wanted_item['type'] == 'episode' and
+                    wanted_item['season_number'] == item['season_number'] and
+                    wanted_item['id'] != item['id']
+                    for wanted_item in self.queues["Wanted"]
+                )
 
-            if not results:
-                wake_count = self.wake_counts.get(item['id'], 0)
-                logging.warning(f"No results returned for {item['title']} (Version: {item['version']}). Moving to Sleeping queue with wake count {wake_count}")
-                update_media_item_state(item['id'], 'Sleeping')
-                updated_item = get_media_item_by_id(item['id'])
-                if updated_item:
-                    self.queues["Sleeping"].append(updated_item)
-                    self.wake_counts[item['id']] = wake_count  # Preserve the wake count
-                    self.sleeping_queue_times[item['id']] = datetime.now()
-                    logging.debug(f"Set wake count for {item['title']} (ID: {item['id']}) to {wake_count}")
-                return
-
-            # Filter out "not wanted" results
-            filtered_results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
-            logging.debug(f"Scrape results for {item['title']}: {len(filtered_results)} results after filtering")
-
-            if filtered_results:
-                best_result = filtered_results[0]
-                logging.info(f"Best result for {item['title']} (Version: {item['version']}): {best_result['title']}, {best_result['magnet']}")
-                update_media_item_state(item['id'], 'Adding', filled_by_title=best_result['title'], scrape_results=filtered_results)
-                updated_item = get_media_item_by_id(item['id'])
-                if updated_item:
-                    logging.debug(f"Updated {updated_item['id']}, title {updated_item['title']} (Scraping)")
-                    self.queues["Adding"].append(updated_item)
-                else:
-                    logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
-            else:
                 if item['type'] == 'episode':
-                    logging.warning(f"No valid results for {item['title']} S{item['season_number']}E{item['episode_number']} ({item['year']}) (Version: {item['version']}) moving to Sleeping")
+                    logging.info(f"Scraping for {item['title']} S{item['season_number']}E{item['episode_number']} ({item['year']}) - Version: {item['version']}")
                 else:
-                    logging.warning(f"No valid results for {item['title']} ({item['year']}) (Version: {item['version']}), moving to Sleeping")
-                update_media_item_state(item['id'], 'Sleeping')
-                updated_item = get_media_item_by_id(item['id'])
-                if updated_item:
-                    self.queues["Sleeping"].append(updated_item)
+                    logging.info(f"Scraping for {item['title']} ({item['year']}) - Version: {item['version']}")
+
+                results = scrape(
+                    item['imdb_id'],
+                    item['tmdb_id'],
+                    item['title'],
+                    item['year'],
+                    item['type'],
+                    item['version'],
+                    item.get('season_number'),
+                    item.get('episode_number'),
+                    is_multi_pack
+                )
+
+                if not results:
+                    wake_count = self.wake_counts.get(item['id'], 0)
+                    logging.warning(f"No results returned for {item['title']} (Version: {item['version']}). Moving to Sleeping queue with wake count {wake_count}")
+                    update_media_item_state(item['id'], 'Sleeping')
+                    updated_item = get_media_item_by_id(item['id'])
+                    if updated_item:
+                        self.queues["Sleeping"].append(updated_item)
+                        self.wake_counts[item['id']] = wake_count  # Preserve the wake count
+                        self.sleeping_queue_times[item['id']] = datetime.now()
+                        logging.debug(f"Set wake count for {item['title']} (ID: {item['id']}) to {wake_count}")
+                    return
+
+                # Filter out "not wanted" results
+                filtered_results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
+                logging.debug(f"Scrape results for {item['title']}: {len(filtered_results)} results after filtering")
+
+                if filtered_results:
+                    best_result = filtered_results[0]
+                    logging.info(f"Best result for {item['title']} (Version: {item['version']}): {best_result['title']}, {best_result['magnet']}")
+                    update_media_item_state(item['id'], 'Adding', filled_by_title=best_result['title'], scrape_results=filtered_results)
+                    updated_item = get_media_item_by_id(item['id'])
+                    if updated_item:
+                        logging.debug(f"Updated {updated_item['id']}, title {updated_item['title']} (Scraping)")
+                        self.queues["Adding"].append(updated_item)
+                    else:
+                        logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
                 else:
-                    logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
-        except Exception as e:
-            logging.error(f"Error processing item {item['title']} (Version: {item['version']}): {str(e)}", exc_info=True)
+                    if item['type'] == 'episode':
+                        logging.warning(f"No valid results for {item['title']} S{item['season_number']}E{item['episode_number']} ({item['year']}) (Version: {item['version']}) moving to Sleeping")
+                    else:
+                        logging.warning(f"No valid results for {item['title']} ({item['year']}) (Version: {item['version']}), moving to Sleeping")
+                    update_media_item_state(item['id'], 'Sleeping')
+                    updated_item = get_media_item_by_id(item['id'])
+                    if updated_item:
+                        self.queues["Sleeping"].append(updated_item)
+                    else:
+                        logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+            except Exception as e:
+                logging.error(f"Error processing item {item['title']} (Version: {item['version']}): {str(e)}", exc_info=True)
 
     def process_adding(self):
         logging.debug("Processing adding queue")
