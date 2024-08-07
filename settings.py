@@ -176,8 +176,10 @@ class SettingsEditor:
             urwid.Text("Settings Editor (press 'q' to quit)"),
             urwid.Text("Use Shift-Insert to paste values."),
             urwid.AttrMap(urwid.Button("Required Settings", on_press=self.show_required_settings), None, focus_map='reversed'),
-            urwid.AttrMap(urwid.Button("Additional Settings", on_press=self.show_additional_settings), None, focus_map='reversed'),
+            urwid.AttrMap(urwid.Button("Scrapers", on_press=self.show_scrapers), None, focus_map='reversed'),
             urwid.AttrMap(urwid.Button("Scraping Settings", on_press=self.show_scraping_settings), None, focus_map='reversed'),
+            urwid.AttrMap(urwid.Button("Content Settings", on_press=self.show_content_settings), None, focus_map='reversed'),
+            urwid.AttrMap(urwid.Button("Additional Settings", on_press=self.show_additional_settings), None, focus_map='reversed'),
             urwid.AttrMap(urwid.Button("Debug Settings", on_press=self.show_debug_settings), None, focus_map='reversed')
         ])
         return urwid.Filler(menu, valign='top')
@@ -194,33 +196,38 @@ class SettingsEditor:
             ('Torrentio', 'enabled', 'Torrentio - Torrentio enabled? (Must configure at least one scraper in Additional Settings if not Torrentio) True/False')
         ])
 
+
+    def show_scrapers(self, button):
+        self.show_settings("Scrapers", [
+            ('Zilean', 'url', 'Zilean - Zilean URL'),
+            ('Comet', 'url', 'Comet - Comet URL'),
+            ('Jackett', 'url', 'Jackett - Jackett URL'),
+            ('Jackett', 'api', 'Jackett - Jackett API'),
+            ('Prowlarr', 'url', 'Jackett - Jackett URL'),
+            ('Prowlarr', 'api', 'Jackett - Jackett API')
+        ])
+
+    def show_content_settings(self, button):
+        self.show_settings("Additional Settings", [
+            ('MDBList Content Source', 'urls', 'MDBList - MDB List URLs'),
+            ('Collected Content Source', 'enabled', 'Collected - Enable collected content source? True/False'),
+            ('Trakt', 'user_watchlist_enabled', 'Trakt - Enable your watchlist as a content source? True/False (Requires auth. below)'),
+            ('Trakt', 'trakt_lists', 'Trakt - Add any other Trakt lists as content sources (comma-separated)')
+        ])
+
     def show_additional_settings(self, button):
         self.show_settings("Additional Settings", [
-            ('Zilean', 'url', 'Zilean - Zilean URL'),
-            ('Zilean', 'enabled', 'Zilean - Zilean enabled? True/False'),
-            #('Knightcrawler', 'url', 'Knightcrawler URL'),
-            #('Knightcrawler', 'enabled', 'Knightcrawler enabled? (True/False)'),
-            ('Comet', 'url', 'Comet - Comet URL'),
-            ('Comet', 'enabled', 'Comet - Comet enabled? True/False'),
-            ('MDBList', 'urls', 'MDBList - MDB List URLs'),
-            ('Collected Content Source', 'enabled', 'Collected - Enable collected content source? True/False'),
             ('TMDB', 'api_key', 'TMDB - TMDB API Key'),
             ('Queue', 'wake_limit', 'Queue - Enter number of times to wake items before blacklisting'),
             ('Scraping', 'uncached_content_handling', 'Scraping - Uncached content handling (None/Hybrid/Full)'),
             ('Trakt', 'client_id', 'Trakt - Enter Trakt client ID'),
-            ('Trakt', 'client_secret', 'Trakt - Enter Trakt client secret'),
-            ('Trakt', 'user_watchlist_enabled', 'Trakt - Enable your watchlist as a content source? True/False (Requires auth. below)'),
-            ('Trakt', 'trakt_lists', 'Trakt - Add any other Trakt lists as content sources (comma-separated)'),
-            ('Jackett', 'enabled', 'Jackett - Jackett enabled? True/False'),
-            ('Jackett', 'url', 'Jackett - Jackett URL'),
-            ('Jackett', 'api', 'Jackett - Jackett API')
-            #('Trakt', 'oauth_token', 'Trakt - oauth_token - Do not change - set by authorization below'),
-            #('Trakt', 'refresh_token', 'Trakt - refresh_token - Do not change - set by authorization below')
+            ('Trakt', 'client_secret', 'Trakt - Enter Trakt client secret')
         ])
         # Add Trakt OAuth button
         self.main_loop.widget.body.body.insert(-2, urwid.AttrMap(
-            urwid.Button("Authorize Trakt", on_press=self.start_trakt_oauth),
+            urwid.Button("Authorize Trakt (must add client_id/secret first)", on_press=self.start_trakt_oauth),
             None, focus_map='reversed'))
+
 
     def show_scraping_settings(self, button):
         ScrapingSettingsEditor(self.main_loop).show_versions_menu()
@@ -230,7 +237,8 @@ class SettingsEditor:
             ('Debug', 'logging_level', 'Logging - Logging Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)'),
             ('Debug', 'skip_initial_plex_update', 'Menu - Skip Plex initial collection scan (True/False)'),
             ('Debug', 'skip_menu', 'Menu - Skip menu? (True/False)'),
-            ('Debug', 'disable_initialization', 'Menu - Disable initialization tasks? (True/False)')
+            ('Debug', 'disable_initialization', 'Menu - Disable initialization tasks? (True/False)'),
+            ('Debug', 'api_key', 'TMDB - TMDB API Key')
         ])
 
     def start_trakt_oauth(self, button):

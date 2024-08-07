@@ -6,14 +6,10 @@ from settings import get_setting
 from urllib.parse import urlencode
 
 ZILEAN_URL = get_setting('Zilean', 'url')
-ZILEAN_ENABLED = get_setting('Zilean', 'enabled', 'False')
-if isinstance(ZILEAN_ENABLED, bool):
-    ZILEAN_ENABLED = str(ZILEAN_ENABLED).lower()
-ZILEAN_ENABLED = ZILEAN_ENABLED == 'true'
 
 def scrape_zilean(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    if not ZILEAN_ENABLED:
-        logging.debug("Zilean is not enabled. Skipping Zilean scrape.")
+    if not ZILEAN_URL:
+        logging.info("Zilean disabled")
         return []
 
     if not ZILEAN_URL:

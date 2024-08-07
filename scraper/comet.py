@@ -5,16 +5,14 @@ from typing import List, Dict, Any, Tuple
 from settings import get_setting
 
 # Get the Comet URL from settings, with a default value
-COMET_BASE_URL = get_setting('Comet', 'url', '').rstrip('manifest.json')
-
-if not COMET_BASE_URL:
-    logging.warning("Comet URL is not set in the configuration. Comet scraping will be disabled.")
-
+COMET_BASE_URL = get_setting('Comet', 'url', '')
+if COMET_BASE_URL:
+    COMET_BASE_URL = COMET_BASE_URL.rstrip('manifest.json')
 DEBRID_API_KEY = get_setting('Debrid', 'api_key')
 
 def scrape_comet(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
     if not COMET_BASE_URL:
-        logging.warning("Comet scraping is disabled due to missing URL configuration.")
+        logging.info("Comet disabled")
         return []
 
     try:
