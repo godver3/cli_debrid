@@ -8,9 +8,10 @@ from urllib.parse import quote
 
 PROWLARR_URL = get_setting('Prowlarr', 'url')
 PROWLARR_API = get_setting('Prowlarr', 'api')
+PROWLARR_ENABLED = get_setting('Prowlarr', 'enabled')
 
 def scrape_prowlarr(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    if not PROWLARR_URL:
+    if PROWLARR_ENABLED == "False":
         logging.info("Prowlarr disabled")
         return []
 
