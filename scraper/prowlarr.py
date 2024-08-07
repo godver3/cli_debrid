@@ -11,7 +11,7 @@ PROWLARR_API = get_setting('Prowlarr', 'api')
 PROWLARR_ENABLED = get_setting('Prowlarr', 'enabled')
 
 def scrape_prowlarr(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    if PROWLARR_ENABLED == "False":
+    if not PROWLARR_ENABLED:
         logging.info("Prowlarr disabled")
         return []
 

@@ -9,7 +9,7 @@ ZILEAN_URL = get_setting('Zilean', 'url')
 ZILEAN_ENABLED = get_setting('Zilean', 'enabled')
 
 def scrape_zilean(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    if ZILEAN_ENABLED == "False":
+    if not ZILEAN_ENABLED:
         logging.info("Zilean disabled")
         return []
 
