@@ -17,7 +17,7 @@ def reset_queued_item_status():
             logging.info(f"Reset item {format_item_log(item)} (ID: {item['id']}) from {state} to Wanted")
 
 def plex_collection_update(skip_initial_plex_update):
-    if skip_initial_plex_update:
+    if skip_initial_plex_update == "True":
         logging.info("Skipping initial Plex update due to debug flag, completing recently added scan instead.")
         collected_content = get_collected_from_plex('recent')
         if collected_content:

@@ -1,6 +1,5 @@
 aiohttp==3.9.5
 Flask==3.0.3
-fuzzywuzzy==0.18.0
 inquirer==3.3.0
 parse_torrent_title==2.8.1
 PlexAPI==4.15.15
@@ -12,3 +11,5 @@ tqdm==4.66.4
 urwid==2.6.15
 pytrakt==3.4.32
 flask_session==0.8.0
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.23.0

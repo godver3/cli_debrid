@@ -21,23 +21,32 @@ def process_movie(movie, collected_content, missing_guid_items):
             logging.warning(f"Skipping movie without title or year: {movie}")
             movie.refresh()
             return
-        
+
         imdb_id = get_guid(movie, 'imdb')
         tmdb_id = get_guid(movie, 'tmdb')
         if not imdb_id and not tmdb_id:
             missing_guid_items['movies'].append(movie.title)
             logging.warning(f"Skipping movie without valid IMDb or TMDb ID: {movie.title}")
             return
-        
+
         logging.debug(f"Collected movie: {movie.title}, IMDb: {imdb_id}, TMDb: {tmdb_id}")
-        collected_content['movies'].append({
+        
+        # Create a base movie entry
+        base_movie_entry = {
             'imdb_id': imdb_id,
             'tmdb_id': tmdb_id,
             'title': movie.title,
             'year': movie.year,
             'addedAt': movie.addedAt,
-            'location': movie.locations[0] if movie.locations else None  # Add this line
-        })
+        }
+        
+        # Add an entry for each location
+        for location in movie.locations:
+            movie_entry = base_movie_entry.copy()
+            movie_entry['location'] = location
+            collected_content['movies'].append(movie_entry)
+            
+        logging.debug(f"Added {len(movie.locations)} location(s) for movie: {movie.title}")
     except Exception as e:
         logging.error(f"Error processing movie {movie.title}: {str(e)}")
         logging.debug(f"Movie not processed: {movie.title}, addedAt: {movie.addedAt}")
@@ -56,7 +65,7 @@ def process_episode(show, episode, collected_content, missing_guid_items):
             logging.warning(f"Skipping episode without valid show IMDb or TMDb ID: {episode.title} from show {show.title}")
             return
 
-        episode_info = {
+        base_episode_info = {
             'imdb_id': show_imdb_id,
             'tmdb_id': show_tmdb_id,
             'title': show.title,
@@ -65,11 +74,16 @@ def process_episode(show, episode, collected_content, missing_guid_items):
             'season_number': episode.seasonNumber,
             'episode_number': episode.index,
             'addedAt': episode.addedAt,
-            'location': episode.locations[0] if episode.locations else None  # Add this line
         }
 
-        collected_content['episodes'].append(episode_info)
+        # Add an entry for each location
+        for location in episode.locations:
+            episode_info = base_episode_info.copy()
+            episode_info['location'] = location
+            collected_content['episodes'].append(episode_info)
+
         logging.debug(f"Collected episode: {episode.title} from show: {show.title}, IMDb: {show_imdb_id}, TMDb: {show_tmdb_id}")
+        logging.debug(f"Added {len(episode.locations)} location(s) for episode: {episode.title}")
     except Exception as e:
         logging.error(f"Error processing episode {episode.title} of {show.title}: {str(e)}")
         logging.debug(f"Episode not processed: {episode.title} of {show.title}, addedAt: {episode.addedAt}")

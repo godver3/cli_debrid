@@ -10,7 +10,7 @@ TORRENTIO_ENABLED = get_setting('Torrentio', 'enabled')
 
 def scrape_torrentio(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
     if not TORRENTIO_ENABLED:
-        logging.info("Torrentio disabled")
+        logging.debug("Torrentio disabled")
         return []
 
     try:

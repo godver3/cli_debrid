@@ -13,8 +13,8 @@ ENABLED_INDEXERS = get_setting('Jackett', 'enabled_indexers')
 JACKETT_ENABLED = get_setting('Jackett', 'enabled')
 
 def scrape_jackett(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    if JACKETT_ENABLED == "False":
-        logging.info("Jackett disabled")
+    if not JACKETT_ENABLED:
+        logging.debug("Jackett disabled")
         return []
 
     title = get_title_by_imdb_id(imdb_id)
