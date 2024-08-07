@@ -203,6 +203,7 @@ class SettingsEditor:
             ('Comet', 'url', 'Comet - Comet URL'),
             ('Jackett', 'url', 'Jackett - Jackett URL'),
             ('Jackett', 'api', 'Jackett - Jackett API'),
+            ('Jackett', 'enabled_indexers', 'Jackett - Comma-separated list of enabled Indexers (blank for all)'),
             ('Prowlarr', 'url', 'Jackett - Jackett URL'),
             ('Prowlarr', 'api', 'Jackett - Jackett API')
         ])
