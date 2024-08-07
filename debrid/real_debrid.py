@@ -188,3 +188,42 @@ def is_cached_on_rd(hashes):
             cache_status[hash_] = False
     logging.debug(f"Cache status: {cache_status}")
     return cache_status
+
+def get_cached_files(hash_):
+    url = f'{API_BASE_URL}/torrents/instantAvailability/{hash_}'
+    response = get(url)
+    if not response:
+        return None
+
+    response = namespace_to_dict(response)
+    hash_data = response.get(hash_.lower(), [])
+
+    if isinstance(hash_data, list) and hash_data:
+        files = hash_data[0].get('rd', [])
+    elif isinstance(hash_data, dict):
+        files = hash_data.get('rd', [])
+    else:
+        return None
+
+    if isinstance(files, list) and files:
+        # Flatten the list of dictionaries into a single dictionary
+        all_files = {k: v for file_dict in files for k, v in file_dict.items()}
+    elif isinstance(files, dict):
+        all_files = files
+    else:
+        return None
+
+    # Extract only the filenames
+    return {'cached_files': [file_info['filename'] for file_info in all_files.values()]}
+
+def get_magnet_files(magnet_link):
+    hash_ = extract_hash_from_magnet(magnet_link)
+    if not hash_:
+        logging.error(f"Invalid magnet link: {magnet_link}")
+        return None
+
+    cache_status = is_cached_on_rd(hash_)
+    if cache_status.get(hash_, False):
+        return get_cached_files(hash_)
+    
+    return None

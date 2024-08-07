@@ -399,29 +399,41 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     return processed_items
     
 def refresh_release_dates():
+    logging.info("Starting refresh_release_dates function")
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')
     if not overseerr_url or not overseerr_api_key:
         logging.error("Overseerr URL or API key not set. Please configure in settings.")
         return
 
+    logging.info("Getting Overseerr cookies")
     cookies = get_overseerr_cookies(overseerr_url)
+    
+    logging.info("Fetching items to refresh")
     items_to_refresh = get_all_media_items(state="Unreleased") + get_all_media_items(state="Wanted")
+    logging.info(f"Found {len(items_to_refresh)} items to refresh")
 
-    for item in items_to_refresh:
+    for index, item in enumerate(items_to_refresh, 1):
+        logging.info(f"Processing item {index}/{len(items_to_refresh)}: {item['title']} (Type: {item['type']}, TMDB ID: {item['tmdb_id']})")
         try:
             if item['type'] == 'movie':
+                logging.info(f"Fetching movie details for TMDB ID: {item['tmdb_id']}")
                 details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
                 media_type = 'movie'
             else:  # TV show episode
+                logging.info(f"Fetching TV show details for TMDB ID: {item['tmdb_id']}")
                 show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+                logging.info(f"Fetching season details for TMDB ID: {item['tmdb_id']}, Season: {item['season_number']}")
                 season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], item['season_number'], cookies)
+                logging.info(f"Finding episode details for Episode: {item['episode_number']}")
                 episode_details = next((ep for ep in season_details.get('episodes', []) if ep['episodeNumber'] == item['episode_number']), None)
                 details = episode_details if episode_details else show_details
                 media_type = 'tv'
 
             if details:
+                logging.info("Getting release date")
                 new_release_date = get_release_date(details, media_type)
+                logging.info(f"New release date: {new_release_date}")
 
                 if new_release_date == 'Unknown':
                     new_state = "Wanted"
@@ -434,14 +446,21 @@ def refresh_release_dates():
                     else:
                         new_state = "Unreleased"
 
+                logging.info(f"New state: {new_state}")
+
                 if new_state != item['state'] or new_release_date != item['release_date']:
+                    logging.info("Updating release date and state in database")
                     update_release_date_and_state(item['id'], new_release_date, new_state)
-                    logging.info(f"{item['title']} has a release date of: {new_release_date}")
-                
+                    logging.info(f"Updated: {item['title']} has a release date of: {new_release_date}")
+                else:
+                    logging.info("No changes needed for this item")
+
             else:
                 logging.warning(f"Could not fetch details for {item['title']}")
         except Exception as e:
-            logging.error(f"Error processing item {item['title']}: {str(e)}")
+            logging.error(f"Error processing item {item['title']}: {str(e)}", exc_info=True)
+
+    logging.info("Finished refresh_release_dates function")
 
 def get_episode_count_for_seasons(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, seasons: List[int], cookies: requests.cookies.RequestsCookieJar) -> int:
     total_episodes = 0

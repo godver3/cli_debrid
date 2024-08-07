@@ -357,16 +357,15 @@ def add_collected_items(media_items_batch, recent=False):
 
                     logging.debug(f"Comparing existing item in DB with Plex item:")
                     logging.debug(f"  DB Item: {normalized_title} (ID: {item_id}, State: {current_state}, Version: {version})")
-                    logging.debug(f"  DB Filled By Title: {filled_by_title}")
                     logging.debug(f"  Plex Folder: {plex_folder}")
-
+                    
                     if filled_by_title and plex_folder:
                         match_ratio = fuzz.ratio(filled_by_title.lower(), plex_folder.lower())
                         logging.debug(f"  Fuzzy match ratio: {match_ratio}%")
-
-                        if match_ratio >= 75:  # You can adjust this threshold
+                        
+                        if match_ratio >= 90:  # You can adjust this threshold
                             logging.debug(f"  Match found: DB Filled By Title matches Plex Folder (Fuzzy match: {match_ratio}%)")
-
+                            
                             # Update to 'Collected' only if it's not already 'Collected'
                             if current_state != 'Collected':
                                 conn.execute('''

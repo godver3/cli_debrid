@@ -13,7 +13,7 @@ COMET_ENABLED = get_setting('Comet', 'enabled')
 
 def scrape_comet(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
     if not COMET_ENABLED:
-        logging.info("Comet disabled")
+        logging.debug("Comet disabled")
         return []
 
     try:

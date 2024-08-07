@@ -12,7 +12,7 @@ PROWLARR_ENABLED = get_setting('Prowlarr', 'enabled')
 
 def scrape_prowlarr(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
     if not PROWLARR_ENABLED:
-        logging.info("Prowlarr disabled")
+        logging.debug("Prowlarr disabled")
         return []
 
     title = get_title_by_imdb_id(imdb_id)
@@ -62,11 +62,12 @@ def parse_prowlarr_results(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results = []
     for item in data:
         if not item['indexer'] == None and not item['size'] == None:
-            result = {
-                'title': item.get('title', 'N/A'),  
-                'size': item.get('size', 0) / (1024 * 1024 * 1024),  # Convert to GB
-                'source': f"Prowlarr - {item.get('indexer', 'N/A')}",
-                'magnet': f"magnet:?xt=urn:btih:{item.get('infoHash', '')}"
-            }
-        results.append(result)
+            if 'infoHash' in str(item):
+                result = {
+                    'title': item.get('title', 'N/A'),  
+                    'size': item.get('size', 0) / (1024 * 1024 * 1024),  # Convert to GB
+                    'source': f"Prowlarr - {item.get('indexer', 'N/A')}",
+                    'magnet': f"magnet:?xt=urn:btih:{item.get('infoHash', '')}"
+                    }       
+                results.append(result)
     return (results)
