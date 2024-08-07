@@ -10,9 +10,10 @@ JACKETT_URL = get_setting('Jackett', 'url')
 JACKETT_API = get_setting('Jackett', 'api')
 JACKETT_FILTER = "!status:failing,test:passed"
 ENABLED_INDEXERS = get_setting('Jackett', 'enabled_indexers')
+JACKETT_ENABLED = get_setting('Jackett', 'enabled')
 
 def scrape_jackett(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    if not JACKETT_URL:
+    if JACKETT_ENABLED == "False":
         logging.info("Jackett disabled")
         return []
 

@@ -9,9 +9,10 @@ COMET_BASE_URL = get_setting('Comet', 'url', '')
 if COMET_BASE_URL:
     COMET_BASE_URL = COMET_BASE_URL.rstrip('manifest.json')
 DEBRID_API_KEY = get_setting('Debrid', 'api_key')
+COMET_ENABLED = get_setting('Comet', 'enabled')
 
 def scrape_comet(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
-    if not COMET_BASE_URL:
+    if COMET_ENABLED == "False":
         logging.info("Comet disabled")
         return []
 

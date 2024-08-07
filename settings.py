@@ -200,11 +200,15 @@ class SettingsEditor:
 
     def show_scrapers(self, button):
         self.show_settings("Scrapers", [
+            ('Zilean', 'enabled', 'Zilean - enabled True/False'),
             ('Zilean', 'url', 'Zilean - Zilean URL'),
+            ('Comet', 'enabled', 'Comet - enabled True/False'),
             ('Comet', 'url', 'Comet - Comet URL'),
+            ('Jackett', 'enabled', 'Jackett - enabled True/False'),
             ('Jackett', 'url', 'Jackett - Jackett URL'),
             ('Jackett', 'api', 'Jackett - Jackett API'),
             ('Jackett', 'enabled_indexers', 'Jackett - Comma-separated list of enabled Indexers (blank for all)'),
+            ('Prowlarr', 'enabled', 'Prowlarr - enabled True/False'),
             ('Prowlarr', 'url', 'Prowlarr - Jackett URL'),
             ('Prowlarr', 'api', 'Prowlarr - Jackett API')
         ])
