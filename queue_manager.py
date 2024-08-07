@@ -64,36 +64,34 @@ class QueueManager:
                 items = get_all_media_items(state=state)
                 self.queues[state] = [dict(row) for row in items]
 
-
     def get_queue_contents(self):
         contents = OrderedDict()
-        
         # Add Upgrading queue first
         upgrading_contents = self.upgrading_queue.get_queue_contents()
         for item in upgrading_contents:
             item['time_added'] = item.get('time_added', datetime.now().isoformat())
             item['upgrades_found'] = item.get('upgrades_found', 0)
-            # Ensure version is included and not overwritten
             if 'version' not in item:
                 item['version'] = 'Unknown'
         contents['Upgrading'] = upgrading_contents
-        
         # Add other queues in the specified order
         for state, queue in self.queues.items():
             contents[state] = []
             for item in queue:
-                new_item = item.copy()  # Create a copy to avoid modifying the original item
+                new_item = item.copy()
                 if state == "Sleeping":
                     new_item["wake_count"] = self.wake_counts.get(item['id'], 0)
                 elif state == "Checking":
-                    new_item["time_added"] = self.checking_queue_times.get(item['id'], datetime.now()).isoformat()
-                
-                # Ensure version is included and not overwritten
+                    time_added = self.checking_queue_times.get(item['id'])
+                    if isinstance(time_added, float):
+                        new_item["time_added"] = datetime.fromtimestamp(time_added).isoformat()
+                    elif isinstance(time_added, datetime):
+                        new_item["time_added"] = time_added.isoformat()
+                    else:
+                        new_item["time_added"] = datetime.now().isoformat()
                 if 'version' not in new_item:
                     new_item['version'] = 'Unknown'
-                
                 contents[state].append(new_item)
-        
         return contents
 
     def process_wanted(self):
@@ -198,13 +196,18 @@ class QueueManager:
                     self.move_to_wanted(item)
                     return
 
-                is_multi_pack = any(
-                    wanted_item['type'] == 'episode' and
-                    wanted_item['season_number'] == item['season_number'] and
-                    wanted_item['version'] == item['version'] and
-                    wanted_item['id'] != item['id']
-                    for wanted_item in self.queues["Wanted"]
-                )
+                # Check if there are other episodes in the same season, excluding different versions of the current episode
+                is_multi_pack = False
+                if item['type'] == 'episode':
+                    is_multi_pack = any(
+                        wanted_item['type'] == 'episode' and
+                        wanted_item['imdb_id'] == item['imdb_id'] and
+                        wanted_item['season_number'] == item['season_number'] and
+                        (wanted_item['episode_number'] != item['episode_number'] or
+                         (wanted_item['episode_number'] == item['episode_number'] and
+                          wanted_item['version'] == item['version']))
+                        for wanted_item in self.queues["Wanted"] + self.queues["Scraping"]
+                    )
 
                 logging.info(f"Scraping for {item_identifier}")
 
@@ -250,7 +253,8 @@ class QueueManager:
 
     def scrape_with_fallback(self, item, is_multi_pack):
         item_identifier = self.generate_identifier(item)
-        
+        logging.debug(f"Scraping for {item_identifier} with is_multi_pack={is_multi_pack}")
+
         # First, try scraping with the original parameters
         results = scrape(
             item['imdb_id'],
@@ -269,7 +273,7 @@ class QueueManager:
 
         # If no results and it's a multi-pack episode, try individual episode scraping
         logging.info(f"No results for multi-pack {item_identifier}. Falling back to individual episode scraping.")
-        
+
         individual_results = scrape(
             item['imdb_id'],
             item['tmdb_id'],
@@ -344,7 +348,7 @@ class QueueManager:
                                     checked_item_identifier = self.generate_identifier(checked_item)
                                     self.queues["Checking"].append(checked_item)
                                     self.upgrading_queue.add_item(checked_item)
-                                    logging.info(f"Added item {checked_item_identifier} to UpgradingQueue")
+                                    #logging.info(f"Added item {checked_item_identifier} to UpgradingQueue")
                                     logging.debug(f"Item {checked_item_identifier} was a multi-pack result: {result.get('is_multi_pack', False)}")
                                     if result.get('is_multi_pack', False):
                                         self.process_multi_pack(checked_item, title, magnet, result.get('season_pack', ''))

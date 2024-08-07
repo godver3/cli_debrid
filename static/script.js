@@ -106,7 +106,7 @@ function updateQueueContents() {
                                         - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
                                     ` : ''}
                                     ${queueName === 'Sleeping' ? `
-                                        - Wake Count: ${item.wake_count || 0}
+                                        - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}
                                     ` : ''}
                                 </div>
                             `).join('')}

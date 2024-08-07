@@ -14,6 +14,10 @@ from settings import get_setting
 import time
 from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes, get_episode_count_for_seasons, get_all_season_episode_counts
 
+def detect_hdr(title: str) -> bool:
+    hdr_terms = ['HDR', 'DV', 'DOVI', 'DOLBY VISION', 'HDR10+', 'HDR10', 'HLG']
+    return any(term in title.upper() for term in hdr_terms)
+
 def is_regex(pattern):
     """Check if a pattern is likely to be a regex."""
     return any(char in pattern for char in r'.*?+^$()[]{}|\\')
@@ -286,7 +290,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
     resolution_score = get_resolution_rank(torrent_title)
-    hdr_score = 1 if 'HDR' in torrent_title.upper() and version_settings.get('enable_hdr', True) else 0
+    hdr_score = 1 if result.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
     size = parse_size(result.get('size', 0))
     runtime = result.get('runtime', 0)
     bitrate = result.get('bitrate', 0)  # Use pre-calculated bitrate
@@ -533,6 +537,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     min_size_gb = float(version_settings.get('min_size_gb', 0.01))
     filter_in = version_settings.get('filter_in', [])
     filter_out = version_settings.get('filter_out', [])
+    enable_hdr = version_settings.get('enable_hdr', False)
 
     logging.debug(f"Filtering settings: resolution_wanted={resolution_wanted}, max_resolution={max_resolution}, min_size_gb={min_size_gb}")
 
@@ -558,6 +563,12 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         
         logging.debug(f"Processing result: {torrent_title}")
         logging.debug(f"Parsed info: {parsed_info}")
+
+        # Apply HDR filter
+        is_hdr = detect_hdr(torrent_title)
+        if not enable_hdr and is_hdr:
+            logging.debug(f"Filtered out HDR content when HDR is disabled: {torrent_title}")
+            continue
 
         # Check title similarity
         parsed_title = parsed_info.get('title', '')
@@ -653,6 +664,9 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         result['normalized_episode_count'] = normalized_episode_count
         result['season_pack'] = season_pack
         result['title_similarity'] = title_sim
+
+        # Add HDR information to the result
+        result['is_hdr'] = is_hdr
 
         filtered_results.append(result)
         logging.debug(f"Result passed all filters: {torrent_title}")

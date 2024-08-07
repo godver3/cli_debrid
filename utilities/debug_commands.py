@@ -5,7 +5,7 @@ from questionary import Choice
 from utilities.plex_functions import get_collected_from_plex
 import curses
 from database import (
-    get_all_media_items, search_movies, search_tv_shows,
+    get_all_media_items, search_movies, search_tv_shows, update_media_item_state,
     purge_database, verify_database, remove_from_media_items,
     add_collected_items, add_wanted_items, get_blacklisted_items, remove_from_blacklist
 )
@@ -20,6 +20,7 @@ from utilities.manual_scrape import imdb_id_to_title_and_year
 import json
 from typing import List, Tuple, Dict
 from metadata.metadata import process_metadata, refresh_release_dates
+from initialization import reset_queued_item_status
 
 def search_db():
     search_term = input("Enter search term (use % for wildcards): ")
@@ -116,21 +117,25 @@ def view_database_content():
 
         items = get_all_media_items(state=queue, media_type=content_type)
 
+        if not items:
+            logging.info(f"No items found in the {queue} queue for {content_type}.")
+            continue
+
         if content_type == 'movie':
             headers = ["ID", "IMDb ID", "Title", "Year", "Release Date", "State", "Type", "Version"]
             item_data = [
-                [str(item['id']), item['imdb_id'], item['title'], str(item['year']), 
-                 str(item['release_date']), item['state'], item['type'], 
-                 str(item['version'])] 
+                [str(item['id']), item['imdb_id'], item['title'], str(item['year']),
+                 str(item['release_date']), item['state'], item['type'],
+                 str(item['version'])]
                 for item in items
             ]
         else:  # TV shows (episodes)
             headers = ["ID", "IMDb ID", "Title", "Season", "Episode", "Year", "Release Date", "State", "Type", "Version"]
             item_data = [
-                [str(item['id']), item['imdb_id'], item['title'], 
-                 str(item['season_number']), str(item['episode_number']), 
-                 str(item['year']), str(item['release_date']), item['state'], 
-                 item['type'], str(item['version'])] 
+                [str(item['id']), item['imdb_id'], item['title'],
+                 str(item['season_number']), str(item['episode_number']),
+                 str(item['year']), str(item['release_date']), item['state'],
+                 item['type'], str(item['version'])]
                 for item in items
             ]
 
@@ -331,6 +336,7 @@ def debug_commands():
                 Choice("Manage Blacklisted Items", "manage_blacklist"),
                 Choice("Manage Manual Blacklist", "manage_manual_blacklist"),
                 Choice("Refresh release dates", "refresh_release"),
+                Choice("Reset working queue items", "reset_queue"),
                 Choice("Check and refresh Trakt auth token", "refresh_trakt"),
                 Choice("Back to Main Menu", "back")
             ]
@@ -370,6 +376,8 @@ def debug_commands():
                     add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
         elif action == 'purge_db':
             purge_db()
+        elif action == 'reset_queue':
+            reset_queued_item_status()
         elif action == 'get_all_wanted':
             wanted_content = get_wanted_from_overseerr()
             if wanted_content:

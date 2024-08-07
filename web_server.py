@@ -174,27 +174,20 @@ def queues():
                 item['time_added'] = item.get('time_added', datetime.now())
         elif queue_name == 'Sleeping':
             for item in items:
-                item['wake_count'] = item.get('wake_count', 0)
-    
+                item['wake_count'] = queue_manager.wake_counts.get(item['id'], 0)  # Get wake count directly from QueueManager
+
     upgrading_queue = queue_contents['Upgrading']
     logging.info(f"Rendering queues page. UpgradingQueue size: {len(upgrading_queue)}")
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
 
-
 @app.route('/api/queue_contents')
 def api_queue_contents():
     contents = queue_manager.get_queue_contents()
+    # Ensure wake counts are included for Sleeping queue items
+    if 'Sleeping' in contents:
+        for item in contents['Sleeping']:
+            item['wake_count'] = queue_manager.wake_counts.get(item['id'], 0)
     return jsonify(contents)
-
-@app.route('/api/stats')
-def api_stats():
-    uptime = time.time() - start_time
-    return jsonify({
-        'total_processed': total_processed,
-        'successful_additions': successful_additions,
-        'failed_additions': failed_additions,
-        'uptime': uptime
-    })
 
 @app.route('/api/logs')
 def api_logs():
