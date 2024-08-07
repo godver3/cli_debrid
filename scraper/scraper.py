@@ -40,6 +40,22 @@ def calculate_bitrate(size_gb, runtime_minutes):
     bitrate_mbps = (size_bits / runtime_seconds) / 1000000  # Convert to Mbps
     return round(bitrate_mbps, 2)
 
+def detect_resolution(title):
+    resolution_patterns = [
+        r'(?i)2160p',
+        r'(?i)1080p',
+        r'(?i)720p',
+        r'(?i)480p',
+        r'(?i)4k',
+        r'(?i)uhd',
+        r'(?i)hd'
+    ]
+    for pattern in resolution_patterns:
+        match = re.search(pattern, title)
+        if match:
+            return match.group(0).lower()
+    return None
+
 def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Optional[Dict[str, Any]]:
     url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}"
     headers = {
@@ -426,25 +442,29 @@ def trim_magnet(magnet: str) -> str:
 
 def compare_resolutions(res1: str, res2: str) -> int:
     resolution_order = {
-        '2160p': 4, 'uhd': 4,
-        '1080p': 3,
-        '720p': 2,
-        'sd': 1
+        '2160p': 6, '4k': 6, 'uhd': 6,
+        '1440p': 5, 'qhd': 5,
+        '1080p': 4, 'fhd': 4,
+        '720p': 3, 'hd': 3,
+        '480p': 2, 'sd': 2,
+        '360p': 1
     }
     
     res1 = res1.lower()
     res2 = res2.lower()
     
-    # Handle '4k' as '2160p'
-    if res1 == '4k':
-        res1 = '2160p'
-    if res2 == '4k':
-        res2 = '2160p'
+    # Handle numeric resolutions (e.g., '2160', '1080')
+    if res1.isdigit():
+        res1 += 'p'
+    if res2.isdigit():
+        res2 += 'p'
     
     val1 = resolution_order.get(res1, 0)
     val2 = resolution_order.get(res2, 0)
     
+    logging.debug(f"Comparing resolutions: {res1} ({val1}) vs {res2} ({val2})")
     return val1 - val2
+
 
 def round_size(size: str) -> int:
     try:
@@ -508,56 +528,107 @@ def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     
 def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str, season: int, episode: int, multi: bool, version_settings: Dict[str, Any], runtime: int, episode_count: int, season_episode_counts: Dict[int, int]) -> List[Dict[str, Any]]:
     filtered_results = []
+    resolution_wanted = version_settings.get('resolution_wanted', '<=')
     max_resolution = version_settings.get('max_resolution', '2160p')
-    min_size_gb = float(version_settings.get('min_size_gb', 0.01))  # Convert to float
+    min_size_gb = float(version_settings.get('min_size_gb', 0.01))
     filter_in = version_settings.get('filter_in', [])
     filter_out = version_settings.get('filter_out', [])
+
+    logging.debug(f"Filtering settings: resolution_wanted={resolution_wanted}, max_resolution={max_resolution}, min_size_gb={min_size_gb}")
+
+    def resolution_filter(result_resolution):
+        if not result_resolution:
+            logging.debug(f"No resolution found for result, filtering out")
+            return False
+        logging.debug(f"Comparing resolutions: result={result_resolution}, max={max_resolution}")
+        comparison = compare_resolutions(result_resolution, max_resolution)
+        logging.debug(f"Resolution comparison result: {comparison}")
+        if resolution_wanted == '<=':
+            return comparison <= 0
+        elif resolution_wanted == '==':
+            return comparison == 0
+        elif resolution_wanted == '>=':
+            return comparison >= 0
+        return False  # If the operator is invalid, filter out the result
 
     for result in results:
         torrent_title = result.get('title', '')
         preprocessed_title = preprocess_title(torrent_title)
         parsed_info = PTN.parse(preprocessed_title)
         
-        # Check if the result matches the content type
-        if content_type.lower() == 'movie' and re.search(r'(s\d{2}|e\d{2})', torrent_title, re.IGNORECASE):
-            continue
-        elif content_type.lower() == 'episode' and not re.search(r'(s\d{2}|e\d{2})', torrent_title, re.IGNORECASE):
+        logging.debug(f"Processing result: {torrent_title}")
+        logging.debug(f"Parsed info: {parsed_info}")
+
+        # Check title similarity
+        parsed_title = parsed_info.get('title', '')
+        title_sim = similarity(title, parsed_title)
+        logging.debug(f"Title similarity: {title_sim} ('{title}' vs '{parsed_title}')")
+        if title_sim < 0.8:
+            logging.debug(f"Filtered out due to low title similarity: {title_sim}")
             continue
 
+        # Content type specific filtering
+        if content_type.lower() == 'movie':
+            parsed_year = parsed_info.get('year')
+            if not parsed_year:
+                logging.debug(f"Filtered out due to missing year")
+                continue
+            if abs(int(parsed_year) - year) > 1:
+                logging.debug(f"Filtered out due to year mismatch: {parsed_year} vs {year}")
+                continue
+        elif content_type.lower() == 'episode':
+            if multi:
+                if re.search(r'S\d{2}E\d{2}', torrent_title, re.IGNORECASE):
+                    logging.debug(f"Filtered out single episode result when searching for multi")
+                    continue
+            else:
+                result_season = parsed_info.get('season')
+                result_episode = parsed_info.get('episode')
+                if result_season != season or result_episode != episode:
+                    logging.debug(f"Filtered out due to season/episode mismatch: S{result_season}E{result_episode} vs S{season}E{episode}")
+                    continue
+
         # Apply resolution filter
-        if compare_resolutions(parsed_info.get('resolution', ''), max_resolution) > 0:
+        result_resolution = parsed_info.get('resolution', '')
+        if not result_resolution:
+            result_resolution = detect_resolution(torrent_title)
+        logging.debug(f"Detected resolution: {result_resolution}")
+        if not resolution_filter(result_resolution):
+            logging.debug(f"Filtered out due to resolution mismatch: {result_resolution}")
             continue
 
         # Apply size filter
         size_gb = parse_size(result.get('size', 0))
         if size_gb < min_size_gb:
+            logging.debug(f"Filtered out due to small size: {size_gb} GB")
             continue
 
         # Apply custom filters with smart matching
         if filter_in and not any(smart_search(pattern, torrent_title) for pattern in filter_in):
+            logging.debug(f"Filtered out due to not matching any filter_in patterns")
             continue
         if filter_out and any(smart_search(pattern, torrent_title) for pattern in filter_out):
+            logging.debug(f"Filtered out due to matching a filter_out pattern")
             continue
 
         # Handle multi-episode releases
         season_pack = detect_season_pack(torrent_title)
         if multi:
             if season_pack == 'N/A' or season_pack == 'Unknown':
+                logging.debug(f"Filtered out non-multi result when searching for multi")
                 continue
             if ':M' in season_pack:  # It's a multi-episode release
                 result_season = int(season_pack.split(':')[0])
                 if result_season != season:
+                    logging.debug(f"Filtered out multi-episode release for wrong season: {result_season} vs {season}")
                     continue
             elif str(season) not in season_pack.split(','):
+                logging.debug(f"Filtered out season pack not containing the requested season")
                 continue
         else:
             if season_pack != 'N/A' and season_pack != 'Unknown':
+                logging.debug(f"Filtered out multi-episode release when searching for single episode")
                 continue
-            if content_type.lower() == 'episode':
-                result_season = parsed_info.get('season')
-                result_episode = parsed_info.get('episode')
-                if result_season != season or result_episode != episode:
-                    continue
 
         # Calculate normalized size and bitrate
         if content_type.lower() == 'episode':
@@ -581,10 +652,25 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         result['parsed_info'] = parsed_info
         result['normalized_episode_count'] = normalized_episode_count
         result['season_pack'] = season_pack
+        result['title_similarity'] = title_sim
 
         filtered_results.append(result)
+        logging.debug(f"Result passed all filters: {torrent_title}")
 
+    logging.debug(f"Filtering complete. {len(filtered_results)} results passed out of {len(results)} total")
     return filtered_results
+
+def normalize_title(title: str) -> str:
+    """
+    Normalize the title by replacing spaces with periods and removing duplicate periods.
+    """
+    # Replace spaces with periods
+    normalized = title.replace(' ', '.')
+    # Remove duplicate periods
+    normalized = re.sub(r'\.+', '.', normalized)
+    # Remove leading and trailing periods
+    normalized = normalized.strip('.')
+    return normalized.lower()  # Convert to lowercase for case-insensitive comparison
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     try:
@@ -642,6 +728,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     _, scraper_results = scraper_results
                 for item in scraper_results:
                     item['scraper'] = scraper_name
+                    item['title'] = normalize_title(item.get('title', ''))  # Add normalized title
                 logging.debug(f"{scraper_name} scraper found {len(scraper_results)} results")
                 logging.debug(f"{scraper_name} scraper took {time.time() - scraper_start:.2f} seconds")
                 return scraper_results

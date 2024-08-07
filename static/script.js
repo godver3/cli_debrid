@@ -92,9 +92,22 @@ function updateQueueContents() {
                         <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
                             ${items.map(item => `
                                 <div class="item">
-                                    ${item.title} (${item.year})
+                                    ${item.title} (${item.year}) - Version: ${item.version || 'Unknown'}
                                     ${item.type === 'episode' ? ` S${item.season_number}E${item.episode_number}` : ''}
                                     ${queueName === 'Unreleased' ? ` - Release Date: ${item.release_date}` : ''}
+                                    ${queueName === 'Blacklisted' ? ` - Reason: ${item.blacklist_reason || 'N/A'}` : ''}
+                                    ${queueName === 'Upgrading' ? `
+                                        - Current Quality: ${item.current_quality || 'N/A'}
+                                        - Target Quality: ${item.target_quality || 'N/A'}
+                                        - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
+                                        - Upgrades Found: ${item.upgrades_found || 0}
+                                    ` : ''}
+                                    ${queueName === 'Checking' ? `
+                                        - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
+                                    ` : ''}
+                                    ${queueName === 'Sleeping' ? `
+                                        - Wake Count: ${item.wake_count || 0}
+                                    ` : ''}
                                 </div>
                             `).join('')}
                         </div>
@@ -119,19 +132,20 @@ function refreshCurrentPage() {
 function searchMedia(event) {
     event.preventDefault();
     const searchTerm = document.querySelector('input[name="search_term"]').value;
-    fetch('/scraper', {  // Changed from '/search' to '/scraper'
+    const version = document.querySelector('select[name="version"]').value;
+    fetch('/scraper', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: `search_term=${encodeURIComponent(searchTerm)}`
+        body: `search_term=${encodeURIComponent(searchTerm)}&version=${encodeURIComponent(version)}`
     })
     .then(response => response.json())
     .then(data => {
         if (data.error) {
             displayError(data.error);
         } else {
-            displaySearchResults(data.results);
+            displaySearchResults(data.results, version);
         }
     })
     .catch(error => {
@@ -141,6 +155,7 @@ function searchMedia(event) {
 }
 
 function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
+    const version = document.getElementById('version-select').value;
     let formData = new FormData();
     formData.append('media_id', mediaId);
     formData.append('title', title);
@@ -149,6 +164,7 @@ function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
     if (season !== null) formData.append('season', season);
     if (episode !== null) formData.append('episode', episode);
     formData.append('multi', multi);
+    formData.append('version', version);
 
     fetch('/select_media', {
         method: 'POST',
@@ -159,7 +175,7 @@ function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
         if (data.error) {
             displayError(data.error);
         } else {
-            displayTorrentResults(data.torrent_results, title, year);
+            displayTorrentResults(data.torrent_results, title, year, version);
         }
     })
     .catch(error => {

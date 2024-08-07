@@ -1,11 +1,14 @@
 {% extends "base.html" %}
-
 {% block title %}Scraper{% endblock %}
-
 {% block content %}
     <div id="scraper-container">
         <form id="search-form" action="{{ url_for('scraper') }}" method="post">
             <input type="text" name="search_term" placeholder="Enter search term" required>
+            <select name="version" id="version-select">
+                {% for version in versions %}
+                    <option value="{{ version }}">{{ version }}</option>
+                {% endfor %}
+            </select>
             <button type="submit">Search</button>
         </form>
         <div id="results">
@@ -38,6 +41,7 @@
                                     <input type="hidden" name="title" value="{{ item.title }}">
                                     <input type="hidden" name="year" value="{{ item.year }}">
                                     <input type="hidden" name="media_type" value="{{ item.media_type }}">
+                                    <input type="hidden" name="version" value="{{ request.form.get('version') }}">
                                     <button type="submit">Select</button>
                                 </form>
                             </td>
@@ -47,7 +51,7 @@
                 </table>
             {% endif %}
             {% if torrent_results %}
-                <h3>Torrent Results for {{ selected_media.title }} ({{ selected_media.year }})</h3>
+                <h3>Torrent Results for {{ selected_media.title }} ({{ selected_media.year }}) - Version: {{ request.form.get('version') }}</h3>
                 <table border="1">
                     <thead>
                         <tr>

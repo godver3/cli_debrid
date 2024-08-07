@@ -7,9 +7,10 @@ import logging
 import os
 from settings import get_all_settings, set_setting, get_setting
 from collections import OrderedDict
-from web_scraper import web_scrape, process_media_selection, process_torrent_selection
+from web_scraper import web_scrape, process_media_selection, process_torrent_selection, get_available_versions
 from debrid.real_debrid import add_to_real_debrid
 import re
+from datetime import datetime
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -30,6 +31,13 @@ total_processed = 0
 successful_additions = 0
 failed_additions = 0
 
+@app.template_filter('datetime')
+def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    return value.strftime(format)
 
 @app.route('/')
 def index():
@@ -63,6 +71,22 @@ def statistics():
     }
     return render_template('statistics.html', stats=stats)
 
+@app.route('/scraper', methods=['GET', 'POST'])
+def scraper():
+    versions = get_available_versions()
+    if request.method == 'POST':
+        search_term = request.form.get('search_term')
+        version = request.form.get('version')
+        if search_term:
+            session['search_term'] = search_term  # Store the search term in the session
+            session['version'] = version  # Store the version in the session
+            results = web_scrape(search_term, version)
+            return jsonify(results)
+        else:
+            return jsonify({'error': 'No search term provided'})
+    
+    return render_template('scraper.html', versions=versions)
+
 @app.route('/select_media', methods=['POST'])
 def select_media():
     try:
@@ -73,6 +97,10 @@ def select_media():
         season = request.form.get('season')
         episode = request.form.get('episode')
         multi = request.form.get('multi', 'false').lower() == 'true'
+        version = request.form.get('version')
+
+        if not version or version == 'undefined':
+            version = get_setting('Scraping', 'default_version', '1080p')  # Fallback to a default version
 
         season = int(season) if season and season.isdigit() else None
         episode = int(episode) if episode and episode.isdigit() else None
@@ -85,27 +113,15 @@ def select_media():
             else:
                 multi = False
 
-        logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}")
+        logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
 
-        torrent_results = process_media_selection(media_id, title, year, media_type, season, episode, multi)
+        torrent_results = process_media_selection(media_id, title, year, media_type, season, episode, multi, version)
         
         return jsonify({'torrent_results': torrent_results})
     except Exception as e:
         logging.error(f"Error in select_media: {str(e)}")
         return jsonify({'error': 'An error occurred while selecting media'}), 500
 
-@app.route('/scraper', methods=['GET', 'POST'])
-def scraper():
-    if request.method == 'POST':
-        search_term = request.form.get('search_term')
-        if search_term:
-            session['search_term'] = search_term  # Store the search term in the session
-            results = web_scrape(search_term)
-            return jsonify(results)
-        else:
-            return jsonify({'error': 'No search term provided'})
-    
-    return render_template('scraper.html')
 
 @app.route('/add_torrent', methods=['POST'])
 def add_torrent():
@@ -148,9 +164,22 @@ def settings():
 @app.route('/queues')
 def queues():
     queue_contents = queue_manager.get_queue_contents()
+    for queue_name, items in queue_contents.items():
+        if queue_name == 'Upgrading':
+            for item in items:
+                item['time_added'] = item.get('time_added', datetime.now())
+                item['upgrades_found'] = item.get('upgrades_found', 0)
+        elif queue_name == 'Checking':
+            for item in items:
+                item['time_added'] = item.get('time_added', datetime.now())
+        elif queue_name == 'Sleeping':
+            for item in items:
+                item['wake_count'] = item.get('wake_count', 0)
+    
     upgrading_queue = queue_contents['Upgrading']
     logging.info(f"Rendering queues page. UpgradingQueue size: {len(upgrading_queue)}")
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
+
 
 @app.route('/api/queue_contents')
 def api_queue_contents():
