@@ -304,7 +304,7 @@ class QueueManager:
                         scrape_results = json.loads(scrape_results_str)
                     except json.JSONDecodeError:
                         logging.error(f"Error parsing JSON scrape results for item: {updated_item_identifier}")
-                        self.move_to_sleeping(updated_item)
+                        self.move_to_scraping(updated_item)
                         return
 
                     uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None')
@@ -316,6 +316,10 @@ class QueueManager:
                         magnet = result.get('magnet', '')
                         hash_value = extract_hash_from_magnet(magnet)
                         if hash_value:
+                            if is_magnet_not_wanted(magnet):
+                                logging.info(f"Skipping already processed magnet for {updated_item_identifier}")
+                                continue
+
                             cache_status = is_cached_on_rd(hash_value)
                             logging.debug(f"Cache status for {hash_value} ({updated_item_identifier}): {cache_status}")
                             is_cached = hash_value in cache_status and cache_status[hash_value]
@@ -323,6 +327,9 @@ class QueueManager:
                             if is_cached or (uncached_handling != 'None' and not first_uncached_added):
                                 try:
                                     add_to_real_debrid(magnet)
+                                    add_to_not_wanted(magnet)
+                                    logging.info(f"Marked magnet as unwanted after successful addition: {hash_value}")
+
                                     if is_cached:
                                         cached_added = True
                                         logging.info(f"Added cached content for {updated_item_identifier}")
@@ -330,7 +337,6 @@ class QueueManager:
                                         first_uncached_added = True
                                         logging.info(f"Added uncached content for {updated_item_identifier}")
                                     
-                                    # Fetch file list from Real Debrid
                                     torrent_files = get_magnet_files(magnet)
                                     if torrent_files and 'cached_files' in torrent_files:
                                         if updated_item['type'] == 'movie':
@@ -339,15 +345,17 @@ class QueueManager:
                                                 self.move_item_to_checking(updated_item, title, magnet)
                                             else:
                                                 logging.warning(f"No matching file found for movie: {updated_item_identifier}")
+                                                self.move_to_scraping(updated_item)
                                         else:
                                             self.process_multi_pack(updated_item, title, magnet, torrent_files['cached_files'])
                                     else:
                                         logging.warning(f"Invalid torrent_files structure for {updated_item_identifier}: {torrent_files}")
+                                        self.move_to_scraping(updated_item)
                                         continue
 
                                 except RealDebridUnavailableError:
-                                    logging.error(f"Real-Debrid service is unavailable. Moving item {updated_item_identifier} to Sleeping to retry later.")
-                                    self.move_to_sleeping(updated_item)
+                                    logging.error(f"Real-Debrid service is unavailable. Moving item {updated_item_identifier} to Scraping to retry later.")
+                                    self.move_to_scraping(updated_item)
                                     return
                                 except Exception as e:
                                     logging.error(f"Error adding magnet to Real-Debrid for {updated_item_identifier}: {str(e)}")
@@ -362,11 +370,11 @@ class QueueManager:
                             logging.warning(f"Failed to extract hash from magnet link for {updated_item_identifier}")
 
                     if not (cached_added or first_uncached_added):
-                        logging.info(f"No suitable results found for {updated_item_identifier}. Moving to Sleeping.")
-                        self.move_to_sleeping(updated_item)
+                        logging.info(f"No suitable results found for {updated_item_identifier}. Moving to Scraping.")
+                        self.move_to_scraping(updated_item)
                 else:
                     logging.error(f"No scrape results found for {updated_item_identifier}")
-                    self.move_to_sleeping(updated_item)
+                    self.move_to_scraping(updated_item)
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
@@ -383,7 +391,9 @@ class QueueManager:
                 break
 
         if not original_item_matched:
-            logging.warning(f"Original item {item_identifier} did not match any files in the torrent.")
+            logging.warning(f"Original item {item_identifier} did not match any files in the torrent. Moving back to Scraping.")
+            self.move_to_scraping(item)
+            return  # Exit the function as we've moved the item back to Scraping
 
         # Find all matching episodes in the Wanted, Scraping, and Sleeping queues
         matching_items = [
@@ -406,6 +416,22 @@ class QueueManager:
                     break
 
         logging.info(f"Processed multi-pack: moved matching episodes to Checking queue")
+
+    def move_to_scraping(self, item: Dict[str, Any]) -> None:
+        item_identifier = self.generate_identifier(item)
+        logging.debug(f"Moving item to Scraping: {item_identifier}")
+        update_media_item_state(item['id'], 'Scraping')
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            self.queues["Scraping"].append(updated_item)
+            # Remove from original queue if present
+            for queue in [self.queues["Wanted"], self.queues["Sleeping"], self.queues["Adding"]]:
+                if item in queue:
+                    queue.remove(item)
+                    break
+            logging.info(f"Moved item {item_identifier} to Scraping queue")
+        else:
+            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
     def move_item_to_checking(self, item: Dict[str, Any], title: str, magnet: str) -> None:
         item_identifier = self.generate_identifier(item)
