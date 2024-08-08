@@ -75,7 +75,8 @@ def purge_db():
                 Choice("Wanted", "Wanted"),
                 Choice("Collected", "Collected"),
                 Choice("All", "all"),
-                Choice("Working (All queues that are not Wanted, Collected, or Blacklisted", "working")
+                Choice("Working (All queues that are not Wanted, Collected, or Blacklisted", "working"),
+                Choice("Blacklisted")
             ]
         ).ask()
 
