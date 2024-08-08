@@ -43,21 +43,25 @@ def add_to_real_debrid(magnet_link):
             magnet_data = {'magnet': magnet_link}
             torrent_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
         else:
-            torrent = requests.get(magnet_link, allow_redirects=False, timeout=float(60))
+            torrent = requests.get(magnet_link, allow_redirects=False, timeout=60)
             if torrent.status_code != 200:
                 sleep(1)
-                torrent = requests.get(magnet_link, allow_redirects=False, timeout=float(60))
+                torrent = requests.get(magnet_link, allow_redirects=False, timeout=60)
                 if torrent.status_code != 200:
                     torrent.raise_for_status()
                     return False
-            torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent)
+            torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
+            if not torrent_response:
+                sleep(1)
+                torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
+            sleep(0.1)
 
         torrent_response.raise_for_status()
         torrent_id = torrent_response.json()['id']
 
         rate_limited()
         # Step 2: Get torrent info
-        info_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers)
+        info_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
         info_response.raise_for_status()
         torrent_info = info_response.json()
 
@@ -73,20 +77,23 @@ def add_to_real_debrid(magnet_link):
 
         rate_limited()
         select_data = {'files': ','.join(files_to_select)}
-        select_response = requests.post(f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}", headers=headers, data=select_data)
+        select_response = requests.post(f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}", headers=headers, data=select_data, timeout=60)
         select_response.raise_for_status()
 
         # Step 4: Wait for the torrent to be processed
         max_attempts = 1
         for attempt in range(max_attempts):
             rate_limited()
-            links_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers)
+            links_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
             links_response.raise_for_status()
             links_info = links_response.json()
 
             if links_info['status'] == 'downloaded':
-                logging.info(f"Successfully added torrent to Real-Debrid. Torrent ID: {torrent_id}")
+                logging.info(f"Successfully added cached torrent to Real-Debrid. Torrent ID: {torrent_id}")
                 return links_info['links']
+            elif links_info['status'] == 'downloading' or links_info['status'] == 'queued':
+                logging.info(f"Successfully added uncached torrent to Real-Debrid. Torrent ID: {torrent_id}")
+                return links_info['status']
             elif links_info['status'] in ['magnet_error', 'error', 'virus', 'dead']:
                 logging.error(f"Torrent processing failed. Status: {links_info['status']}")
                 return None
