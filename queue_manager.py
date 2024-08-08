@@ -507,26 +507,39 @@ class QueueManager:
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
+    def blacklist_old_season_items(self, item):
+        item_identifier = self.generate_identifier(item)
+        logging.info(f"Blacklisting item {item_identifier} and related old season items with the same version")
+
+        # Blacklist the current item
+        self.blacklist_item(item)
+
+        # Find and blacklist related items in the same season with the same version that are also old
+        related_items = self.find_related_season_items(item)
+        for related_item in related_items:
+            if self.is_item_old(related_item) and related_item['version'] == item['version']:
+                self.blacklist_item(related_item)
+            else:
+                logging.debug(f"Not blacklisting {self.generate_identifier(related_item)} as it's either not old enough or has a different version")
+
+    def find_related_season_items(self, item):
+        related_items = []
+        if item['type'] == 'episode':
+            for queue in self.queues.values():
+                for queue_item in queue:
+                    if (queue_item['type'] == 'episode' and
+                        queue_item['imdb_id'] == item['imdb_id'] and
+                        queue_item['season_number'] == item['season_number'] and
+                        queue_item['id'] != item['id'] and
+                        queue_item['version'] == item['version']):  # Add this condition
+                        related_items.append(queue_item)
+        return related_items
+
     def is_item_old(self, item):
         if 'release_date' not in item:
             return False
         release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
         return (date.today() - release_date).days > 7
-
-    def blacklist_old_season_items(self, item):
-        item_identifier = self.generate_identifier(item)
-        logging.info(f"Blacklisting item {item_identifier} and related old season items")
-
-        # Blacklist the current item
-        self.blacklist_item(item)
-
-        # Find and blacklist related items in the same season that are also old
-        related_items = self.find_related_season_items(item)
-        for related_item in related_items:
-            if self.is_item_old(related_item):
-                self.blacklist_item(related_item)
-            else:
-                logging.debug(f"Not blacklisting {self.generate_identifier(related_item)} as it's not old enough")
 
     def blacklist_item(self, item):
         item_id = item['id']
@@ -546,18 +559,6 @@ class QueueManager:
             del self.wake_counts[item_id]
         
         logging.info(f"Moved item {item_identifier} to Blacklisted state")
-
-    def find_related_season_items(self, item):
-        related_items = []
-        if item['type'] == 'episode':
-            for queue in self.queues.values():
-                for queue_item in queue:
-                    if (queue_item['type'] == 'episode' and
-                        queue_item['imdb_id'] == item['imdb_id'] and
-                        queue_item['season_number'] == item['season_number'] and
-                        queue_item['id'] != item['id']):
-                        related_items.append(queue_item)
-        return related_items
 
     def process_checking(self):
         logging.debug("Processing checking queue")
