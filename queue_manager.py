@@ -214,13 +214,8 @@ class QueueManager:
                 results = self.scrape_with_fallback(item, is_multi_pack)
 
                 if not results:
-                    if item['type'] == 'episode' and self.is_item_old(item):
-                        logging.warning(f"No results for old episode {item_identifier}. Triggering blacklist for the season.")
-                        self.blacklist_old_season_items(item)
-                    else:
-                        wake_count = self.wake_counts.get(item['id'], 0)
-                        logging.warning(f"No results returned for {item_identifier}. Moving to Sleeping queue with wake count {wake_count}")
-                        self.move_to_sleeping(item)
+                    logging.warning(f"No results found for {item_identifier} after fallback. Moving to Sleeping queue.")
+                    self.move_to_sleeping(item)
                     return
 
                 # Filter out "not wanted" results
@@ -240,14 +235,10 @@ class QueueManager:
                         logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
                 else:
                     logging.warning(f"No valid results for {item_identifier}, moving to Sleeping")
-                    update_media_item_state(item['id'], 'Sleeping')
-                    updated_item = get_media_item_by_id(item['id'])
-                    if updated_item:
-                        self.queues["Sleeping"].append(updated_item)
-                    else:
-                        logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+                    self.move_to_sleeping(item)
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
+                self.move_to_sleeping(item)
 
     def scrape_with_fallback(self, item, is_multi_pack):
         item_identifier = self.generate_identifier(item)
@@ -265,7 +256,7 @@ class QueueManager:
             is_multi_pack
         )
 
-        if results or item['type'] != 'episode' or not is_multi_pack:
+        if results or item['type'] != 'episode':
             return results
 
         logging.info(f"No results for multi-pack {item_identifier}. Falling back to individual episode scraping.")
