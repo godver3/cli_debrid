@@ -170,10 +170,10 @@ def is_cached_on_rd(hashes):
     response = get(url)
     if not response:
         return {hash_: False for hash_ in hashes}
-    
+
     # Convert entire response to dictionary, including nested SimpleNamespace objects
     response = namespace_to_dict(response)
-    
+
     cache_status = {}
     for hash_ in hashes:
         hash_key = hash_.lower()
@@ -232,5 +232,5 @@ def get_magnet_files(magnet_link):
     cache_status = is_cached_on_rd(hash_)
     if cache_status.get(hash_, False):
         return get_cached_files(hash_)
-    
+
     return None

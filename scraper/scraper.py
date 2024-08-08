@@ -54,15 +54,15 @@ def detect_resolution(title: str) -> str:
         (r'(?i)(?:^|\D)(480p)(?:$|\D)', '480p'),
     ]
     title_lower = title.lower()
-    
+
     detected_resolutions = []
-    
+
     # Check for all resolution patterns
     for pattern, res in resolution_patterns:
         if re.search(pattern, title_lower):
             detected_resolutions.append(res)
             logging.debug(f"Matched pattern '{pattern}' in title. Detected resolution: {res}")
-    
+
     # Look for numbers followed by 'p'
     p_matches = re.findall(r'(\d+)p', title_lower)
     for p_value in p_matches:
@@ -75,13 +75,14 @@ def detect_resolution(title: str) -> str:
             detected_resolutions.append('720p')
         elif p_value >= 480:
             detected_resolutions.append('480p')
-        logging.debug(f"Found '{p_value}p' in title. Categorized as {detected_resolutions[-1]}")
-    
+        if detected_resolutions:  # Only log if a resolution was actually added
+            logging.debug(f"Found '{p_value}p' in title. Categorized as {detected_resolutions[-1]}")
+
     # Look for '4k' or 'uhd', even if part of another word
     if '4k' in title_lower or 'uhd' in title_lower:
         detected_resolutions.append('2160p')
         logging.debug("Found '4k' or 'uhd' in title. Categorized as 2160p")
-    
+
     if detected_resolutions:
         # Sort resolutions and pick the lowest
         resolution_order = ['480p', '720p', '1080p', '2160p']

@@ -7,7 +7,7 @@ from settings import get_setting
 
 def get_guid(media, guid_type='imdb'):
     for guid in media.guids:
-        logging.debug(f"Processing GUID: {guid.id}")
+        #logging.debug(f"Processing GUID: {guid.id}")
         if guid_type.lower() in guid.id.lower():
             try:
                 return guid.id.split('://')[1]
@@ -46,7 +46,7 @@ def process_movie(movie, collected_content, missing_guid_items):
             movie_entry['location'] = location
             collected_content['movies'].append(movie_entry)
             
-        logging.debug(f"Added {len(movie.locations)} location(s) for movie: {movie.title}")
+        #logging.debug(f"Added {len(movie.locations)} location(s) for movie: {movie.title}")
     except Exception as e:
         logging.error(f"Error processing movie {movie.title}: {str(e)}")
         logging.debug(f"Movie not processed: {movie.title}, addedAt: {movie.addedAt}")
@@ -83,7 +83,7 @@ def process_episode(show, episode, collected_content, missing_guid_items):
             collected_content['episodes'].append(episode_info)
 
         logging.debug(f"Collected episode: {episode.title} from show: {show.title}, IMDb: {show_imdb_id}, TMDb: {show_tmdb_id}")
-        logging.debug(f"Added {len(episode.locations)} location(s) for episode: {episode.title}")
+        #logging.debug(f"Added {len(episode.locations)} location(s) for episode: {episode.title}")
     except Exception as e:
         logging.error(f"Error processing episode {episode.title} of {show.title}: {str(e)}")
         logging.debug(f"Episode not processed: {episode.title} of {show.title}, addedAt: {episode.addedAt}")
@@ -107,9 +107,9 @@ def get_collected_from_plex(request='all'):
         missing_guid_items = {'movies': [], 'episodes': []}
         current_time = datetime.now()
         time_limit = current_time - timedelta(minutes=240)
-        logging.debug(f"Current time: {current_time}")
-        logging.debug(f"Time limit: {time_limit}")
-        logging.debug(f"Time window: {current_time - time_limit}")
+        #logging.debug(f"Current time: {current_time}")
+        #logging.debug(f"Time limit: {time_limit}")
+        #logging.debug(f"Time window: {current_time - time_limit}")
 
         def log_progress(current, total, item_type):
             progress = (current / total) * 100
