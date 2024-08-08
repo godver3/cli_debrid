@@ -173,12 +173,20 @@ def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str
         if magnet_link:
             result = add_to_real_debrid(magnet_link)
             if result:
-                logging.info("Torrent added to Real-Debrid successfully")
-                return {
-                    "success": True,
-                    "message": "Torrent added to Real-Debrid successfully",
-                    "torrent_info": selected_torrent
-                }
+                if result == 'downloading' or result == 'queued':
+                    logging.info("Uncached torrent added to Real-Debrid successfully")
+                    return {
+                        "success": True,
+                        "message": "Uncached torrent added to Real-Debrid successfully",
+                        "torrent_info": selected_torrent
+                    }
+                else:
+                    logging.info("Cached torrent added to Real-Debrid successfully")
+                    return {
+                        "success": True,
+                        "message": "Cached torrent added to Real-Debrid successfully",
+                        "torrent_info": selected_torrent
+                    }
             else:
                 logging.error("Failed to add torrent to Real-Debrid")
                 return {

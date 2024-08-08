@@ -52,7 +52,10 @@ def add_torrent_to_real_debrid():
 
         result = add_to_real_debrid(magnet_link)
         if result:
-            return jsonify({'message': 'Torrent added to Real-Debrid successfully'})
+            if result == 'downloading' or result == 'queued':
+                return jsonify({'message': 'Uncached torrent added to Real-Debrid successfully'})
+            else:
+                return jsonify({'message': 'Cached torrent added to Real-Debrid successfully'})
         else:
             return jsonify({'error': 'Failed to add torrent to Real-Debrid'}), 500
 
