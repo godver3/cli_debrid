@@ -322,44 +322,6 @@ class QueueManager:
 
                             if is_cached or (uncached_handling != 'None' and not first_uncached_added):
                                 try:
-                                    if is_cached:
-                                        torrent_files = get_magnet_files(magnet)
-                                        if torrent_files and 'cached_files' in torrent_files:
-                                            if updated_item['type'] == 'movie':
-                                                logging.debug(f"Movie item detected: {updated_item_identifier}")
-                                                if not any(self.file_matches_item(file, updated_item) for file in torrent_files['cached_files']):
-                                                    logging.warning(f"No matching file found for movie: {updated_item_identifier}")
-                                                    continue
-                                            else:
-                                                multi_pack_success = self.process_multi_pack(updated_item, title, magnet, result.get('season_pack', ''), torrent_files['cached_files'])
-                                                if not multi_pack_success:
-                                                    logging.info(f"Multi-pack processing failed for {updated_item_identifier}. Falling back to individual episode search.")
-                                                    individual_results = self.scrape_with_fallback(updated_item, False)
-                                                    if individual_results:
-                                                        logging.info(f"Found individual results for {updated_item_identifier}. Processing...")
-                                                        # Process individual results
-                                                        for ind_result in individual_results:
-                                                            ind_magnet = ind_result.get('magnet', '')
-                                                            ind_hash = extract_hash_from_magnet(ind_magnet)
-                                                            if ind_hash:
-                                                                ind_cache_status = is_cached_on_rd(ind_hash)
-                                                                if ind_hash in ind_cache_status and ind_cache_status[ind_hash]:
-                                                                    add_to_real_debrid(ind_magnet)
-                                                                    cached_added = True
-                                                                    logging.info(f"Added individual cached content for {updated_item_identifier}")
-                                                                    update_media_item_state(updated_item['id'], 'Checking', filled_by_title=ind_result.get('title', ''), filled_by_magnet=ind_magnet)
-                                                                    checked_item = get_media_item_by_id(updated_item['id'])
-                                                                    if checked_item:
-                                                                        self.queues["Checking"].append(checked_item)
-                                                                        logging.debug(f"Item {updated_item_identifier} added to Checking queue")
-                                                                    return
-                                                    else:
-                                                        logging.warning(f"No individual results found for {updated_item_identifier}")
-                                                        continue
-                                        else:
-                                            logging.warning(f"Invalid torrent_files structure for {updated_item_identifier}: {torrent_files}")
-                                            continue
-
                                     add_to_real_debrid(magnet)
                                     if is_cached:
                                         cached_added = True
@@ -367,6 +329,22 @@ class QueueManager:
                                     else:
                                         first_uncached_added = True
                                         logging.info(f"Added uncached content for {updated_item_identifier}")
+                                    
+                                    # Fetch file list from Real Debrid
+                                    torrent_files = get_magnet_files(magnet)
+                                    if torrent_files and 'cached_files' in torrent_files:
+                                        if updated_item['type'] == 'movie':
+                                            logging.debug(f"Movie item detected: {updated_item_identifier}")
+                                            if any(self.file_matches_item(file, updated_item) for file in torrent_files['cached_files']):
+                                                self.move_item_to_checking(updated_item, title, magnet)
+                                            else:
+                                                logging.warning(f"No matching file found for movie: {updated_item_identifier}")
+                                        else:
+                                            self.process_multi_pack(updated_item, title, magnet, torrent_files['cached_files'])
+                                    else:
+                                        logging.warning(f"Invalid torrent_files structure for {updated_item_identifier}: {torrent_files}")
+                                        continue
+
                                 except RealDebridUnavailableError:
                                     logging.error(f"Real-Debrid service is unavailable. Moving item {updated_item_identifier} to Sleeping to retry later.")
                                     self.move_to_sleeping(updated_item)
@@ -375,15 +353,6 @@ class QueueManager:
                                     logging.error(f"Error adding magnet to Real-Debrid for {updated_item_identifier}: {str(e)}")
                                     add_to_not_wanted(magnet)
                                     continue
-
-                                update_media_item_state(updated_item['id'], 'Checking', filled_by_title=title, filled_by_magnet=magnet)
-                                checked_item = get_media_item_by_id(updated_item['id'])
-                                if checked_item:
-                                    checked_item_identifier = self.generate_identifier(checked_item)
-                                    self.queues["Checking"].append(checked_item)
-                                    logging.debug(f"Item {checked_item_identifier} added to Checking queue")
-                                else:
-                                    logging.error(f"Failed to retrieve checked item for ID: {updated_item['id']}")
 
                                 if uncached_handling == 'None' or (uncached_handling == 'Hybrid' and cached_added):
                                     return
@@ -401,79 +370,69 @@ class QueueManager:
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
-    def process_multi_pack(self, item: Dict[str, Any], title: str, magnet: str, season_pack: str, torrent_files: List[str]) -> bool:
+    def process_multi_pack(self, item: Dict[str, Any], title: str, magnet: str, torrent_files: List[str]) -> None:
         item_identifier = self.generate_identifier(item)
-        logging.debug(f"Starting process_multi_pack for item: {item_identifier}")
-        logging.debug(f"Item details: type={item['type']}, imdb_id={item['imdb_id']}, season_number={item['season_number']}, version={item['version']}")
-        logging.debug(f"Season pack: {season_pack}")
-        logging.debug(f"Title: {title}")
-        logging.debug(f"Magnet: {magnet}")
-        logging.debug(f"Torrent files: {torrent_files}")
+        logging.debug(f"Processing multi-pack for item: {item_identifier}")
 
-        # Log the current state of the Wanted and Scraping queues
-        logging.debug(f"Current Wanted queue size: {len(self.queues['Wanted'])}")
-        logging.debug(f"Current Scraping queue size: {len(self.queues['Scraping'])}")
+        # Check if the original item matches any file
+        original_item_matched = False
+        for file_name in torrent_files:
+            if self.file_matches_item(file_name, item):
+                self.move_item_to_checking(item, title, magnet)
+                original_item_matched = True
+                break
 
-        # Convert season_pack to a list of integers
-        seasons = [int(s.strip()) for s in season_pack.split(',') if s.strip().isdigit()] if season_pack else [item['season_number']]
+        if not original_item_matched:
+            logging.warning(f"Original item {item_identifier} did not match any files in the torrent.")
 
         # Find all matching episodes in the Wanted, Scraping, and Sleeping queues
         matching_items = [
-            wanted_item for wanted_item in self.queues["Wanted"] + self.queues["Scraping"] + self.queues["Sleeping"]
+            wanted_item for queue in [self.queues["Wanted"], self.queues["Scraping"], self.queues["Sleeping"]]
+            for wanted_item in queue
             if (wanted_item['type'] == 'episode' and
                 wanted_item['imdb_id'] == item['imdb_id'] and
-                wanted_item['season_number'] in seasons and
                 wanted_item['version'] == item['version'] and
-                wanted_item['id'] != item['id'])
+                wanted_item['id'] != item['id'])  # Exclude the original item
         ]
 
         logging.debug(f"Found {len(matching_items)} potential matching items in Wanted, Scraping and Sleeping queues")
 
         # Match files with items
-        matched_items = []
         for file_name in torrent_files:
             for matching_item in matching_items:
                 if self.file_matches_item(file_name, matching_item):
-                    matched_items.append(matching_item)
+                    self.move_item_to_checking(matching_item, title, magnet)
+                    matching_items.remove(matching_item)
                     break
 
-        logging.debug(f"Matched {len(matched_items)} items with files in the torrent")
+        logging.info(f"Processed multi-pack: moved matching episodes to Checking queue")
 
-        # Move matching items to Checking queue
-        moved_items = 0
-        for matching_item in matched_items:
-            matching_item_identifier = self.generate_identifier(matching_item)
-            logging.debug(f"Updating state for item: {matching_item_identifier}")
-            update_media_item_state(matching_item['id'], 'Checking', filled_by_title=title, filled_by_magnet=magnet)
-            updated_matching_item = get_media_item_by_id(matching_item['id'])
-            if updated_matching_item:
-                self.queues["Checking"].append(updated_matching_item)
-
-                if matching_item in self.queues["Wanted"]:
-                    self.queues["Wanted"].remove(matching_item)
-                elif matching_item in self.queues["Scraping"]:
-                    self.queues["Scraping"].remove(matching_item)
-                elif matching_item in self.queues["Sleeping"]:
-                    self.queues["Sleeping"].remove(matching_item)
-                moved_items += 1
-                logging.debug(f"Moved item {matching_item_identifier} to Checking queue")
-            else:
-                logging.error(f"Failed to retrieve updated item for ID: {matching_item['id']}")
-
-        logging.info(f"Processed multi-pack: moved {moved_items} matching episodes to Checking queue")
-        logging.debug(f"Updated Wanted queue size: {len(self.queues['Wanted'])}")
-        logging.debug(f"Updated Scraping queue size: {len(self.queues['Scraping'])}")
-        logging.debug(f"Updated Checking queue size: {len(self.queues['Checking'])}")
-
-        # Return True if we found and moved matching items, False otherwise
-        return moved_items > 0
+    def move_item_to_checking(self, item: Dict[str, Any], title: str, magnet: str) -> None:
+        item_identifier = self.generate_identifier(item)
+        logging.debug(f"Moving item to Checking: {item_identifier}")
+        update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=magnet)
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            self.queues["Checking"].append(updated_item)
+            # Remove from original queue
+            for queue in [self.queues["Wanted"], self.queues["Scraping"], self.queues["Sleeping"], self.queues["Adding"]]:
+                if item in queue:
+                    queue.remove(item)
+                    break
+            logging.info(f"Moved item {item_identifier} to Checking queue")
+        else:
+            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
     def file_matches_item(self, file_name: str, item: Dict[str, Any]) -> bool:
         # Implement logic to check if the file name matches the item
         # This is a placeholder implementation and should be adjusted based on your naming conventions
-        season_str = f"S{item['season_number']:02d}"
-        episode_str = f"E{item['episode_number']:02d}"
-        return season_str in file_name and episode_str in file_name    
+        if item['type'] == 'movie':
+            return item['title'].lower() in file_name.lower() and str(item['year']) in file_name
+        elif item['type'] == 'episode':
+            season_str = f"S{item['season_number']:02d}"
+            episode_str = f"E{item['episode_number']:02d}"
+            return season_str in file_name and episode_str in file_name
+        return False
 
     def move_to_wanted(self, item):
         item_identifier = self.generate_identifier(item)
