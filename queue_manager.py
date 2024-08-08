@@ -476,25 +476,27 @@ class QueueManager:
         else:
             logging.error(f"Failed to retrieve wanted item for ID: {item['id']}")
 
+
     def move_to_sleeping(self, item):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Sleeping queue")
 
-        # Check if the item has no scrape results and is older than 7 days
+        # Check if the item has no scrape results and is older than 7 days or has unknown release date
         if not item.get('scrape_results') and self.is_item_old(item):
             self.blacklist_old_season_items(item)
+            return
+        
+        update_media_item_state(item['id'], 'Sleeping')
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            updated_item_identifier = self.generate_identifier(updated_item)
+            self.queues["Sleeping"].append(updated_item)
+            wake_count = self.wake_counts.get(item['id'], 0)  # Get existing count or default to 0
+            self.wake_counts[item['id']] = wake_count  # Preserve the wake count
+            self.sleeping_queue_times[item['id']] = datetime.now()
+            logging.debug(f"Successfully moved item {updated_item_identifier} to Sleeping queue (Wake count: {wake_count})")
         else:
-            update_media_item_state(item['id'], 'Sleeping')
-            updated_item = get_media_item_by_id(item['id'])
-            if updated_item:
-                updated_item_identifier = self.generate_identifier(updated_item)
-                self.queues["Sleeping"].append(updated_item)
-                wake_count = self.wake_counts.get(item['id'], 0)  # Get existing count or default to 0
-                self.wake_counts[item['id']] = wake_count  # Preserve the wake count
-                self.sleeping_queue_times[item['id']] = datetime.now()
-                logging.debug(f"Successfully moved item {updated_item_identifier} to Sleeping queue (Wake count: {wake_count})")
-            else:
-                logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
     def blacklist_old_season_items(self, item):
         item_identifier = self.generate_identifier(item)
@@ -511,6 +513,7 @@ class QueueManager:
             else:
                 logging.debug(f"Not blacklisting {self.generate_identifier(related_item)} as it's either not old enough or has a different version")
 
+
     def find_related_season_items(self, item):
         related_items = []
         if item['type'] == 'episode':
@@ -525,10 +528,15 @@ class QueueManager:
         return related_items
 
     def is_item_old(self, item):
-        if 'release_date' not in item:
-            return False
-        release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
-        return (date.today() - release_date).days > 7
+        if 'release_date' not in item or item['release_date'] == 'Unknown':
+            logging.info(f"Item {self.generate_identifier(item)} has no release date or unknown release date. Considering it as old.")
+            return True
+        try:
+            release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+            return (date.today() - release_date).days > 7
+        except ValueError as e:
+            logging.error(f"Error parsing release date for item {self.generate_identifier(item)}: {str(e)}")
+            return True  # Consider items with unparseable dates as old
 
     def blacklist_item(self, item):
         item_id = item['id']
