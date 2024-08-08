@@ -222,6 +222,19 @@ class QueueManager:
                 filtered_results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
                 logging.debug(f"Scrape results for {item_identifier}: {len(filtered_results)} results after filtering")
 
+                if not filtered_results:
+                    logging.warning(f"All results for {item_identifier} were filtered out as 'not wanted'. Retrying with individual scraping.")
+                    # Retry with individual scraping
+                    individual_results = self.scrape_with_fallback(item, False)
+                    filtered_individual_results = [r for r in individual_results if not is_magnet_not_wanted(r['magnet'])]
+                    
+                    if not filtered_individual_results:
+                        logging.warning(f"No valid results for {item_identifier} even after individual scraping. Moving to Sleeping.")
+                        self.move_to_sleeping(item)
+                        return
+                    else:
+                        filtered_results = filtered_individual_results
+
                 if filtered_results:
                     best_result = filtered_results[0]
                     logging.info(f"Best result for {item_identifier}: {best_result['title']}, {best_result['magnet']}")
