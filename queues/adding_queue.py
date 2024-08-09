@@ -538,11 +538,13 @@ class AddingQueue:
         file_name = file_path.split('/')[-1].lower()
 
         if item['type'] == 'movie':
-            # For movies, check if the title and year are in the file name
-            title_year_pattern = re.compile(re.escape(item['title'].lower()) + r'.*' + re.escape(str(item['year'])))
-            match = bool(title_year_pattern.search(file_name))
-            logging.debug(f"Movie match result: {match}")
-            return match
+            # For movies, just check if the file has a common video extension
+            common_video_extensions = ('.mkv', '.mp4', '.avi', '.mov', '.m4v', '.wmv')
+            if file_name.endswith(common_video_extensions):
+                logging.debug(f"Movie file match found: {file_name}")
+                return True
+            logging.debug(f"No match found for movie file: {file_name}")
+            return False            return match
         elif item['type'] == 'episode':
             # For episodes, check for season and episode numbers
             season_pattern = f"s{item['season_number']:02d}"
