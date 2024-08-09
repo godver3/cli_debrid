@@ -544,7 +544,7 @@ class AddingQueue:
                 logging.debug(f"Movie file match found: {file_name}")
                 return True
             logging.debug(f"No match found for movie file: {file_name}")
-            return False            return match
+            return False
         elif item['type'] == 'episode':
             # For episodes, check for season and episode numbers
             season_pattern = f"s{item['season_number']:02d}"
