@@ -177,9 +177,9 @@ def queues():
                 item['time_added'] = item.get('time_added', datetime.now())
         elif queue_name == 'Sleeping':
             for item in items:
-                item['wake_count'] = queue_manager.wake_counts.get(item['id'], 0)  # Get wake count directly from QueueManager
+                item['wake_count'] = queue_manager.get_wake_count(item['id'])  # Use the new get_wake_count method
 
-    upgrading_queue = queue_contents['Upgrading']
+    upgrading_queue = queue_contents.get('Upgrading', [])
     logging.info(f"Rendering queues page. UpgradingQueue size: {len(upgrading_queue)}")
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
 
@@ -189,7 +189,7 @@ def api_queue_contents():
     # Ensure wake counts are included for Sleeping queue items
     if 'Sleeping' in contents:
         for item in contents['Sleeping']:
-            item['wake_count'] = queue_manager.wake_counts.get(item['id'], 0)
+            item['wake_count'] = queue_manager.get_wake_count(item['id'])
     return jsonify(contents)
 
 @app.route('/api/logs')
@@ -219,7 +219,14 @@ def update_stats(processed=0, successful=0, failed=0):
     total_processed += processed
     successful_additions += successful
     failed_additions += failed
-    #logging.debug(f"Stats updated - Total: {total_processed}, Successful: {successful_additions}, Failed: {failed_additions}")
+
+def safe_process_queue(queue_name):
+    try:
+        getattr(queue_manager, f'process_{queue_name.lower()}')()
+        update_stats(processed=1)
+    except Exception as e:
+        logging.error(f"Error processing {queue_name} queue: {str(e)}")
+        update_stats(failed=1)
 
 if __name__ == '__main__':
     app.run(debug=True)
