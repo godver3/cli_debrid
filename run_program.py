@@ -39,34 +39,16 @@ class ProgramRunner:
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
         
         self.enabled_tasks = {
-            'wanted',
-            'scraping',
-            'adding',
-            'checking',
-            'sleeping',
-            'unreleased',
-            'blacklisted',
-            'task_plex_full_scan',
-            'task_overseerr_wanted',
-            'task_debug_log',
-            'task_refresh_release_dates',
+            'wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted',
+            'task_plex_full_scan', 'task_overseerr_wanted', 'task_debug_log', 'task_refresh_release_dates',
         }
         
-        # Conditionally enable tasks based on settings
         if get_setting('MDBList', 'urls', ''):
             self.enabled_tasks.add('task_mdb_list_wanted')
         if get_setting('Collected Content Source', 'enabled', ''):
             self.enabled_tasks.add('task_collected_wanted')
         if get_setting('Trakt', 'user_watchlist_enabled', '') or get_setting('Trakt', 'trakt_lists', ''):
             self.enabled_tasks.add('task_trakt_wanted')
-
-    def run_initialization(self):
-        logging.info("Running initialization...")
-        skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
-        
-        if get_setting('Debug', 'disable_initialization', '') != "True":
-            initialize(skip_initial_plex_update)
-        logging.info("Initialization complete")
 
     def should_run_task(self, task_name):
         if task_name not in self.enabled_tasks:
@@ -82,29 +64,72 @@ class ProgramRunner:
 
         for queue_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted']:
             if self.should_run_task(queue_name):
-                getattr(self.queue_manager, f'process_{queue_name}')()
-                update_stats(processed=1)
+                self.safe_process_queue(queue_name)
 
         if self.should_run_task('task_plex_full_scan'):
-            task_plex_full_scan()
+            self.task_plex_full_scan()
         if self.should_run_task('task_overseerr_wanted'):
-            task_overseerr_wanted()
+            self.task_overseerr_wanted()
         if self.should_run_task('task_mdb_list_wanted'):
-            task_mdb_list_wanted()
+            self.task_mdb_list_wanted()
         if self.should_run_task('task_refresh_release_dates'):
-            task_refresh_release_dates()
+            self.task_refresh_release_dates()
         if self.should_run_task('task_collected_wanted'):
-            task_collected_wanted()
+            self.task_collected_wanted()
         if self.should_run_task('task_trakt_wanted'):
-            task_trakt_wanted()
+            self.task_trakt_wanted()
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
+
+    def safe_process_queue(self, queue_name):
+        try:
+            getattr(self.queue_manager, f'process_{queue_name}')()
+            update_stats(processed=1)
+        except Exception as e:
+            logging.error(f"Error processing {queue_name} queue: {str(e)}")
+            update_stats(failed=1)
+
+    def task_plex_full_scan(self):
+        collected_content = get_collected_from_plex('all')
+        if collected_content:
+            add_collected_items(collected_content['movies'] + collected_content['episodes'])
+
+    def task_overseerr_wanted(self):
+        wanted_content = get_wanted_from_overseerr()
+        if wanted_content:
+            wanted_content_processed = process_metadata(wanted_content)
+            if wanted_content_processed:
+                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+
+    def task_mdb_list_wanted(self):
+        wanted_content = get_wanted_from_mdblists()
+        if wanted_content:
+            wanted_content_processed = process_metadata(wanted_content)
+            if wanted_content_processed:
+                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+
+    def task_collected_wanted(self):
+        wanted_content = get_wanted_from_collected()
+        if wanted_content:
+            wanted_content_processed = process_metadata(wanted_content)
+            if wanted_content_processed:
+                add_wanted_items(wanted_content_processed['episodes'])
+
+    def task_trakt_wanted(self):
+        wanted_content = get_wanted_from_trakt()
+        if wanted_content:
+            wanted_content_processed = process_metadata(wanted_content)
+            if wanted_content_processed:
+                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+
+    def task_refresh_release_dates(self):
+        refresh_release_dates()
 
     def task_debug_log(self):
         current_time = time.time()
         debug_info = []
         for task, interval in self.task_intervals.items():
-            if interval > 60:
+            if interval > 60:  # Only log tasks that run less frequently than every minute
                 time_until_next_run = interval - (current_time - self.last_run_times[task])
                 minutes, seconds = divmod(int(time_until_next_run), 60)
                 hours, minutes = divmod(minutes, 60)
@@ -113,12 +138,11 @@ class ProgramRunner:
         logging.info("Time until next task run:\n" + "\n".join(debug_info))
 
     def run(self):
-        self.run_initialization()
-        start_server()
+        start_server()  # Start the web server
 
         while True:
             self.process_queues()
-            time.sleep(1)
+            time.sleep(1)  # Main loop runs every second
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
