@@ -94,13 +94,24 @@ class QueueManager:
         self.queues["Blacklisted"].blacklist_old_season_items(item, self)
         self.queues[from_queue].remove_item(item)
 
-    def move_to_wanted(self, item: Dict[str, Any], from_queue: str):
+    def move_to_wanted(self, item: Dict[str, Any], from_queue: str, hybrid_flag: str = None):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Wanted queue")
-        update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None)
+        
+        # If hybrid_flag is provided, include it in the database update
+        if hybrid_flag:
+            update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None, hybrid_flag=hybrid_flag)
+        else:
+            update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None)
+        
         wanted_item = get_media_item_by_id(item['id'])
         if wanted_item:
             wanted_item_identifier = self.generate_identifier(wanted_item)
+            
+            # If hybrid_flag is provided, add it to the item before adding to the queue
+            if hybrid_flag:
+                wanted_item['hybrid_flag'] = hybrid_flag
+            
             self.queues["Wanted"].add_item(wanted_item)
             self.queues[from_queue].remove_item(item)
             logging.debug(f"Successfully moved item {wanted_item_identifier} to Wanted queue")
@@ -134,6 +145,11 @@ class QueueManager:
     def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Checking: {item_identifier}")
+        
+        # Remove hybrid_flag if it exists
+        if 'hybrid_flag' in item:
+            del item['hybrid_flag']
+        
         update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
@@ -142,6 +158,19 @@ class QueueManager:
             logging.info(f"Moved item {item_identifier} to Checking queue")
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+
+    def get_hybrid_flag(self, item: Dict[str, Any]) -> str:
+        """
+        Retrieve the hybrid flag for an item.
+        """
+        return item.get('hybrid_flag', '')
+
+    def set_hybrid_flag(self, item: Dict[str, Any], flag: str):
+        """
+        Set the hybrid flag for an item and update it in the database.
+        """
+        item['hybrid_flag'] = flag
+        update_media_item_state(item['id'], item['state'], hybrid_flag=flag)
 
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)

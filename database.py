@@ -33,7 +33,7 @@ def migrate_media_items_table():
     try:
         # Step 1: Create a new table with the desired structure
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS media_items_new (
+            CREATE TABLE IF NOT EXISTS media_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 imdb_id TEXT,
                 tmdb_id TEXT,
@@ -53,6 +53,7 @@ def migrate_media_items_table():
                 last_checked TIMESTAMP,
                 scrape_results TEXT,
                 version TEXT,
+                hybrid_flag TEXT,
                 UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
             )
         ''')
@@ -466,7 +467,11 @@ def get_media_item_by_id(item_id):
     try:
         cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
         item = cursor.fetchone()
-        return dict(item) if item else None
+        if item:
+            item_dict = dict(item)
+            item_dict['hybrid_flag'] = item_dict.get('hybrid_flag', None)  # Ensure hybrid_flag is included
+            return item_dict
+        return None
     except Exception as e:
         logging.error(f"Error retrieving media item (ID: {item_id}): {str(e)}")
         return None
@@ -524,6 +529,8 @@ def verify_database():
         logging.error("media_items table does not exist!")
     conn.close()
     
+    add_hybrid_flag_column()
+
     logging.info("Database verification complete.")
 
 def get_all_media_items(state=None, media_type=None):
@@ -582,18 +589,18 @@ def purge_database(content_type=None, state=None):
         conn.close()
     create_tables()
 
-def update_media_item_state(item_id, state, filled_by_title=None, filled_by_magnet=None, scrape_results=None):
+def update_media_item_state(item_id, state, filled_by_title=None, filled_by_magnet=None, scrape_results=None, hybrid_flag=None):
     conn = get_db_connection()
     try:
         scrape_results_str = json.dumps(scrape_results) if scrape_results else None
         conn.execute('''
             UPDATE media_items
-            SET state = ?, filled_by_title = ?, filled_by_magnet = ?, scrape_results = ?, last_updated = ?
+            SET state = ?, filled_by_title = ?, filled_by_magnet = ?, scrape_results = ?, last_updated = ?, hybrid_flag = ?
             WHERE id = ?
-        ''', (state, filled_by_title, filled_by_magnet, scrape_results_str, datetime.now(), item_id))
+        ''', (state, filled_by_title, filled_by_magnet, scrape_results_str, datetime.now(), hybrid_flag, item_id))
         conn.commit()
-        logging.debug(f"Updated media item (ID: {item_id}) state to {state}, filled by to {filled_by_magnet}")
-        
+        logging.debug(f"Updated media item (ID: {item_id}) state to {state}, filled by to {filled_by_magnet}, hybrid_flag to {hybrid_flag}")
+
         # If the state is changing to 'Scraping', add the item to the Upgrading database
         if state == 'Scraping':
             item = get_media_item_by_id(item_id)
@@ -713,5 +720,21 @@ def update_year(item_id: int, year: int):
         logging.info(f"Updated year to {year} for item ID {item_id}")
     except Exception as e:
         logging.error(f"Error updating year for item ID {item_id}: {str(e)}")
+    finally:
+        conn.close()
+
+def add_hybrid_flag_column():
+    conn = get_db_connection()
+    try:
+        conn.execute('ALTER TABLE media_items ADD COLUMN hybrid_flag TEXT')
+        conn.commit()
+        logging.info("Successfully added hybrid_flag column to media_items table.")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            logging.info("hybrid_flag column already exists in media_items table.")
+        else:
+            logging.error(f"Error adding hybrid_flag column: {str(e)}")
+    except Exception as e:
+        logging.error(f"Unexpected error adding hybrid_flag column: {str(e)}")
     finally:
         conn.close()
