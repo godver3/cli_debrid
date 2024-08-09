@@ -156,8 +156,19 @@ class ProgramRunner:
 
         logging.info("Time until next task run:\n" + "\n".join(debug_info))
 
+    def run_initialization(self):
+        logging.info("Running initialization...")
+        skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
+        
+        disable_initialization = get_setting('Debug', 'disable_initialization', '')
+        if disable_initialization == "False":
+            initialize(skip_initial_plex_update)
+        logging.info("Initialization complete")
+
     def run(self):
         start_server()  # Start the web server
+
+        self.run_initialization()
 
         while True:
             self.process_queues()
@@ -208,8 +219,6 @@ def run_program():
     logging.info("Program started")
     runner = ProgramRunner()
     runner.run()
-
-# Other functions (task_plex_full_scan, task_overseerr_wanted, etc.) remain the same
 
 if __name__ == "__main__":
     run_program()
