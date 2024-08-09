@@ -8,7 +8,7 @@ from utilities.plex_functions import get_collected_from_plex
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.trakt import get_wanted_from_trakt
-from metadata.metadata import process_metadata
+from metadata.metadata import process_metadata, refresh_release_dates
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
 from flask import request, jsonify
