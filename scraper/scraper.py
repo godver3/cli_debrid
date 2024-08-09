@@ -399,7 +399,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         is_queried_season_pack = False
 
     # Apply a bonus for multi-packs when requested, scaled by the number of items
-    MULTI_PACK_BONUS = 10  # Base bonus
+    MULTI_PACK_BONUS = 20  # Base bonus
     multi_pack_score = (50 + (MULTI_PACK_BONUS * num_items)) if multi and is_queried_season_pack else 0
 
     # Penalize multi-packs when looking for single episodes
