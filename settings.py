@@ -79,7 +79,7 @@ def get_setting(section, key, default=''):
         if validated_url != value:
             logging.debug(f"URL validation changed value for {section}.{key}: '{value}' -> '{validated_url}'")
         return validated_url
-    logging.debug(f"Returning {value} for {key}")
+    #logging.debug(f"Returning {value} for {key}")
 
     return value
 

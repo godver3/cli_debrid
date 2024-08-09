@@ -12,6 +12,7 @@ from metadata.metadata import process_metadata, refresh_release_dates
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
 from flask import request, jsonify
+import traceback
 
 queue_logger = logging.getLogger('queue_logger')
 
@@ -81,13 +82,31 @@ class ProgramRunner:
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
 
-    def safe_process_queue(self, queue_name):
+    def safe_process_queue(self, queue_name: str):
         try:
-            getattr(self.queue_manager, f'process_{queue_name}')()
+            logging.debug(f"Starting to process {queue_name} queue")
+            
+            # Get the appropriate process method
+            process_method = getattr(self.queue_manager, f'process_{queue_name}')
+            
+            # Call the process method and capture any return value
+            result = process_method()
+            
+            # Log successful processing
+            logging.info(f"Successfully processed {queue_name} queue")
             update_stats(processed=1)
+            
+            # Return the result if any
+            return result
+        
+        except AttributeError as e:
+            logging.error(f"Error: No process method found for {queue_name} queue. Error: {str(e)}")
         except Exception as e:
             logging.error(f"Error processing {queue_name} queue: {str(e)}")
+            logging.error(f"Traceback: {traceback.format_exc()}")
             update_stats(failed=1)
+        
+        return None
 
     def task_plex_full_scan(self):
         collected_content = get_collected_from_plex('all')

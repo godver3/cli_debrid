@@ -6,11 +6,13 @@ import requests
 import hashlib
 import bencodepy
 import re
+from datetime import datetime, timedelta
 
-from database import get_all_media_items, get_media_item_by_id
+from database import get_all_media_items, get_media_item_by_id, update_media_item_state
 from settings import get_setting
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, get, API_BASE_URL
 from not_wanted_magnets import add_to_not_wanted
+from scraper.scraper import scrape
 
 class AddingQueue:
     def __init__(self):
@@ -68,6 +70,8 @@ class AddingQueue:
 
     def process_full_mode(self, queue_manager, item, scrape_results):
         item_identifier = queue_manager.generate_identifier(item)
+        logging.debug(f"Processing full mode for item: {item_identifier}")
+
         for result in scrape_results:
             title = result.get('title', '')
             link = result.get('magnet', '')
@@ -90,10 +94,22 @@ class AddingQueue:
                 else:
                     self.remove_unwanted_torrent(add_result['torrent_id'])
 
-        queue_manager.move_to_sleeping(item, "Adding")
+        # If we've gone through all results without success, try individual episode scraping
+        if item['type'] == 'episode':
+            logging.info(f"No matching files found for {item_identifier}. Attempting individual episode scraping.")
+            individual_results = self.scrape_individual_episode(item)
+            if individual_results:
+                for result in individual_results:
+                    if self.process_single_result(queue_manager, item, result):
+                        return
+
+        # If we've gone through all results without success, handle as a failed item
+        self.handle_failed_item(queue_manager, item, "Adding")
 
     def process_none_mode(self, queue_manager, item, scrape_results):
         item_identifier = queue_manager.generate_identifier(item)
+        logging.debug(f"Processing none mode for item: {item_identifier}")
+
         for result in scrape_results:
             title = result.get('title', '')
             link = result.get('magnet', '')
@@ -107,7 +123,10 @@ class AddingQueue:
                 logging.warning(f"Failed to extract hash from link for {item_identifier}")
                 continue
 
-            if is_cached_on_rd(current_hash):
+            cache_status = is_cached_on_rd(current_hash)
+
+            # Only proceed if the content is cached
+            if cache_status[current_hash]:
                 add_result = self.add_to_real_debrid_helper(link, item_identifier, current_hash)
                 if add_result['success']:
                     self.add_to_not_wanted(current_hash, item_identifier)
@@ -116,17 +135,27 @@ class AddingQueue:
                     else:
                         self.remove_unwanted_torrent(add_result['torrent_id'])
 
-        queue_manager.move_to_sleeping(item, "Adding")
+        # If we've gone through all results without success, try individual episode scraping
+        if item['type'] == 'episode':
+            logging.info(f"No matching cached files found for {item_identifier}. Attempting individual episode scraping.")
+            individual_results = self.scrape_individual_episode(item)
+            if individual_results:
+                for result in individual_results:
+                    if self.process_single_result(queue_manager, item, result, cached_only=True):
+                        return
+
+        # If we've gone through all results without success, handle as a failed item
+        self.handle_failed_item(queue_manager, item, "Adding")
 
     def process_hybrid_mode(self, queue_manager, item, scrape_results):
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Processing hybrid mode for item: {item_identifier}")
-        
+
         # First pass: look for cached results
         for result in scrape_results:
             title = result.get('title', '')
             link = result.get('magnet', '')
-            
+
             if link.startswith('magnet:'):
                 current_hash = extract_hash_from_magnet(link)
             else:
@@ -154,7 +183,7 @@ class AddingQueue:
         for result in scrape_results:
             title = result.get('title', '')
             link = result.get('magnet', '')
-            
+
             if link.startswith('magnet:'):
                 current_hash = extract_hash_from_magnet(link)
             else:
@@ -172,8 +201,90 @@ class AddingQueue:
                 else:
                     self.remove_unwanted_torrent(add_result['torrent_id'])
 
-        logging.info(f"No suitable results found for {item_identifier} in hybrid mode.")
-        queue_manager.move_to_sleeping(item, "Adding")
+        # If we've gone through all results without success, try individual episode scraping
+        if item['type'] == 'episode':
+            logging.info(f"No matching files found for {item_identifier}. Attempting individual episode scraping.")
+            individual_results = self.scrape_individual_episode(item)
+            if individual_results:
+                # First try cached results from individual scraping
+                for result in individual_results:
+                    if self.process_single_result(queue_manager, item, result, cached_only=True):
+                        return
+                # Then try uncached results from individual scraping
+                for result in individual_results:
+                    if self.process_single_result(queue_manager, item, result, cached_only=False):
+                        return
+
+        # If we've gone through all results without success, handle as a failed item
+        self.handle_failed_item(queue_manager, item, "Adding")
+
+    def handle_failed_item(self, queue_manager, item, from_queue):
+        item_identifier = queue_manager.generate_identifier(item)
+        logging.info(f"Handling failed item: {item_identifier}")
+        
+        if self.is_item_old(item):
+            self.blacklist_old_season_items(item, queue_manager)
+        else:
+            queue_manager.move_to_sleeping(item, from_queue)
+
+    def is_item_old(self, item: Dict[str, Any]) -> bool:
+        if 'release_date' not in item or item['release_date'] == 'Unknown':
+            logging.info(f"Item {self.generate_identifier(item)} has no release date or unknown release date. Considering it as old.")
+            return True
+        try:
+            release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+            return (datetime.now().date() - release_date).days > 7
+        except ValueError as e:
+            logging.error(f"Error parsing release date for item {self.generate_identifier(item)}: {str(e)}")
+            return True  # Consider items with unparseable dates as old
+
+    def blacklist_old_season_items(self, item: Dict[str, Any], queue_manager):
+        item_identifier = queue_manager.generate_identifier(item)
+        logging.info(f"Blacklisting item {item_identifier} and related old season items with the same version")
+
+        # Blacklist the current item
+        self.blacklist_item(item, queue_manager)
+
+        # Find and blacklist related items in the same season with the same version that are also old
+        related_items = self.find_related_season_items(item, queue_manager)
+        for related_item in related_items:
+            if self.is_item_old(related_item) and related_item['version'] == item['version']:
+                self.blacklist_item(related_item, queue_manager)
+            else:
+                logging.debug(f"Not blacklisting {queue_manager.generate_identifier(related_item)} as it's either not old enough or has a different version")
+
+    def find_related_season_items(self, item: Dict[str, Any], queue_manager) -> List[Dict[str, Any]]:
+        related_items = []
+        if item['type'] == 'episode':
+            for queue in queue_manager.queues.values():
+                for queue_item in queue.get_contents():
+                    if (queue_item['type'] == 'episode' and
+                        queue_item['imdb_id'] == item['imdb_id'] and
+                        queue_item['season_number'] == item['season_number'] and
+                        queue_item['id'] != item['id'] and
+                        queue_item['version'] == item['version']):
+                        related_items.append(queue_item)
+        return related_items
+
+    def blacklist_item(self, item: Dict[str, Any], queue_manager):
+        item_id = item['id']
+        item_identifier = queue_manager.generate_identifier(item)
+        update_media_item_state(item_id, 'Blacklisted')
+
+        # Remove from current queue and add to blacklisted queue
+        current_queue_name = queue_manager.get_item_queue(item)
+        if current_queue_name:
+            current_queue = queue_manager.queues.get(current_queue_name)
+            if current_queue:
+                current_queue.remove_item(item)
+            else:
+                logging.error(f"Queue {current_queue_name} not found in queue_manager")
+        else:
+            logging.warning(f"Item {item_identifier} not found in any queue")
+
+        queue_manager.queues['Blacklisted'].add_item(item)
+
+        logging.info(f"Moved item {item_identifier} to Blacklisted state")
 
     def process_torrent(self, queue_manager, item, title, link, add_result):
         item_identifier = queue_manager.generate_identifier(item)
@@ -451,3 +562,69 @@ class AddingQueue:
             logging.info(f"Successfully removed unwanted torrent with ID: {torrent_id}")
         except requests.exceptions.RequestException as e:
             logging.error(f"Error removing unwanted torrent with ID {torrent_id}: {str(e)}")
+
+    def move_to_blacklist_if_older_than_7_days(self, queue_manager, item, from_queue: str):
+        item_identifier = queue_manager.generate_identifier(item)
+        release_date_str = item.get('release_date')
+        
+        if release_date_str:
+            release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
+            if release_date < datetime.now() - timedelta(days=7):
+                logging.info(f"Item {item_identifier} is older than 7 days. Moving to blacklist.")
+                queue_manager.move_to_blacklisted(item, from_queue)
+                return True
+        
+        return False
+
+    def process_single_result(self, queue_manager, item, result, cached_only=False):
+        item_identifier = queue_manager.generate_identifier(item)
+        title = result.get('title', '')
+        link = result.get('magnet', '')
+
+        if link.startswith('magnet:'):
+            current_hash = extract_hash_from_magnet(link)
+        else:
+            current_hash = self.download_and_extract_hash(link)
+
+        if not current_hash:
+            logging.warning(f"Failed to extract hash from link for {item_identifier}")
+            return False
+
+        is_cached = is_cached_on_rd(current_hash)
+        if cached_only and not is_cached:
+            return False
+
+        add_result = self.add_to_real_debrid_helper(link, item_identifier, current_hash)
+
+        if add_result['success']:
+            self.add_to_not_wanted(current_hash, item_identifier)
+            if self.process_torrent(queue_manager, item, title, link, add_result):
+                return True
+            else:
+                self.remove_unwanted_torrent(add_result['torrent_id'])
+
+        return False
+
+    def scrape_individual_episode(self, item):
+        logging.info(f"Performing individual episode scrape for {self.generate_identifier(item)}")
+        results = scrape(
+            item['imdb_id'],
+            item['tmdb_id'],
+            item['title'],
+            item['year'],
+            item['type'],
+            item['version'],
+            item.get('season_number'),
+            item.get('episode_number'),
+            multi=False  # Force individual episode scraping
+        )
+        return results
+
+    @staticmethod
+    def generate_identifier(item: Dict[str, Any]) -> str:
+        if item['type'] == 'movie':
+            return f"movie_{item['title']}_{item['imdb_id']}_{item['version']}"
+        elif item['type'] == 'episode':
+            return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
+        else:
+            raise ValueError(f"Unknown item type: {item['type']}")
