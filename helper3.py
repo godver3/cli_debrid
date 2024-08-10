@@ -2,7 +2,7 @@ import libtorrent as lt
 import time
 
 # Replace this with your actual magnet link
-magnet_uri = "magnet:?xt=urn:btih:82e9c42126adff0d43ce00d77bfa5b346df4c533"
+magnet_uri = "magnet:?xt=urn:btih:384c1df8f0ad94d6c1b990374a7eef159dac44dd"
 
 # Create a session and set download parameters
 session = lt.session()
