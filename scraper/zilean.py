@@ -5,17 +5,12 @@ from database import get_title_by_imdb_id
 from settings import load_config
 from urllib.parse import urlencode
 
-def scrape_zilean(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_zilean(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
     all_results = []
     config = load_config()
     zilean_instances = config.get('Scrapers', {})
     
     logging.debug(f"Zilean settings: {zilean_instances}")
-
-    title = get_title_by_imdb_id(imdb_id)
-    if not title:
-        logging.warning(f"No title found for IMDB ID: {imdb_id}. Skipping Zilean scrape.")
-        return []
 
     for instance, settings in zilean_instances.items():
         if instance.startswith('Zilean'):
@@ -26,14 +21,14 @@ def scrape_zilean(imdb_id: str, content_type: str, season: int = None, episode: 
             logging.info(f"Scraping Zilean instance: {instance}")
             
             try:
-                instance_results = scrape_zilean_instance(instance, settings, title, content_type, season, episode)
+                instance_results = scrape_zilean_instance(instance, settings, title, year, content_type, season, episode)
                 all_results.extend(instance_results)
             except Exception as e:
                 logging.error(f"Error scraping Zilean instance '{instance}': {str(e)}", exc_info=True)
 
     return all_results
 
-def scrape_zilean_instance(instance: str, settings: Dict[str, Any], title: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_zilean_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
     zilean_url = settings.get('url', '')
     if not zilean_url:
         logging.warning(f"Zilean URL is not set or invalid for instance {instance}. Skipping.")
@@ -44,6 +39,8 @@ def scrape_zilean_instance(instance: str, settings: Dict[str, Any], title: str, 
         params['Season'] = season
         if episode is not None:
             params['Episode'] = episode
+    else:
+        params['Year'] = year
 
     search_endpoint = f"{zilean_url}/dmm/filtered"
     encoded_params = urlencode(params)

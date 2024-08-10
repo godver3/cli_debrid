@@ -6,7 +6,7 @@ from settings import get_setting
 
 KNIGHTCRAWLER_URL = get_setting('Knightcrawler', 'url')
 
-def scrape_knightcrawler(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
+def scrape_knightcrawler(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None) -> Tuple[str, List[Dict[str, Any]]]:
     try:
         url = construct_url(imdb_id, content_type, season, episode)
         response = fetch_data(url)

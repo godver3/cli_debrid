@@ -9,7 +9,7 @@ import json
 
 JACKETT_FILTER = "!status:failing,test:passed"
 
-def scrape_jackett(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
     jackett_results = []
     all_settings = get_jackett_settings()
     
@@ -18,12 +18,6 @@ def scrape_jackett(imdb_id: str, content_type: str, season: int = None, episode:
 
     jackett_instances = all_settings.get('Scrapers', {})
     jackett_filter = "!status:failing,test:passed"
-
-    title = get_title_by_imdb_id(imdb_id)
-    year = get_year_from_imdb_id(imdb_id)
-    if not title or not year:
-        logging.error(f"Failed to get title or year for IMDB ID: {imdb_id}")
-        return []
 
     for instance, settings in jackett_instances.items():
         if instance.startswith('Jackett'):
@@ -59,8 +53,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str,
     query_params = {'Query': params}
     
     if enabled_indexers:
-        indexers = [indexer.strip().lower() for indexer in enabled_indexers.split(',')]
-        query_params.update({f'Tracker[]': indexer for indexer in indexers})
+        query_params.update({f'Tracker[]': {enabled_indexers}})
 
     full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
     logging.debug(f"Jackett instance '{instance}' URL: {full_url}")
