@@ -3,6 +3,8 @@ name: Docker Image CI
 on:
   push:
     branches: [ "dev" ]
+    paths-ignore:
+      - "version.txt"
   pull_request:
     branches: [ "dev" ]
 
@@ -14,6 +16,15 @@ jobs:
       with:
         fetch-depth: 0
         token: ${{ secrets.PAT_TOKEN }}
+
+    - name: Check if commit is a version bump
+      run: |
+        COMMIT_MESSAGE=$(git log -1 --pretty=%B)
+        echo "Last commit message: $COMMIT_MESSAGE"
+        if [[ "$COMMIT_MESSAGE" == *"Bump version"* ]]; then
+          echo "Skipping build for version bump commit."
+          exit 0
+        fi
 
     - name: Read and increment version
       id: version
