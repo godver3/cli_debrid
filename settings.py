@@ -124,6 +124,15 @@ def get_scraping_settings():
 
     return scraping_settings
 
+def get_jackett_settings():
+    config = load_config()
+    jackett_settings = {}
+    instances = config.get('Jackett', {})
+    for instance, settings in instances.items():
+        jackett_settings[f"{instance}"] = (settings)
+        
+    return jackett_settings
+
 def ensure_settings_file():
     config = load_config()
     default_settings = {
