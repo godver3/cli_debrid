@@ -12,6 +12,7 @@ import trakt.core
 import io
 import json
 import copy
+from scraper_manager import ScraperManager
 
 CONFIG_FILE = './config/config.json'
 
@@ -65,8 +66,21 @@ def validate_url(url):
     except:
         return ''
 
-def get_setting(section, key, default=''):
+def get_setting(section, key=None, default=''):
     config = load_config()
+    
+    if section == 'Scrapers' and key is None:
+        # Return all scraper settings
+        return config.get('Scrapers', {})
+    
+    if section == 'Scrapers' and key:
+        # Handle nested scraper settings
+        scraper_settings = config.get('Scrapers', {}).get(key, {})
+        if isinstance(scraper_settings, dict):
+            return scraper_settings
+        return default
+
+    # Original logic for other settings
     value = config.get(section, {}).get(key, default)
     
     if key.lower() == 'enabled':
@@ -79,7 +93,6 @@ def get_setting(section, key, default=''):
         if validated_url != value:
             logging.debug(f"URL validation changed value for {section}.{key}: '{value}' -> '{validated_url}'")
         return validated_url
-    #logging.debug(f"Returning {value} for {key}")
 
     return value
 
@@ -179,6 +192,8 @@ class SettingsEditor:
         ]
         self.main_loop = urwid.MainLoop(self.build_main_menu(), self.palette, unhandled_input=self.exit_on_q)
         self.main_loop.original_widget = self.main_loop.widget
+        self.scraper_manager = ScraperManager(self.main_loop)
+        self.scraper_manager.back_callback = self.back_to_main_menu
         self.main_loop.run()
 
     def build_main_menu(self):
@@ -208,19 +223,8 @@ class SettingsEditor:
 
 
     def show_scrapers(self, button):
-        self.show_settings("Scrapers", [
-            ('Zilean', 'enabled', 'Zilean - enabled True/False'),
-            ('Zilean', 'url', 'Zilean - Zilean URL'),
-            ('Comet', 'enabled', 'Comet - enabled True/False'),
-            ('Comet', 'url', 'Comet - Comet URL'),
-            ('Jackett', 'enabled', 'Jackett - enabled True/False'),
-            ('Jackett', 'url', 'Jackett - Jackett URL'),
-            ('Jackett', 'api', 'Jackett - Jackett API'),
-            ('Jackett', 'enabled_indexers', 'Jackett - Comma-separated list of enabled Indexers (blank for all)'),
-            ('Prowlarr', 'enabled', 'Prowlarr - enabled True/False'),
-            ('Prowlarr', 'url', 'Prowlarr - Jackett URL'),
-            ('Prowlarr', 'api', 'Prowlarr - Jackett API')
-        ])
+        self.scraper_manager.show_scrapers_menu(self.back_to_main_menu)
+
 
     def show_content_settings(self, button):
         self.show_settings("Additional Settings", [

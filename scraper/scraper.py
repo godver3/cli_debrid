@@ -771,12 +771,34 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             version_settings = {}
         logging.debug(f"Using version settings: {version_settings}")
 
-        # Run scrapers concurrently using ThreadPoolExecutor
-        def run_scraper(scraper_func, scraper_name):
+        # Get all scraper settings
+        all_scraper_settings = get_setting('Scrapers')
+        logging.debug(f"Loaded scraper settings: {all_scraper_settings}")
+
+        # Define scraper functions
+        scraper_functions = {
+            'Zilean': scrape_zilean,
+            'Torrentio': scrape_torrentio,
+            'Comet': scrape_comet,
+            'Jackett': scrape_jackett,
+            'Prowlarr': scrape_prowlarr
+        }
+
+        def run_scraper(scraper_name, scraper_settings):
             scraper_start = time.time()
             try:
                 logging.debug(f"Starting {scraper_name} scraper")
+                logging.debug(f"Scraper settings: {scraper_settings}")
+                
+                scraper_type = scraper_name.split('_')[0]
+                scraper_func = scraper_functions.get(scraper_type)
+                if not scraper_func:
+                    logging.warning(f"No scraper function found for {scraper_name}")
+                    return []
+                
+                # All scrapers now use the same parameter list
                 scraper_results = scraper_func(imdb_id, content_type, season, episode)
+                
                 if isinstance(scraper_results, tuple):
                     *_, scraper_results = scraper_results
                 for item in scraper_results:
@@ -786,22 +808,19 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 logging.debug(f"{scraper_name} scraper took {time.time() - scraper_start:.2f} seconds")
                 return scraper_results
             except Exception as e:
-                logging.error(f"Error in {scraper_name} scraper: {str(e)}")
+                logging.error(f"Error in {scraper_name} scraper: {str(e)}", exc_info=True)
                 return []
 
-        # Define scrapers
-        all_scrapers = [
-            (scrape_zilean, 'Zilean'),
-            #(scrape_knightcrawler, 'Knightcrawler'),
-            (scrape_torrentio, 'Torrentio'),
-            (scrape_comet, 'Comet'),
-            (scrape_jackett, 'Jackett'),
-            (scrape_prowlarr, 'Prowlarr')
-        ]
-
         scraping_start = time.time()
-        with ThreadPoolExecutor(max_workers=len(all_scrapers)) as executor:
-            future_to_scraper = {executor.submit(run_scraper, scraper_func, scraper_name): scraper_name for scraper_func, scraper_name in all_scrapers}
+        with ThreadPoolExecutor(max_workers=len(all_scraper_settings)) as executor:
+            future_to_scraper = {}
+            for scraper_name, scraper_settings in all_scraper_settings.items():
+                if scraper_settings.get('enabled', False):
+                    future = executor.submit(run_scraper, scraper_name, scraper_settings)
+                    future_to_scraper[future] = scraper_name
+                else:
+                    logging.debug(f"Scraper {scraper_name} is disabled, skipping")
+
             for future in as_completed(future_to_scraper):
                 scraper_name = future_to_scraper[future]
                 try:

@@ -3,25 +3,42 @@ import logging
 from typing import List, Dict, Any
 from database import get_title_by_imdb_id
 from metadata.metadata import get_year_from_imdb_id
-from settings import get_setting
+from settings import load_config
 from urllib.parse import quote
 
-PROWLARR_URL = get_setting('Prowlarr', 'url')
-PROWLARR_API = get_setting('Prowlarr', 'api')
-PROWLARR_ENABLED = get_setting('Prowlarr', 'enabled')
-
 def scrape_prowlarr(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    if not PROWLARR_ENABLED:
-        logging.debug("Prowlarr disabled")
-        return []
+    all_results = []
+    config = load_config()
+    prowlarr_instances = config.get('Scrapers', {})
+    
+    logging.debug(f"Prowlarr settings: {prowlarr_instances}")
 
     title = get_title_by_imdb_id(imdb_id)
-    if not title:
-        return []
     year = get_year_from_imdb_id(imdb_id)
-    if not year:
+    if not title or not year:
+        logging.error(f"Failed to get title or year for IMDB ID: {imdb_id}")
         return []
-    
+
+    for instance, settings in prowlarr_instances.items():
+        if instance.startswith('Prowlarr'):
+            if not settings.get('enabled', False):
+                logging.debug(f"Prowlarr instance '{instance}' is disabled, skipping")
+                continue
+
+            logging.info(f"Scraping Prowlarr instance: {instance}")
+            
+            try:
+                instance_results = scrape_prowlarr_instance(instance, settings, title, year, content_type, season, episode)
+                all_results.extend(instance_results)
+            except Exception as e:
+                logging.error(f"Error scraping Prowlarr instance '{instance}': {str(e)}", exc_info=True)
+
+    return all_results
+
+def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+    prowlarr_url = settings.get('url', '')
+    prowlarr_api = settings.get('api', '')
+
     if content_type.lower() == 'movie':
         params = f"{title} {year}"
     else:
@@ -32,42 +49,42 @@ def scrape_prowlarr(imdb_id: str, content_type: str, season: int = None, episode
         if episode is not None:
             params = f"{params}.e{episode:02d}"
 
-    headers = {'X-Api-Key': PROWLARR_API,'accept': 'application/json'}
+    headers = {'X-Api-Key': prowlarr_api, 'accept': 'application/json'}
     encoded_params = quote(params)
-    search_endpoint = f"{PROWLARR_URL}/api/v1/search?query={encoded_params}&type=search&limit=1000&offset=0"    
+    search_endpoint = f"{prowlarr_url}/api/v1/search?query={encoded_params}&type=search&limit=1000&offset=0"    
     full_url = f"{search_endpoint}"
-
-    logging.debug(f"Attempting to access Prowlarr API with URL: {full_url}")
+    
+    logging.debug(f"Attempting to access Prowlarr API for {instance} with URL: {full_url}")
     
     try:
         response = requests.get(full_url, headers=headers, timeout=60)
         
-        logging.debug(f"Prowlarr API status code: {response.status_code}")
+        logging.debug(f"Prowlarr API status code for {instance}: {response.status_code}")
         
         if response.status_code == 200:
             try:
                 data = response.json()
-                return parse_prowlarr_results(data[:])
+                return parse_prowlarr_results(data[:], instance)
             except requests.exceptions.JSONDecodeError as json_error:
-                logging.error(f"Failed to parse JSON response: {str(json_error)}")
+                logging.error(f"Failed to parse JSON response for {instance}: {str(json_error)}")
                 return []
         else:
-            logging.error(f"Prowlarr API error: Status code {response.status_code}")
+            logging.error(f"Prowlarr API error for {instance}: Status code {response.status_code}")
             return []
     except Exception as e:
-        logging.error(f"Error in scrape_prowlarr: {str(e)}", exc_info=True)
+        logging.error(f"Error in scrape_prowlarr_instance for {instance}: {str(e)}", exc_info=True)
         return []
 
-def parse_prowlarr_results(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def parse_prowlarr_results(data: List[Dict[str, Any]], instance: str) -> List[Dict[str, Any]]:
     results = []
     for item in data:
-        if not item['indexer'] == None and not item['size'] == None:
-            if 'infoHash' in str(item):
+        if item.get('indexer') is not None and item.get('size') is not None:
+            if 'infoHash' in item:
                 result = {
                     'title': item.get('title', 'N/A'),  
                     'size': item.get('size', 0) / (1024 * 1024 * 1024),  # Convert to GB
-                    'source': f"Prowlarr - {item.get('indexer', 'N/A')}",
+                    'source': f"Prowlarr - {instance} - {item.get('indexer', 'N/A')}",
                     'magnet': f"magnet:?xt=urn:btih:{item.get('infoHash', '')}"
-                    }       
+                }       
                 results.append(result)
-    return (results)
+    return results

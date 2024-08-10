@@ -3,70 +3,77 @@ import logging
 from typing import List, Dict, Any
 from database import get_title_by_imdb_id
 from metadata.metadata import get_year_from_imdb_id
-from settings import get_setting, get_jackett_settings
+from settings import get_setting, load_config as get_jackett_settings
 from urllib.parse import quote, urlencode
+import json
 
 JACKETT_FILTER = "!status:failing,test:passed"
 
 def scrape_jackett(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    jackett_results=[]
-    jackett_instances = get_jackett_settings()
-    for instance,settings in jackett_instances.items():
-        INS_NAME = instance
-        JACKETT_URL = settings['url']
-        JACKETT_API = settings['api']
-        ENABLED_INDEXERS = settings['enabled_indexers']
-        JACKETT_ENABLED = settings['enabled']
-        if not JACKETT_ENABLED:
-            logging.debug("{INS_NAME} disabled")
-            return []
+    jackett_results = []
+    all_settings = get_jackett_settings()
+    
+    # Debug log to check the structure of all_settings
+    logging.debug(f"All settings: {json.dumps(all_settings, indent=2)}")
 
-        title = get_title_by_imdb_id(imdb_id)
-        if not title:
-            return []
+    jackett_instances = all_settings.get('Scrapers', {})
+    jackett_filter = "!status:failing,test:passed"
 
-        year = get_year_from_imdb_id(imdb_id)
-        if not year:
-            return []
+    title = get_title_by_imdb_id(imdb_id)
+    year = get_year_from_imdb_id(imdb_id)
+    if not title or not year:
+        logging.error(f"Failed to get title or year for IMDB ID: {imdb_id}")
+        return []
 
-        if content_type.lower() == 'movie':
-            params = f"{title} {year}"
-        else:
-            params = f"{title}"
+    for instance, settings in jackett_instances.items():
+        if instance.startswith('Jackett'):
+            if not settings.get('enabled', False):
+                logging.debug(f"Jackett instance '{instance}' is disabled, skipping")
+                continue
 
-        if content_type.lower() == 'tv' and season is not None:
+            logging.info(f"Scraping Jackett instance: {instance}")
+            
+            try:
+                instance_results = scrape_jackett_instance(instance, settings, title, year, content_type, season, episode, jackett_filter)
+                jackett_results.extend(instance_results)
+            except Exception as e:
+                logging.error(f"Error scraping Jackett instance '{instance}': {str(e)}", exc_info=True)
+
+    return jackett_results
+
+def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int, episode: int, jackett_filter: str) -> List[Dict[str, Any]]:
+    jackett_url = settings['url']
+    jackett_api = settings['api']
+    enabled_indexers = settings.get('enabled_indexers', '')
+
+    if content_type.lower() == 'movie':
+        params = f"{title} {year}"
+    else:
+        params = f"{title}"
+        if season is not None:
             params = f"{params}.s{season:02d}"
             if episode is not None:
                 params = f"{params}.e{episode:02d}"
 
-        search_endpoint = f"{JACKETT_URL}/api/v2.0/indexers/{JACKETT_FILTER}/results?apikey={JACKETT_API}"
-        
-        query_params = {'Query': params}
-        
-        if ENABLED_INDEXERS:
-            indexers = [indexer.strip().lower() for indexer in ENABLED_INDEXERS.split(',')]
-            query_params.update({f'Tracker[]': indexer for indexer in indexers})
+    search_endpoint = f"{jackett_url}/api/v2.0/indexers/{jackett_filter}/results?apikey={jackett_api}"
+    query_params = {'Query': params}
+    
+    if enabled_indexers:
+        indexers = [indexer.strip().lower() for indexer in enabled_indexers.split(',')]
+        query_params.update({f'Tracker[]': indexer for indexer in indexers})
 
-        full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
-        logging.debug(f"Attempting to access Jackett API with URL: {full_url}")
+    full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
+    logging.debug(f"Jackett instance '{instance}' URL: {full_url}")
 
-        try:
-            response = requests.get(full_url, headers={'accept': 'application/json'})
-            logging.debug(f"Jackett API status code: {response.status_code}")
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    jackett_results += parse_jackett_results(data["Results"],INS_NAME)
-                except requests.exceptions.JSONDecodeError as json_error:
-                    logging.error(f"Failed to parse JSON response: {str(json_error)}")
-                    return []
-            else:
-                logging.error(f"Jackett API error: Status code {response.status_code}")
-                return []
-        except Exception as e:
-            logging.error(f"Error in scrape_jackett: {str(e)}", exc_info=True)
-            return []
-    return jackett_results
+    response = requests.get(full_url, headers={'accept': 'application/json'})
+    logging.debug(f"Jackett instance '{instance}' API status code: {response.status_code}")
+
+    if response.status_code == 200:
+        data = response.json()
+        return parse_jackett_results(data["Results"], instance)
+    else:
+        logging.error(f"Jackett instance '{instance}' API error: Status code {response.status_code}")
+        return []
 
 def parse_jackett_results(data: List[Dict[str, Any]],ins_name: str) -> List[Dict[str, Any]]:
     results = []
