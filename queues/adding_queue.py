@@ -20,7 +20,7 @@ class AddingQueue:
         self.api_key = get_setting("RealDebrid", "api_key")
         if not self.api_key:
             logging.error("Real-Debrid API key not found in settings")
-            raise ValueError("Real-Debrid API key not found in settings")
+            #raise ValueError("Real-Debrid API key not found in settings")
 
     def update(self):
         self.items = [dict(row) for row in get_all_media_items(state="Adding")]

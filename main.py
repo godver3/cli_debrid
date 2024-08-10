@@ -5,6 +5,8 @@ import configparser
 import inspect
 from settings import SettingsEditor, get_setting, load_config, save_config, CONFIG_FILE, ensure_settings_file, set_setting
 from database import verify_database
+import shutil
+from datetime import datetime
 
 # Ensure logs directory exists
 if not os.path.exists('logs'):
@@ -20,6 +22,15 @@ for log_file in ['debug.log', 'info.log', 'queue.log']:
 # Ensure db_content directory exists
 if not os.path.exists('db_content'):
     os.makedirs('db_content')
+
+config_path = 'config/config.json'
+if os.path.exists(config_path):
+    #timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = f'config/config_backup.json'
+    shutil.copy2(config_path, backup_path)
+    logging.info(f"Backup of config.json created: {backup_path}")
+else:
+    logging.warning("config.json not found, no backup created.")
 
 # Ensure settings file exists and populate with default keys
 ensure_settings_file()
