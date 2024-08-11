@@ -3,10 +3,11 @@ import logging
 import requests
 import json
 from typing import List, Dict, Any
-from urllib.parse import urlparse, parse_qs
-from settings import get_setting
+from urllib.parse import urlparse
+from settings import get_all_settings
 import trakt.core
 import time
+from database import get_media_item_presence
 
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
@@ -37,29 +38,30 @@ def get_trakt_headers() -> Dict[str, str]:
         'Authorization': f'Bearer {access_token}'
     }
 
-def get_trakt_lists() -> List[str]:
-    trakt_lists = get_setting('Trakt', 'trakt_lists')
-    if not trakt_lists:
-        logging.info("No additional Trakt lists configured.")
-        return []
+def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
+    content_sources = get_all_settings().get('Content Sources', {})
+    watchlist_sources = [data for source, data in content_sources.items() if source.startswith('Trakt Watchlist')]
+    list_sources = [data for source, data in content_sources.items() if source.startswith('Trakt Lists')]
+    
+    return {
+        'watchlist': watchlist_sources,
+        'lists': list_sources
+    }
 
-    # Clean the entire URL string first
-    cleaned_lists = clean_trakt_urls(trakt_lists)
-
-    # Split by comma and strip whitespace
-    urls = [url.strip() for url in cleaned_lists.split(',') if url.strip()]
-
-    logging.debug(f"Parsed Trakt lists: {urls}")
-    return urls
-
-def clean_trakt_urls(urls: str) -> str:
-    # Remove everything from '?' to the end of 'asc' or 'desc' for each URL
-    cleaned = re.sub(r'\?.*?(asc|desc)(?=[,\s]|$)', '', urls)
-
-    # Ensure each URL starts with 'https://'
-    cleaned = re.sub(r'(?<!https:\/\/)(?=trakt\.tv)', 'https://', cleaned)
-
-    return cleaned
+def clean_trakt_urls(urls: str) -> List[str]:
+    # Split the URLs and clean each one
+    url_list = [url.strip() for url in urls.split(',')]
+    cleaned_urls = []
+    for url in url_list:
+        # Remove everything from '?' to the end
+        cleaned = re.sub(r'\?.*$', '', url)
+        # Ensure the URL starts with 'https://'
+        if not cleaned.startswith('http://') and not cleaned.startswith('https://'):
+            cleaned = 'https://' + cleaned
+        # Only add the URL if it doesn't contain 'asc'
+        if 'asc' not in cleaned:
+            cleaned_urls.append(cleaned)
+    return cleaned_urls
 
 def parse_trakt_list_url(url: str) -> Dict[str, str]:
     parsed_url = urlparse(url)
@@ -81,19 +83,11 @@ def fetch_items_from_trakt(endpoint: str) -> List[Dict[str, Any]]:
 
     full_url = f"{TRAKT_API_URL}{endpoint}"
     logging.debug(f"Fetching items from Trakt URL: {full_url}")
-    logging.debug(f"Headers: {json.dumps(headers, indent=2)}")
 
     try:
         response = requests.get(full_url, headers=headers, timeout=REQUEST_TIMEOUT)
-        logging.debug(f"Response status code: {response.status_code}")
-        logging.debug(f"Response headers: {json.dumps(dict(response.headers), indent=2)}")
-
         response.raise_for_status()
-
-        json_response = response.json()
-        logging.debug(f"Response JSON: {json.dumps(json_response[:2], indent=2)}...")  # Log first 2 items
-
-        return json_response
+        return response.json()
     except requests.RequestException as e:
         logging.error(f"Error fetching items from Trakt: {e}")
         if hasattr(e, 'response') and e.response is not None:
@@ -104,16 +98,13 @@ def assign_media_type(item: Dict[str, Any]) -> str:
     if 'movie' in item:
         return 'movie'
     elif 'show' in item:
-        return 'show'
+        return 'tv'
     else:
         logging.warning(f"Unknown media type: {item}. Skipping.")
         return ''
 
 def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
-    if media_type == 'tv':
-        media_type_key = 'show'
-    else:
-        media_type_key = media_type
+    media_type_key = 'show' if media_type == 'tv' else media_type
 
     if media_type_key not in item:
         logging.error(f"Media type '{media_type_key}' not found in item: {json.dumps(item, indent=2)}")
@@ -124,35 +115,29 @@ def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
         return ''
     return ids.get('imdb') or ids.get('tmdb') or ids.get('tvdb') or ''
 
-def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def process_trakt_items(items: List[Dict[str, Any]], versions: Dict[str, bool]) -> List[Dict[str, Any]]:
     processed_items = []
     for item in items:
         media_type = assign_media_type(item)
         if not media_type:
             continue
         
-        # Map 'show' to 'tv' for consistency
-        if media_type == 'show':
-            media_type = 'tv'
-
         imdb_id = get_imdb_id(item, media_type)
         if not imdb_id:
             logging.warning(f"Skipping item due to missing ID: {item.get(media_type, {}).get('title', 'Unknown Title')}")
-            logging.debug(f"Full item details: {json.dumps(item, indent=2)}")
             continue
         processed_items.append({
             'imdb_id': imdb_id,
-            'media_type': media_type  # This will now be either 'movie' or 'tv'
+            'media_type': media_type,
+            'versions': versions
         })
     return processed_items
 
 def ensure_trakt_auth():
     logging.info("Starting Trakt authentication check")
     
-    # Load config if not already loaded
     trakt.core.CONFIG_PATH = './config/.pytrakt.json'
     trakt.core.load_config()
-    logging.debug("Trakt configuration loaded")
     
     current_time = int(time.time())
     
@@ -171,10 +156,9 @@ def ensure_trakt_auth():
         return trakt.core.OAUTH_TOKEN
     except Exception as e:
         logging.error("Failed to refresh Trakt token: %s", str(e), exc_info=True)
-        # Handle the error (e.g., prompt for re-authorization)
         return None
 
-def get_wanted_from_trakt() -> List[Dict[str, Any]]:
+def get_wanted_from_trakt_watchlist() -> List[Dict[str, Any]]:
     logging.info("Preparing to make Trakt API call")
     access_token = ensure_trakt_auth()
     if access_token is None:
@@ -183,35 +167,84 @@ def get_wanted_from_trakt() -> List[Dict[str, Any]]:
     logging.info("Successfully obtained valid access token")
 
     all_wanted_items = []
+    trakt_sources = get_trakt_sources()
 
-    # Fetch watchlist if enabled
-    if get_setting('Trakt', 'user_watchlist_enabled'):
-        logging.info("Fetching user's watchlist")
-        watchlist_items = fetch_items_from_trakt("/sync/watchlist")
-        logging.debug(f"Watchlist items fetched: {len(watchlist_items)}")
-        all_wanted_items.extend(process_trakt_items(watchlist_items))
-    else:
-        logging.info("User watchlist is not enabled")
-
-    # Fetch items from additional lists
-    trakt_lists = get_trakt_lists()
-    logging.info(f"Found {len(trakt_lists)} Trakt lists to process")
-    for list_url in trakt_lists:
-        list_info = parse_trakt_list_url(list_url)
-        if list_info:
-            endpoint = f"/users/{list_info['username']}/lists/{list_info['list_id']}/items"
-            logging.info(f"Fetching items from list: {list_url}")
-            list_items = fetch_items_from_trakt(endpoint)
-            logging.debug(f"List items fetched: {len(list_items)}")
-            all_wanted_items.extend(process_trakt_items(list_items))
-        else:
-            logging.warning(f"Skipping invalid Trakt list URL: {list_url}")
+    # Process Trakt Watchlist
+    for watchlist_source in trakt_sources['watchlist']:
+        if watchlist_source.get('enabled', False):
+            versions = watchlist_source.get('versions', {})
+            logging.info("Fetching user's watchlist")
+            watchlist_items = fetch_items_from_trakt("/sync/watchlist")
+            logging.debug(f"Watchlist items fetched: {len(watchlist_items)}")
+            all_wanted_items.extend(process_trakt_items(watchlist_items, versions))
 
     logging.info(f"Retrieved {len(all_wanted_items)} wanted items from Trakt")
-    return all_wanted_items
+    
+    # Final filtering step
+    new_wanted_items = []
+    for item in all_wanted_items:
+        imdb_id = item.get('imdb_id')
+        if imdb_id:
+            status = get_media_item_presence(imdb_id=imdb_id)
+            if status == "Missing":
+                new_wanted_items.append(item)
+            else:
+                logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
+        else:
+            logging.warning(f"Skipping item without IMDB ID: {item}")
 
+    logging.info(f"After filtering, {len(new_wanted_items)} new wanted items remain.")
+    logging.debug(f"Full list of new wanted items: {new_wanted_items}")
+    return new_wanted_items
+    
+def get_wanted_from_trakt_lists() -> List[Dict[str, Any]]:
+    logging.info("Preparing to make Trakt API call")
+    access_token = ensure_trakt_auth()
+    if access_token is None:
+        logging.error("Failed to obtain a valid Trakt access token")
+        raise Exception("Failed to obtain a valid Trakt access token")
+    logging.info("Successfully obtained valid access token")
+
+    all_wanted_items = []
+    trakt_sources = get_trakt_sources()
+
+    # Process Trakt Lists
+    for list_source in trakt_sources['lists']:
+        versions = list_source.get('versions', {})
+        trakt_lists = clean_trakt_urls(list_source.get('trakt_lists', ''))
+        logging.info(f"Found {len(trakt_lists)} Trakt lists to process")
+        for list_url in trakt_lists:
+            list_info = parse_trakt_list_url(list_url)
+            if list_info:
+                endpoint = f"/users/{list_info['username']}/lists/{list_info['list_id']}/items"
+                logging.info(f"Fetching items from list: {list_url}")
+                list_items = fetch_items_from_trakt(endpoint)
+                logging.debug(f"List items fetched: {len(list_items)}")
+                all_wanted_items.extend(process_trakt_items(list_items, versions))
+            else:
+                logging.warning(f"Skipping invalid Trakt list URL: {list_url}")
+
+    logging.info(f"Retrieved {len(all_wanted_items)} wanted items from Trakt")
+
+    # Final filtering step
+    new_wanted_items = []
+    for item in all_wanted_items:
+        imdb_id = item.get('imdb_id')
+        if imdb_id:
+            status = get_media_item_presence(imdb_id=imdb_id)
+            if status == "Missing":
+                new_wanted_items.append(item)
+            else:
+                logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
+        else:
+            logging.warning(f"Skipping item without IMDB ID: {item}")
+
+    logging.info(f"After filtering, {len(new_wanted_items)} new wanted items remain.")
+    logging.debug(f"Full list of new wanted items: {new_wanted_items}")
+    return new_wanted_items
+    
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
     wanted_items = get_wanted_from_trakt()
     print(f"Total wanted items: {len(wanted_items)}")
-    print(json.dumps(wanted_items[:10], indent=2))  # Print first 5 items for brevity
+    print(json.dumps(wanted_items[:10], indent=2))  # Print first 10 items for brevity

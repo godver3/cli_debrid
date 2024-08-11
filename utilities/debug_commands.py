@@ -7,20 +7,23 @@ import curses
 from database import (
     get_all_media_items, search_movies, search_tv_shows, update_media_item_state,
     purge_database, verify_database, remove_from_media_items,
-    add_collected_items, add_wanted_items, get_blacklisted_items, remove_from_blacklist
+    add_collected_items, add_wanted_items, get_blacklisted_items, remove_from_blacklist,
+    get_versions_for_item, update_item_versions, get_all_items_for_content_source,
+    update_content_source_for_item
 )
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from content_checkers.overseerr import get_wanted_from_overseerr#, map_collected_media_to_wanted
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.collected import get_wanted_from_collected
-from content_checkers.trakt import get_wanted_from_trakt, ensure_trakt_auth
+from content_checkers.trakt import get_wanted_from_trakt_watchlist, get_wanted_from_trakt_lists, ensure_trakt_auth
 import logging
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, manage_manual_blacklist
 from utilities.manual_scrape import imdb_id_to_title_and_year
 import json
 from typing import List, Tuple, Dict
 from metadata.metadata import process_metadata, refresh_release_dates
-from initialization import reset_queued_item_status
+#from initialization import reset_queued_item_status
+from settings import get_setting, get_all_settings, set_setting
 
 def search_db():
     search_term = input("Enter search term (use % for wildcards): ")
@@ -326,19 +329,17 @@ def debug_commands():
             choices=[
                 Choice("Get and Add All Collected from Plex", "get_all_collected"),
                 Choice("Get and Add All Recent from Plex", "get_recent_collected"),
-                Choice("Get and Add All Wanted from Overseerr", "get_all_wanted"),
-                Choice("Get and Add All Wanted from MDB List", "pull_mdblist"),
-                Choice("Get and Add All Wanted from Collected", "get_wanted_collected"),
-                Choice("Get and Add All Wanted from Trakt", "get_trakt"),
+                Choice("Get and Add Wanted Content from All Sources", "get_all_wanted"),
                 Choice("View Database Content", "view_db"),
                 Choice("Search Database", "search_db"),
-                Choice("Delete Database Items", "delete_db"),  # New option
+                Choice("Delete Database Items", "delete_db"),
                 Choice("Purge Database", "purge_db"),
                 Choice("Manage Blacklisted Items", "manage_blacklist"),
                 Choice("Manage Manual Blacklist", "manage_manual_blacklist"),
                 Choice("Refresh release dates", "refresh_release"),
                 Choice("Reset working queue items", "reset_queue"),
                 Choice("Check and refresh Trakt auth token", "refresh_trakt"),
+                Choice("Manage Content Sources", "manage_sources"),
                 Choice("Back to Main Menu", "back")
             ]
         ).ask()
@@ -357,34 +358,12 @@ def debug_commands():
             view_database_content()
         elif action == 'search_db':
             search_db()
-        elif action == 'pull_mdblist':
-            wanted_content = get_wanted_from_mdblists()
-            if wanted_content:
-                wanted_content_processed = process_metadata(wanted_content)
-                if wanted_content_processed:
-                    add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
-        elif action == 'get_wanted_collected':
-            wanted_content = get_wanted_from_collected()
-            if wanted_content:
-                wanted_content_processed = process_metadata(wanted_content)
-                if wanted_content_processed:
-                    add_wanted_items(wanted_content_processed['episodes'])
-        elif action == 'get_trakt':
-            wanted_content = get_wanted_from_trakt()
-            if wanted_content:
-                wanted_content_processed = process_metadata(wanted_content)
-                if wanted_content_processed:
-                    add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+        elif action == 'get_all_wanted':
+            get_all_wanted_from_enabled_sources()
         elif action == 'purge_db':
             purge_db()
         elif action == 'reset_queue':
             reset_queued_item_status()
-        elif action == 'get_all_wanted':
-            wanted_content = get_wanted_from_overseerr()
-            if wanted_content:
-                wanted_content_processed = process_metadata(wanted_content)
-                if wanted_content_processed:
-                    add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
         elif action == 'manage_blacklist':
             manage_blacklist()
         elif action == 'manage_manual_blacklist':
@@ -393,9 +372,139 @@ def debug_commands():
             ensure_trakt_auth()
         elif action == 'refresh_release':
             refresh_release_dates()
+        elif action == 'manage_sources':
+            manage_content_sources()
         elif action == 'back':
             os.system('clear')
             break
+
+def get_all_wanted_from_enabled_sources():
+    content_sources = get_all_settings().get('Content Sources', {})
+    
+    for source_id, source_data in content_sources.items():
+        if not source_data.get('enabled', False):
+            logging.info(f"Skipping disabled source: {source_id}")
+            continue
+
+        source_type = source_id.split('_')[0]
+        versions = source_data.get('versions', {})
+        logging.info(f"Processing enabled source: {source_id}")
+        
+        wanted_content = None
+        if source_type == 'Overseerr':
+            wanted_content = get_wanted_from_overseerr()
+        elif source_type == 'MDBList':
+            wanted_content = get_wanted_from_mdblists()
+        elif source_type == 'Trakt Watchlist':
+            update_trakt_settings(content_sources)
+            wanted_content = get_wanted_from_trakt_watchlist()
+        elif source_type == 'Trakt Lists':
+            update_trakt_settings(content_sources)
+            wanted_content = get_wanted_from_trakt_lists()
+        elif source_type == 'Collected':
+            wanted_content = get_wanted_from_collected()
+
+        if wanted_content:
+            wanted_content_processed = process_metadata(wanted_content)
+            if wanted_content_processed:
+                # Combine movies and episodes
+                all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', [])
+                
+                # Ensure each item has the correct versions
+                for item in all_items:
+                    if 'versions' not in item:
+                        item['versions'] = versions
+
+                add_wanted_items(all_items)
+                logging.info(f"Added {len(all_items)} wanted items from {source_id}")
+        else:
+            logging.warning(f"No wanted content retrieved from {source_id}")
+
+    logging.info("Finished processing all enabled content sources")
+
+def update_trakt_settings(content_sources):
+    trakt_watchlist_enabled = any(
+        source_data['enabled'] 
+        for source_id, source_data in content_sources.items() 
+        if source_id.startswith('Trakt Watchlist')
+    )
+    trakt_lists = ','.join([
+        source_data.get('trakt_lists', '') 
+        for source_id, source_data in content_sources.items()
+        if source_id.startswith('Trakt Lists') and source_data['enabled']
+    ])
+
+    set_setting('Trakt', 'user_watchlist_enabled', trakt_watchlist_enabled)
+    set_setting('Trakt', 'trakt_lists', trakt_lists)
+
+def manage_content_sources():
+    content_sources = get_all_settings().get('Content Sources', {})
+    while True:
+        choices = [Choice(source, source) for source in content_sources.keys()]
+        choices.append(Choice("Back", "back"))
+
+        selected_source = questionary.select(
+            "Select a content source to manage:",
+            choices=choices
+        ).ask()
+
+        if selected_source == "back":
+            break
+
+        manage_single_content_source(selected_source, content_sources[selected_source])
+
+def manage_single_content_source(source, data):
+    while True:
+        action = questionary.select(
+            f"Manage {source}:",
+            choices=[
+                Choice("View Items", "view"),
+                Choice("Update Versions", "update_versions"),
+                Choice("Back", "back")
+            ]
+        ).ask()
+
+        if action == "view":
+            items = get_all_items_for_content_source(source)
+            display_items(items)
+        elif action == "update_versions":
+            update_source_versions(source, data)
+        elif action == "back":
+            break
+
+def display_items(items):
+    headers = ["ID", "Title", "Type", "Year", "Version", "State"]
+    item_data = [
+        [str(item['id']), item['title'], item['type'], str(item['year']), 
+         item['version'], item['state']]
+        for item in items
+    ]
+    display_results_curses(item_data, headers)
+
+def update_source_versions(source, data):
+    current_versions = data.get('versions', {})
+    all_versions = get_setting('Scraping', 'versions', {})
+
+    choices = [
+        Choice(f"{version} ({'Enabled' if current_versions.get(version, False) else 'Disabled'})", version)
+        for version in all_versions.keys()
+    ]
+
+    selected_versions = questionary.checkbox(
+        "Select versions for this content source:",
+        choices=choices,
+        default=[v for v, enabled in current_versions.items() if enabled]
+    ).ask()
+
+    new_versions = {v: True for v in selected_versions}
+    data['versions'] = new_versions
+
+    # Update all items for this source with new versions
+    items = get_all_items_for_content_source(source)
+    for item in items:
+        update_item_versions(item['id'], new_versions)
+
+    logging.info(f"Updated versions for {source}: {new_versions}")
 
 def manage_blacklist():
     while True:
@@ -426,6 +535,15 @@ def manage_blacklist():
             logging.info(f"Removed {len(selected)} items from blacklist.")
         else:
             break
+
+def reset_queued_item_status():
+    logging.info("Resetting queued item status...")
+    states_to_reset = ['Scraping', 'Adding', 'Checking', 'Sleeping']
+    for state in states_to_reset:
+        items = get_all_media_items(state=state)
+        for item in items:
+            update_media_item_state(item['id'], 'Wanted')
+            logging.info(f"Reset item {format_item_log(item)} (ID: {item['id']}) from {state} to Wanted")
 
 if __name__ == "__main__":
     debug_commands()

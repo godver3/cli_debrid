@@ -1,7 +1,8 @@
 import logging
 import requests
-from settings import get_setting
+from settings import get_setting, get_all_settings
 from typing import List, Dict, Any
+from database import get_media_item_presence
 
 DEFAULT_TAKE = 100
 REQUEST_TIMEOUT = 3  # seconds
@@ -70,36 +71,59 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
     return wanted_content
 
 def get_wanted_from_overseerr() -> List[Dict[str, Any]]:
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    if not overseerr_url or not overseerr_api_key:
-        logging.error("Overseerr URL or API key not set. Please configure in settings.")
-        return []
+    content_sources = get_all_settings().get('Content Sources', {})
+    overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
+    
+    all_wanted_items = []
+    
+    for source in overseerr_sources:
+        overseerr_url = source.get('url')
+        overseerr_api_key = source.get('api_key')
+        versions = source.get('versions', {})
+        
+        if not overseerr_url or not overseerr_api_key:
+            logging.error(f"Overseerr URL or API key not set for source: {source}. Please configure in settings.")
+            continue
 
-    try:
-        wanted_content_raw = fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key)
-        wanted_items = []
+        try:
+            wanted_content_raw = fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key)
+            wanted_items = []
 
-        for item in wanted_content_raw:
-            media = item.get('media', {})
-            logging.debug(f"Processing wanted item: {media}")
+            for item in wanted_content_raw:
+                media = item.get('media', {})
+                logging.debug(f"Processing wanted item: {media}")
 
-            if media.get('mediaType') in ['movie', 'tv']:
-                wanted_item = {
-                    #'imdb_id': media.get('imdbId'),
-                    'tmdb_id': media.get('tmdbId'),
-                    #'title': media.get('title'),
-                    #'year': media.get('releaseDate', '')[:4] if media.get('releaseDate') else None,
-                    #'release_date': media.get('releaseDate'),
-                    'media_type': media.get('mediaType')
-                }
+                if media.get('mediaType') in ['movie', 'tv']:
+                    wanted_item = {
+                        'tmdb_id': media.get('tmdbId'),
+                        'media_type': media.get('mediaType'),
+                        'versions': versions  # Add versions to each wanted item
+                    }
 
-                wanted_items.append(wanted_item)
-                logging.debug(f"Added wanted item: {wanted_item}")
+                    wanted_items.append(wanted_item)
+                    logging.debug(f"Added wanted item: {wanted_item}")
 
-        logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr.")
-        logging.debug(f"Full list of wanted items: {wanted_items}")
-        return wanted_items
-    except Exception as e:
-        logging.error(f"Unexpected error while processing Overseerr response: {e}")
-        return []
+            all_wanted_items.extend(wanted_items)
+            logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source.")
+        except Exception as e:
+            logging.error(f"Unexpected error while processing Overseerr source: {e}")
+
+    logging.info(f"Retrieved a total of {len(all_wanted_items)} wanted items from all Overseerr sources.")
+    logging.debug(f"Full list of wanted items: {all_wanted_items}")
+    
+    # Final filtering step
+    new_wanted_items = []
+    for item in all_wanted_items:
+        tmdb_id = item.get('tmdb_id')
+        if tmdb_id:
+            status = get_media_item_presence(tmdb_id=tmdb_id)
+            if status == "Missing":
+                new_wanted_items.append(item)
+            else:
+                logging.debug(f"Skipping existing item with TMDB ID {tmdb_id}")
+        else:
+            logging.warning(f"Skipping item without TMDB ID: {item}")
+
+    logging.info(f"After filtering, {len(new_wanted_items)} new wanted items remain.")
+    logging.debug(f"Full list of new wanted items: {new_wanted_items}")
+    return new_wanted_items

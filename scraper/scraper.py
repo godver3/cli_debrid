@@ -111,7 +111,7 @@ def calculate_bitrate(size_gb, runtime_minutes):
     return round(bitrate_mbps, 2)
 
 def detect_resolution(title: str) -> str:
-    logging.debug(f"Detecting resolution for title: '{title}'")
+    #logging.debug(f"Detecting resolution for title: '{title}'")
     resolution_patterns = [
         (r'(?:^|\.)2160p(?:\.|$)', '2160p'),
         (r'(?:^|\.)(4k|uhd)(?:\.|$)', '2160p'),
@@ -127,7 +127,7 @@ def detect_resolution(title: str) -> str:
     for pattern, res in resolution_patterns:
         if re.search(pattern, title_lower, re.IGNORECASE):
             detected_resolutions.append(res)
-            logging.debug(f"Matched pattern '{pattern}' in title. Detected resolution: {res}")
+            #logging.debug(f"Matched pattern '{pattern}' in title. Detected resolution: {res}")
 
     # Look for numbers followed by 'p' surrounded by periods
     p_matches = re.findall(r'(?:^|\.)(\d+)p(?:\.|$)', title_lower)
@@ -146,10 +146,10 @@ def detect_resolution(title: str) -> str:
         # Sort resolutions and pick the highest
         resolution_order = ['480p', '720p', '1080p', '2160p']
         highest_resolution = max(detected_resolutions, key=lambda x: resolution_order.index(x))
-        logging.debug(f"Multiple resolutions detected: {detected_resolutions}. Choosing highest: {highest_resolution}")
+        #logging.debug(f"Multiple resolutions detected: {detected_resolutions}. Choosing highest: {highest_resolution}")
         return highest_resolution
     else:
-        logging.debug("No resolution detected. Returning 'Unknown'")
+        #logging.debug("No resolution detected. Returning 'Unknown'")
         return 'Unknown'
 
 # Update parse_torrent_info to use our detect_resolution function

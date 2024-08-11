@@ -13,6 +13,7 @@ import io
 import json
 import copy
 from scraper_manager import ScraperManager
+from content_manager import ContentManager
 
 CONFIG_FILE = './config/config.json'
 
@@ -193,6 +194,7 @@ class SettingsEditor:
         self.main_loop = urwid.MainLoop(self.build_main_menu(), self.palette, unhandled_input=self.exit_on_q)
         self.main_loop.original_widget = self.main_loop.widget
         self.scraper_manager = ScraperManager(self.main_loop)
+        self.content_manager = ContentManager(self.main_loop)
         self.scraper_manager.back_callback = self.back_to_main_menu
         self.main_loop.run()
 
@@ -227,12 +229,7 @@ class SettingsEditor:
 
 
     def show_content_settings(self, button):
-        self.show_settings("Additional Settings", [
-            ('MDBList Content Source', 'urls', 'MDBList - MDB List URLs'),
-            ('Collected Content Source', 'enabled', 'Collected - Enable collected content source? True/False'),
-            ('Trakt', 'user_watchlist_enabled', 'Trakt - Enable your watchlist as a content source? True/False (Requires auth. below)'),
-            ('Trakt', 'trakt_lists', 'Trakt - Add any other Trakt lists as content sources (comma-separated)')
-        ])
+        self.content_manager.show_content_sources_menu(self.back_to_main_menu)
 
     def show_additional_settings(self, button):
         self.show_settings("Additional Settings", [

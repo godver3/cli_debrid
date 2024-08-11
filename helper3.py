@@ -2,7 +2,7 @@ import libtorrent as lt
 import time
 
 # Replace this with your actual magnet link
-magnet_uri = "magnet:?xt=urn:btih:384c1df8f0ad94d6c1b990374a7eef159dac44dd"
+magnet_uri = "magnet:?xt=urn:btih:MHAN7WHCFP75QFN3PWXJSGDQC2N6S6XD"
 
 # Create a session and set download parameters
 session = lt.session()
@@ -27,3 +27,4 @@ for file in torrent_info.files():
     print(file.path, file.size)
 
 print("Total files:", len(torrent_info.files()))
+
