@@ -48,7 +48,7 @@ class ProgramRunner:
         
         # Add default intervals for each content source type
         default_intervals = {
-            'Overseerr': 30,
+            'Overseerr': 900,
             'MDBList': 900,
             'Collected': 86400,
             'Trakt Watchlist': 900,
