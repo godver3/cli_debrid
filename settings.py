@@ -235,7 +235,8 @@ class SettingsEditor:
         self.show_settings("Additional Settings", [
             ('TMDB', 'api_key', 'TMDB - TMDB API Key'),
             ('Queue', 'wake_limit', 'Queue - Enter number of times to wake items before blacklisting'),
-            ('Queue', 'airtime_offset', 'Queue - Enter the number of hours after midnight to start scraping for new releases (default 19)'),
+            ('Queue', 'movie_airtime_offset', 'Queue - Enter the number of hours after midnight to start scraping for new movies (default 19)'),
+            ('Queue', 'episode_airtime_offset', 'Queue - Enter the number of hours after midnight to start scraping for new episodes (default 19)'),
             ('Scraping', 'uncached_content_handling', 'Scraping - Uncached content handling (None/Hybrid/Full)'),
             ('Trakt', 'client_id', 'Trakt - Enter Trakt client ID'),
             ('Trakt', 'client_secret', 'Trakt - Enter Trakt client secret')
