@@ -60,6 +60,7 @@ class ProgramRunner:
             data['interval'] = default_intervals.get(source_type, 3600)
             task_name = f'task_{source}_wanted'
             self.task_intervals[task_name] = data['interval']
+            self.last_run_times[task_name] = self.start_time  # Update last_run_times dictionary
             if data.get('enabled', False):
                 self.enabled_tasks.add(task_name)
 
