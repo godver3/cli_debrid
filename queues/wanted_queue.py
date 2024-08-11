@@ -25,8 +25,6 @@ class WantedQueue:
         logging.debug("Processing wanted queue")
         current_date = datetime.now().date()
         current_time = datetime.now().time()
-        airtime_offset = get_setting("Queue", "airtime_offset", 19)
-        airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(minutes=airtime_offset)).time()
         seasons_in_queues = set()
 
         # Get seasons already in Scraping or Adding queue
@@ -42,6 +40,16 @@ class WantedQueue:
         for item in list(self.items):
             item_identifier = queue_manager.generate_identifier(item)
             try:
+                # Determine airtime offset based on content type
+                if item['type'] == 'movie':
+                    airtime_offset = get_setting("Queue", "movie_airtime_offset", 19)
+                elif item['type'] == 'episode':
+                    airtime_offset = get_setting("Queue", "episode_airtime_offset", 19)
+                else:
+                    airtime_offset = 0
+
+                airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(minutes=airtime_offset)).time()
+
                 # Check if release_date is None, empty string, or "Unknown"
                 if not item['release_date'] or item['release_date'].lower() == "unknown":
                     logging.debug(f"Release date is missing or unknown for item: {item_identifier}. Moving to Unreleased state.")
