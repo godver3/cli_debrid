@@ -647,7 +647,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     continue
 
         size_gb = parse_size(result.get('size', 0))
-        #season_pack = detect_season_pack(original_title)
+
+        season_pack = detect_season_pack(original_title)
         scraper = result.get('scraper', '').lower()
 
         if scraper in ['jackett', 'zilean']:
@@ -674,7 +675,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             #result['size'] = f"{size_gb:.2f} GB"
             bitrate = calculate_bitrate(size_gb, runtime) #* episode_count)
 
-        result['bitrate'] = bitrate
+        result['bitrate'] = bitrate          
 
         # Apply custom filters with smart matching
         if filter_in and not any(smart_search(pattern, original_title) for pattern in filter_in):
