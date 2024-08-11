@@ -36,13 +36,24 @@ jobs:
         echo $NEW_VERSION > version.txt
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
-    - name: Commit version update
+    - name: Create version bump branch
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
+        git checkout -b version-bump-${{ steps.version.outputs.new_version }}
         git add version.txt
         git commit -m "Bump version to ${{ steps.version.outputs.new_version }}"
-        git push
+        git push origin version-bump-${{ steps.version.outputs.new_version }}
+
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.PAT_TOKEN }}
+        commit-message: Bump version to ${{ steps.version.outputs.new_version }}
+        title: Bump version to ${{ steps.version.outputs.new_version }}
+        body: Automated version bump
+        branch: version-bump-${{ steps.version.outputs.new_version }}
+        base: dev
 
     - name: Build the Docker image
       run: docker build . --file Dockerfile --tag godver3/cli_debrid:${{ steps.version.outputs.new_version }} --tag godver3/cli_debrid:dev
