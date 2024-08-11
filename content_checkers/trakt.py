@@ -2,7 +2,7 @@ import re
 import logging
 import requests
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from settings import get_all_settings
 import trakt.core
@@ -115,7 +115,7 @@ def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
         return ''
     return ids.get('imdb') or ids.get('tmdb') or ids.get('tvdb') or ''
 
-def process_trakt_items(items: List[Dict[str, Any]], versions: Dict[str, bool]) -> List[Dict[str, Any]]:
+def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     processed_items = []
     for item in items:
         media_type = assign_media_type(item)
@@ -128,10 +128,36 @@ def process_trakt_items(items: List[Dict[str, Any]], versions: Dict[str, bool]) 
             continue
         processed_items.append({
             'imdb_id': imdb_id,
-            'media_type': media_type,
-            'versions': versions
+            'media_type': media_type
         })
     return processed_items
+
+def filter_and_log_items(all_wanted_items: List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    filtered_items = []
+    total_items = sum(len(items) for items, _ in all_wanted_items)
+    new_items_count = 0
+
+    for items, versions in all_wanted_items:
+        new_items = []
+        for item in items:
+            imdb_id = item.get('imdb_id')
+            if imdb_id:
+                status = get_media_item_presence(imdb_id=imdb_id)
+                if status == "Missing":
+                    new_items.append(item)
+                    new_items_count += 1
+                else:
+                    logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
+            else:
+                logging.warning(f"Skipping item without IMDB ID: {item}")
+        
+        if new_items:
+            filtered_items.append((new_items, versions))
+
+    logging.info(f"Retrieved {total_items} total items from Trakt")
+    logging.info(f"After filtering, {new_items_count} new wanted items remain.")
+    logging.debug(f"Full list of new wanted items: {filtered_items}")
+    return filtered_items
 
 def ensure_trakt_auth():
     logging.info("Starting Trakt authentication check")
@@ -159,7 +185,7 @@ def ensure_trakt_auth():
         return None
 
 def get_wanted_from_trakt_watchlist() -> List[Dict[str, Any]]:
-    logging.info("Preparing to make Trakt API call")
+    logging.info("Preparing to make Trakt API call for watchlist")
     access_token = ensure_trakt_auth()
     if access_token is None:
         logging.error("Failed to obtain a valid Trakt access token")
@@ -176,29 +202,15 @@ def get_wanted_from_trakt_watchlist() -> List[Dict[str, Any]]:
             logging.info("Fetching user's watchlist")
             watchlist_items = fetch_items_from_trakt("/sync/watchlist")
             logging.debug(f"Watchlist items fetched: {len(watchlist_items)}")
-            all_wanted_items.extend(process_trakt_items(watchlist_items, versions))
+            processed_items = process_trakt_items(watchlist_items)
+            all_wanted_items.append((processed_items, versions))
 
-    logging.info(f"Retrieved {len(all_wanted_items)} wanted items from Trakt")
+    logging.info(f"Retrieved watchlist items from Trakt")
     
-    # Final filtering step
-    new_wanted_items = []
-    for item in all_wanted_items:
-        imdb_id = item.get('imdb_id')
-        if imdb_id:
-            status = get_media_item_presence(imdb_id=imdb_id)
-            if status == "Missing":
-                new_wanted_items.append(item)
-            else:
-                logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
-        else:
-            logging.warning(f"Skipping item without IMDB ID: {item}")
+    return filter_and_log_items(all_wanted_items)
 
-    logging.info(f"After filtering, {len(new_wanted_items)} new wanted items remain.")
-    logging.debug(f"Full list of new wanted items: {new_wanted_items}")
-    return new_wanted_items
-    
-def get_wanted_from_trakt_lists() -> List[Dict[str, Any]]:
-    logging.info("Preparing to make Trakt API call")
+def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    logging.info("Preparing to make Trakt API call for lists")
     access_token = ensure_trakt_auth()
     if access_token is None:
         logging.error("Failed to obtain a valid Trakt access token")
@@ -206,42 +218,21 @@ def get_wanted_from_trakt_lists() -> List[Dict[str, Any]]:
     logging.info("Successfully obtained valid access token")
 
     all_wanted_items = []
-    trakt_sources = get_trakt_sources()
 
-    # Process Trakt Lists
-    for list_source in trakt_sources['lists']:
-        versions = list_source.get('versions', {})
-        trakt_lists = clean_trakt_urls(list_source.get('trakt_lists', ''))
-        logging.info(f"Found {len(trakt_lists)} Trakt lists to process")
-        for list_url in trakt_lists:
-            list_info = parse_trakt_list_url(list_url)
-            if list_info:
-                endpoint = f"/users/{list_info['username']}/lists/{list_info['list_id']}/items"
-                logging.info(f"Fetching items from list: {list_url}")
-                list_items = fetch_items_from_trakt(endpoint)
-                logging.debug(f"List items fetched: {len(list_items)}")
-                all_wanted_items.extend(process_trakt_items(list_items, versions))
-            else:
-                logging.warning(f"Skipping invalid Trakt list URL: {list_url}")
+    logging.info(f"Processing Trakt list: {trakt_list_url}")
+    
+    list_info = parse_trakt_list_url(trakt_list_url)
+    if list_info:
+        endpoint = f"/users/{list_info['username']}/lists/{list_info['list_id']}/items"
+        logging.info(f"Fetching items from list: {trakt_list_url}")
+        items = fetch_items_from_trakt(endpoint)
+        logging.debug(f"List items fetched: {len(items)}")
+        processed_items = process_trakt_items(items)
+        all_wanted_items.append((processed_items, versions))
 
-    logging.info(f"Retrieved {len(all_wanted_items)} wanted items from Trakt")
+    logging.info(f"Retrieved items from Trakt list")
 
-    # Final filtering step
-    new_wanted_items = []
-    for item in all_wanted_items:
-        imdb_id = item.get('imdb_id')
-        if imdb_id:
-            status = get_media_item_presence(imdb_id=imdb_id)
-            if status == "Missing":
-                new_wanted_items.append(item)
-            else:
-                logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
-        else:
-            logging.warning(f"Skipping item without IMDB ID: {item}")
-
-    logging.info(f"After filtering, {len(new_wanted_items)} new wanted items remain.")
-    logging.debug(f"Full list of new wanted items: {new_wanted_items}")
-    return new_wanted_items
+    return filter_and_log_items(all_wanted_items)
     
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -1,6 +1,6 @@
 import logging
 import requests
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from settings import get_all_settings
 from database import get_media_item_presence
 
@@ -45,52 +45,45 @@ def assign_media_type(item: Dict[str, Any]) -> str:
         logging.warning(f"Unknown media type: {media_type}. Defaulting to 'movie'.")
         return 'movie'
 
-def get_wanted_from_mdblists() -> List[Dict[str, Any]]:
-    mdblist_sources = get_mdblist_sources()
+def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
-
-    for source in mdblist_sources:
-        urls = source.get('urls', '')
-        versions = source.get('versions', {})
-        
-        if not urls:
-            logging.warning(f"Skipping MDBList source due to missing URLs: {source}")
+    
+    items = fetch_items_from_mdblist(mdblist_url)
+    processed_items = []
+    for item in items:
+        imdb_id = item.get('imdb_id')
+        if not imdb_id:
+            logging.warning(f"Skipping item due to missing IMDB ID: {item.get('title', 'Unknown Title')}")
             continue
         
-        # Split URLs and process each one
-        url_list = [url.strip() for url in urls.split(',') if url.strip()]
-        
-        for url in url_list:
-            items = fetch_items_from_mdblist(url)
-            for item in items:
-                imdb_id = item.get('imdb_id')
-                if not imdb_id:
-                    logging.warning(f"Skipping item due to missing IMDB ID: {item.get('title', 'Unknown Title')}")
-                    continue
-                
-                media_type = assign_media_type(item)
-                wanted_item = {
-                    'imdb_id': imdb_id,
-                    'media_type': media_type,
-                    'versions': versions
-                }
-                all_wanted_items.append(wanted_item)
-
-    logging.info(f"Retrieved {len(all_wanted_items)} wanted items from all MDB Lists")
+        media_type = assign_media_type(item)
+        wanted_item = {
+            'imdb_id': imdb_id,
+            'media_type': media_type,
+        }
+        processed_items.append(wanted_item)
+    
+    all_wanted_items.append((processed_items, versions))
+    
+    logging.info(f"Retrieved {len(processed_items)} wanted items from MDB List: {mdblist_url}")
     
     # Final filtering step
-    new_wanted_items = []
-    for item in all_wanted_items:
-        imdb_id = item.get('imdb_id')
-        if imdb_id:
-            status = get_media_item_presence(imdb_id=imdb_id)
-            if status == "Missing":
-                new_wanted_items.append(item)
+    filtered_items = []
+    for items, item_versions in all_wanted_items:
+        new_items = []
+        for item in items:
+            imdb_id = item.get('imdb_id')
+            if imdb_id:
+                status = get_media_item_presence(imdb_id=imdb_id)
+                if status == "Missing":
+                    new_items.append(item)
+                else:
+                    logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
             else:
-                logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
-        else:
-            logging.warning(f"Skipping item without IMDB ID: {item}")
-
-    logging.info(f"After filtering, {len(new_wanted_items)} new wanted items remain.")
-    logging.debug(f"Full list of new wanted items: {new_wanted_items}")
-    return new_wanted_items
+                logging.warning(f"Skipping item without IMDB ID: {item}")
+        if new_items:
+            filtered_items.append((new_items, item_versions))
+    
+    logging.info(f"After filtering, {sum(len(items) for items, _ in filtered_items)} new wanted items remain.")
+    logging.debug(f"Full list of new wanted items: {filtered_items}")
+    return filtered_items

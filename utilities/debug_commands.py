@@ -330,6 +330,7 @@ def debug_commands():
                 Choice("Get and Add All Collected from Plex", "get_all_collected"),
                 Choice("Get and Add All Recent from Plex", "get_recent_collected"),
                 Choice("Get and Add Wanted Content from All Sources", "get_all_wanted"),
+                Choice("Get and Add Wanted Content from Specific Source", "get_specific_wanted"),
                 Choice("View Database Content", "view_db"),
                 Choice("Search Database", "search_db"),
                 Choice("Delete Database Items", "delete_db"),
@@ -344,7 +345,11 @@ def debug_commands():
             ]
         ).ask()
 
-        if action == 'delete_db':
+        if action == 'get_specific_wanted':
+            get_specific_wanted_content()
+        elif action == 'get_all_wanted':
+            get_all_wanted_from_enabled_sources()
+        elif action == 'delete_db':
             delete_database_items()
         elif action == 'get_all_collected':
             collected_content = get_collected_from_plex('all')
@@ -358,8 +363,6 @@ def debug_commands():
             view_database_content()
         elif action == 'search_db':
             search_db()
-        elif action == 'get_all_wanted':
-            get_all_wanted_from_enabled_sources()
         elif action == 'purge_db':
             purge_db()
         elif action == 'reset_queue':
@@ -378,6 +381,56 @@ def debug_commands():
             os.system('clear')
             break
 
+def get_specific_wanted_content():
+    content_sources = get_all_settings().get('Content Sources', {})
+    choices = [Choice(source, source) for source in content_sources.keys() if content_sources[source].get('enabled', False)]
+    
+    selected_source = questionary.select(
+        "Select a content source to get wanted content from:",
+        choices=choices
+    ).ask()
+
+    source_data = content_sources[selected_source]
+    source_type = selected_source.split('_')[0]
+
+    wanted_content = None
+    if source_type == 'MDBList':
+        mdblist_urls = source_data.get('urls', '').split(',')
+        versions = source_data.get('versions', {})
+        wanted_content = []
+        for mdblist_url in mdblist_urls:
+            mdblist_url = mdblist_url.strip()
+            list_content = get_wanted_from_mdblists(mdblist_url, versions)
+            wanted_content.extend(list_content)
+    elif source_type == 'Trakt Lists':
+        trakt_lists = source_data.get('trakt_lists', '').split(',')
+        versions = source_data.get('versions', {})
+        wanted_content = []
+        for trakt_list in trakt_lists:
+            trakt_list = trakt_list.strip()
+            list_content = get_wanted_from_trakt_lists(trakt_list, versions)
+            wanted_content.extend(list_content)
+    elif source_type == 'Overseerr':
+        wanted_content = get_wanted_from_overseerr()
+    elif source_type == 'Trakt Watchlist':
+        update_trakt_settings(content_sources)
+        wanted_content = get_wanted_from_trakt_watchlist()
+    elif source_type == 'Collected':
+        wanted_content = get_wanted_from_collected()
+
+    if wanted_content:
+        total_items = 0
+        for items, item_versions in wanted_content:
+            processed_items = process_metadata(items)
+            if processed_items:
+                all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                add_wanted_items(all_items, item_versions)
+                total_items += len(all_items)
+        
+        logging.info(f"Added {total_items} wanted items from {selected_source}")
+    else:
+        logging.warning(f"No wanted content retrieved from {selected_source}")
+
 def get_all_wanted_from_enabled_sources():
     content_sources = get_all_settings().get('Content Sources', {})
     
@@ -390,33 +443,44 @@ def get_all_wanted_from_enabled_sources():
         versions = source_data.get('versions', {})
         logging.info(f"Processing enabled source: {source_id}")
         
-        wanted_content = None
+        wanted_content = []
         if source_type == 'Overseerr':
-            wanted_content = get_wanted_from_overseerr()
+            overseerr_content = get_wanted_from_overseerr()
+            if overseerr_content:
+                wanted_content = [(overseerr_content, versions)]
         elif source_type == 'MDBList':
-            wanted_content = get_wanted_from_mdblists()
+            mdblist_urls = source_data.get('urls', '').split(',')
+            for mdblist_url in mdblist_urls:
+                mdblist_url = mdblist_url.strip()
+                mdblist_content = get_wanted_from_mdblists(mdblist_url, versions)
+                wanted_content.extend(mdblist_content)
         elif source_type == 'Trakt Watchlist':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_watchlist()
+            trakt_watchlist_content = get_wanted_from_trakt_watchlist()
+            if trakt_watchlist_content:
+                wanted_content = [(trakt_watchlist_content, versions)]
         elif source_type == 'Trakt Lists':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_lists()
+            trakt_lists = source_data.get('trakt_lists', '').split(',')
+            for trakt_list in trakt_lists:
+                trakt_list = trakt_list.strip()
+                trakt_list_content = get_wanted_from_trakt_lists(trakt_list, versions)
+                wanted_content.extend(trakt_list_content)
         elif source_type == 'Collected':
-            wanted_content = get_wanted_from_collected()
+            collected_content = get_wanted_from_collected()
+            if collected_content:
+                wanted_content = [(collected_content, versions)]
 
         if wanted_content:
-            wanted_content_processed = process_metadata(wanted_content)
-            if wanted_content_processed:
-                # Combine movies and episodes
-                all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', [])
-                
-                # Ensure each item has the correct versions
-                for item in all_items:
-                    if 'versions' not in item:
-                        item['versions'] = versions
-
-                add_wanted_items(all_items)
-                logging.info(f"Added {len(all_items)} wanted items from {source_id}")
+            total_items = 0
+            for items, item_versions in wanted_content:
+                processed_items = process_metadata(items)
+                if processed_items:
+                    all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                    add_wanted_items(all_items, item_versions)
+                    total_items += len(all_items)
+            
+            logging.info(f"Added {total_items} wanted items from {source_id}")
         else:
             logging.warning(f"No wanted content retrieved from {source_id}")
 
@@ -543,7 +607,7 @@ def reset_queued_item_status():
         items = get_all_media_items(state=state)
         for item in items:
             update_media_item_state(item['id'], 'Wanted')
-            logging.info(f"Reset item {format_item_log(item)} (ID: {item['id']}) from {state} to Wanted")
+            #logging.info(f"Reset item {format_item_log(item)} (ID: {item['id']}) from {state} to Wanted")
 
 if __name__ == "__main__":
     debug_commands()
