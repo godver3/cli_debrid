@@ -621,7 +621,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         # Check title similarity
         title_sim = improved_title_similarity(title, original_title)
         #logging.debug(f"Title similarity for '{original_title}': {title_sim:.2f}")
-        if title_sim < 0.7:  # Increased threshold from 0.8 to 0.7
+        if title_sim < 0.65:  # Increased threshold from 0.8 to 0.7
             logging.debug(f"Filtered out due to low title similarity: {title_sim:.2f}")
             continue       
 
