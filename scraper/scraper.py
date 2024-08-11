@@ -647,7 +647,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     continue
 
         size_gb = parse_size(result.get('size', 0))
-        season_pack = detect_season_pack(original_title)
+        #season_pack = detect_season_pack(original_title)
         scraper = result.get('scraper', '').lower()
 
         if scraper in ['jackett', 'zilean']:
@@ -686,25 +686,26 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 log_filter_result(original_title, detected_resolution, f"Matching filter_out pattern(s): {', '.join(matched_patterns)}")
                 continue
 
-        season_pack = detect_season_pack(original_title)
-        if multi:
-            if season_pack == 'Unknown':
-                log_filter_result(original_title, detected_resolution, "Non-multi result when searching for multi")
-                continue
-            if season_pack != 'Complete':
-                season_numbers = [int(s) for s in season_pack.split(',')]
-                if len(season_numbers) == 2:
-                    # It's a range
-                    if season not in range(season_numbers[0], season_numbers[1] + 1):
+        if content_type == "episode":
+            season_pack = detect_season_pack(original_title)
+            if multi:
+                if season_pack == 'Unknown':
+                    log_filter_result(original_title, detected_resolution, "Non-multi result when searching for multi")
+                    continue
+                if season_pack != 'Complete':
+                    season_numbers = [int(s) for s in season_pack.split(',')]
+                    if len(season_numbers) == 2:
+                        # It's a range
+                        if season not in range(season_numbers[0], season_numbers[1] + 1):
+                            log_filter_result(original_title, detected_resolution, f"Season pack not containing the requested season: {season}")
+                            continue
+                    elif season not in season_numbers:
                         log_filter_result(original_title, detected_resolution, f"Season pack not containing the requested season: {season}")
                         continue
-                elif season not in season_numbers:
-                    log_filter_result(original_title, detected_resolution, f"Season pack not containing the requested season: {season}")
+            else:
+                if season_pack != 'Unknown' and season_pack != str(season):
+                    log_filter_result(original_title, detected_resolution, "Multi-episode release when searching for single episode")
                     continue
-        else:
-            if season_pack != 'Unknown' and season_pack != str(season):
-                log_filter_result(original_title, detected_resolution, "Multi-episode release when searching for single episode")
-                continue
 
         # If the result passed all filters, add it to filtered_results
         log_filter_result(original_title, detected_resolution)
