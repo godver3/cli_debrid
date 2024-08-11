@@ -145,11 +145,22 @@ class ProgramRunner:
             wanted_content = get_wanted_from_trakt_watchlist()
         elif source_type == 'Trakt Lists':
             wanted_content = get_wanted_from_trakt_lists()
-
+               
         if wanted_content:
             wanted_content_processed = process_metadata(wanted_content)
             if wanted_content_processed:
-                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'], versions)
+                # Combine movies and episodes
+                all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', [])
+                
+                # Ensure each item has the correct versions
+                for item in all_items:
+                    if 'versions' not in item:
+                        item['versions'] = versions
+
+                add_wanted_items(all_items)
+                logging.info(f"Added {len(all_items)} wanted items from {source_id}")
+        else:
+            logging.warning(f"No wanted content retrieved from {source_id}")
 
     def task_refresh_release_dates(self):
         refresh_release_dates()

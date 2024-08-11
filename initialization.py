@@ -67,7 +67,7 @@ def format_item_log(item):
         return item['title']
 
 def initialize(skip_initial_plex_update=False):
-    logging.debug("Running initial setup...")
+    #logging.debug("Running initial setup...")
     #reset_queued_item_status()
     plex_collection_update(skip_initial_plex_update)
     
