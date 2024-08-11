@@ -43,10 +43,16 @@ jobs:
           NEW_VERSION=$VERSION
         fi
         echo "New version: $NEW_VERSION"
-        echo $NEW_VERSION > version.txt
+        if [[ "$NEW_VERSION" != "$VERSION" ]]; then
+          echo $NEW_VERSION > version.txt
+          echo "version_changed=true" >> $GITHUB_OUTPUT
+        else
+          echo "version_changed=false" >> $GITHUB_OUTPUT
+        fi
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
     - name: Commit version update
+      if: steps.version.outputs.version_changed == 'true'
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
