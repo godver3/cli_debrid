@@ -15,11 +15,16 @@ jobs:
         fetch-depth: 0
         token: ${{ secrets.PAT_TOKEN }}
 
-    - name: Check if commit is a version bump
-      id: check_version_bump
+    - name: Check commit message
+      id: check_commit
       run: |
         COMMIT_MESSAGE=$(git log -1 --pretty=%B)
         echo "Last commit message: $COMMIT_MESSAGE"
+        if [[ "$COMMIT_MESSAGE" == *"!build"* ]]; then
+          echo "should_build=true" >> $GITHUB_OUTPUT
+        else
+          echo "should_build=false" >> $GITHUB_OUTPUT
+        fi
         if [[ "$COMMIT_MESSAGE" == *"Bump version"* ]]; then
           echo "is_version_bump=true" >> $GITHUB_OUTPUT
         else
@@ -34,7 +39,7 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
     - name: Build and push Docker image
-      if: steps.check_version_bump.outputs.is_version_bump == 'true'
+      if: steps.check_commit.outputs.should_build == 'true' || steps.check_commit.outputs.is_version_bump == 'true'
       env:
         DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
@@ -45,7 +50,7 @@ jobs:
         docker push godver3/cli_debrid:dev
 
     - name: Increment version and create PR
-      if: steps.check_version_bump.outputs.is_version_bump == 'false'
+      if: steps.check_commit.outputs.is_version_bump == 'false'
       run: |
         # Increment version
         VERSION=$(cat version.txt)
