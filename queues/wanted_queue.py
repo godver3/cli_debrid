@@ -42,9 +42,9 @@ class WantedQueue:
             try:
                 # Determine airtime offset based on content type
                 if item['type'] == 'movie':
-                    airtime_offset = get_setting("Queue", "movie_airtime_offset", 19)
+                    airtime_offset = int(get_setting("Queue", "movie_airtime_offset", 19))
                 elif item['type'] == 'episode':
-                    airtime_offset = get_setting("Queue", "episode_airtime_offset", 19)
+                    airtime_offset = int(get_setting("Queue", "episode_airtime_offset", 19))
                 else:
                     airtime_offset = 0
 
@@ -67,7 +67,7 @@ class WantedQueue:
                         continue
                     
                     # Check if we've reached the scraping cap
-                    if len(queue_manager.queues["Scraping"].get_contents()) + len(items_to_move) >= get_setting("Queue", "scraping_cap", 5):
+                    if len(queue_manager.queues["Scraping"].get_contents()) + len(items_to_move) >= int(get_setting("Queue", "scraping_cap", 5)):
                         logging.debug(f"Scraping cap reached. Keeping {item_identifier} in Wanted queue.")
                         break  # Exit the loop as we've reached the cap
                     
