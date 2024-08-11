@@ -7,6 +7,7 @@ import hashlib
 import bencodepy
 import re
 from datetime import datetime, timedelta
+import os
 
 from database import get_all_media_items, get_media_item_by_id, update_media_item_state
 from settings import get_setting
@@ -299,8 +300,9 @@ class AddingQueue:
                 matching_files = [file for file in files if self.file_matches_item(file, item)]
                 if matching_files:
                     logging.info(f"Matching file(s) found for movie: {item_identifier}")
-                    queue_manager.move_to_checking(item, "Adding", title, link)
-                    logging.debug(f"Moved movie {item_identifier} to Checking queue")
+                    filled_by_file = os.path.basename(matching_files[0])  # Get the filename
+                    queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file)
+                    logging.debug(f"Moved movie {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
                     return True
                 else:
                     logging.warning(f"No matching file found for movie: {item_identifier}")
@@ -493,8 +495,9 @@ class AddingQueue:
             matching_files = [file for file in files if self.file_matches_item(file, item)]
             if matching_files:
                 logging.debug(f"Original item matched files: {matching_files}")
-                queue_manager.move_to_checking(item, "Adding", title, link)
-                logging.debug(f"Moved original item {item_identifier} to Checking queue")
+                filled_by_file = os.path.basename(matching_files[0])  # Get the filename
+                queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file)
+                logging.debug(f"Moved original item {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
             else:
                 logging.warning(f"Original item {item_identifier} did not match any files in the torrent.")
                 return False
@@ -520,8 +523,9 @@ class AddingQueue:
                         item_id = queue_manager.generate_identifier(matching_item)
                         logging.debug(f"Matched file {file_path} with item {item_id}")
                         current_queue = queue_manager.get_item_queue(matching_item)
-                        queue_manager.move_to_checking(matching_item, current_queue, title, link)
-                        logging.debug(f"Moved item {item_id} to Checking queue")
+                        filled_by_file = os.path.basename(file_path)  # Get the filename
+                        queue_manager.move_to_checking(matching_item, current_queue, title, link, filled_by_file)
+                        logging.debug(f"Moved item {item_id} to Checking queue with filled_by_file: {filled_by_file}")
                         matching_items.remove(matching_item)
                         moved_items += 1
                         break
