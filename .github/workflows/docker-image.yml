@@ -1,19 +1,18 @@
-name: Docker Image CI and Version Bump
+name: Docker Image CI and Version Management
 
 on:
   push:
     branches: [ "dev" ]
 
 jobs:
-  build-and-bump:
+  build-and-version:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        token: ${{ secrets.PAT_TOKEN }}
 
-    - name: Check commit message and changes
+    - name: Check commit message
       id: check_commit
       run: |
         COMMIT_MESSAGE=$(git log -1 --pretty=%B)
@@ -23,58 +22,45 @@ jobs:
         else
           echo "should_build=false" >> $GITHUB_OUTPUT
         fi
-        if [[ "$COMMIT_MESSAGE" == *"Bump version"* ]]; then
-          echo "is_version_bump=true" >> $GITHUB_OUTPUT
+        if [[ "$COMMIT_MESSAGE" == *"!increment"* ]]; then
+          echo "increment_type=patch" >> $GITHUB_OUTPUT
+        elif [[ "$COMMIT_MESSAGE" == *"!major_increment"* ]]; then
+          echo "increment_type=minor" >> $GITHUB_OUTPUT
         else
-          echo "is_version_bump=false" >> $GITHUB_OUTPUT
-        fi
-        git diff --name-only HEAD^ HEAD > changed_files.txt
-        if grep -qv "version.txt" changed_files.txt; then
-          echo "has_code_changes=true" >> $GITHUB_OUTPUT
-        else
-          echo "has_code_changes=false" >> $GITHUB_OUTPUT
+          echo "increment_type=none" >> $GITHUB_OUTPUT
         fi
 
-    - name: Read current version
-      id: current_version
+    - name: Read and update version
+      id: version
       run: |
         VERSION=$(cat version.txt)
         echo "Current version: $VERSION"
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        if [[ "${{ steps.check_commit.outputs.increment_type }}" == "patch" ]]; then
+          NEW_VERSION=$(echo $VERSION | awk -F. '{$NF = $NF + 1;} 1' | sed 's/ /./g')
+        elif [[ "${{ steps.check_commit.outputs.increment_type }}" == "minor" ]]; then
+          NEW_VERSION=$(echo $VERSION | awk -F. '{$(NF-1) = $(NF-1) + 1; $NF = 0;} 1' | sed 's/ /./g')
+        else
+          NEW_VERSION=$VERSION
+        fi
+        echo "New version: $NEW_VERSION"
+        echo $NEW_VERSION > version.txt
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Commit version update
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add version.txt
+        git commit -m "Update version to ${{ steps.version.outputs.new_version }}"
+        git push
 
     - name: Build and push Docker image
-      if: steps.check_commit.outputs.should_build == 'true' || steps.check_commit.outputs.is_version_bump == 'true'
+      if: steps.check_commit.outputs.should_build == 'true'
       env:
         DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
       run: |
-        docker build . --file Dockerfile --tag godver3/cli_debrid:${{ steps.current_version.outputs.version }} --tag godver3/cli_debrid:dev
+        docker build . --file Dockerfile --tag godver3/cli_debrid:${{ steps.version.outputs.new_version }} --tag godver3/cli_debrid:dev
         echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-        docker push godver3/cli_debrid:${{ steps.current_version.outputs.version }}
+        docker push godver3/cli_debrid:${{ steps.version.outputs.new_version }}
         docker push godver3/cli_debrid:dev
-
-    - name: Increment version and create PR
-      if: steps.check_commit.outputs.is_version_bump == 'false' && steps.check_commit.outputs.has_code_changes == 'true'
-      run: |
-        # Increment version
-        VERSION=$(cat version.txt)
-        NEW_VERSION=$(echo $VERSION | awk -F. '{$NF = $NF + 1;} 1' | sed 's/ /./g')
-        echo "New version: $NEW_VERSION"
-        
-        # Create new branch
-        git checkout -b version-bump-$NEW_VERSION
-        
-        # Update version.txt
-        echo $NEW_VERSION > version.txt
-        
-        # Commit and push
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add version.txt
-        git commit -m "Bump version to $NEW_VERSION"
-        git push origin version-bump-$NEW_VERSION
-        
-        # Create PR
-        gh pr create --base dev --head version-bump-$NEW_VERSION --title "Bump version to $NEW_VERSION" --body "Automated version bump"
-      env:
-        GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
