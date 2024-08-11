@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
 from database import get_all_media_items
@@ -24,7 +24,11 @@ class WantedQueue:
     def process(self, queue_manager):
         logging.debug("Processing wanted queue")
         current_date = datetime.now().date()
+        current_time = datetime.now().time()
+        airtime_offset = get_setting("Queue", "airtime_offset", 19)
+        airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(minutes=airtime_offset)).time()
         seasons_in_queues = set()
+
         # Get seasons already in Scraping or Adding queue
         for queue_name in ["Scraping", "Adding"]:
             for item in queue_manager.queues[queue_name].get_contents():
@@ -49,17 +53,23 @@ class WantedQueue:
                     logging.info(f"Item {item_identifier} is not released yet. Moving to Unreleased state.")
                     items_to_unreleased.append(item)
                 else:
+                    # Check airtime offset
+                    if current_time < airtime_cutoff:
+                        logging.debug(f"Current time {current_time} is before the airtime offset {airtime_cutoff}. Deferring scraping for {item_identifier}.")
+                        continue
+                    
                     # Check if we've reached the scraping cap
                     if len(queue_manager.queues["Scraping"].get_contents()) + len(items_to_move) >= get_setting("Queue", "scraping_cap", 5):
                         logging.debug(f"Scraping cap reached. Keeping {item_identifier} in Wanted queue.")
                         break  # Exit the loop as we've reached the cap
+                    
                     # Check if we're already processing an item from this season
                     if item['type'] == 'episode':
                         season_key = (item['imdb_id'], item['season_number'], item['version'])
                         if season_key in seasons_in_queues:
                             logging.debug(f"Already processing an item from {item_identifier}. Keeping in Wanted queue.")
                             continue
-                    logging.info(f"Item {item_identifier} has been released. Marking for move to Scraping.")
+                    logging.info(f"Item {item_identifier} has been released and meets airtime offset. Marking for move to Scraping.")
                     items_to_move.append(item)
                     if item['type'] == 'episode':
                         seasons_in_queues.add(season_key)
