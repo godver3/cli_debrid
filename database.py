@@ -210,7 +210,7 @@ def is_metadata_stale(metadata_date_str):
     
     return (datetime.now() - metadata_date) > timedelta(days=7)
 
-def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
+def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str, bool]):
     conn = get_db_connection()
     try:
         items_added = 0
@@ -228,26 +228,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                 items_skipped += 1
                 continue
 
-            versions = item.get('versions', {'Default': True})
             normalized_title = normalize_string(item.get('title', 'Unknown'))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
-
-            # Check if an "unknown" version is already collected
-            if item_type == 'movie':
-                unknown_collected = conn.execute('''
-                    SELECT id FROM media_items
-                    WHERE imdb_id = ? AND type = 'movie' AND version = 'unknown' AND state = 'Collected'
-                ''', (item['imdb_id'],)).fetchone()
-            else:
-                unknown_collected = conn.execute('''
-                    SELECT id FROM media_items
-                    WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND version = 'unknown' AND state = 'Collected'
-                ''', (item['imdb_id'], item['season_number'], item['episode_number'])).fetchone()
-
-            if unknown_collected:
-                logging.debug(f"Skipping item with collected unknown version: {normalized_title}")
-                items_skipped += 1
-                continue
 
             for version, enabled in versions.items():
                 if not enabled:
@@ -408,21 +390,18 @@ def add_collected_items(media_items_batch, recent=False):
     try:
         processed_items = set()
 
-        # Get all existing items from the database
-        existing_items = conn.execute('SELECT id, imdb_id, type, season_number, episode_number, state, version, filled_by_title FROM media_items').fetchall()
+        existing_items = conn.execute('SELECT id, imdb_id, type, season_number, episode_number, state, version, filled_by_file FROM media_items').fetchall()
         existing_ids = {}
         for row in map(row_to_dict, existing_items):
             if row['type'] == 'movie':
                 key = (row['imdb_id'], 'movie', row['version'])
             else:
                 key = (row['imdb_id'], 'episode', row['season_number'], row['episode_number'], row['version'])
-            existing_ids[key] = (row['id'], row['state'], row['filled_by_title'])
+            existing_ids[key] = (row['id'], row['state'], row['filled_by_file'])
 
-        # Get all versions from settings
         scraping_versions = get_setting('Scraping', 'versions', {})
         versions = list(scraping_versions.keys())
 
-        # Process incoming items
         for item in media_items_batch:
             if not item.get('imdb_id'):
                 logging.warning(f"Skipping item without valid IMDb ID: {item.get('title', 'Unknown')}")
@@ -431,7 +410,7 @@ def add_collected_items(media_items_batch, recent=False):
             normalized_title = normalize_string(item.get('title', 'Unknown'))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
-            plex_folder = os.path.basename(os.path.dirname(item.get('location', '')))
+            plex_filename = os.path.basename(item.get('location', ''))
 
             item_found = False
             for version in versions:
@@ -442,36 +421,28 @@ def add_collected_items(media_items_batch, recent=False):
 
                 if item_key in existing_ids:
                     item_found = True
-                    item_id, current_state, filled_by_title = existing_ids[item_key]
+                    item_id, current_state, filled_by_file = existing_ids[item_key]
 
                     logging.debug(f"Comparing existing item in DB with Plex item:")
                     logging.debug(f"  DB Item: {normalized_title} (ID: {item_id}, State: {current_state}, Version: {version})")
-                    logging.debug(f"  DB Filled By Title: {filled_by_title}")
-                    logging.debug(f"  Plex Folder: {plex_folder}")
+                    logging.debug(f"  DB Filled By File: {filled_by_file}")
+                    logging.debug(f"  Plex Filename: {plex_filename}")
 
-                    if filled_by_title and plex_folder:
-                        match_ratio = fuzz.ratio(filled_by_title.lower(), plex_folder.lower())
+                    if filled_by_file and plex_filename:
+                        match_ratio = fuzz.ratio(filled_by_file.lower(), plex_filename.lower())
                         logging.debug(f"  Fuzzy match ratio: {match_ratio}%")
 
-                        if match_ratio >= 75:  # You can adjust this threshold
-                            logging.debug(f"  Match found: DB Filled By Title matches Plex Folder (Fuzzy match: {match_ratio}%)")
+                        if match_ratio >= 90:  # You can adjust this threshold
+                            logging.debug(f"  Match found: DB Filled By File matches Plex Filename (Fuzzy match: {match_ratio}%)")
 
-                            # Update to 'Collected' only if it's not already 'Collected'
                             if current_state != 'Collected':
-                                conn.execute('''
-                                    UPDATE media_items
-                                    SET state = ?, last_updated = ?
-                                    WHERE id = ?
-                                ''', ('Collected', datetime.now(), item_id))
+                                update_media_item_state(item_id, 'Collected')
                                 logging.debug(f"Updating item in DB to Collected: {normalized_title} (Version: {version})")
                         else:
-                            logging.debug(f"  No match: DB Filled By Title does not match Plex Folder (Fuzzy match: {match_ratio}%)")
+                            logging.debug(f"  No match: DB Filled By File does not match Plex Filename (Fuzzy match: {match_ratio}%)")
                     elif current_state == 'Collected':
-                        # If it's already 'Collected' but doesn't have a filled_by_title, keep it as 'Collected'
                         logging.debug(f"Item already Collected, keeping state: {normalized_title} (Version: {version})")
                     else:
-                        # If there's no filled_by_title and it's not already 'Collected', we can't compare
-                        # but we also don't want to change its state
                         logging.debug(f"Cannot compare item, keeping current state: {normalized_title} (Version: {version})")
 
                     processed_items.add(item_id)
@@ -652,6 +623,7 @@ def verify_database():
     conn.close()
     
     add_hybrid_flag_column()
+    add_filled_by_file_column()
 
     logging.info("Database verification complete.")
 
@@ -711,19 +683,39 @@ def purge_database(content_type=None, state=None):
         conn.close()
     create_tables()
 
-def update_media_item_state(item_id, state, filled_by_title=None, filled_by_magnet=None, scrape_results=None, hybrid_flag=None):
+def update_media_item_state(item_id, state, **kwargs):
     conn = get_db_connection()
     try:
-        scrape_results_str = json.dumps(scrape_results) if scrape_results else None
-        conn.execute('''
+        # Prepare the base query
+        query = '''
             UPDATE media_items
-            SET state = ?, filled_by_title = ?, filled_by_magnet = ?, scrape_results = ?, last_updated = ?, hybrid_flag = ?
-            WHERE id = ?
-        ''', (state, filled_by_title, filled_by_magnet, scrape_results_str, datetime.now(), hybrid_flag, item_id))
-        conn.commit()
-        logging.debug(f"Updated media item (ID: {item_id}) state to {state}, filled by to {filled_by_magnet}, hybrid_flag to {hybrid_flag}")
+            SET state = ?, last_updated = ?
+        '''
+        params = [state, datetime.now()]
 
-        # If the state is changing to 'Scraping', add the item to the Upgrading database
+        # Add optional fields to the query if they are provided
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'scrape_results', 'hybrid_flag']
+        for field in optional_fields:
+            if field in kwargs:
+                query += f", {field} = ?"
+                value = kwargs[field]
+                if field == 'scrape_results':
+                    value = json.dumps(value) if value else None
+                params.append(value)
+
+        # Complete the query
+        query += " WHERE id = ?"
+        params.append(item_id)
+
+        # Execute the query
+        conn.execute(query, params)
+        conn.commit()
+
+        logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
+        for field in optional_fields:
+            if field in kwargs:
+                logging.debug(f"  {field}: {kwargs[field]}")
+
         if state == 'Scraping':
             item = get_media_item_by_id(item_id)
             if item:
@@ -858,5 +850,19 @@ def add_hybrid_flag_column():
             logging.error(f"Error adding hybrid_flag column: {str(e)}")
     except Exception as e:
         logging.error(f"Unexpected error adding hybrid_flag column: {str(e)}")
+    finally:
+        conn.close()
+
+def add_filled_by_file_column():
+    conn = get_db_connection()
+    try:
+        conn.execute('ALTER TABLE media_items ADD COLUMN filled_by_file TEXT')
+        conn.commit()
+        logging.info("Successfully added filled_by_file column to media_items table.")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            logging.info("filled_by_file column already exists in media_items table.")
+        else:
+            logging.error(f"Error adding filled_by_file column: {str(e)}")
     finally:
         conn.close()

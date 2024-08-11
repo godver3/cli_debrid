@@ -10,12 +10,13 @@ class ContentManager:
         self.main_loop = main_loop
         self.content_sources = self.load_content_sources()
         self.content_source_types = {
-            'MDBList': ['enabled', 'urls', 'versions'],
-            'Collected': ['enabled', 'versions'],
-            'Trakt Watchlist': ['enabled', 'versions'],
-            'Trakt Lists': ['enabled', 'trakt_lists', 'versions'],
-            'Overseerr': ['enabled', 'url', 'api_key', 'versions']
+            'MDBList': ['enabled', 'urls', 'versions', 'display_name'],
+            'Collected': ['enabled', 'versions', 'display_name'],
+            'Trakt Watchlist': ['enabled', 'versions', 'display_name'],
+            'Trakt Lists': ['enabled', 'trakt_lists', 'versions', 'display_name'],
+            'Overseerr': ['enabled', 'url', 'api_key', 'versions', 'display_name']
         }
+        self.single_instance_sources = ['Collected', 'Trakt Watchlist', 'Overseerr']
         self.back_callback = None
 
     def load_content_sources(self):
@@ -48,15 +49,81 @@ class ContentManager:
         return {}
 
     def add_content_source(self, source_type):
+        if source_type in self.single_instance_sources:
+            existing_source = self.get_existing_source(source_type)
+            if existing_source:
+                logging.warning(f"A {source_type} source already exists. Only one instance is allowed.")
+                return None
+
         index = 1
         while f"{source_type}_{index}" in self.content_sources:
             index += 1
         new_source = {setting: '' for setting in self.content_source_types[source_type]}
         new_source['enabled'] = False  # Set enabled to False by default
         new_source['versions'] = {'Default': True}  # Set Default version
+        new_source['display_name'] = f"{source_type} {index}"  # Set default display name
         self.content_sources[f"{source_type}_{index}"] = new_source
         self.save_content_sources()
         return f"{source_type}_{index}"
+
+    def create_content_source_item(self, source_id, source_data):
+        enabled = source_data.get('enabled', False)
+        enabled_text = "Enabled" if enabled else "Disabled"
+        display_name = source_data.get('display_name', source_id)
+        return urwid.Columns([
+            ('weight', 4, urwid.Text(f"{display_name} ({enabled_text})")),
+            ('weight', 2, urwid.AttrMap(urwid.Button("Edit", on_press=self.edit_content_source, user_data=source_id), None, focus_map='reversed')),
+            ('weight', 2, urwid.AttrMap(urwid.Button("Rename", on_press=self.rename_content_source, user_data=source_id), None, focus_map='reversed')),
+            ('weight', 2, urwid.AttrMap(urwid.Button("Remove", on_press=self.remove_content_source_ui, user_data=source_id), None, focus_map='reversed'))
+        ])
+
+    def rename_content_source(self, button, source_id):
+        source_data = self.get_content_source(source_id)
+        current_name = source_data.get('display_name', source_id)
+        
+        def rename_done(edit, new_name):
+            if new_name:
+                source_data['display_name'] = new_name
+                self.update_content_source(source_id, 'display_name', new_name)
+                self.show_content_sources_menu(self.back_callback)
+            else:
+                self.show_error("Display name cannot be empty")
+
+        rename_edit = urwid.Edit("New name: ", current_name)
+        rename_button = urwid.Button("OK", on_press=lambda button: rename_done(rename_edit, rename_edit.edit_text))
+        cancel_button = urwid.Button("Cancel", on_press=lambda button: self.show_content_sources_menu(self.back_callback))
+        
+        rename_menu = urwid.ListBox(urwid.SimpleFocusListWalker([
+            urwid.Text(f"Rename {current_name}"),
+            urwid.Divider(),
+            rename_edit,
+            urwid.Divider(),
+            rename_button,
+            cancel_button
+        ]))
+        
+        self.main_loop.widget = urwid.Frame(rename_menu)
+
+    def get_existing_source(self, source_type):
+        return next((source_id for source_id in self.content_sources if source_id.startswith(source_type)), None)
+
+    def show_add_new_content_source_menu(self, button):
+        menu = [urwid.Text("Select Content Source Type"), urwid.Divider()]
+        for source_type in self.content_source_types.keys():
+            if source_type in self.single_instance_sources and self.get_existing_source(source_type):
+                menu.append(urwid.Text(f"{source_type} (Already exists)"))
+            else:
+                menu.append(urwid.AttrMap(urwid.Button(source_type, on_press=self.create_new_content_source, user_data=source_type), None, focus_map='reversed'))
+        menu.append(urwid.AttrMap(urwid.Button("Back", on_press=self.return_to_content_sources_menu), None, focus_map='reversed'))
+        list_box = urwid.ListBox(urwid.SimpleFocusListWalker(menu))
+        self.main_loop.widget = urwid.Frame(list_box)
+
+    def create_new_content_source(self, button, source_type):
+        new_source_id = self.add_content_source(source_type)
+        if new_source_id:
+            self.edit_content_source(None, new_source_id)
+        else:
+            self.show_error(f"Cannot create another {source_type} source. Only one instance is allowed.")
 
     def update_content_source(self, source_id, key, value):
         if source_id in self.content_sources:
@@ -94,34 +161,15 @@ class ContentManager:
         list_box = urwid.ListBox(urwid.SimpleFocusListWalker(content_menu))
         self.main_loop.widget = urwid.Frame(list_box, footer=urwid.Text("Use arrow keys to navigate, Enter to select"))
 
-    def create_content_source_item(self, source_id, source_data):
-        enabled = source_data.get('enabled', False)
-        enabled_text = "Enabled" if enabled else "Disabled"
-        return urwid.Columns([
-            ('weight', 4, urwid.Text(f"{source_id} ({enabled_text})")),
-            ('weight', 2, urwid.AttrMap(urwid.Button("Edit", on_press=self.edit_content_source, user_data=source_id), None, focus_map='reversed')),
-            ('weight', 2, urwid.AttrMap(urwid.Button("Remove", on_press=self.remove_content_source_ui, user_data=source_id), None, focus_map='reversed'))
-        ])
-
-    def show_add_new_content_source_menu(self, button):
-        menu = [urwid.Text("Select Content Source Type"), urwid.Divider()]
-        for source_type in self.content_source_types.keys():
-            menu.append(urwid.AttrMap(urwid.Button(source_type, on_press=self.create_new_content_source, user_data=source_type), None, focus_map='reversed'))
-        menu.append(urwid.AttrMap(urwid.Button("Back", on_press=self.return_to_content_sources_menu), None, focus_map='reversed'))
-        list_box = urwid.ListBox(urwid.SimpleFocusListWalker(menu))
-        self.main_loop.widget = urwid.Frame(list_box)
-
-    def create_new_content_source(self, button, source_type):
-        new_source_id = self.add_content_source(source_type)
-        self.edit_content_source(None, new_source_id)
-
     def edit_content_source(self, button, source_id):
         source_data = self.get_content_source(source_id)
         source_type = source_id.split('_')[0]
-        menu = [urwid.Text(f"Editing {source_id}"), urwid.Divider()]
+        menu = [urwid.Text(f"Editing {source_data.get('display_name', source_id)}"), urwid.Divider()]
         
         self.edit_widgets = {}
         for key in self.content_source_types[source_type]:
+            if key == 'display_name':
+                continue  # Skip the display_name field
             value = source_data.get(key, '')
             if key == 'enabled':
                 checkbox = urwid.CheckBox(f"Enabled", state=value, on_state_change=self.on_content_source_checkbox_change, user_data=(source_id, key))
