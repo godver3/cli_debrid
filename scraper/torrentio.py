@@ -8,7 +8,7 @@ from settings import load_config
 DEFAULT_OPTS = "sort=qualitysize|qualityfilter=480p,scr,cam"
 TORRENTIO_BASE_URL = "https://torrentio.strem.fun"
 
-def scrape_torrentio(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_torrentio(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
     all_results = []
     config = load_config()
     torrentio_instances = config.get('Scrapers', {})

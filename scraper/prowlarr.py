@@ -6,18 +6,12 @@ from metadata.metadata import get_year_from_imdb_id
 from settings import load_config
 from urllib.parse import quote
 
-def scrape_prowlarr(imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_prowlarr(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
     all_results = []
     config = load_config()
     prowlarr_instances = config.get('Scrapers', {})
     
     logging.debug(f"Prowlarr settings: {prowlarr_instances}")
-
-    title = get_title_by_imdb_id(imdb_id)
-    year = get_year_from_imdb_id(imdb_id)
-    if not title or not year:
-        logging.error(f"Failed to get title or year for IMDB ID: {imdb_id}")
-        return []
 
     for instance, settings in prowlarr_instances.items():
         if instance.startswith('Prowlarr'):
