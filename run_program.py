@@ -158,9 +158,9 @@ class ProgramRunner:
                         item['versions'] = versions
 
                 add_wanted_items(all_items)
-                logging.info(f"Added {len(all_items)} wanted items from {source_id}")
+                logging.info(f"Added {len(all_items)} wanted items from {source}")
         else:
-            logging.warning(f"No wanted content retrieved from {source_id}")
+            logging.warning(f"No wanted content retrieved from {source}")
 
     def task_refresh_release_dates(self):
         refresh_release_dates()
