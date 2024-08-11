@@ -48,7 +48,7 @@ class ProgramRunner:
         
         # Add default intervals for each content source type
         default_intervals = {
-            'Overseerr': 900,
+            'Overseerr': 30,
             'MDBList': 900,
             'Collected': 86400,
             'Trakt Watchlist': 900,
@@ -158,12 +158,21 @@ class ProgramRunner:
 
         if wanted_content:
             total_items = 0
-            for items, item_versions in wanted_content:
-                processed_items = process_metadata(items)
+            if isinstance(wanted_content, list) and all(isinstance(item, tuple) for item in wanted_content):
+                # New format: list of tuples
+                for items, item_versions in wanted_content:
+                    processed_items = process_metadata(items)
+                    if processed_items:
+                        all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                        add_wanted_items(all_items, item_versions)
+                        total_items += len(all_items)
+            else:
+                # Old format: just a list of items
+                processed_items = process_metadata(wanted_content)
                 if processed_items:
                     all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                    add_wanted_items(all_items, item_versions)
-                    total_items += len(all_items)
+                    add_wanted_items(all_items, versions)
+                    total_items = len(all_items)
             
             logging.info(f"Added {total_items} wanted items from {source}")
         else:
