@@ -217,10 +217,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
         items_updated = 0
         items_skipped = 0
 
-        # Get all versions from settings
-        scraping_versions = get_setting('Scraping', 'versions', {})
-        versions = list(scraping_versions.keys())
-
         for item in media_items_batch:
             if not item.get('imdb_id'):
                 logging.warning(f"Skipping item without valid IMDb ID: {item.get('title', 'Unknown')}")
@@ -232,6 +228,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                 items_skipped += 1
                 continue
 
+            versions = item.get('versions', {'Default': True})
             normalized_title = normalize_string(item.get('title', 'Unknown'))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
@@ -252,7 +249,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
                 items_skipped += 1
                 continue
 
-            for version in versions:
+            for version, enabled in versions.items():
+                if not enabled:
+                    continue
+
                 # Check if item exists for this version
                 if item_type == 'movie':
                     existing_item = conn.execute('''
@@ -311,6 +311,94 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]]):
         logging.debug(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
     except Exception as e:
         logging.error(f"Error adding wanted items: {str(e)}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+def get_versions_for_item(item_id):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT version FROM media_items
+            WHERE id = ?
+        ''', (item_id,))
+        versions = [row['version'] for row in cursor.fetchall()]
+        return versions
+    except Exception as e:
+        logging.error(f"Error retrieving versions for item ID {item_id}: {str(e)}")
+        return []
+    finally:
+        conn.close()
+
+def update_item_versions(item_id, versions):
+    conn = get_db_connection()
+    try:
+        # First, remove all existing versions for this item
+        conn.execute('''
+            DELETE FROM media_items
+            WHERE id = ?
+        ''', (item_id,))
+
+        # Then, insert new records for each version
+        item_data = get_media_item_by_id(item_id)
+        if item_data:
+            for version in versions:
+                if item_data['type'] == 'movie':
+                    conn.execute('''
+                        INSERT INTO media_items
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        item_data['imdb_id'], item_data['tmdb_id'], item_data['title'], item_data['year'],
+                        item_data['release_date'], item_data['state'], 'movie', datetime.now(), version
+                    ))
+                else:
+                    conn.execute('''
+                        INSERT INTO media_items
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        item_data['imdb_id'], item_data['tmdb_id'], item_data['title'], item_data['year'],
+                        item_data['release_date'], item_data['state'], 'episode',
+                        item_data['season_number'], item_data['episode_number'], item_data['episode_title'],
+                        datetime.now(), version
+                    ))
+        
+        conn.commit()
+        logging.debug(f"Updated versions for item ID {item_id}: {versions}")
+    except Exception as e:
+        logging.error(f"Error updating versions for item ID {item_id}: {str(e)}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+def get_all_items_for_content_source(source_type):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT * FROM media_items
+            WHERE source = ?
+        ''', (source_type,))
+        items = [dict(row) for row in cursor.fetchall()]
+        return items
+    except Exception as e:
+        logging.error(f"Error retrieving items for content source {source_type}: {str(e)}")
+        return []
+    finally:
+        conn.close()
+
+def update_content_source_for_item(item_id, source_type):
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET source = ?, last_updated = ?
+            WHERE id = ?
+        ''', (source_type, datetime.now(), item_id))
+        conn.commit()
+        logging.debug(f"Updated content source for item ID {item_id} to {source_type}")
+    except Exception as e:
+        logging.error(f"Error updating content source for item ID {item_id}: {str(e)}")
         conn.rollback()
     finally:
         conn.close()
@@ -506,6 +594,40 @@ def get_media_item_status(imdb_id=None, tmdb_id=None, title=None, year=None, sea
         return "Missing"
     finally:
         conn.close()
+        
+def get_media_item_presence(imdb_id=None, tmdb_id=None):
+    conn = get_db_connection()
+    try:
+        # Determine the query and parameters based on provided IDs
+        if imdb_id is not None:
+            id_field = 'imdb_id'
+            id_value = imdb_id
+        elif tmdb_id is not None:
+            id_field = 'tmdb_id'
+            id_value = tmdb_id
+        else:
+            raise ValueError("Either imdb_id or tmdb_id must be provided.")
+
+        # Check for a matching item in the database
+        query = f'''
+            SELECT state FROM media_items
+            WHERE {id_field} = ?
+        '''
+        params = (id_value,)
+
+        cursor = conn.execute(query, params)
+        result = cursor.fetchone()
+
+        return result['state'] if result else "Missing"
+    except ValueError as ve:
+        logging.error(f"Invalid input: {ve}")
+        return "Missing"
+    except Exception as e:
+        logging.error(f"Error retrieving media item status: {e}")
+        return "Missing"
+    finally:
+        conn.close()
+
         
 # Modify the create_database function to include creating the upgrading table
 def create_database():

@@ -2,12 +2,12 @@ import logging
 import time
 from queue_manager import QueueManager
 from initialization import initialize
-from settings import get_setting
+from settings import get_setting, get_all_settings
 from web_server import start_server, update_stats, app
 from utilities.plex_functions import get_collected_from_plex
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
-from content_checkers.trakt import get_wanted_from_trakt
+from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
 from metadata.metadata import process_metadata, refresh_release_dates
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
@@ -29,27 +29,41 @@ class ProgramRunner:
             'unreleased': 3600,
             'blacklisted': 3600,
             'task_plex_full_scan': 3600,
-            'task_overseerr_wanted': 900,
-            'task_mdb_list_wanted': 900,
             'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
-            'task_collected_wanted': 86400,
-            'task_trakt_wanted': 900,
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
         
         self.enabled_tasks = {
             'wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted',
-            'task_plex_full_scan', 'task_overseerr_wanted', 'task_debug_log', 'task_refresh_release_dates',
+            'task_plex_full_scan', 'task_debug_log', 'task_refresh_release_dates',
         }
         
-        if get_setting('MDBList', 'urls', ''):
-            self.enabled_tasks.add('task_mdb_list_wanted')
-        if get_setting('Collected Content Source', 'enabled', ''):
-            self.enabled_tasks.add('task_collected_wanted')
-        if get_setting('Trakt', 'user_watchlist_enabled', '') or get_setting('Trakt', 'trakt_lists', ''):
-            self.enabled_tasks.add('task_trakt_wanted')
+        self.content_sources = self.load_content_sources()
+
+    def load_content_sources(self):
+        settings = get_all_settings()
+        content_sources = settings.get('Content Sources', {})
+        
+        # Add default intervals for each content source type
+        default_intervals = {
+            'Overseerr': 900,
+            'MDBList': 900,
+            'Collected': 86400,
+            'Trakt Watchlist': 900,
+            'Trakt Lists': 900
+        }
+        
+        for source, data in content_sources.items():
+            source_type = source.split('_')[0]
+            data['interval'] = default_intervals.get(source_type, 3600)
+            task_name = f'task_{source}_wanted'
+            self.task_intervals[task_name] = data['interval']
+            if data.get('enabled', False):
+                self.enabled_tasks.add(task_name)
+
+        return content_sources
 
     def should_run_task(self, task_name):
         if task_name not in self.enabled_tasks:
@@ -69,18 +83,16 @@ class ProgramRunner:
 
         if self.should_run_task('task_plex_full_scan'):
             self.task_plex_full_scan()
-        if self.should_run_task('task_overseerr_wanted'):
-            self.task_overseerr_wanted()
-        if self.should_run_task('task_mdb_list_wanted'):
-            self.task_mdb_list_wanted()
         if self.should_run_task('task_refresh_release_dates'):
             self.task_refresh_release_dates()
-        if self.should_run_task('task_collected_wanted'):
-            self.task_collected_wanted()
-        if self.should_run_task('task_trakt_wanted'):
-            self.task_trakt_wanted()
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
+
+        # Process content source tasks
+        for source, data in self.content_sources.items():
+            task_name = f'task_{source}_wanted'
+            if self.should_run_task(task_name):
+                self.process_content_source(source, data)
 
     def safe_process_queue(self, queue_name: str):
         try:
@@ -113,33 +125,30 @@ class ProgramRunner:
         if collected_content:
             add_collected_items(collected_content['movies'] + collected_content['episodes'])
 
-    def task_overseerr_wanted(self):
-        wanted_content = get_wanted_from_overseerr()
-        if wanted_content:
-            wanted_content_processed = process_metadata(wanted_content)
-            if wanted_content_processed:
-                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+    def process_content_source(self, source, data):
+        source_type = source.split('_')[0]
+        versions = data.get('versions', {})
 
-    def task_mdb_list_wanted(self):
-        wanted_content = get_wanted_from_mdblists()
-        if wanted_content:
-            wanted_content_processed = process_metadata(wanted_content)
-            if wanted_content_processed:
-                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+        if not versions:
+            logging.warning(f"No versions specified for {source}. Skipping.")
+            return
 
-    def task_collected_wanted(self):
-        wanted_content = get_wanted_from_collected()
-        if wanted_content:
-            wanted_content_processed = process_metadata(wanted_content)
-            if wanted_content_processed:
-                add_wanted_items(wanted_content_processed['episodes'])
+        wanted_content = None
+        if source_type == 'Overseerr':
+            wanted_content = get_wanted_from_overseerr()
+        elif source_type == 'MDBList':
+            wanted_content = get_wanted_from_mdblists()
+        elif source_type == 'Collected':
+            wanted_content = get_wanted_from_collected()
+        elif source_type == 'Trakt Watchlist':
+            wanted_content = get_wanted_from_trakt_watchlist()
+        elif source_type == 'Trakt Lists':
+            wanted_content = get_wanted_from_trakt_lists()
 
-    def task_trakt_wanted(self):
-        wanted_content = get_wanted_from_trakt()
         if wanted_content:
             wanted_content_processed = process_metadata(wanted_content)
             if wanted_content_processed:
-                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+                add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'], versions)
 
     def task_refresh_release_dates(self):
         refresh_release_dates()
@@ -201,7 +210,11 @@ def process_overseerr_webhook(data):
     wanted_content = [wanted_item]
     wanted_content_processed = process_metadata(wanted_content)
     if wanted_content_processed:
-        add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'])
+        # Get the versions for Overseerr from settings
+        overseerr_settings = next((data for source, data in ProgramRunner().content_sources.items() if source.startswith('Overseerr')), {})
+        versions = overseerr_settings.get('versions', {})
+        
+        add_wanted_items(wanted_content_processed['movies'] + wanted_content_processed['episodes'], versions)
         logging.info(f"Processed and added wanted item: {wanted_item}")
 
 @app.route('/webhook', methods=['POST'])
