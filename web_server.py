@@ -11,6 +11,9 @@ from web_scraper import web_scrape, process_media_selection, process_torrent_sel
 from debrid.real_debrid import add_to_real_debrid
 import re
 from datetime import datetime
+import sqlite3
+from database import get_db_connection
+import string
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -42,6 +45,68 @@ def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
 @app.route('/')
 def index():
     return redirect(url_for('statistics'))
+
+@app.route('/database', methods=['GET', 'POST'])
+def database():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Get all column names
+    cursor.execute("PRAGMA table_info(media_items)")
+    all_columns = [column[1] for column in cursor.fetchall()]
+
+    # Get or set selected columns
+    if request.method == 'POST':
+        selected_columns = request.form.getlist('columns')
+        session['selected_columns'] = selected_columns
+    else:
+        selected_columns = session.get('selected_columns', all_columns[:10])  # Default to first 10 columns
+
+    # Pagination
+    page = request.args.get('page', 1, type=int)
+    per_page = 100  # Number of items per page
+
+    # Get filter and sort parameters
+    filter_column = request.args.get('filter_column', '')
+    filter_value = request.args.get('filter_value', '')
+    sort_column = request.args.get('sort_column', 'id')  # Default sort by id
+    sort_order = request.args.get('sort_order', 'asc')
+
+    # Construct the SQL query
+    query = f"SELECT {', '.join(selected_columns)} FROM media_items"
+    count_query = "SELECT COUNT(*) FROM media_items"
+    params = []
+
+    if filter_column and filter_value:
+        where_clause = f" WHERE {filter_column} LIKE ?"
+        query += where_clause
+        count_query += where_clause
+        params.append(f"%{filter_value}%")
+
+    query += f" ORDER BY {sort_column} {sort_order}"
+    query += f" LIMIT {per_page} OFFSET {(page - 1) * per_page}"
+
+    # Execute the queries
+    cursor.execute(count_query, params)
+    total_items = cursor.fetchone()[0]
+
+    cursor.execute(query, params)
+    items = [dict(zip(selected_columns, row)) for row in cursor.fetchall()]
+
+    conn.close()
+
+    total_pages = (total_items + per_page - 1) // per_page
+
+    return render_template('database.html', 
+                           all_columns=all_columns,
+                           selected_columns=selected_columns,
+                           items=items,
+                           filter_column=filter_column,
+                           filter_value=filter_value,
+                           sort_column=sort_column,
+                           sort_order=sort_order,
+                           page=page,
+                           total_pages=total_pages)
 
 @app.route('/add_to_real_debrid', methods=['POST'])
 def add_torrent_to_real_debrid():

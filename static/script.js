@@ -80,43 +80,103 @@ function updateQueueContents() {
             let queueContents = document.getElementById('queue-contents');
             if (queueContents) {
                 queueContents.innerHTML = '';
-                for (let [queueName, items] of Object.entries(data)) {
-                    let queueDiv = document.createElement('div');
-                    queueDiv.className = 'queue';
-                    let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
-                    queueDiv.innerHTML = `
-                        <div class="queue-title" onclick="toggleQueue(this)">
-                            <span>${queueName}</span>
-                            <span class="queue-count">${items.length} items</span>
-                        </div>
-                        <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
-                            ${items.map(item => `
-                                <div class="item">
-                                    ${item.title} (${item.year}) - Version: ${item.version || 'Unknown'}
-                                    ${item.type === 'episode' ? ` S${item.season_number}E${item.episode_number}` : ''}
-                                    ${queueName === 'Unreleased' ? ` - Release Date: ${item.release_date}` : ''}
-                                    ${queueName === 'Blacklisted' ? ` - Reason: ${item.blacklist_reason || 'N/A'}` : ''}
-                                    ${queueName === 'Upgrading' ? `
-                                        - Current Quality: ${item.current_quality || 'N/A'}
-                                        - Target Quality: ${item.target_quality || 'N/A'}
-                                        - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
-                                        - Upgrades Found: ${item.upgrades_found || 0}
-                                    ` : ''}
-                                    ${queueName === 'Checking' ? `
-                                        - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
-                                    ` : ''}
-                                    ${queueName === 'Sleeping' ? `
-                                        - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}
-                                    ` : ''}
-                                </div>
-                            `).join('')}
-                        </div>
-                    `;
-                    queueContents.appendChild(queueDiv);
-                }
+                const queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted'];
+                
+                queueOrder.forEach(queueName => {
+                    if (data[queueName] && data[queueName].length > 0) {
+                        let queueDiv = document.createElement('div');
+                        queueDiv.className = 'queue';
+                        let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
+                        
+                        queueDiv.innerHTML = `
+                            <div class="queue-title" onclick="toggleQueue(this)">
+                                <span>${queueName}</span>
+                                <span class="queue-count">${data[queueName].length} items</span>
+                            </div>
+                            <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
+                                ${queueName === 'Blacklisted' ? generateConsolidatedItems(data[queueName], 'Blacklisted') :
+                                  queueName === 'Unreleased' ? generateConsolidatedItems(data[queueName], 'Unreleased') :
+                                  generateRegularItems(queueName, data[queueName])}
+                            </div>
+                        `;
+                        queueContents.appendChild(queueDiv);
+                    }
+                });
             }
         })
         .catch(error => console.error('Error fetching queue contents:', error));
+}
+
+function generateConsolidatedItems(items, queueName) {
+    let consolidatedItems = {};
+    items.forEach(item => {
+        let key = `${item.title}_${item.year}`;
+        if (!consolidatedItems[key]) {
+            consolidatedItems[key] = {
+                title: item.title,
+                year: item.year,
+                versions: new Set(),
+                seasons: new Set(),
+                release_date: item.release_date
+            };
+        }
+        consolidatedItems[key].versions.add(item.version);
+        if (item.type === 'episode') {
+            consolidatedItems[key].seasons.add(item.season_number);
+        }
+    });
+
+    return Object.values(consolidatedItems).map(item => `
+        <div class="item">
+            ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
+            ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
+            ${queueName === 'Unreleased' ? ` - Release Date: ${item.release_date}` : ''}
+        </div>
+    `).join('');
+}
+
+function generateRegularItems(queueName, items) {
+    return items.map(item => `
+        <div class="item">
+            ${item.title} (${item.year}) - Version: ${item.version || 'Unknown'}
+            ${item.type === 'episode' ? ` S${item.season_number}E${item.episode_number}` : ''}
+            ${queueName === 'Upgrading' ? `
+                - Current Quality: ${item.current_quality || 'N/A'}
+                - Target Quality: ${item.target_quality || 'N/A'}
+                - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
+                - Upgrades Found: ${item.upgrades_found || 0}
+            ` : ''}
+            ${queueName === 'Sleeping' ? `
+                - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}
+            ` : ''}
+        </div>
+    `).join('');
+}
+
+function generateBlacklistedItems(items) {
+    let consolidatedItems = {};
+    items.forEach(item => {
+        let key = `${item.title}_${item.year}`;
+        if (!consolidatedItems[key]) {
+            consolidatedItems[key] = {
+                title: item.title,
+                year: item.year,
+                versions: new Set(),
+                seasons: new Set()
+            };
+        }
+        consolidatedItems[key].versions.add(item.version);
+        if (item.type === 'episode') {
+            consolidatedItems[key].seasons.add(item.season_number);
+        }
+    });
+
+    return Object.values(consolidatedItems).map(item => `
+        <div class="item">
+            ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
+            ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
+        </div>
+    `).join('');
 }
 
 function refreshCurrentPage() {
@@ -265,12 +325,49 @@ document.addEventListener('DOMContentLoaded', function() {
     // Set up auto-refresh
     setInterval(refreshCurrentPage, 5000);  // Refresh every 5 seconds
 
-
     // Add event listener for search form
     const searchForm = document.getElementById('search-form');
     if (searchForm) {
         searchForm.addEventListener('submit', searchMedia);
     }
+
+    // Database-specific functionality
+    const columnForm = document.getElementById('column-form');
+    const filterForm = document.getElementById('filter-form');
+
+    if (columnForm) {
+        columnForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(columnForm);
+            fetch('/database', {
+                method: 'POST',
+                body: formData
+            }).then(() => {
+                window.location.reload();
+            });
+        });
+    }
+
+    if (filterForm) {
+        filterForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(filterForm);
+            const params = new URLSearchParams(formData);
+            window.location.href = '/database?' + params.toString();
+        });
+    }
+
+    // Handle alphabetical pagination
+    const paginationLinks = document.querySelectorAll('.pagination a');
+    paginationLinks.forEach(link => {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            const letter = this.textContent;
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('letter', letter);
+            window.location.href = currentUrl.toString();
+        });
+    });
 
     // Initial refresh
     refreshCurrentPage();

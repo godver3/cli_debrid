@@ -10,6 +10,9 @@ from manual_blacklist import is_blacklisted
 from upgrading_db import add_to_upgrading, remove_from_upgrading, create_upgrading_table
 from settings import get_setting
 from fuzzywuzzy import fuzz
+from functools import wraps
+import random
+import time
 
 def get_db_connection():
     db_path = os.path.join('db_content', 'media_items.db')
@@ -25,6 +28,26 @@ def normalize_string(input_str):
 
 def row_to_dict(row: Row) -> Dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            attempt = 0
+            while attempt < max_attempts:
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e) and attempt < max_attempts - 1:
+                        attempt += 1
+                        wait_time = initial_wait * (backoff_factor ** attempt) + random.uniform(0, 0.1)
+                        logging.warning(f"Database locked. Retrying in {wait_time:.2f} seconds... (Attempt {attempt + 1}/{max_attempts})")
+                        time.sleep(wait_time)
+                    else:
+                        raise
+            raise Exception(f"Failed to execute {func.__name__} after {max_attempts} attempts due to database locks")
+        return wrapper
+    return decorator
 
 def migrate_media_items_table():
     conn = get_db_connection()
@@ -249,7 +272,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
 
                 if existing_item:
                     # Item exists, check if we need to update
-                    if existing_item['state'] != 'Collected':
+                    if existing_item['state'] == 'Blacklisted':
+                        logging.debug(f"Skipping update for blacklisted item: {normalized_title} (Version: {version})")
+                        items_skipped += 1
+                    elif existing_item['state'] != 'Collected':
                         if existing_item['release_date'] != item.get('release_date'):
                             conn.execute('''
                                 UPDATE media_items
@@ -265,6 +291,17 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                         logging.debug(f"Skipping update for collected item: {normalized_title} (Version: {version})")
                         items_skipped += 1
                 else:
+                    # Check if a blacklisted item exists with the same IMDB ID
+                    blacklisted_item = conn.execute('''
+                        SELECT id FROM media_items
+                        WHERE imdb_id = ? AND state = 'Blacklisted'
+                    ''', (item['imdb_id'],)).fetchone()
+
+                    if blacklisted_item:
+                        logging.debug(f"Skipping insertion for blacklisted item: {normalized_title} (Version: {version})")
+                        items_skipped += 1
+                        continue
+
                     # Insert new item
                     if item_type == 'movie':
                         conn.execute('''
@@ -385,6 +422,7 @@ def update_content_source_for_item(item_id, source_type):
     finally:
         conn.close()
 
+@retry_on_db_lock()
 def add_collected_items(media_items_batch, recent=False):
     conn = get_db_connection()
     try:
@@ -507,20 +545,21 @@ def add_collected_items(media_items_batch, recent=False):
                 item_info = conn.execute('SELECT title, state, version FROM media_items WHERE id = ?', (item_id,)).fetchone()
                 if item_info:
                     title, state, version = item_info
-                    if state != 'Collected':
+                    if state not in ['Collected', 'Blacklisted']:
                         conn.execute('UPDATE media_items SET state = ?, last_updated = ? WHERE id = ?', ('Wanted', datetime.now(), item_id))
-                        logging.debug(f"Moving non-Collected item back to Wanted state: ID {item_id}, {title} (Version: {version})")
+                        logging.debug(f"Moving non-Collected/non-Blacklisted item back to Wanted state: ID {item_id}, {title} (Version: {version})")
                     else:
-                        logging.debug(f"Keeping Collected item in DB: ID {item_id}, {title} (Version: {version})")
+                        logging.debug(f"Keeping {state} item in DB: ID {item_id}, {title} (Version: {version})")
 
         conn.commit()
         logging.debug(f"Collected items processed and database updated. Total items: {len(media_items_batch)}, Processed: {len(processed_items)}")
     except Exception as e:
         logging.error(f"Error adding collected items: {str(e)}", exc_info=True)
         conn.rollback()
+        raise
     finally:
         conn.close()
-
+        
 def get_media_item_by_id(item_id):
     conn = get_db_connection()
     try:
@@ -683,6 +722,7 @@ def purge_database(content_type=None, state=None):
         conn.close()
     create_tables()
 
+@retry_on_db_lock()
 def update_media_item_state(item_id, state, **kwargs):
     conn = get_db_connection()
     try:
@@ -722,6 +762,7 @@ def update_media_item_state(item_id, state, **kwargs):
                 add_to_upgrading(item)
     except Exception as e:
         logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
+        raise
     finally:
         conn.close()
 

@@ -12,28 +12,36 @@
                 <span class="queue-count">{{ queue_contents[queue_name]|length }} items</span>
             </div>
             <div class="queue-items">
-            {% for item in queue_contents[queue_name] %}
-            <div class="item">
-                {{ item.title }} ({{ item.year }}) - Version: {{ item.version }}
-                {% if item.type == 'episode' %}
-                    S{{ item.season_number }}E{{ item.episode_number }}
-                {% endif %}
-                {% if queue_name == 'Unreleased' %}
-                    - Release Date: {{ item.release_date }}
-                {% elif queue_name == 'Blacklisted' %}
-                    - Reason: {{ item.blacklist_reason }}
-                {% elif queue_name == 'Upgrading' %}
-                    - Current Quality: {{ item.current_quality }}
-                    - Target Quality: {{ item.target_quality }}
-                    - Time Added: {{ item.time_added|datetime }}
-                    - Upgrades Found: {{ item.upgrades_found }}
-                {% elif queue_name == 'Checking' %}
-                    - Time Added: {{ item.time_added|datetime }}
-                {% elif queue_name == 'Sleeping' %}
-                    - Wake Count: {{ item.wake_count }}
-                {% endif %}
-            </div>
-            {% endfor %}
+            {% if queue_name in ['Blacklisted', 'Unreleased'] %}
+                {% for item in queue_contents[queue_name]|groupby('title') %}
+                <div class="item">
+                    {{ item.grouper }} ({{ item.list[0].year }}) - Version(s): {{ item.list|map(attribute='version')|join(', ') }}
+                    {% if item.list[0].type == 'episode' %}
+                        - Season(s): {{ item.list|map(attribute='season_number')|unique|join(', ') }}
+                    {% endif %}
+                    {% if queue_name == 'Unreleased' %}
+                        - Release Date: {{ item.list[0].release_date }}
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                {% for item in queue_contents[queue_name] %}
+                <div class="item">
+                    {{ item.title }} ({{ item.year }}) - Version: {{ item.version }}
+                    {% if item.type == 'episode' %}
+                        S{{ item.season_number }}E{{ item.episode_number }}
+                    {% endif %}
+                    {% if queue_name == 'Upgrading' %}
+                        - Current Quality: {{ item.current_quality }}
+                        - Target Quality: {{ item.target_quality }}
+                        - Time Added: {{ item.time_added|datetime }}
+                        - Upgrades Found: {{ item.upgrades_found }}
+                    {% elif queue_name == 'Sleeping' %}
+                        - Wake Count: {{ item.wake_count }}
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% endif %}
             </div>
         </div>
         {% endif %}

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Database{% endblock %}
+{% block content %}
+<div class="container">
+    <h2>Database Content</h2>
+    <div id="column-selector">
+        <h3>Select Columns to Display:</h3>
+        <form id="column-form">
+            {% for column in all_columns %}
+            <label>
+                <input type="checkbox" name="columns" value="{{ column }}" {% if column in selected_columns %}checked{% endif %}>
+                {{ column }}
+            </label>
+            {% endfor %}
+            <button type="submit">Update View</button>
+        </form>
+    </div>
+    <div id="filter-sort">
+        <h3>Filter and Sort:</h3>
+        <form id="filter-form">
+            <label for="filter-column">Filter Column:</label>
+            <select id="filter-column" name="filter_column">
+                <option value="">None</option>
+                {% for column in selected_columns %}
+                <option value="{{ column }}" {% if column == filter_column %}selected{% endif %}>{{ column }}</option>
+                {% endfor %}
+            </select>
+            <label for="filter-value">Filter Value:</label>
+            <input type="text" id="filter-value" name="filter_value" value="{{ filter_value }}">
+            <label for="sort-column">Sort Column:</label>
+            <select id="sort-column" name="sort_column">
+                <option value="">None</option>
+                {% for column in selected_columns %}
+                <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
+                {% endfor %}
+            </select>
+            <label for="sort-order">Sort Order:</label>
+            <select id="sort-order" name="sort_order">
+                <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
+                <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
+            </select>
+            <button type="submit">Apply</button>
+        </form>
+    </div>
+    <div class="pagination">
+        {% for letter in alphabet %}
+        <a href="{{ url_for('database', letter=letter, filter_column=filter_column, filter_value=filter_value, sort_column=sort_column, sort_order=sort_order) }}" 
+           {% if letter == current_letter %}class="active"{% endif %}>
+            {{ letter }}
+        </a>
+        {% endfor %}
+    </div>
+    <div class="table-container">
+        <table id="database-table">
+            <thead>
+                <tr>
+                    {% for column in selected_columns %}
+                    <th>{{ column }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    {% for column in selected_columns %}
+                    <td><div class="cell-content">{{ item[column] }}</div></td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

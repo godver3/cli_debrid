@@ -12,6 +12,7 @@ from metadata.metadata import process_metadata, refresh_release_dates
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
 from flask import request, jsonify
+from not_wanted_magnets import task_purge_not_wanted_magnets_file
 import traceback
 
 queue_logger = logging.getLogger('queue_logger')
@@ -31,6 +32,7 @@ class ProgramRunner:
             'task_plex_full_scan': 3600,
             'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
+            'task_purge_not_wanted_magnets_file': 604800,
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -180,6 +182,9 @@ class ProgramRunner:
 
     def task_refresh_release_dates(self):
         refresh_release_dates()
+        
+    def task_refresh_release_dates(self):
+        task_purge_not_wanted_magnets_file()
 
     def task_debug_log(self):
         current_time = time.time()
