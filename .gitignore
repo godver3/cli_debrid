@@ -68,3 +68,11 @@ old_functions.txt
 scraper_framework.py
 upgrading_simulation.py
 sampling.sh
+bk*
+dev-update.sh
+helper*
+sampling.sh
+test.py
+utilities/nohup.out
+flask_session
+
