@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, redirect, url_for, request, session
+from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory
 from flask_session import Session
 import threading
 import time
@@ -45,6 +45,16 @@ def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
 @app.route('/')
 def index():
     return redirect(url_for('statistics'))
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'static'),
+                               'favicon.ico', mimetype='image/vnd.microsoft.icon')
+
+@app.route('/manifest.json')
+def manifest():
+    return send_from_directory(os.path.join(app.root_path, 'static'),
+                               'site.webmanifest', mimetype='application/json')
 
 @app.route('/database', methods=['GET', 'POST'])
 def database():

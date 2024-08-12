@@ -5,10 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>cli_debrid - {% block title %}{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    
+    <!-- Standard favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='icon-16x16.png') }}">
+    
+    <!-- Apple Touch Icon (for iOS devices) -->
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+    
+    <!-- Android Chrome -->
+    <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
+    
+    <!-- Microsoft Tiles -->
+    <meta name="msapplication-TileColor" content="#007bff">
+    <meta name="msapplication-TileImage" content="{{ url_for('static', filename='mstile-144x144.png') }}">
+    
+    <!-- Safari Pinned Tab -->
+    <link rel="mask-icon" href="{{ url_for('static', filename='safari-pinned-tab.svg') }}" color="#007bff">
+    
+    <!-- Theme Color for Mobile Browsers -->
+    <meta name="theme-color" content="#007bff">
 </head>
 <body>
     <header>
-        <h1>cli_debrid</h1>
+        <div class="header-content">
+            <img src="{{ url_for('static', filename='icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
+            <h1>cli_debrid</h1>
+        </div>
         <nav>
             <ul>
                 <li><a href="{{ url_for('statistics') }}">Statistics</a></li>
