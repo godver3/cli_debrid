@@ -166,3 +166,69 @@ main {
 .dark-mode .submit-button:hover {
     background-color: #003d82;
 }
+
+.table-container {
+    width: 100%;
+    overflow-x: auto;
+}
+
+#database-table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+}
+
+#database-table th, #database-table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+#database-table th {
+    background-color: #f2f2f2;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.dark-mode #database-table th {
+    background-color: #606060;
+}
+
+.cell-content {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#column-selector, #filter-sort {
+    margin-bottom: 20px;
+}
+
+#column-selector label, #filter-sort label {
+    margin-right: 10px;
+}
+
+.pagination {
+    margin: 20px 0;
+    text-align: center;
+}
+
+.pagination a {
+    display: inline-block;
+    padding: 5px 10px;
+    margin: 0 2px;
+    border: 1px solid #ddd;
+    text-decoration: none;
+    color: #333;
+}
+
+.pagination a.active {
+    background-color: #4CAF50;
+    color: white;
+    border-color: #4CAF50;
+}
+
+.pagination a:hover:not(.active) {
+    background-color: #ddd;
+}

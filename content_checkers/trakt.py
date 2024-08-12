@@ -210,15 +210,18 @@ def get_wanted_from_trakt_watchlist() -> List[Dict[str, Any]]:
     return filter_and_log_items(all_wanted_items)
 
 def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    # Check if the URL exclusively contains 'asc'
+    if trakt_list_url.strip().lower() == 'asc':
+        logging.info("Ignoring 'asc' URL")
+        return []
+
     logging.info("Preparing to make Trakt API call for lists")
     access_token = ensure_trakt_auth()
     if access_token is None:
         logging.error("Failed to obtain a valid Trakt access token")
         raise Exception("Failed to obtain a valid Trakt access token")
     logging.info("Successfully obtained valid access token")
-
     all_wanted_items = []
-
     logging.info(f"Processing Trakt list: {trakt_list_url}")
     
     list_info = parse_trakt_list_url(trakt_list_url)
@@ -229,9 +232,7 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
         logging.debug(f"List items fetched: {len(items)}")
         processed_items = process_trakt_items(items)
         all_wanted_items.append((processed_items, versions))
-
     logging.info(f"Retrieved items from Trakt list")
-
     return filter_and_log_items(all_wanted_items)
     
 if __name__ == "__main__":

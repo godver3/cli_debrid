@@ -137,12 +137,16 @@ class ScrapingQueue:
             logging.warning(f"No results found even after individual episode scraping for {item_identifier}.")
 
         return individual_results
-        
+     
     def handle_no_results(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
-        if item['type'] == 'episode' and self.is_item_old(item):
-            logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
-            queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
+        if self.is_item_old(item):
+            if item['type'] == 'episode':
+                logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
+                queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
+            elif item['type'] == 'movie':
+                logging.info(f"No results found for old movie {item_identifier}. Blacklisting item.")
+                queue_manager.move_to_blacklisted(item, "Scraping")
         else:
             logging.warning(f"No results found for {item_identifier}. Moving to Sleeping queue.")
             queue_manager.move_to_sleeping(item, "Scraping")
@@ -153,7 +157,19 @@ class ScrapingQueue:
             return True
         try:
             release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
-            return (datetime.now().date() - release_date).days > 7
+            days_since_release = (datetime.now().date() - release_date).days
+            
+            # Define thresholds for considering items as old
+            movie_threshold = 30  # Consider movies old after 30 days
+            episode_threshold = 7  # Consider episodes old after 7 days
+            
+            if item['type'] == 'movie':
+                return days_since_release > movie_threshold
+            elif item['type'] == 'episode':
+                return days_since_release > episode_threshold
+            else:
+                logging.warning(f"Unknown item type: {item['type']}. Considering it as old.")
+                return True
         except ValueError as e:
             logging.error(f"Error parsing release date for item {self.generate_identifier(item)}: {str(e)}")
             return True  # Consider items with unparseable dates as old
