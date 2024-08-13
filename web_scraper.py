@@ -3,7 +3,8 @@ from typing import Dict, Any, List, Tuple, Optional
 from settings import get_setting
 import requests
 from scraper.scraper import scrape
-from debrid.real_debrid import extract_hash_from_magnet, add_to_real_debrid
+from debrid.real_debrid import extract_hash_from_magnet, add_to_real_debrid, is_cached_on_rd
+from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
 
@@ -125,7 +126,17 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         if isinstance(result, dict):
             magnet_link = result.get('magnet')
             if magnet_link:
-                result['hash'] = extract_hash_from_magnet(magnet_link)
+                if 'magnet:?xt=urn:btih:' in magnet_link:
+                    magnet_hash = extract_hash_from_magnet(magnet_link)
+                else:
+                    adding_queue = AddingQueue()
+                    magnet_hash = adding_queue.download_and_extract_hash(magnet_link)
+                cache_status = is_cached_on_rd(magnet_hash)
+                if cache_status.get(magnet_hash, False):
+                    result['cached'] = 'RD'
+                else:
+                    result['cached'] = ''
+                result['hash'] = magnet_hash
                 processed_results.append(result)
 
     return processed_results
