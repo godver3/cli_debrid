@@ -17,6 +17,7 @@ import time
 def get_db_connection():
     db_path = os.path.join('db_content', 'media_items.db')
     conn = sqlite3.connect(db_path)
+    conn.execute('PRAGMA journal_mode=WAL')  # Enable WAL mode
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -432,7 +433,11 @@ def update_content_source_for_item(item_id, source_type):
 def add_collected_items(media_items_batch, recent=False):
     conn = get_db_connection()
     try:
+        conn.execute('BEGIN TRANSACTION')
+        
         processed_items = set()
+        updates = []
+        inserts = []
 
         existing_items = conn.execute('SELECT id, imdb_id, type, season_number, episode_number, state, version, filled_by_file FROM media_items').fetchall()
         existing_ids = {}
@@ -467,100 +472,118 @@ def add_collected_items(media_items_batch, recent=False):
                     item_found = True
                     item_id, current_state, filled_by_file = existing_ids[item_key]
 
-                    logging.debug(f"Comparing existing item in DB with Plex item:")
-                    logging.debug(f"  DB Item: {normalized_title} (ID: {item_id}, State: {current_state}, Version: {version})")
-                    logging.debug(f"  DB Filled By File: {filled_by_file}")
-                    logging.debug(f"  Plex Filename: {plex_filename}")
-
                     if filled_by_file and plex_filename:
                         match_ratio = fuzz.ratio(filled_by_file.lower(), plex_filename.lower())
-                        logging.debug(f"  Fuzzy match ratio: {match_ratio}%")
-
-                        if match_ratio >= 90:  # You can adjust this threshold
-                            logging.debug(f"  Match found: DB Filled By File matches Plex Filename (Fuzzy match: {match_ratio}%)")
-
-                            if current_state != 'Collected':
-                                update_media_item_state(item_id, 'Collected')
-                                logging.debug(f"Updating item in DB to Collected: {normalized_title} (Version: {version})")
-                        else:
-                            logging.debug(f"  No match: DB Filled By File does not match Plex Filename (Fuzzy match: {match_ratio}%)")
-                    elif current_state == 'Collected':
-                        logging.debug(f"Item already Collected, keeping state: {normalized_title} (Version: {version})")
-                    else:
-                        logging.debug(f"Cannot compare item, keeping current state: {normalized_title} (Version: {version})")
-
+                        if match_ratio >= 90 and current_state != 'Collected':
+                            updates.append((item_id, 'Collected', datetime.now()))
+                            logging.debug(f"Queuing update for item in DB to Collected: {normalized_title} (Version: {version})")
+                    
                     processed_items.add(item_id)
 
             if not item_found:
-                # Check if the item already exists with 'unknown' version
                 if item_type == 'movie':
-                    cursor = conn.execute('''
-                        SELECT id FROM media_items
-                        WHERE imdb_id = ? AND type = 'movie' AND version = 'unknown'
-                    ''', (item['imdb_id'],))
+                    inserts.append((
+                        item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
+                        item.get('release_date'), 'Collected', 'movie',
+                        datetime.now(), datetime.now(), 'unknown'
+                    ))
                 else:
-                    cursor = conn.execute('''
-                        SELECT id FROM media_items
-                        WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND version = 'unknown'
-                    ''', (item['imdb_id'], item['season_number'], item['episode_number']))
+                    inserts.append((
+                        item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
+                        item.get('release_date'), 'Collected', 'episode',
+                        item['season_number'], item['episode_number'], item.get('episode_title', ''),
+                        datetime.now(), datetime.now(), 'unknown'
+                    ))
 
-                existing_item = cursor.fetchone()
+        # Perform batch updates
+        if updates:
+            conn.executemany('''
+                UPDATE media_items
+                SET state = ?, last_updated = ?
+                WHERE id = ?
+            ''', updates)
 
-                if existing_item:
-                    # Update existing item
-                    item_id = existing_item[0]
-                    conn.execute('''
-                        UPDATE media_items
-                        SET state = ?, last_updated = ?
-                        WHERE id = ?
-                    ''', ('Collected', datetime.now(), item_id))
-                    logging.debug(f"Updating existing item to Collected: {normalized_title}")
-                else:
-                    # Insert new item
-                    if item_type == 'movie':
-                        cursor = conn.execute('''
-                            INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version)
-                            VALUES (?,?,?,?,?,?,?,?,?,?)
-                        ''', (
-                            item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                            item.get('release_date'), 'Collected', 'movie',
-                            datetime.now(), datetime.now(), 'unknown'
-                        ))
-                        logging.info(f"Adding new movie to DB as Collected: {normalized_title}")
-                    else:
-                        cursor = conn.execute('''
-                            INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        ''', (
-                            item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                            item.get('release_date'), 'Collected', 'episode',
-                            item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), datetime.now(), 'unknown'
-                        ))
-                        logging.info(f"Adding new episode to DB as Collected: {normalized_title} S{item['season_number']}E{item['episode_number']}")
-                
-                new_item_id = cursor.lastrowid
-                processed_items.add(new_item_id)
+        # Perform batch inserts
+        if inserts:
+            conn.executemany('''
+                INSERT INTO media_items
+                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+            ''', [insert for insert in inserts if len(insert) == 10])  # Movies
+            
+            conn.executemany('''
+                INSERT INTO media_items
+                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', [insert for insert in inserts if len(insert) == 13])  # Episodes
 
-        # Remove items not in the batch if not recent
+        # Handle items not in the batch if not recent
         if not recent:
             items_to_check = set(id for id, _, _ in existing_ids.values()) - processed_items
-            for item_id in items_to_check:
-                item_info = conn.execute('SELECT title, state, version FROM media_items WHERE id = ?', (item_id,)).fetchone()
-                if item_info:
-                    title, state, version = item_info
-                    if state not in ['Collected', 'Blacklisted']:
-                        conn.execute('UPDATE media_items SET state = ?, last_updated = ? WHERE id = ?', ('Wanted', datetime.now(), item_id))
-                        logging.debug(f"Moving non-Collected/non-Blacklisted item back to Wanted state: ID {item_id}, {title} (Version: {version})")
-                    else:
-                        logging.debug(f"Keeping {state} item in DB: ID {item_id}, {title} (Version: {version})")
+            to_wanted = [(datetime.now(), item_id) for item_id in items_to_check 
+                         if conn.execute('SELECT state FROM media_items WHERE id = ?', (item_id,)).fetchone()[0] 
+                         not in ['Collected', 'Blacklisted']]
+            
+            if to_wanted:
+                conn.executemany('''
+                    UPDATE media_items 
+                    SET state = 'Wanted', last_updated = ? 
+                    WHERE id = ?
+                ''', to_wanted)
 
         conn.commit()
         logging.debug(f"Collected items processed and database updated. Total items: {len(media_items_batch)}, Processed: {len(processed_items)}")
     except Exception as e:
         logging.error(f"Error adding collected items: {str(e)}", exc_info=True)
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+        
+@retry_on_db_lock()
+def update_media_item_state(item_id, state, **kwargs):
+    conn = get_db_connection()
+    try:
+        conn.execute('BEGIN TRANSACTION')
+        
+        # Prepare the base query
+        query = '''
+            UPDATE media_items
+            SET state = ?, last_updated = ?
+        '''
+        params = [state, datetime.now()]
+
+        # Add optional fields to the query if they are provided
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'scrape_results', 'hybrid_flag']
+        for field in optional_fields:
+            if field in kwargs:
+                query += f", {field} = ?"
+                value = kwargs[field]
+                if field == 'scrape_results':
+                    value = json.dumps(value) if value else None
+                params.append(value)
+
+        # Complete the query
+        query += " WHERE id = ?"
+        params.append(item_id)
+
+        # Execute the query
+        conn.execute(query, params)
+
+        if state == 'Scraping':
+            item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+            if item:
+                add_to_upgrading(dict(item))
+
+        conn.commit()
+
+        logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
+        for field in optional_fields:
+            if field in kwargs:
+                logging.debug(f"  {field}: {kwargs[field]}")
+
+    except Exception as e:
+        logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
         conn.rollback()
         raise
     finally:
@@ -730,50 +753,6 @@ def purge_database(content_type=None, state=None):
     finally:
         conn.close()
     create_tables()
-
-@retry_on_db_lock()
-def update_media_item_state(item_id, state, **kwargs):
-    conn = get_db_connection()
-    try:
-        # Prepare the base query
-        query = '''
-            UPDATE media_items
-            SET state = ?, last_updated = ?
-        '''
-        params = [state, datetime.now()]
-
-        # Add optional fields to the query if they are provided
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'scrape_results', 'hybrid_flag']
-        for field in optional_fields:
-            if field in kwargs:
-                query += f", {field} = ?"
-                value = kwargs[field]
-                if field == 'scrape_results':
-                    value = json.dumps(value) if value else None
-                params.append(value)
-
-        # Complete the query
-        query += " WHERE id = ?"
-        params.append(item_id)
-
-        # Execute the query
-        conn.execute(query, params)
-        conn.commit()
-
-        logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
-        for field in optional_fields:
-            if field in kwargs:
-                logging.debug(f"  {field}: {kwargs[field]}")
-
-        if state == 'Scraping':
-            item = get_media_item_by_id(item_id)
-            if item:
-                add_to_upgrading(item)
-    except Exception as e:
-        logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
-        raise
-    finally:
-        conn.close()
 
 def remove_from_media_items(item_id):
     conn = get_db_connection()
