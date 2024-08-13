@@ -1,11 +1,11 @@
-name: Docker Image CI and Version Management
+name: Docker Image CI
 
 on:
   push:
     branches: [ "dev" ]
 
 jobs:
-  build-and-version:
+  build-and-push:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -13,61 +13,12 @@ jobs:
         fetch-depth: 0
         token: ${{ secrets.PAT_TOKEN }}
 
-    - name: Check commit message
-      id: check_commit
-      run: |
-        COMMIT_MESSAGE=$(git log -1 --pretty=%B)
-        echo "Last commit message: $COMMIT_MESSAGE"
-        if [[ "$COMMIT_MESSAGE" == *"!build"* ]]; then
-          echo "should_build=true" >> $GITHUB_OUTPUT
-        else
-          echo "should_build=false" >> $GITHUB_OUTPUT
-        fi
-        if [[ "$COMMIT_MESSAGE" == *"!increment"* ]]; then
-          echo "increment_type=patch" >> $GITHUB_OUTPUT
-        elif [[ "$COMMIT_MESSAGE" == *"!major_increment"* ]]; then
-          echo "increment_type=minor" >> $GITHUB_OUTPUT
-        else
-          echo "increment_type=none" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Read and update version
-      id: version
-      run: |
-        VERSION=$(cat version.txt)
-        echo "Current version: $VERSION"
-        if [[ "${{ steps.check_commit.outputs.increment_type }}" == "patch" ]]; then
-          NEW_VERSION=$(echo $VERSION | awk -F. '{$NF = $NF + 1;} 1' | sed 's/ /./g')
-        elif [[ "${{ steps.check_commit.outputs.increment_type }}" == "minor" ]]; then
-          NEW_VERSION=$(echo $VERSION | awk -F. '{$(NF-1) = $(NF-1) + 1; $NF = 0;} 1' | sed 's/ /./g')
-        else
-          NEW_VERSION=$VERSION
-        fi
-        echo "New version: $NEW_VERSION"
-        if [[ "$NEW_VERSION" != "$VERSION" ]]; then
-          echo $NEW_VERSION > version.txt
-          echo "version_changed=true" >> $GITHUB_OUTPUT
-        else
-          echo "version_changed=false" >> $GITHUB_OUTPUT
-        fi
-        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-
-    - name: Commit version update
-      if: steps.version.outputs.version_changed == 'true'
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add version.txt
-        git commit -m "Update version to ${{ steps.version.outputs.new_version }}"
-        git push
-
     - name: Build and push Docker image
-      if: steps.check_commit.outputs.should_build == 'true'
       env:
         DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
       run: |
-        docker build . --file Dockerfile --tag godver3/cli_debrid:${{ steps.version.outputs.new_version }} --tag godver3/cli_debrid:dev
+        docker build . --file Dockerfile --tag godver3/cli_debrid:latest --tag godver3/cli_debrid:dev
         echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-        docker push godver3/cli_debrid:${{ steps.version.outputs.new_version }}
+        docker push godver3/cli_debrid:latest
         docker push godver3/cli_debrid:dev
