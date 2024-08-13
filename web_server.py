@@ -193,12 +193,20 @@ def select_media():
 
         logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
 
-        torrent_results = process_media_selection(media_id, title, year, media_type, season, episode, multi, version)
-        
-        return jsonify({'torrent_results': torrent_results})
+        torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version)
+        cached_results = []
+        for result in torrent_results:
+            if cache_status[result.get('hash')]:
+                result['cached'] = 'RD'
+            else:
+                result['cached'] = ''
+            cached_results.append(result)
+
+        return jsonify({'torrent_results': cached_results})
     except Exception as e:
         logging.error(f"Error in select_media: {str(e)}")
         return jsonify({'error': 'An error occurred while selecting media'}), 500
+
 
 
 @app.route('/add_torrent', methods=['POST'])

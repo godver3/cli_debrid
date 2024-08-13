@@ -122,6 +122,8 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
 
     # Process the results
     processed_results = []
+    hashes=[]
+    cache_status = []
     for result in scrape_results:
         if isinstance(result, dict):
             magnet_link = result.get('magnet')
@@ -131,15 +133,12 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 else:
                     adding_queue = AddingQueue()
                     magnet_hash = adding_queue.download_and_extract_hash(magnet_link)
-                cache_status = is_cached_on_rd(magnet_hash)
-                if cache_status.get(magnet_hash, False):
-                    result['cached'] = 'RD'
-                else:
-                    result['cached'] = ''
+                hashes += [magnet_hash]
                 result['hash'] = magnet_hash
                 processed_results.append(result)
-
-    return processed_results
+    cache_status = is_cached_on_rd(hashes)
+    
+    return processed_results, cache_status
 
 def get_available_versions():
     scraping_versions = get_setting('Scraping', 'versions', default={})
