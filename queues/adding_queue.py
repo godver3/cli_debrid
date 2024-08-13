@@ -536,13 +536,13 @@ class AddingQueue:
             logging.error(f"Exception in process_multi_pack for {item_identifier}: {str(e)}")
             logging.exception("Traceback:")
             return False
-
+            
     def file_matches_item(self, file_path: str, item: Dict[str, Any]) -> bool:
         logging.debug(f"Checking if file {file_path} matches item {item.get('id')}")
         file_name = file_path.split('/')[-1].lower()
-
+        
         if item['type'] == 'movie':
-            # For movies, just check if the file has a common video extension
+            # For movies, check if the file has a common video extension
             common_video_extensions = ('.mkv', '.mp4', '.avi', '.mov', '.m4v', '.wmv')
             if file_name.endswith(common_video_extensions):
                 logging.debug(f"Movie file match found: {file_name}")
@@ -550,13 +550,22 @@ class AddingQueue:
             logging.debug(f"No match found for movie file: {file_name}")
             return False
         elif item['type'] == 'episode':
-            # For episodes, check for season and episode numbers
-            season_pattern = f"s{item['season_number']:02d}"
-            episode_pattern = f"e{item['episode_number']:02d}"
-            match = season_pattern in file_name and episode_pattern in file_name
-            logging.debug(f"Episode match result: {match}")
-            return match
-
+            # For episodes, use a more flexible regex pattern
+            season_number = item['season_number']
+            episode_number = item['episode_number']
+            
+            # Pattern to match various season and episode formats
+            pattern = rf's0*{season_number}e0*{episode_number}|s0*{season_number}\.?e0*{episode_number}|' \
+                      rf'season\s*0*{season_number}\s*episode\s*0*{episode_number}|' \
+                      rf'(?<!\d)0*{season_number}x0*{episode_number}(?!\d)'
+            
+            if re.search(pattern, file_name, re.IGNORECASE):
+                logging.debug(f"Episode match found: {file_name}")
+                return True
+            
+            logging.debug(f"No match found for episode file: {file_name}")
+            return False
+        
         logging.debug(f"No match found for file {file_path}")
         return False
 

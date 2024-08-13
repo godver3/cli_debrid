@@ -18,7 +18,19 @@ import traceback
 queue_logger = logging.getLogger('queue_logger')
 
 class ProgramRunner:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ProgramRunner, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
     def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+
         self.queue_manager = QueueManager()
         self.tick_counter = 0
         self.task_intervals = {
@@ -38,8 +50,16 @@ class ProgramRunner:
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
         
         self.enabled_tasks = {
-            'wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted',
-            'task_plex_full_scan', 'task_debug_log', 'task_refresh_release_dates',
+            'wanted', 
+            'scraping', 
+            'adding', 
+            'checking', 
+            'sleeping', 
+            'unreleased', 
+            'blacklisted',
+            'task_plex_full_scan', 
+            'task_debug_log', 
+            'task_refresh_release_dates',
         }
         
         self.content_sources = self.load_content_sources()
@@ -48,7 +68,6 @@ class ProgramRunner:
         settings = get_all_settings()
         content_sources = settings.get('Content Sources', {})
         
-        # Add default intervals for each content source type
         default_intervals = {
             'Overseerr': 900,
             'MDBList': 900,
@@ -58,16 +77,33 @@ class ProgramRunner:
         }
         
         for source, data in content_sources.items():
+            if isinstance(data, str):
+                data = {'enabled': data.lower() == 'true'}
+            
+            if not isinstance(data, dict):
+                logging.error(f"Unexpected data type for content source {source}: {type(data)}")
+                continue
+            
             source_type = source.split('_')[0]
-            data['interval'] = data.get('interval', default_intervals.get(source_type, 3600))
+            data['interval'] = int(data.get('interval', default_intervals.get(source_type, 90)))
             task_name = f'task_{source}_wanted'
             self.task_intervals[task_name] = data['interval']
             self.last_run_times[task_name] = self.start_time
+            
+            if isinstance(data.get('enabled'), str):
+                data['enabled'] = data['enabled'].lower() == 'true'
+            
             if data.get('enabled', False):
                 self.enabled_tasks.add(task_name)
-
+        
+        # Log the intervals only once
+        logging.info("Content source intervals:")
+        for task, interval in self.task_intervals.items():
+            if task.startswith('task_') and task.endswith('_wanted'):
+                logging.info(f"{task}: {interval} seconds")
+        
         return content_sources
-
+        
     def should_run_task(self, task_name):
         if task_name not in self.enabled_tasks:
             return False
@@ -132,19 +168,47 @@ class ProgramRunner:
         source_type = source.split('_')[0]
         versions = data.get('versions', {})
 
-        if not versions:
-            logging.warning(f"No versions specified for {source}. Skipping.")
+        logging.debug(f"Processing content source: {source} (type: {source_type})")
+
+        wanted_content = []
+        if source_type == 'Overseerr':
+            wanted_content = get_wanted_from_overseerr()
+        elif source_type == 'MDBList':
+            mdblist_urls = data.get('urls', '').split(',')
+            for mdblist_url in mdblist_urls:
+                mdblist_url = mdblist_url.strip()
+                wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
+        elif source_type == 'Trakt Watchlist':
+            wanted_content = get_wanted_from_trakt_watchlist()
+        elif source_type == 'Trakt Lists':
+            trakt_lists = data.get('trakt_lists', '').split(',')
+            for trakt_list in trakt_lists:
+                trakt_list = trakt_list.strip()
+                wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+        elif source_type == 'Collected':
+            wanted_content = get_wanted_from_collected()
+        else:
+            logging.warning(f"Unknown source type: {source_type}")
             return
 
-        wanted_content = self.get_wanted_content(source_type, data)
+        logging.debug(f"Retrieved wanted content from {source}: {len(wanted_content)} items")
 
         if wanted_content:
             total_items = 0
-            for items, item_versions in wanted_content:
-                processed_items = process_metadata(items)
+            if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
+                # Handle list of tuples
+                for items, item_versions in wanted_content:
+                    processed_items = process_metadata(items)
+                    if processed_items:
+                        all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                        add_wanted_items(all_items, item_versions or versions)
+                        total_items += len(all_items)
+            else:
+                # Handle single list of items
+                processed_items = process_metadata(wanted_content)
                 if processed_items:
                     all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                    add_wanted_items(all_items, item_versions or versions)
+                    add_wanted_items(all_items, versions)
                     total_items += len(all_items)
             
             logging.info(f"Added {total_items} wanted items from {source}")
@@ -152,20 +216,38 @@ class ProgramRunner:
             logging.warning(f"No wanted content retrieved from {source}")
 
     def get_wanted_content(self, source_type, data):
+        versions = data.get('versions', {})
+        logging.debug(f"Getting wanted content for {source_type} with versions: {versions}")
+        
         if source_type == 'Overseerr':
-            return [(get_wanted_from_overseerr(), None)]
+            content = get_wanted_from_overseerr()
+            return [(content, versions)] if content else []
         elif source_type == 'MDBList':
             mdblist_urls = data.get('urls', '').split(',')
-            return [get_wanted_from_mdblists(mdblist_url.strip(), data.get('versions', {}))
-                    for mdblist_url in mdblist_urls]
+            result = []
+            for url in mdblist_urls:
+                content = get_wanted_from_mdblists(url.strip(), versions)
+                if isinstance(content, list) and len(content) > 0 and isinstance(content[0], tuple):
+                    result.extend(content)
+                else:
+                    result.append((content, versions))
+            return result
         elif source_type == 'Collected':
-            return [(get_wanted_from_collected(), None)]
+            content = get_wanted_from_collected()
+            return [(content, versions)] if content else []
         elif source_type == 'Trakt Watchlist':
-            return [(get_wanted_from_trakt_watchlist(), None)]
+            content = get_wanted_from_trakt_watchlist()
+            return [(content, versions)] if content else []
         elif source_type == 'Trakt Lists':
             trakt_lists = data.get('trakt_lists', '').split(',')
-            return [get_wanted_from_trakt_lists(trakt_list.strip(), data.get('versions', {}))
-                    for trakt_list in trakt_lists]
+            result = []
+            for url in trakt_lists:
+                content = get_wanted_from_trakt_lists(url.strip(), versions)
+                if isinstance(content, list) and len(content) > 0 and isinstance(content[0], tuple):
+                    result.extend(content)
+                else:
+                    result.append((content, versions))
+            return result
         else:
             logging.warning(f"Unknown source type: {source_type}")
             return []
