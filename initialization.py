@@ -73,6 +73,6 @@ def initialize(skip_initial_plex_update=False):
     
     get_all_wanted_from_enabled_sources()
     
-    refresh_release_dates()
+    #refresh_release_dates()
 
     

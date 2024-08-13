@@ -42,11 +42,13 @@ class WantedQueue:
             try:
                 # Determine airtime offset based on content type
                 if item['type'] == 'movie':
-                    airtime_offset = int(get_setting("Queue", "movie_airtime_offset", 19))
+                    airtime_offset = int(get_setting("Queue", "movie_airtime_offset", "19"))
                 elif item['type'] == 'episode':
-                    airtime_offset = int(get_setting("Queue", "episode_airtime_offset", 19))
+                    airtime_offset = int(get_setting("Queue", "episode_airtime_offset", "19"))
                 else:
                     airtime_offset = 0
+
+                logging.debug(f"Processing item: {item_identifier}, Type: {item['type']}, Airtime offset: {airtime_offset}")
 
                 airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(minutes=airtime_offset)).time()
 
@@ -56,7 +58,16 @@ class WantedQueue:
                     items_to_unreleased.append(item)
                     continue
                 
-                release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+                try:
+                    release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+                except ValueError as e:
+                    logging.error(f"Error parsing release date for item {item_identifier}: {str(e)}")
+                    logging.error(f"Item details: {item}")
+                    items_to_unreleased.append(item)
+                    continue
+
+                logging.debug(f"Item: {item_identifier}, Release date: {release_date}, Current date: {current_date}")
+
                 if release_date > current_date:
                     logging.info(f"Item {item_identifier} is not released yet. Moving to Unreleased state.")
                     items_to_unreleased.append(item)
@@ -67,7 +78,10 @@ class WantedQueue:
                         continue
                     
                     # Check if we've reached the scraping cap
-                    if len(queue_manager.queues["Scraping"].get_contents()) + len(items_to_move) >= int(get_setting("Queue", "scraping_cap", 5)):
+                    scraping_cap = int(get_setting("Queue", "scraping_cap", 5))
+                    current_scraping_count = len(queue_manager.queues["Scraping"].get_contents()) + len(items_to_move)
+                    logging.debug(f"Current scraping count: {current_scraping_count}, Scraping cap: {scraping_cap}")
+                    if current_scraping_count >= scraping_cap:
                         logging.debug(f"Scraping cap reached. Keeping {item_identifier} in Wanted queue.")
                         break  # Exit the loop as we've reached the cap
                     
@@ -81,13 +95,8 @@ class WantedQueue:
                     items_to_move.append(item)
                     if item['type'] == 'episode':
                         seasons_in_queues.add(season_key)
-            except ValueError as e:
-                logging.error(f"Error processing release date for item {item_identifier}: {str(e)}")
-                logging.error(f"Item details: {item}")
-                # Move to Unreleased state if there's an error processing the date
-                items_to_unreleased.append(item)
             except Exception as e:
-                logging.error(f"Unexpected error processing item {item_identifier}: {str(e)}")
+                logging.error(f"Unexpected error processing item {item_identifier}: {str(e)}", exc_info=True)
                 logging.error(f"Item details: {item}")
                 # Move to Unreleased state if there's an unexpected error
                 items_to_unreleased.append(item)
