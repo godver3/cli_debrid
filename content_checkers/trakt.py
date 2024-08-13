@@ -132,33 +132,6 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
     return processed_items
 
-def filter_and_log_items(all_wanted_items: List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
-    filtered_items = []
-    total_items = sum(len(items) for items, _ in all_wanted_items)
-    new_items_count = 0
-
-    for items, versions in all_wanted_items:
-        new_items = []
-        for item in items:
-            imdb_id = item.get('imdb_id')
-            if imdb_id:
-                status = get_media_item_presence(imdb_id=imdb_id)
-                if status == "Missing":
-                    new_items.append(item)
-                    new_items_count += 1
-                else:
-                    logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
-            else:
-                logging.warning(f"Skipping item without IMDB ID: {item}")
-        
-        if new_items:
-            filtered_items.append((new_items, versions))
-
-    logging.info(f"Retrieved {total_items} total items from Trakt")
-    logging.info(f"After filtering, {new_items_count} new wanted items remain.")
-    logging.debug(f"Full list of new wanted items: {filtered_items}")
-    return filtered_items
-
 def ensure_trakt_auth():
     logging.info("Starting Trakt authentication check")
     
@@ -184,7 +157,7 @@ def ensure_trakt_auth():
         logging.error("Failed to refresh Trakt token: %s", str(e), exc_info=True)
         return None
 
-def get_wanted_from_trakt_watchlist() -> List[Dict[str, Any]]:
+def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.info("Preparing to make Trakt API call for watchlist")
     access_token = ensure_trakt_auth()
     if access_token is None:
@@ -207,7 +180,7 @@ def get_wanted_from_trakt_watchlist() -> List[Dict[str, Any]]:
 
     logging.info(f"Retrieved watchlist items from Trakt")
     
-    return filter_and_log_items(all_wanted_items)
+    return all_wanted_items
 
 def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     # Check if the URL exclusively contains 'asc'
@@ -221,6 +194,7 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
         logging.error("Failed to obtain a valid Trakt access token")
         raise Exception("Failed to obtain a valid Trakt access token")
     logging.info("Successfully obtained valid access token")
+    
     all_wanted_items = []
     logging.info(f"Processing Trakt list: {trakt_list_url}")
     
@@ -232,8 +206,10 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
         logging.debug(f"List items fetched: {len(items)}")
         processed_items = process_trakt_items(items)
         all_wanted_items.append((processed_items, versions))
+    
     logging.info(f"Retrieved items from Trakt list")
-    return filter_and_log_items(all_wanted_items)
+    
+    return all_wanted_items
     
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')

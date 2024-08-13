@@ -136,49 +136,39 @@ class ProgramRunner:
             logging.warning(f"No versions specified for {source}. Skipping.")
             return
 
-        wanted_content = None
-        if source_type == 'Overseerr':
-            wanted_content = get_wanted_from_overseerr()
-        elif source_type == 'MDBList':
-            mdblist_urls = data.get('urls', '').split(',')
-            wanted_content = []
-            for mdblist_url in mdblist_urls:
-                mdblist_url = mdblist_url.strip()
-                mdblist_content = get_wanted_from_mdblists(mdblist_url, versions)
-                wanted_content.extend(mdblist_content)
-        elif source_type == 'Collected':
-            wanted_content = get_wanted_from_collected()
-        elif source_type == 'Trakt Watchlist':
-            wanted_content = get_wanted_from_trakt_watchlist()
-        elif source_type == 'Trakt Lists':
-            trakt_lists = data.get('trakt_lists', '').split(',')
-            wanted_content = []
-            for trakt_list in trakt_lists:
-                trakt_list = trakt_list.strip()
-                trakt_list_content = get_wanted_from_trakt_lists(trakt_list, versions)
-                wanted_content.extend(trakt_list_content)
+        wanted_content = self.get_wanted_content(source_type, data)
 
         if wanted_content:
             total_items = 0
-            if isinstance(wanted_content, list) and all(isinstance(item, tuple) for item in wanted_content):
-                # New format: list of tuples
-                for items, item_versions in wanted_content:
-                    processed_items = process_metadata(items)
-                    if processed_items:
-                        all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                        add_wanted_items(all_items, item_versions)
-                        total_items += len(all_items)
-            else:
-                # Old format: just a list of items
-                processed_items = process_metadata(wanted_content)
+            for items, item_versions in wanted_content:
+                processed_items = process_metadata(items)
                 if processed_items:
                     all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                    add_wanted_items(all_items, versions)
-                    total_items = len(all_items)
+                    add_wanted_items(all_items, item_versions or versions)
+                    total_items += len(all_items)
             
             logging.info(f"Added {total_items} wanted items from {source}")
         else:
             logging.warning(f"No wanted content retrieved from {source}")
+
+    def get_wanted_content(self, source_type, data):
+        if source_type == 'Overseerr':
+            return [(get_wanted_from_overseerr(), None)]
+        elif source_type == 'MDBList':
+            mdblist_urls = data.get('urls', '').split(',')
+            return [get_wanted_from_mdblists(mdblist_url.strip(), data.get('versions', {}))
+                    for mdblist_url in mdblist_urls]
+        elif source_type == 'Collected':
+            return [(get_wanted_from_collected(), None)]
+        elif source_type == 'Trakt Watchlist':
+            return [(get_wanted_from_trakt_watchlist(), None)]
+        elif source_type == 'Trakt Lists':
+            trakt_lists = data.get('trakt_lists', '').split(',')
+            return [get_wanted_from_trakt_lists(trakt_list.strip(), data.get('versions', {}))
+                    for trakt_list in trakt_lists]
+        else:
+            logging.warning(f"Unknown source type: {source_type}")
+            return []
 
     def task_refresh_release_dates(self):
         refresh_release_dates()
