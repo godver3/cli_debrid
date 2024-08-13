@@ -1,7 +1,7 @@
 import logging
 import requests
 from settings import get_setting, get_all_settings
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from database import get_media_item_presence
 
 DEFAULT_TAKE = 100
@@ -70,7 +70,7 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
     logging.info(f"Fetched a total of {len(wanted_content)} wanted content items from Overseerr")
     return wanted_content
 
-def get_wanted_from_overseerr() -> List[Dict[str, Any]]:
+def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     content_sources = get_all_settings().get('Content Sources', {})
     overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
     
@@ -97,7 +97,6 @@ def get_wanted_from_overseerr() -> List[Dict[str, Any]]:
                     wanted_item = {
                         'tmdb_id': media.get('tmdbId'),
                         'media_type': media.get('mediaType'),
-                        'versions': versions  # Add versions to each wanted item
                     }
 
                     wanted_items.append(wanted_item)
@@ -126,4 +125,6 @@ def get_wanted_from_overseerr() -> List[Dict[str, Any]]:
 
     logging.info(f"After filtering, {len(new_wanted_items)} new wanted items remain.")
     logging.debug(f"Full list of new wanted items: {new_wanted_items}")
-    return new_wanted_items
+    
+    # Return a list containing a single tuple of (items, versions)
+    return [(new_wanted_items, versions)]
