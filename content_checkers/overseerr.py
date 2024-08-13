@@ -102,29 +102,11 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                     wanted_items.append(wanted_item)
                     logging.debug(f"Added wanted item: {wanted_item}")
 
-            all_wanted_items.extend(wanted_items)
+            all_wanted_items.append((wanted_items, versions))
             logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source.")
         except Exception as e:
             logging.error(f"Unexpected error while processing Overseerr source: {e}")
 
-    logging.info(f"Retrieved a total of {len(all_wanted_items)} wanted items from all Overseerr sources.")
-    logging.debug(f"Full list of wanted items: {all_wanted_items}")
+    logging.info(f"Retrieved items from {len(all_wanted_items)} Overseerr sources.")
     
-    # Final filtering step
-    new_wanted_items = []
-    for item in all_wanted_items:
-        tmdb_id = item.get('tmdb_id')
-        if tmdb_id:
-            status = get_media_item_presence(tmdb_id=tmdb_id)
-            if status == "Missing":
-                new_wanted_items.append(item)
-            else:
-                logging.debug(f"Skipping existing item with TMDB ID {tmdb_id}")
-        else:
-            logging.warning(f"Skipping item without TMDB ID: {item}")
-
-    logging.info(f"After filtering, {len(new_wanted_items)} new wanted items remain.")
-    logging.debug(f"Full list of new wanted items: {new_wanted_items}")
-    
-    # Return a list containing a single tuple of (items, versions)
-    return [(new_wanted_items, versions)]
+    return all_wanted_items

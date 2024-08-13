@@ -298,13 +298,6 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     for item in media_items:
         logging.debug(f"Processing item: {item}")
 
-        #if 'media_type' not in item:
-        #    media_type = get_media_type_if_missing(item, overseerr_url, overseerr_api_key)
-        #    if not media_type:
-        #        logging.warning(f"Could not determine media type for item: {item}")
-        #        continue
-        #    item['media_type'] = media_type
-
         if 'tmdb_id' not in item:
             tmdb_id = get_tmdb_id_if_missing(item, overseerr_url, overseerr_api_key)
             if not tmdb_id:
@@ -345,47 +338,34 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             if 'year' not in item:
                 item['year'] = get_year_if_missing(item, show_details)
 
-            if 'season_number' in item and 'episode_number' in item:
-                # Process specific episode
-                season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], item['season_number'], cookies)
-                episode = next((ep for ep in season_details.get('episodes', []) if ep['episodeNumber'] == item['episode_number']), None)
-                
-                if episode:
-                    episode_item = {
-                        'imdb_id': item['imdb_id'],
-                        'tmdb_id': item['tmdb_id'],
-                        'title': item['title'],
-                        'year': item['year'],
-                        'season_number': item['season_number'],
-                        'episode_number': item['episode_number'],
-                        'episode_title': episode.get('name', 'Unknown Episode Title'),
-                        'release_date': get_release_date(episode, 'tv'),
-                        'media_type': 'episode'
-                    }
-                    processed_items['episodes'].append(episode_item)
-                else:
-                    logging.warning(f"Could not find episode details for item: {item}")
-            else:
-                # Process all episodes for all seasons
-                for season in show_details.get('seasons', []):
-                    season_number = season.get('seasonNumber')
-                    if season_number == 0:
-                        continue  # Skip season 0
-                    
-                    season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], season_number, cookies)
-                    for episode in season_details.get('episodes', []):
-                        episode_item = {
-                            'imdb_id': item['imdb_id'],
-                            'tmdb_id': item['tmdb_id'],
-                            'title': item['title'],
-                            'year': item['year'],
-                            'season_number': season_number,
-                            'episode_number': episode.get('episodeNumber'),
-                            'episode_title': episode.get('name', 'Unknown Episode Title'),
-                            'release_date': get_release_date(episode, 'tv'),
-                            'media_type': 'episode'
-                        }
-                        processed_items['episodes'].append(episode_item)
+            # Get all season-episode counts
+            season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+
+            # Get existing episodes
+            existing_episodes = get_all_media_items(tmdb_id=item['tmdb_id'], media_type='episode')
+            existing_episode_set = set((ep['season_number'], ep['episode_number']) for ep in existing_episodes)
+
+            for season_number, episode_count in season_episode_counts.items():
+                for episode_number in range(1, episode_count + 1):
+                    if (season_number, episode_number) not in existing_episode_set:
+                        episode_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], season_number, cookies)
+                        episode = next((ep for ep in episode_details.get('episodes', []) if ep['episodeNumber'] == episode_number), None)
+                        
+                        if episode:
+                            episode_item = {
+                                'imdb_id': item['imdb_id'],
+                                'tmdb_id': item['tmdb_id'],
+                                'title': item['title'],
+                                'year': item['year'],
+                                'season_number': season_number,
+                                'episode_number': episode_number,
+                                'episode_title': episode.get('name', 'Unknown Episode Title'),
+                                'release_date': get_release_date(episode, 'tv'),
+                                'media_type': 'episode'
+                            }
+                            processed_items['episodes'].append(episode_item)
+                        else:
+                            logging.warning(f"Could not find episode details for S{season_number}E{episode_number} of show: {item['title']}")
 
         logging.debug(f"Processed item: {item}")
 

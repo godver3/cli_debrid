@@ -67,23 +67,4 @@ def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> Lis
     
     logging.info(f"Retrieved {len(processed_items)} wanted items from MDB List: {mdblist_url}")
     
-    # Final filtering step
-    filtered_items = []
-    for items, item_versions in all_wanted_items:
-        new_items = []
-        for item in items:
-            imdb_id = item.get('imdb_id')
-            if imdb_id:
-                status = get_media_item_presence(imdb_id=imdb_id)
-                if status == "Missing":
-                    new_items.append(item)
-                else:
-                    logging.debug(f"Skipping existing item with IMDB ID {imdb_id}")
-            else:
-                logging.warning(f"Skipping item without IMDB ID: {item}")
-        if new_items:
-            filtered_items.append((new_items, item_versions))
-    
-    logging.info(f"After filtering, {sum(len(items) for items, _ in filtered_items)} new wanted items remain.")
-    logging.debug(f"Full list of new wanted items: {filtered_items}")
-    return filtered_items
+    return all_wanted_items

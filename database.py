@@ -254,6 +254,17 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
             normalized_title = normalize_string(item.get('title', 'Unknown'))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
+            # Check if any version of the item is already collected
+            any_version_collected = conn.execute('''
+                SELECT id FROM media_items
+                WHERE imdb_id = ? AND state = 'Collected'
+            ''', (item['imdb_id'],)).fetchone()
+
+            if any_version_collected:
+                logging.debug(f"Skipping item as it's already collected in some version: {normalized_title}")
+                items_skipped += 1
+                continue
+
             for version, enabled in versions.items():
                 if not enabled:
                     continue
@@ -291,17 +302,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                         logging.debug(f"Skipping update for collected item: {normalized_title} (Version: {version})")
                         items_skipped += 1
                 else:
-                    # Check if a blacklisted item exists with the same IMDB ID
-                    blacklisted_item = conn.execute('''
-                        SELECT id FROM media_items
-                        WHERE imdb_id = ? AND state = 'Blacklisted'
-                    ''', (item['imdb_id'],)).fetchone()
-
-                    if blacklisted_item:
-                        logging.debug(f"Skipping insertion for blacklisted item: {normalized_title} (Version: {version})")
-                        items_skipped += 1
-                        continue
-
                     # Insert new item
                     if item_type == 'movie':
                         conn.execute('''
@@ -666,7 +666,7 @@ def verify_database():
 
     logging.info("Database verification complete.")
 
-def get_all_media_items(state=None, media_type=None):
+def get_all_media_items(state=None, media_type=None, tmdb_id=None):
     conn = get_db_connection()
     query = 'SELECT * FROM media_items WHERE 1=1'
     params = []
@@ -676,6 +676,9 @@ def get_all_media_items(state=None, media_type=None):
     if media_type:
         query += ' AND type = ?'
         params.append(media_type)
+    if tmdb_id:
+        query += ' AND tmdb_id = ?'
+        params.append(tmdb_id)
     cursor = conn.execute(query, params)
     items = cursor.fetchall()
     conn.close()
