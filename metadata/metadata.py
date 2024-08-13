@@ -298,12 +298,12 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     for item in media_items:
         logging.debug(f"Processing item: {item}")
 
-        if 'media_type' not in item:
-            media_type = get_media_type_if_missing(item, overseerr_url, overseerr_api_key)
-            if not media_type:
-                logging.warning(f"Could not determine media type for item: {item}")
-                continue
-            item['media_type'] = media_type
+        #if 'media_type' not in item:
+        #    media_type = get_media_type_if_missing(item, overseerr_url, overseerr_api_key)
+        #    if not media_type:
+        #        logging.warning(f"Could not determine media type for item: {item}")
+        #        continue
+        #    item['media_type'] = media_type
 
         if 'tmdb_id' not in item:
             tmdb_id = get_tmdb_id_if_missing(item, overseerr_url, overseerr_api_key)
