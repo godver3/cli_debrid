@@ -58,13 +58,53 @@ class ProgramRunner:
         }
         
         for source, data in content_sources.items():
+            if isinstance(data, str):
+                # If data is a string, it's likely the 'enabled' setting
+                data = {'enabled': data.lower() == 'true'}
+            
+            if not isinstance(data, dict):
+                logging.error(f"Unexpected data type for content source {source}: {type(data)}")
+                continue
+            
             source_type = source.split('_')[0]
-            data['interval'] = data.get('interval', default_intervals.get(source_type, 3600))
+            data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
             task_name = f'task_{source}_wanted'
             self.task_intervals[task_name] = data['interval']
             self.last_run_times[task_name] = self.start_time
+            
+            # Convert 'enabled' to boolean if it's a string
+            if isinstance(data.get('enabled'), str):
+                data['enabled'] = data['enabled'].lower() == 'true'
+            
             if data.get('enabled', False):
                 self.enabled_tasks.add(task_name)
+        
+        return content_sources
+        
+    def load_content_sources(self):
+        content_sources = {}
+        content_sources_config = get_setting('Content Sources', {})
+        default_intervals = {
+            'MDBList': 3600,
+            'Trakt Watchlist': 3600,
+            'Trakt Lists': 3600,
+            'Overseerr': 300
+        }
+
+        for source, data in content_sources_config.items():
+            if isinstance(data, str):
+                # If data is a string, it's likely the 'enabled' setting
+                enabled = data.lower() == 'true'
+                data = {'enabled': enabled}
+            elif not isinstance(data, dict):
+                logging.error(f"Unexpected data type for content source {source}: {type(data)}")
+                continue
+
+            source_type = source.split('_')[0]
+            data['interval'] = data.get('interval', default_intervals.get(source_type, 3600))
+            
+            if data.get('enabled', False):
+                content_sources[source] = data
 
         return content_sources
 

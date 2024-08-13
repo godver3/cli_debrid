@@ -1,21 +1,256 @@
 {% extends "base.html" %}
-
 {% block title %}Settings{% endblock %}
+
+{% macro render_settings(settings, parent_key='') %}
+    {% for key, value in settings.items() %}
+        {% set full_key = (parent_key + '.' + key) if parent_key else key %}
+        <div class="setting-group">
+            <label for="{{ full_key }}">{{ key | replace('_', ' ') | title }}:</label>
+            {% if value is mapping %}
+                <div class="nested-settings">
+                    {{ render_settings(value, full_key) }}
+                </div>
+            {% elif value is sequence and value is not string %}
+                <select multiple id="{{ full_key }}" name="{{ full_key }}">
+                    {% for item in value %}
+                        <option value="{{ item }}" selected>{{ item }}</option>
+                    {% endfor %}
+                </select>
+            {% elif value is sameas true or value is sameas false %}
+                <select id="{{ full_key }}" name="{{ full_key }}">
+                    <option value="true" {% if value %}selected{% endif %}>True</option>
+                    <option value="false" {% if not value %}selected{% endif %}>False</option>
+                </select>
+            {% elif value is number %}
+                <input type="number" id="{{ full_key }}" name="{{ full_key }}" value="{{ value }}">
+            {% else %}
+                <input type="text" id="{{ full_key }}" name="{{ full_key }}" value="{{ value }}">
+            {% endif %}
+        </div>
+    {% endfor %}
+{% endmacro %}
+
+{% macro render_content_sources(settings, parent_key) %}
+    {% for key, value in settings.items() %}
+        <div class="content-source-settings">
+            <h4>{{ key }}</h4>
+            {% for sub_key, sub_value in value.items() %}
+                <div class="setting-item">
+                    <label for="{{ parent_key }}.{{ key }}.{{ sub_key }}">{{ sub_key | replace('_', ' ') | title }}:</label>
+                    {% if sub_key == 'enabled' %}
+                        <select id="{{ parent_key }}.{{ key }}.{{ sub_key }}" name="{{ parent_key }}.{{ key }}.{{ sub_key }}">
+                            <option value="true" {% if sub_value %}selected{% endif %}>True</option>
+                            <option value="false" {% if not sub_value %}selected{% endif %}>False</option>
+                        </select>
+                    {% elif sub_key == 'versions' %}
+                        <div class="nested-versions">
+                            {% for version, version_enabled in sub_value.items() %}
+                                <div class="version-item">
+                                    <label for="{{ parent_key }}.{{ key }}.versions.{{ version }}">{{ version }}:</label>
+                                    <select id="{{ parent_key }}.{{ key }}.versions.{{ version }}" name="{{ parent_key }}.{{ key }}.versions.{{ version }}">
+                                        <option value="true" {% if version_enabled %}selected{% endif %}>True</option>
+                                        <option value="false" {% if not version_enabled %}selected{% endif %}>False</option>
+                                    </select>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <input type="text" id="{{ parent_key }}.{{ key }}.{{ sub_key }}" name="{{ parent_key }}.{{ key }}.{{ sub_key }}" value="{{ sub_value }}">
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    {% endfor %}
+{% endmacro %}
 
 {% block content %}
 <div class="container">
     <h2>Settings</h2>
-    <form method="POST">
-        {% for category, category_settings in settings.items() %}
-        <h3>{{ category }}</h3>
-        {% for key, value in category_settings.items() %}
-        <div class="form-group">
-            <label for="{{ category }}.{{ key }}">{{ key }}:</label>
-            <input type="text" id="{{ category }}.{{ key }}" name="{{ category }}.{{ key }}" value="{{ value }}">
+    
+    <div class="tabs">
+        <button class="tab-button active" data-tab="required">Required Settings</button>
+        <button class="tab-button" data-tab="scrapers">Scrapers</button>
+        <button class="tab-button" data-tab="scraping">Scraping Settings</button>
+        <button class="tab-button" data-tab="content">Content Settings</button>
+        <button class="tab-button" data-tab="additional">Additional Settings</button>
+        <button class="tab-button" data-tab="debug">Debug Settings</button>
+    </div>
+
+    <form id="settingsForm">
+        <div id="required" class="tab-content active">
+            <h3>Required Settings</h3>
+            {{ render_settings(settings.get('Plex', {}), 'Plex') }}
+            {{ render_settings(settings.get('Overseerr', {}), 'Overseerr') }}
+            {{ render_settings(settings.get('RealDebrid', {}), 'RealDebrid') }}
+            {{ render_settings(settings.get('Torrentio', {}), 'Torrentio') }}
         </div>
-        {% endfor %}
-        {% endfor %}
+
+        <div id="scrapers" class="tab-content">
+            <h3>Scrapers</h3>
+            {{ render_settings(settings.get('Scrapers', {}), 'Scrapers') }}
+        </div>
+
+        <div id="scraping" class="tab-content">
+            <h3>Scraping Settings</h3>
+            {{ render_settings(settings.get('Scraping', {}), 'Scraping') }}
+        </div>
+
+        <div id="content" class="tab-content">
+            <h3>Content Settings</h3>
+            {{ render_content_sources(settings.get('Content Sources', {}), 'Content Sources') }}
+        </div>
+
+        <div id="additional" class="tab-content">
+            <h3>Additional Settings</h3>
+            {{ render_settings(settings.get('TMDB', {}), 'TMDB') }}
+            {{ render_settings(settings.get('Queue', {}), 'Queue') }}
+            {{ render_settings(settings.get('Scraping', {}).get('Uncached Content Handling', {}), 'Scraping.Uncached Content Handling') }}
+            {{ render_settings(settings.get('Trakt', {}), 'Trakt') }}
+        </div>
+
+        <div id="debug" class="tab-content">
+            <h3>Debug Settings</h3>
+            {{ render_settings(settings.get('Logging', {}), 'Logging') }}
+            {{ render_settings(settings.get('Menu', {}), 'Menu') }}
+        </div>
+
         <button type="submit" class="submit-button">Save Settings</button>
     </form>
+    <div id="saveStatus"></div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openTab(evt, tabName) {
+    var i, tabContent, tabButtons;
+    tabContent = document.getElementsByClassName("tab-content");
+    for (i = 0; i < tabContent.length; i++) {
+        tabContent[i].style.display = "none";
+    }
+    tabButtons = document.getElementsByClassName("tab-button");
+    for (i = 0; i < tabButtons.length; i++) {
+        tabButtons[i].className = tabButtons[i].className.replace(" active", "");
+    }
+    document.getElementById(tabName).style.display = "block";
+    evt.currentTarget.className += " active";
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('settingsForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        let formData = new FormData(this);
+        let settings = {};
+
+        for (let [key, value] of formData.entries()) {
+            let keys = key.split('.');
+            let current = settings;
+            for (let i = 0; i < keys.length - 1; i++) {
+                if (!(keys[i] in current)) {
+                    current[keys[i]] = {};
+                }
+                current = current[keys[i]];
+            }
+            if (value === 'true') {
+                value = true;
+            } else if (value === 'false') {
+                value = false;
+            } else if (!isNaN(value) && value !== '') {
+                value = Number(value);
+            }
+            current[keys[keys.length - 1]] = value;
+        }
+
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(settings)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                document.getElementById('saveStatus').textContent = 'Settings saved successfully!';
+            } else {
+                document.getElementById('saveStatus').textContent = 'Error saving settings.';
+            }
+        })
+        .catch((error) => {
+            console.error('Error:', error);
+            document.getElementById('saveStatus').textContent = 'Error saving settings.';
+        });
+    });
+});
+</script>
+{% endblock %}
+
+{% block styles %}
+<style>
+    .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    .tabs {
+        overflow: hidden;
+        border: 1px solid #ccc;
+        background-color: #f1f1f1;
+    }
+    .tab-button {
+        background-color: inherit;
+        float: left;
+        border: none;
+        outline: none;
+        cursor: pointer;
+        padding: 14px 16px;
+        transition: 0.3s;
+    }
+    .tab-button:hover {
+        background-color: #ddd;
+    }
+    .tab-button.active {
+        background-color: #ccc;
+    }
+    .tab-content {
+        display: none;
+        padding: 6px 12px;
+        border: 1px solid #ccc;
+        border-top: none;
+    }
+    .tab-content.active {
+        display: block;
+    }
+    .setting-group {
+        margin-bottom: 15px;
+    }
+    .nested-settings {
+        margin-left: 20px;
+        border-left: 2px solid #ddd;
+        padding-left: 10px;
+    }
+    label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    input[type="text"], input[type="number"], select, textarea {
+        width: 100%;
+        padding: 5px;
+        margin-bottom: 5px;
+    }
+    .submit-button {
+        margin-top: 20px;
+        padding: 10px 20px;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        cursor: pointer;
+    }
+    #saveStatus {
+        margin-top: 20px;
+        font-weight: bold;
+    }
+</style>
 {% endblock %}
