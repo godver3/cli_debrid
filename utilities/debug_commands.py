@@ -446,8 +446,7 @@ def get_all_wanted_from_enabled_sources():
         wanted_content = []
         if source_type == 'Overseerr':
             overseerr_content = get_wanted_from_overseerr()
-            if overseerr_content:
-                wanted_content = [(overseerr_content, versions)]
+            wanted_content.extend(overseerr_content)
         elif source_type == 'MDBList':
             mdblist_urls = source_data.get('urls', '').split(',')
             for mdblist_url in mdblist_urls:
