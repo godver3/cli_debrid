@@ -38,7 +38,7 @@ def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, seaso
 def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int, episode: int, jackett_filter: str) -> List[Dict[str, Any]]:
     jackett_url = settings['url']
     jackett_api = settings['api']
-    enabled_indexers = settings.get('enabled_indexers', '')
+    enabled_indexers = settings.get('enabled_indexers', '').lower()
 
     if content_type.lower() == 'movie':
         params = f"{title} {year}"
