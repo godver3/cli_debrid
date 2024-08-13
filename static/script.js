@@ -302,13 +302,15 @@ function displaySearchResults(results) {
 
 function displayTorrentResults(results, title, year) {
     const resultsDiv = document.getElementById('results');
-    let html = `<h3>Torrent Results for ${title} (${year})</h3><table border="1"><thead><tr><th>Name</th><th>Size</th><th>Source</th><th>Action</th></tr></thead><tbody>`;
+    let html = `<h3>Torrent Results for ${title} (${year})</h3><table border="1"><thead><tr><th>Name</th><th>Size</th><th>Source</th><th>Cached</th><th>Score</th><th>Action</th></tr></thead><tbody>`;
     for (let torrent of results) {
         html += `
             <tr>
                 <td>${torrent.title}</td>
-                <td>${torrent.size}</td>
+                <td>${(torrent.size).toFixed(1)} GB</td>
                 <td>${torrent.source}</td>
+                <td>${torrent.cached}</td>
+                <td>${torrent.score_breakdown.total_score}</td>
                 <td>
                     <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button>
                 </td>
