@@ -255,10 +255,16 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
             # Check if any version of the item is already collected
-            any_version_collected = conn.execute('''
-                SELECT id FROM media_items
-                WHERE imdb_id = ? AND state = 'Collected'
-            ''', (item['imdb_id'],)).fetchone()
+            if item_type == 'movie':
+                any_version_collected = conn.execute('''
+                    SELECT id FROM media_items
+                    WHERE imdb_id = ? AND type = 'movie' AND state = 'Collected'
+                ''', (item['imdb_id'],)).fetchone()
+            else:
+                any_version_collected = conn.execute('''
+                    SELECT id FROM media_items
+                    WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
+                ''', (item['imdb_id'], item['season_number'], item['episode_number'])).fetchone()
 
             if any_version_collected:
                 logging.debug(f"Skipping item as it's already collected in some version: {normalized_title}")
