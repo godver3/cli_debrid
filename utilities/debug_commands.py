@@ -385,6 +385,10 @@ def get_specific_wanted_content():
     content_sources = get_all_settings().get('Content Sources', {})
     choices = [Choice(source, source) for source in content_sources.keys() if content_sources[source].get('enabled', False)]
     
+    if not choices:
+        logging.warning("No enabled content sources found. Please enable at least one content source.")
+        return
+
     selected_source = questionary.select(
         "Select a content source to get wanted content from:",
         choices=choices
@@ -393,23 +397,19 @@ def get_specific_wanted_content():
     source_data = content_sources[selected_source]
     source_type = selected_source.split('_')[0]
 
-    wanted_content = None
+    wanted_content = []
     if source_type == 'MDBList':
         mdblist_urls = source_data.get('urls', '').split(',')
         versions = source_data.get('versions', {})
-        wanted_content = []
         for mdblist_url in mdblist_urls:
             mdblist_url = mdblist_url.strip()
-            list_content = get_wanted_from_mdblists(mdblist_url, versions)
-            wanted_content.extend(list_content)
+            wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
     elif source_type == 'Trakt Lists':
         trakt_lists = source_data.get('trakt_lists', '').split(',')
         versions = source_data.get('versions', {})
-        wanted_content = []
         for trakt_list in trakt_lists:
             trakt_list = trakt_list.strip()
-            list_content = get_wanted_from_trakt_lists(trakt_list, versions)
-            wanted_content.extend(list_content)
+            wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
     elif source_type == 'Overseerr':
         wanted_content = get_wanted_from_overseerr()
     elif source_type == 'Trakt Watchlist':
@@ -445,30 +445,23 @@ def get_all_wanted_from_enabled_sources():
         
         wanted_content = []
         if source_type == 'Overseerr':
-            overseerr_content = get_wanted_from_overseerr()
-            wanted_content.extend(overseerr_content)
+            wanted_content = get_wanted_from_overseerr()
         elif source_type == 'MDBList':
             mdblist_urls = source_data.get('urls', '').split(',')
             for mdblist_url in mdblist_urls:
                 mdblist_url = mdblist_url.strip()
-                mdblist_content = get_wanted_from_mdblists(mdblist_url, versions)
-                wanted_content.extend(mdblist_content)
+                wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
         elif source_type == 'Trakt Watchlist':
             update_trakt_settings(content_sources)
-            trakt_watchlist_content = get_wanted_from_trakt_watchlist()
-            if trakt_watchlist_content:
-                wanted_content = [(trakt_watchlist_content, versions)]
+            wanted_content = get_wanted_from_trakt_watchlist()
         elif source_type == 'Trakt Lists':
             update_trakt_settings(content_sources)
             trakt_lists = source_data.get('trakt_lists', '').split(',')
             for trakt_list in trakt_lists:
                 trakt_list = trakt_list.strip()
-                trakt_list_content = get_wanted_from_trakt_lists(trakt_list, versions)
-                wanted_content.extend(trakt_list_content)
+                wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
         elif source_type == 'Collected':
-            collected_content = get_wanted_from_collected()
-            if collected_content:
-                wanted_content = [(collected_content, versions)]
+            wanted_content = get_wanted_from_collected()
 
         if wanted_content:
             total_items = 0
