@@ -85,7 +85,9 @@ class ProgramRunner:
                 continue
             
             source_type = source.split('_')[0]
-            data['interval'] = int(data.get('interval', default_intervals.get(source_type, 90)))
+
+            data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
+
             task_name = f'task_{source}_wanted'
             self.task_intervals[task_name] = data['interval']
             self.last_run_times[task_name] = self.start_time
