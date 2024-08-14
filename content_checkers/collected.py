@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any, Tuple
 from database import get_all_media_items
+from settings import get_all_settings
 
 def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     content_sources = get_all_settings().get('Content Sources', {})
