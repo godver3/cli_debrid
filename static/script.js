@@ -22,6 +22,64 @@ function loadDarkModePreference() {
     updateDarkModeIcon();
 }
 
+function updateSettings(event) {
+    event.preventDefault();
+    
+    let formData = new FormData(event.target);
+    let settings = {};
+
+    for (let [key, value] of formData.entries()) {
+        let keys = key.split('.');
+        let current = settings;
+        for (let i = 0; i < keys.length - 1; i++) {
+            if (!(keys[i] in current)) {
+                current[keys[i]] = {};
+            }
+            current = current[keys[i]];
+        }
+        if (value === 'true') {
+            value = true;
+        } else if (value === 'false') {
+            value = false;
+        } else if (!isNaN(value) && value !== '') {
+            value = Number(value);
+        }
+        current[keys[keys.length - 1]] = value;
+    }
+
+    fetch('/settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(settings)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            displaySuccess('Settings saved successfully!');
+        } else {
+            displayError('Error saving settings.');
+        }
+    })
+    .catch((error) => {
+        console.error('Error:', error);
+        displayError('Error saving settings.');
+    });
+}
+
+function displaySuccess(message) {
+    const saveStatus = document.getElementById('saveStatus');
+    saveStatus.textContent = message;
+    saveStatus.style.color = 'green';
+}
+
+function displayError(message) {
+    const saveStatus = document.getElementById('saveStatus');
+    saveStatus.textContent = message;
+    saveStatus.style.color = 'red';
+}
+
 function updateStats() {
     fetch('/api/stats')
         .then(response => response.json())
@@ -321,6 +379,26 @@ function displayTorrentResults(results, title, year) {
     resultsDiv.innerHTML = html;
 }
 
+function openTab(event, tabName) {
+    // Hide all tab contents
+    const tabContents = document.querySelectorAll('.tab-content');
+    tabContents.forEach(content => {
+        content.style.display = 'none';
+    });
+
+    // Remove 'active' class from all tab buttons
+    const tabButtons = document.querySelectorAll('.tab-button');
+    tabButtons.forEach(button => {
+        button.classList.remove('active');
+    });
+
+    // Show the selected tab content
+    document.getElementById(tabName).style.display = 'block';
+
+    // Add 'active' class to the clicked button
+    event.currentTarget.classList.add('active');
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     loadDarkModePreference();
     
@@ -368,6 +446,20 @@ document.addEventListener('DOMContentLoaded', function() {
             const currentUrl = new URL(window.location.href);
             currentUrl.searchParams.set('letter', letter);
             window.location.href = currentUrl.toString();
+        });
+    });
+
+    // Add event listener for settings form
+    const settingsForm = document.getElementById('settingsForm');
+    if (settingsForm) {
+        settingsForm.addEventListener('submit', updateSettings);
+    }
+    
+    // Add event listeners for tab buttons
+    const tabButtons = document.querySelectorAll('.tab-button');
+    tabButtons.forEach(button => {
+        button.addEventListener('click', function(event) {
+            openTab(event, this.getAttribute('data-tab'));
         });
     });
 
