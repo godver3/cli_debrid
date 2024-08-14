@@ -32,6 +32,8 @@ class ScraperTester:
             ('score_box', 'white', 'dark blue'),
         ]
         self.main_loop = None
+        self.show_filtered_out = False  # New attribute to track display mode
+        self.filtered_out_results = []  # New attribute to store filtered out results
 
     def main_view(self):
         self.results_list = self.results_view()
@@ -63,7 +65,7 @@ class ScraperTester:
         for key, (label, value) in scraping_settings.items():
             if key.startswith(f"{self.current_version}_"):
                 if key.endswith('_enable_hdr'):
-                    state = value if isinstance(value, bool) else (value.lower() == 'true' if isinstance(value, str) else False)
+                    state = value if isinstance(value, bool) else (value.lower() in ['true', '1', 'yes', 'on'] if isinstance(value, str) else False)
                     checkbox = urwid.CheckBox(label, state=state)
                     urwid.connect_signal(checkbox, 'change', self.on_checkbox_change, user_args=['Scraping', key])
                     self.settings_widgets[('Scraping', key)] = checkbox
@@ -81,7 +83,15 @@ class ScraperTester:
         widgets.append(urwid.AttrMap(urwid.Button("Refresh Results", on_press=self.refresh_results), None, focus_map='reversed'))
         widgets.append(urwid.AttrMap(urwid.Button("Quit", on_press=self.quit_program), None, focus_map='reversed'))
 
+        # Add toggle button for filtered/filtered-out results
+        toggle_button = urwid.Button("Toggle Filtered/Filtered-out Results", on_press=self.toggle_results_view)
+        widgets.append(urwid.AttrMap(toggle_button, None, focus_map='reversed'))
+
         return urwid.ListBox(urwid.SimpleFocusListWalker(widgets))
+
+    def toggle_results_view(self, button):
+        self.show_filtered_out = not self.show_filtered_out
+        self.refresh_view()
 
     def quit_program(self, button):
         raise urwid.ExitMainLoop()
@@ -95,8 +105,13 @@ class ScraperTester:
             ('weight', 15, urwid.Text("Score")),
         ]), 'header')
 
-        self.result_widgets = [urwid.AttrMap(SelectableColumns(self.format_result(result)), None, focus_map='highlight') for result in self.results]
-        listwalker = urwid.SimpleFocusListWalker([header, urwid.Divider()] + self.result_widgets)
+        results_to_display = self.filtered_out_results if self.show_filtered_out else self.results
+        self.result_widgets = [urwid.AttrMap(SelectableColumns(self.format_result(result)), None, focus_map='highlight') for result in results_to_display]
+        
+        status_text = f"Showing {'Filtered-out' if self.show_filtered_out else 'Filtered'} Results"
+        status_widget = urwid.Text(('header', status_text))
+
+        listwalker = urwid.SimpleFocusListWalker([status_widget, header, urwid.Divider()] + self.result_widgets)
         return urwid.ListBox(listwalker)
 
     def format_result(self, result: Dict[str, Any]) -> List[urwid.Widget]:
@@ -145,21 +160,40 @@ class ScraperTester:
     def refresh_results(self, button):
         logging.debug(f"Refreshing results with movie_or_episode: {self.movie_or_episode}, version: {self.current_version}")
         
-        self.results = scrape(self.imdb_id, self.tmdb_id, self.title, self.year, self.movie_or_episode, self.current_version, self.season, self.episode, self.multi)
+        scrape_results = scrape(self.imdb_id, self.tmdb_id, self.title, self.year, self.movie_or_episode, self.current_version, self.season, self.episode, self.multi)
         
-        logging.debug(f"Number of results returned: {len(self.results)}")
+        if isinstance(scrape_results, tuple) and len(scrape_results) == 2:
+            self.results, self.filtered_out_results = scrape_results
+        elif isinstance(scrape_results, list):
+            self.results = scrape_results
+            self.filtered_out_results = []
+        else:
+            logging.error(f"Unexpected return type from scrape: {type(scrape_results)}")
+            self.results = []
+            self.filtered_out_results = []
+        
+        logging.debug(f"Number of filtered results: {len(self.results)}")
+        logging.debug(f"Number of filtered out results: {len(self.filtered_out_results)}")
 
-        # Calculate scores for each result
-        for result in self.results:
-            rank_result_key(result, self.results, self.title, self.year, self.season, self.episode, self.multi, self.movie_or_episode, self.config['Scraping']['versions'][self.current_version])
-            # Ensure bitrate is calculated and stored in the result
-            if 'bitrate' not in result:
-                size_gb = parse_size(result.get('size', 0))
-                runtime = result.get('runtime', 0)
-                result['bitrate'] = calculate_bitrate(size_gb, runtime)
+        # Calculate scores and ensure bitrate for each result
+        for result_list in [self.results, self.filtered_out_results]:
+            for result in result_list:
+                # Ensure bitrate is calculated and stored in the result
+                if 'bitrate' not in result:
+                    size_gb = parse_size(result.get('size', 0))
+                    runtime = result.get('runtime', 0)
+                    if runtime > 0:
+                        result['bitrate'] = calculate_bitrate(size_gb, runtime)
+                    else:
+                        result['bitrate'] = 0  # Set a default value if we can't calculate
+                        logging.warning(f"Unable to calculate bitrate for result: {result.get('title', 'Unknown')}. Missing runtime.")
 
-        # Sort the results based on the total score
+                # Now that we ensure 'bitrate' exists, we can safely call rank_result_key
+                rank_result_key(result, self.results, self.title, self.year, self.season, self.episode, self.multi, self.movie_or_episode, self.config['Scraping']['versions'][self.current_version])
+
+        # Sort both result lists based on the total score
         self.results.sort(key=lambda x: x.get('score_breakdown', {}).get('total_score', 0), reverse=True)
+        self.filtered_out_results.sort(key=lambda x: x.get('score_breakdown', {}).get('total_score', 0), reverse=True)
 
         self.refresh_view()
 
@@ -181,7 +215,8 @@ class ScraperTester:
         focus_widget, focus_pos = self.results_list.get_focus()
         if isinstance(focus_widget, urwid.AttrMap) and isinstance(focus_widget.original_widget, SelectableColumns):
             try:
-                result = self.results[focus_pos - 2]  # Adjust for header and divider
+                results_to_use = self.filtered_out_results if self.show_filtered_out else self.results
+                result = results_to_use[focus_pos - 3]  # Adjust for status, header and divider
                 score_breakdown = result.get('score_breakdown', {})
                 
                 def format_value(v):
@@ -261,7 +296,7 @@ def run_tester():
     movie_or_episode = details['movie_or_episode']
     season = int(details['season']) if details['season'] else None
     episode = int(details['episode']) if details['episode'] else None
-    multi = details['multi'].lower() == 'true'  # Convert the 'multi' string to a boolean
+    multi = details['multi']  # Assuming 'multi' is already a boolean in the details dictionary
 
     logging.debug(f"movie_or_episode set to: {movie_or_episode}")
     logging.debug(f"multi set to: {multi}")

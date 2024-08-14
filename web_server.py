@@ -174,7 +174,7 @@ def select_media():
         media_type = request.form.get('media_type')
         season = request.form.get('season')
         episode = request.form.get('episode')
-        multi = request.form.get('multi', 'false').lower() == 'true'
+        multi = request.form.get('multi', 'false').lower() in ['true', '1', 'yes', 'on']
         version = request.form.get('version')
 
         if not version or version == 'undefined':
