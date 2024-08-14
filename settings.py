@@ -14,6 +14,7 @@ import json
 import copy
 from scraper_manager import ScraperManager
 from content_manager import ContentManager
+import ast
 
 CONFIG_FILE = './config/config.json'
 
@@ -22,10 +23,30 @@ def load_config():
         with open(CONFIG_FILE, 'r') as config_file:
             try:
                 config = json.load(config_file)
-                return deserialize_config(config)
-            except json.JSONDecodeError:
-                logging.error(f"Error decoding JSON from {CONFIG_FILE}. Using empty config.")
+                # Parse string representations in Content Sources
+                if 'Content Sources' in config:
+                    for key, value in config['Content Sources'].items():
+                        if isinstance(value, str):
+                            # Replace 'True' and 'False' with 'true' and 'false' for JSON compatibility
+                            value = value.replace('True', 'true').replace('False', 'false')
+                            config['Content Sources'][key] = json.loads(value)
+                return config
+            except json.JSONDecodeError as e:
+                logging.error(f"Error decoding JSON from {CONFIG_FILE}: {str(e)}. Using empty config.")
     return {}
+
+def parse_string_dicts(obj):
+    if isinstance(obj, dict):
+        return {k: parse_string_dicts(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [parse_string_dicts(item) for item in obj]
+    elif isinstance(obj, str):
+        try:
+            return parse_string_dicts(ast.literal_eval(obj))
+        except (ValueError, SyntaxError):
+            return obj
+    else:
+        return obj
 
 def deserialize_config(config):
     if isinstance(config, dict):
@@ -39,22 +60,21 @@ def deserialize_config(config):
         return config
 
 def save_config(config):
-    def serialize(obj):
-        if isinstance(obj, dict):
-            return {k: serialize(v) for k, v in obj.items() if not k.isdigit()}
-        elif isinstance(obj, list):
-            return [serialize(item) for item in obj]
-        elif isinstance(obj, tuple):
-            # Handle tuples (used for preferred filters)
-            return list(obj)
-        else:
-            return obj
+    # Convert Content Sources dictionaries to JSON-compatible strings
+    if 'Content Sources' in config:
+        for key, value in config['Content Sources'].items():
+            if isinstance(value, dict):
+                config['Content Sources'][key] = json.dumps(value)
 
-    serialized_config = serialize(config)
-
-    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, 'w') as config_file:
-        json.dump(serialized_config, config_file, indent=2)
+        json.dump(config, config_file, indent=2)
+
+def to_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ('true', 'yes', '1', 'on')
+    return bool(value)
 
 def validate_url(url):
     if not url:
@@ -78,7 +98,17 @@ def get_setting(section, key=None, default=None):
         if isinstance(scraper_settings, dict):
             return scraper_settings
         return default
+    
+    if section == 'Content Sources':
+        content_sources = config.get(section, {})
+        if not isinstance(content_sources, dict):
+            logging.warning(f"'Content Sources' setting is not a dictionary. Resetting to empty dict.")
+            content_sources = {}
+        return content_sources
 
+    if key is None:
+        return config.get(section, {})
+    
     value = config.get(section, {}).get(key, default)
     
     # Handle boolean values
@@ -106,10 +136,21 @@ def set_setting(section, key, value):
         elif value.lower() == 'false':
             value = False
     config[section][key] = value
+
     save_config(config)
 
 def get_all_settings():
-    return load_config()
+    config = load_config()
+    
+    # Ensure 'Content Sources' is a dictionary
+    if 'Content Sources' in config:
+        if not isinstance(config['Content Sources'], dict):
+            logging.warning("'Content Sources' setting is not a dictionary. Resetting to empty dict.")
+            config['Content Sources'] = {}
+    else:
+        config['Content Sources'] = {}
+    
+    return config
 
 def validate_url(url):
     if not url:

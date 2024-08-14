@@ -5,7 +5,7 @@ import time
 from queue_manager import QueueManager
 import logging
 import os
-from settings import get_all_settings, set_setting, get_setting
+from settings import get_all_settings, set_setting, get_setting, load_config, save_config, to_bool
 from collections import OrderedDict
 from web_scraper import web_scrape, process_media_selection, process_torrent_selection, get_available_versions
 from debrid.real_debrid import add_to_real_debrid
@@ -232,20 +232,54 @@ def logs():
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
     if request.method == 'POST':
-        for key, value in request.form.items():
-            section, option = key.split('.')
-            set_setting(section, option, value)
-        return redirect(url_for('settings'))
+        new_settings = request.json
+        current_settings = get_all_settings()
+        update_nested_settings(current_settings, new_settings)
+        save_config(current_settings)
+        return jsonify({"status": "success"})
+    else:
+        settings = get_all_settings()
+        return render_template('settings.html', settings=settings)
+    
+@app.route('/api/settings', methods=['GET', 'POST'])
+def api_settings():
+    if request.method == 'POST':
+        new_settings = request.json
+        current_settings = get_all_settings()
+        update_nested_settings(current_settings, new_settings)
+        save_config(current_settings)
+        return jsonify({"status": "success"})
+    else:
+        # Return all settings for GET request
+        return jsonify(get_all_settings())
 
-    settings = {}
-    for section in ['Required', 'Additional', 'Scraping', 'Debug']:
-        try:
-            settings[f'{section} Settings'] = get_all_settings(section)
-        except KeyError:
-            logging.warning(f"Settings section '{section}' not found in config file.")
-            settings[f'{section} Settings'] = {}
-
-    return render_template('settings.html', settings=settings)
+def update_nested_settings(current, new):
+    for key, value in new.items():
+        if key == 'Content Sources':
+            if key not in current:
+                current[key] = {}
+            for source, source_settings in value.items():
+                current[key][source] = source_settings
+        elif isinstance(value, dict):
+            if key not in current or not isinstance(current[key], dict):
+                current[key] = {}
+            update_nested_settings(current[key], value)
+        elif isinstance(value, list):
+            if all(isinstance(item, list) and len(item) == 2 for item in value):
+                # Handle paired lists
+                current[key] = [[str(item[0]), int(item[1])] for item in value]
+            else:
+                # Handle simple lists
+                current[key] = [str(item) for item in value]
+        else:
+            # Handle boolean and numeric values
+            if isinstance(value, str):
+                if value.lower() in ('true', 'false'):
+                    value = to_bool(value)
+                elif value.replace('.', '', 1).isdigit():
+                    # Convert to float or int
+                    value = float(value) if '.' in value else int(value)
+            current[key] = value
 
 @app.route('/queues')
 def queues():
