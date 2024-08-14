@@ -7,7 +7,7 @@ import logging
 import os
 from settings import get_all_settings, set_setting, get_setting, load_config, save_config, to_bool
 from collections import OrderedDict
-from web_scraper import web_scrape, process_media_selection, process_torrent_selection, get_available_versions
+from web_scraper import web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection, get_available_versions
 from debrid.real_debrid import add_to_real_debrid
 import re
 from datetime import datetime
@@ -162,6 +162,37 @@ def scraper():
             return jsonify(results)
         else:
             return jsonify({'error': 'No search term provided'})
+    
+    return render_template('scraper.html', versions=versions)
+
+@app.route('/select_season', methods=['GET', 'POST'])
+def select_season():
+    versions = get_available_versions()
+    if request.method == 'POST':
+        media_id = request.form.get('media_id')
+        title = request.form.get('title')
+        year = request.form.get('year')
+        if media_id:
+            results = web_scrape_tvshow(media_id, title, year)
+            return jsonify(results)
+        else:
+            return jsonify({'error': 'No media_id provided'})
+    
+    return render_template('scraper.html', versions=versions)
+
+@app.route('/select_episode', methods=['GET', 'POST'])
+def select_episode():
+    versions = get_available_versions()
+    if request.method == 'POST':
+        media_id = request.form.get('media_id')
+        season = request.form.get('season')
+        title = request.form.get('title')
+        year = request.form.get('year')
+        if media_id:
+            results = web_scrape_tvshow(media_id, title, year, season)
+            return jsonify(results)
+        else:
+            return jsonify({'error': 'No media_id provided'})
     
     return render_template('scraper.html', versions=versions)
 
