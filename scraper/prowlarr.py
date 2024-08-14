@@ -37,11 +37,10 @@ def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], title: str
         params = f"{title} {year}"
     else:
         params = f"{title}"
-    
-    if content_type.lower() == 'tv' and season is not None:
-        params = f"{params}.s{season:02d}"
-        if episode is not None and not multi:
-            params = f"{params}e{episode:02d}"
+        if season is not None:
+            params = f"{params}.s{season:02d}"
+            if episode is not None and not multi:
+                params = f"{params}e{episode:02d}"
 
     headers = {'X-Api-Key': prowlarr_api, 'accept': 'application/json'}
     encoded_params = quote(params)
