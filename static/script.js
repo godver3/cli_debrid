@@ -272,6 +272,66 @@ function searchMedia(event) {
     });
 }
 
+function selectSeason(mediaId, title, year, mediaType, season, episode, multi) {
+    const version = document.getElementById('version-select').value;
+    let formData = new FormData();
+    formData.append('media_id', mediaId);
+    formData.append('title', title);
+    formData.append('year', year);
+    formData.append('media_type', mediaType);
+    if (season !== null) formData.append('season', season);
+    if (episode !== null) formData.append('episode', episode);
+    formData.append('multi', multi);
+    formData.append('version', version);
+
+    fetch('/select_season', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            displaySeasonResults(data.results, title, year, version);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayError('An error occurred while selecting media.');
+    });
+}
+
+function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) {
+    const version = document.getElementById('version-select').value;
+    let formData = new FormData();
+    formData.append('media_id', mediaId);
+    formData.append('title', title);
+    formData.append('year', year);
+    formData.append('media_type', mediaType);
+    formData.append('season', season);
+    if (episode !== null) formData.append('episode', episode);
+    formData.append('multi', multi);
+    formData.append('version', version);
+
+    fetch('/select_episode', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            displayEpisodeResults(data.results, title, year, version);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayError('An error occurred while selecting media.');
+    });
+}
+
 function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
@@ -339,20 +399,60 @@ function displaySuccess(message) {
     resultsDiv.innerHTML = `<p style="color: green;">${message}</p>`;
 }
 
-function displaySearchResults(results) {
+function displayEpisodeResults(results, title, year) {
     const resultsDiv = document.getElementById('results');
-    let html = '<h3>Search Results</h3><table border="1"><thead><tr><th>Title</th><th>Year</th><th>Type</th><th>Action</th></tr></thead><tbody>';
+    let html = `<h3>Search Results for ${title}</h3><table border="1"><thead><tr><th> </th><th>Episodes</th><th>Action</th></tr></thead><tbody>`;
     for (let item of results) {
         html += `
             <tr>
-                <td>${item.title}</td>
-                <td>${item.year}</td>
-                <td>${item.media_type}</td>
+                <td><span><img alt="" src="https://image.tmdb.org/t/p/original${item.still_path}" style="width: 150px; height: auto;"></span></td>
+                <td><div style="line-height: 0.5;"><p>Season: ${item.season_num} Episode: ${item.episode_num}</p><p>${item.episode_title}</p><p>Rating: ${item.vote_average}</p></div></td>
                 <td>
-                    <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'}, ${item.multi})">Select</button>
+                    <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode_num || 'null'}, ${item.multi})">Select</button>
                 </td>
             </tr>
-        `;
+        `;         
+    }
+    html += '</tbody></table>';
+    resultsDiv.innerHTML = html;
+}
+
+function displaySeasonResults(results, title, year) {
+    const resultsDiv = document.getElementById('results');
+    let html = `<h3>Search Results for ${title}</h3><table border="1"><thead><tr><th> </th><th>Seasons</th><th>Action</th></tr></thead><tbody>`;
+    for (let item of results) {
+        html += `
+            <tr>
+                <td><span><img alt="" src="https://image.tmdb.org/t/p/w600_and_h900_bestv2${item.poster_path}" style="width: 90px; height: auto;"></span></td>
+                <td><div style="line-height: 0.5;"><p>Season: ${item.season_num}</p><p>${item.season_overview}</p></div></td>
+                <td>
+                    <br><button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode || 'null'}, ${item.multi})">MultiPack</button></br>
+                    <button onclick="selectEpisode('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode || 'null'}, ${item.multi})">Episodes (${item.episode_count})</button>
+                </td>
+            </tr>
+        `;         
+    }
+    html += '</tbody></table>';
+    resultsDiv.innerHTML = html;
+}
+
+function displaySearchResults(results) {
+    const resultsDiv = document.getElementById('results');
+    let html = `<h3>Search Results</h3><table border="1"><thead><tr><th>Title</th><th>Year</th><th>Type</th><th>Action</th></tr></thead><tbody>`;
+    for (let item of results) {
+        if (item.year !== '') {
+            html += `
+                <tr>
+                    <td>${item.title}</td>
+                    <td>${item.year}</td>
+                    <td>${item.media_type}</td>
+                    <td>
+                        ${item.media_type === 'movie' ? ` <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'}, ${item.multi})">Select</button>` : 
+                            ` <button onclick="selectSeason('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'}, ${item.multi})">Select</button>`}
+                    </td>
+                </tr>
+            `;
+        }   
     }
     html += '</tbody></table>';
     resultsDiv.innerHTML = html;
