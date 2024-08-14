@@ -554,14 +554,22 @@ class AddingQueue:
             season_number = item['season_number']
             episode_number = item['episode_number']
             
-            # Pattern to match various season and episode formats
-            pattern = rf's0*{season_number}e0*{episode_number}|s0*{season_number}\.?e0*{episode_number}|' \
+            # Improved pattern to match various season and episode formats
+            pattern = rf'(?i)(?:s0*{season_number}(?:[.-]?|\s*)e0*{episode_number}|' \
+                      rf'0*{season_number}x0*{episode_number}|' \
                       rf'season\s*0*{season_number}\s*episode\s*0*{episode_number}|' \
-                      rf'(?<!\d)0*{season_number}x0*{episode_number}(?!\d)'
+                      rf'(?<!\d)0*{season_number}x0*{episode_number}(?!\d))'
             
-            if re.search(pattern, file_name, re.IGNORECASE):
+            if re.search(pattern, file_name):
                 logging.debug(f"Episode match found: {file_name}")
                 return True
+            
+            # If no match found, try matching with the episode title (if available)
+            if 'name' in item:
+                episode_title = item['name'].lower()
+                if episode_title in file_name:
+                    logging.debug(f"Episode match found by title: {file_name}")
+                    return True
             
             logging.debug(f"No match found for episode file: {file_name}")
             return False
@@ -622,7 +630,7 @@ class AddingQueue:
 
     def scrape_individual_episode(self, item):
         logging.info(f"Performing individual episode scrape for {self.generate_identifier(item)}")
-        results = scrape(
+        results, filtered_out = scrape(
             item['imdb_id'],
             item['tmdb_id'],
             item['title'],
@@ -633,7 +641,7 @@ class AddingQueue:
             item.get('episode_number'),
             multi=False  # Force individual episode scraping
         )
-        return results
+        return results  # We're not using filtered_out here, but you could if needed
 
     @staticmethod
     def generate_identifier(item: Dict[str, Any]) -> str:

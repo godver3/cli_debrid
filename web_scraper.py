@@ -118,7 +118,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                  f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
 
     # Call the scraper function with the version parameter
-    scrape_results = scrape(imdb_id, tmdb_id, title, int(year), movie_or_episode, version, season, episode, multi)
+    scrape_results, filtered_out_results = scrape(imdb_id, tmdb_id, title, int(year), movie_or_episode, version, season, episode, multi)
 
     # Process the results
     processed_results = []

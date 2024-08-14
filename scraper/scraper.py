@@ -856,8 +856,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Filter results
         filtered_results = filter_results(all_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts)
+        filtered_out_results = [result for result in all_results if result not in filtered_results]
         logging.debug(f"Filtering took {time.time() - scraping_start:.2f} seconds")
         logging.debug(f"Total results after filtering: {len(filtered_results)}")
+        logging.debug(f"Total filtered out results: {len(filtered_out_results)}")
 
         # Add is_multi_pack information to each result
         for result in filtered_results:
@@ -939,7 +941,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             #logging.debug(pformat(result_info, indent=2, width=120))
             #logging.debug("-" * 80)  # Separator between results
 
-        return final_results
+        return final_results, filtered_out_results if filtered_out_results else None
 
     except Exception as e:
         logging.error(f"Unexpected error in scrape function for {title} ({year}): {str(e)}", exc_info=True)
