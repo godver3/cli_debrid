@@ -9,7 +9,7 @@ import json
 
 JACKETT_FILTER = "!status:failing,test:passed"
 
-def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     jackett_results = []
     all_settings = get_jackett_settings()
     
@@ -25,13 +25,13 @@ def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, seaso
             logging.info(f"Scraping Jackett instance: {instance}")
             
             try:
-                instance_results = scrape_jackett_instance(instance, settings, title, year, content_type, season, episode, jackett_filter)
+                instance_results = scrape_jackett_instance(instance, settings, title, year, content_type, season, episode, jackett_filter, multi)
                 jackett_results.extend(instance_results)
             except Exception as e:
                 logging.error(f"Error scraping Jackett instance '{instance}': {str(e)}", exc_info=True)
     return jackett_results
 
-def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int, episode: int, jackett_filter: str) -> List[Dict[str, Any]]:
+def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int, episode: int, jackett_filter: str, multi: bool = False) -> List[Dict[str, Any]]:
     jackett_url = settings['url']
     jackett_api = settings['api']
     enabled_indexers = settings.get('enabled_indexers', '').lower()
@@ -44,8 +44,8 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str,
         params = f"{title}"
         if season is not None:
             params = f"{params}.s{season:02d}"
-            if episode is not None:
-                params = f"{params}.e{episode:02d}"
+            if episode is not None and not multi:
+                params = f"{params}e{episode:02d}"
 
     search_endpoint = f"{jackett_url}/api/v2.0/indexers/{jackett_filter}/results?apikey={jackett_api}"
     query_params = {'Query': params}

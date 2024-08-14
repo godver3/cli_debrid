@@ -406,7 +406,7 @@ function displayEpisodeResults(results, title, year) {
         html += `
             <tr>
                 <td><span><img alt="" src="https://image.tmdb.org/t/p/original${item.still_path}" style="width: 150px; height: auto;"></span></td>
-                <td><div style="line-height: 0.5;"><p>Season: ${item.season_num} Episode: ${item.episode_num}</p><p>${item.episode_title}</p><p>Rating: ${item.vote_average}</p></div></td>
+                <td><div><p>Season: ${item.season_num} Episode: ${item.episode_num}</p><p>${item.episode_title}</p><p>Rating: ${item.vote_average}</p></div></td>
                 <td>
                     <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode_num || 'null'}, ${item.multi})">Select</button>
                 </td>
@@ -424,7 +424,7 @@ function displaySeasonResults(results, title, year) {
         html += `
             <tr>
                 <td><span><img alt="" src="https://image.tmdb.org/t/p/w600_and_h900_bestv2${item.poster_path}" style="width: 90px; height: auto;"></span></td>
-                <td><div style="line-height: 0.5;"><p>Season: ${item.season_num}</p><p>${item.season_overview}</p></div></td>
+                <td><div"><p>Season: ${item.season_num}</p><p>${item.season_overview}</p></div></td>
                 <td>
                     <br><button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode || 'null'}, ${item.multi})">MultiPack</button></br>
                     <button onclick="selectEpisode('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode || 'null'}, ${item.multi})">Episodes (${item.episode_count})</button>
@@ -438,13 +438,13 @@ function displaySeasonResults(results, title, year) {
 
 function displaySearchResults(results) {
     const resultsDiv = document.getElementById('results');
-    let html = `<h3>Search Results</h3><table border="1"><thead><tr><th>Title</th><th>Year</th><th>Type</th><th>Action</th></tr></thead><tbody>`;
+    let html = `<h3>Search Results</h3><table border="1"><thead><tr><th> </th><th>Title</th><th>Type</th><th>Action</th></tr></thead><tbody>`;
     for (let item of results) {
         if (item.year !== '') {
             html += `
                 <tr>
-                    <td>${item.title}</td>
-                    <td>${item.year}</td>
+                    <td><span><img alt="" src="https://image.tmdb.org/t/p/w600_and_h900_bestv2${item.poster_path}" style="width: 90px; height: auto;"></span></td>
+                    <td><div><p>${item.title} (${item.year})</p><p>${item.overview}</p></div></td>
                     <td>${item.media_type}</td>
                     <td>
                         ${item.media_type === 'movie' ? ` <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'}, ${item.multi})">Select</button>` : 
