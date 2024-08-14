@@ -35,12 +35,13 @@ def scrape_zilean_instance(instance: str, settings: Dict[str, Any], title: str, 
         return []
 
     params = {'Query': title}
-    if content_type.lower() == 'tv' and season is not None:
-        params['Season'] = season
-        if episode is not None and not multi:
-            params['Episode'] = episode
-    else:
+    if content_type.lower() == 'movie':
         params['Year'] = year
+    else:
+        if season is not None:
+            params['Season'] = season
+            if episode is not None and not multi:
+                params['Episode'] = episode
 
     search_endpoint = f"{zilean_url}/dmm/filtered"
     encoded_params = urlencode(params)
