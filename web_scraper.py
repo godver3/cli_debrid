@@ -133,6 +133,8 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 "title": result.get('title') or result.get('name', ''),
                 "year": result.get('releaseDate', '')[:4] if result.get('mediaType') == 'movie' else result.get('firstAirDate', '')[:4],
                 "media_type": result.get('mediaType', ''),
+                "overview": result.get('overview', ''),
+                "poster_path": result.get('posterPath', ''),
                 "season": season,
                 "episode": episode,
                 "multi": multi
@@ -226,11 +228,13 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
             if magnet_link:
                 if 'magnet:?xt=urn:btih:' in magnet_link:
                     magnet_hash = extract_hash_from_magnet(magnet_link)
+                    torrent_type = 'magnet'
+                    hashes += [magnet_hash]
+                    result['hash'] = magnet_hash
                 else:
-                    adding_queue = AddingQueue()
-                    magnet_hash = adding_queue.download_and_extract_hash(magnet_link)
-                hashes += [magnet_hash]
-                result['hash'] = magnet_hash
+                    #adding_queue = AddingQueue()
+                    #magnet_hash = adding_queue.download_and_extract_hash(magnet_link)
+                    torrent_type = 'torrent_file'
                 processed_results.append(result)
     cache_status = is_cached_on_rd(hashes)
     

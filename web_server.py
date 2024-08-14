@@ -227,7 +227,7 @@ def select_media():
         torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version)
         cached_results = []
         for result in torrent_results:
-            if cache_status[result.get('hash')]:
+            if cache_status.get(result.get('hash'), False):
                 result['cached'] = 'RD'
             else:
                 result['cached'] = ''

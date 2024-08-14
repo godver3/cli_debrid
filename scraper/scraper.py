@@ -815,7 +815,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     return []
                 
                 # All scrapers now use the same parameter list
-                scraper_results = scraper_func(imdb_id, title, year, content_type, season, episode)
+                scraper_results = scraper_func(imdb_id, title, year, content_type, season, episode, multi)
                 
                 if isinstance(scraper_results, tuple):
                     *_, scraper_results = scraper_results
