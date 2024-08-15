@@ -1,0 +1,33 @@
+<h3>Required Settings</h3>
+
+<div class="section">
+    <div class="section-header" onclick="toggleSection('plex')">
+        <h4>Plex</h4>
+        <span class="toggle-icon">+</span>
+    </div>
+    <div id="plex" class="section-content">
+        <div class="form-group">
+            <label for="plex-url" class="setting-title">Plex URL:</label>
+            <input type="text" id="plex-url" name="Plex.url" value="{{ settings.Plex.url }}">
+            <p class="description">Enter the URL of your Plex server, including http:// or https:// and the port number if necessary.</p>
+        </div>
+
+        <div class="form-group">
+            <label for="plex-token" class="setting-title">Plex Token:</label>
+            <input type="text" id="plex-token" name="Plex.token" value="{{ settings.Plex.token }}">
+            <p class="description">Enter your Plex authentication token. This can be found by following the instructions at https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/</p>
+        </div>
+
+        <div class="form-group">
+            <label for="plex-movie-libraries" class="setting-title">Plex Movie Libraries:</label>
+            <input type="text" id="plex-movie-libraries" name="Plex.movie_libraries" value="{{ settings.Plex.movie_libraries }}">
+            <p class="description">Enter the names of your Plex movie libraries, separated by commas.</p>
+        </div>
+
+        <div class="form-group">
+            <label for="plex-shows-libraries" class="setting-title">Plex Shows Libraries:</label>
+            <input type="text" id="plex-shows-libraries" name="Plex.shows_libraries" value="{{ settings.Plex.shows_libraries }}">
+            <p class="description">Enter the names of your Plex TV show libraries, separated by commas.</p>
+        </div>
+    </div>
+</div>

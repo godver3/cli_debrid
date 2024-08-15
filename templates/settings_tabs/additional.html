@@ -1,0 +1,7 @@
+<div id="additional" class="tab-content">
+    <h3>Additional Settings</h3>
+    {{ render_settings(settings.get('TMDB', {}), 'TMDB') }}
+    {{ render_settings(settings.get('Queue', {}), 'Queue') }}
+    {{ render_settings(settings.get('Scraping', {}).get('Uncached Content Handling', {}), 'Scraping.Uncached Content Handling') }}
+    {{ render_settings(settings.get('Trakt', {}), 'Trakt') }}
+</div>

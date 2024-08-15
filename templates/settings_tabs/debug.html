@@ -1,0 +1,5 @@
+<div id="debug" class="tab-content">
+    <h3>Debug Settings</h3>
+    {{ render_settings(settings.get('Logging', {}), 'Logging') }}
+    {{ render_settings(settings.get('Menu', {}), 'Menu') }}
+</div>

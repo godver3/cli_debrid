@@ -1,0 +1,97 @@
+body {
+    background-color: #333;
+    color: #fff;
+    font-family: Arial, sans-serif;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.tabs {
+    display: flex;
+    justify-content: flex-start;
+    background-color: #444;
+    border-radius: 5px;
+    padding: 5px;
+    margin-bottom: 20px;
+}
+
+.tab-button {
+    background-color: #555;
+    border: none;
+    color: #fff;
+    padding: 10px 15px;
+    margin-right: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    border-radius: 3px;
+}
+
+.tab-button:hover, .tab-button.active {
+    background-color: #777;
+}
+
+.section {
+    background-color: #444;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    overflow: hidden;
+}
+
+.section-header {
+    background-color: #555;
+    padding: 10px 15px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.section-header h4 {
+    margin: 0;
+    color: #fff;
+}
+
+.section-content {
+    padding: 15px;
+    display: none;
+}
+
+.section-content.active {
+    display: block;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.setting-title {
+    font-weight: bold;
+    color: #fff;
+    display: block;
+    margin-bottom: 5px;
+}
+
+input[type="text"], select {
+    width: 100%;
+    padding: 8px;
+    background-color: #333;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+}
+
+.description {
+    font-style: italic;
+    color: #aaa;
+    font-size: 0.9em;
+    margin-top: 5px;
+}
+
+.toggle-icon {
+    color: #fff;
+    font-weight: bold;
+}
