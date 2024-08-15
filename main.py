@@ -63,7 +63,7 @@ def check_required_settings():
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')
     realdebrid_api_key = get_setting('RealDebrid', 'api_key')
-    torrentio_enabled = get_setting('Torrentio', 'enabled', 'False')
+    torrentio_enabled = get_setting('Torrentio', 'enabled', False)
 
     if not plex_url or not plex_token:
         errors.append("Plex URL or token is missing.")
@@ -118,7 +118,7 @@ def prompt_for_required_settings():
             value = input(prompt)
             set_setting(section, key, value)
 
-    set_setting('Torrentio', 'enabled', 'True')
+    set_setting('Torrentio', 'enabled', True)
 
     print("Initial setup complete!")
 
@@ -205,10 +205,7 @@ def main():
         prompt_for_required_settings()
 
     # Check for the debug flag
-    skip_menu = get_setting('Debug', 'skip_menu', 'False')
-    if isinstance(skip_menu, bool):
-        skip_menu = str(skip_menu).lower()
-    skip_menu = skip_menu == 'true'
+    skip_menu = get_setting('Debug', 'skip_menu', False)
 
     if skip_menu:
         logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")

@@ -52,6 +52,49 @@ def search_overseerr(search_term: str, year: Optional[int] = None) -> List[Dict[
         logging.error(f"Error searching Overseerr: {e}")
         return []
 
+def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[int] = None, season: Optional[int] = None) -> List[Dict[str, Any]]:
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    
+    if not overseerr_url or not overseerr_api_key:
+        logging.error("Overseerr URL or API key not set. Please configure in settings.")
+        return []
+
+    headers = {
+        'X-Api-Key': overseerr_api_key,
+        'Accept': 'application/json'
+    }
+
+    if media_id and season is not None:
+        search_url = f"{overseerr_url}/api/v1/tv/{media_id}/season/{season}"
+    else:
+        search_url = f"{overseerr_url}/api/v1/tv/{media_id}"
+
+
+    try:
+        response = requests.get(search_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+        if data.get('seasons', False):
+            # Grab TV show seasons
+            seasons = data['seasons']
+            
+            logging.info(f"Sorted seasons: {seasons}")
+            return seasons
+        elif data.get('episodes', False):
+            # Grab TV show seasons
+            episodes = data['episodes']
+            
+            logging.info(f"Sorted episodes: {episodes}")
+            return episodes
+        else:
+            logging.warning(f"No results found for show: {title}")
+            return []
+    except requests.RequestException as e:
+        logging.error(f"Error searching Overseerr: {e}")
+        return []
+    
 def parse_search_term(search_term: str) -> Tuple[str, Optional[int], Optional[int], Optional[int], bool]:
     # Extract year if present
     year_match = re.search(r'\b(19\d{2}|20\d{2})\b', search_term)
@@ -90,6 +133,8 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 "title": result.get('title') or result.get('name', ''),
                 "year": result.get('releaseDate', '')[:4] if result.get('mediaType') == 'movie' else result.get('firstAirDate', '')[:4],
                 "media_type": result.get('mediaType', ''),
+                "overview": result.get('overview', ''),
+                "poster_path": result.get('posterPath', ''),
                 "season": season,
                 "episode": episode,
                 "multi": multi
@@ -97,6 +142,59 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
             for result in search_results
         ]
     }
+
+def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None) -> Dict[str, Any]:
+    logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}")
+    results=[]
+    search_results = overseerr_tvshow(title, media_id = media_id, season = season)
+    if not search_results:
+        logging.warning(f"No results found for search term: {title} ({year if year else 'no year specified'})")
+        return {"error": "No results found"}
+
+    logging.info(f"Found results: {search_results}")
+    if media_id and season is not None:
+        return {
+            "results": [
+                {
+                    "id": media_id,
+                    "title": title,
+                    "episode_title": result.get('name', ''),
+                    "season_id": result['id'],
+                    "season_num": result['seasonNumber'],
+                    "episode_num": result['episodeNumber'],
+                    "year": year,
+                    "media_type": 'tv',
+                    "still_path": result['stillPath'],
+                    "air_date": result['airDate'],
+                    "vote_average": result.get('voteAverage', ''),
+                    "multi": False
+                }
+                for result in search_results
+                if result['airDate'] is not None
+                if result['episodeNumber'] != 0
+            ]
+        }
+    else:
+        return {
+            "results": [
+                {
+                    "id": media_id,
+                    "title": title,
+                    "season_id": result['id'],
+                    "season_num": result['seasonNumber'],
+                    "year": year,
+                    "media_type": 'tv',
+                    "poster_path": result['posterPath'],
+                    "air_date": result['airDate'],
+                    "season_overview": result.get('overview', ''),
+                    "episode_count": result.get('episodeCount', ''),
+                    "multi": True
+                }
+                for result in search_results
+                if result['airDate'] is not None
+                if result['seasonNumber'] != 0
+            ]
+        }
 
 def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str) -> List[Dict[str, Any]]:
     logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
@@ -118,7 +216,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                  f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
 
     # Call the scraper function with the version parameter
-    scrape_results = scrape(imdb_id, tmdb_id, title, int(year), movie_or_episode, version, season, episode, multi)
+    scrape_results, filtered_out_results = scrape(imdb_id, tmdb_id, title, int(year), movie_or_episode, version, season, episode, multi)
 
     # Process the results
     processed_results = []
@@ -130,11 +228,13 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
             if magnet_link:
                 if 'magnet:?xt=urn:btih:' in magnet_link:
                     magnet_hash = extract_hash_from_magnet(magnet_link)
+                    torrent_type = 'magnet'
+                    hashes += [magnet_hash]
+                    result['hash'] = magnet_hash
                 else:
-                    adding_queue = AddingQueue()
-                    magnet_hash = adding_queue.download_and_extract_hash(magnet_link)
-                hashes += [magnet_hash]
-                result['hash'] = magnet_hash
+                    #adding_queue = AddingQueue()
+                    #magnet_hash = adding_queue.download_and_extract_hash(magnet_link)
+                    torrent_type = 'torrent_file'
                 processed_results.append(result)
     cache_status = is_cached_on_rd(hashes)
     
