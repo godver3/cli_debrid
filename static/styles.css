@@ -21,7 +21,7 @@ body.dark-mode {
     flex-grow: 1;
 }
 header {
-    background-color: #007bff;
+    background-color: #1a1a1a;
     color: white;
     padding: 0.5rem;
     display: flex;
@@ -243,3 +243,4 @@ main {
 .pagination a:hover:not(.active) {
     background-color: #ddd;
 }
+

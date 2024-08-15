@@ -16,12 +16,15 @@ from database import get_db_connection
 import string
 from settings_web import get_settings_page, update_settings, get_settings
 from template_utils import render_settings, render_content_sources
+import json
+from scraper_manager import ScraperManager
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
 app.secret_key = '9683650475'
 queue_manager = QueueManager()
+scraper_manager = ScraperManager()
 
 # Disable Werkzeug request logging
 log = logging.getLogger('werkzeug')
@@ -36,9 +39,96 @@ total_processed = 0
 successful_additions = 0
 failed_additions = 0
 
+CONFIG_FILE = './config/config.json'
+
+def load_config():
+    try:
+        with open(CONFIG_FILE, 'r') as config_file:
+            return json.load(config_file)
+    except Exception as e:
+        print(f"Error loading config: {str(e)}")
+        return {}
+
+def save_config(config):
+    try:
+        with open(CONFIG_FILE, 'w') as config_file:
+            json.dump(config, config_file, indent=2)
+        print("Config saved successfully")
+    except Exception as e:
+        print(f"Error saving config: {str(e)}")
+
 @app.context_processor
 def utility_processor():
     return dict(render_settings=render_settings, render_content_sources=render_content_sources)
+
+@app.route('/scrapers/add', methods=['POST'])
+def add_scraper():
+    scraper_type = request.form.get('type')
+    
+    if scraper_type not in scraper_manager.scraper_settings:
+        return jsonify({'success': False, 'error': 'Invalid scraper type'})
+    
+    # Load the current configuration
+    config = load_config()
+    
+    # Ensure 'Scrapers' key exists in the config
+    if 'Scrapers' not in config:
+        config['Scrapers'] = {}
+    
+    # Generate a new scraper ID
+    index = 1
+    while f"{scraper_type}_{index}" in config['Scrapers']:
+        index += 1
+    new_scraper_id = f"{scraper_type}_{index}"
+    
+    # Create the new scraper configuration
+    new_scraper = {setting: '' for setting in scraper_manager.scraper_settings[scraper_type]}
+    new_scraper['enabled'] = False
+    
+    # Update the new scraper with form data
+    for setting in scraper_manager.scraper_settings[scraper_type]:
+        value = request.form.get(setting, '')
+        if setting == 'enabled':
+            value = value == 'on'
+        new_scraper[setting] = value
+    
+    # Add the new scraper to the configuration
+    config['Scrapers'][new_scraper_id] = new_scraper
+    
+    # Save the updated configuration
+    save_config(config)
+    
+    # Update the scraper manager's internal state
+    scraper_manager.config = config
+    scraper_manager.scrapers = config.get('Scrapers', {})
+    
+    return jsonify({'success': True})
+
+@app.route('/scrapers/delete', methods=['POST'])
+def delete_scraper():
+    data = request.json
+    scraper_id = data.get('scraper_id')
+    
+    if not scraper_id:
+        return jsonify({'success': False, 'error': 'No scraper ID provided'}), 400
+
+    config = load_config()
+    scrapers = config.get('Scrapers', {})
+    
+    if scraper_id in scrapers:
+        del scrapers[scraper_id]
+        config['Scrapers'] = scrapers
+        save_config(config)
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False, 'error': 'Scraper not found'}), 404
+
+@app.template_filter('from_json')
+def from_json_filter(value):
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return {}
 
 @app.template_filter('datetime')
 def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
@@ -268,8 +358,19 @@ def logs():
 
 @app.route('/settings', methods=['GET'])
 def settings():
-    settings = load_config()
-    return render_template('settings_base.html', settings=settings)
+    config = load_config()
+    scraper_types = list(scraper_manager.scraper_settings.keys())
+    
+    # Ensure 'Scraping' and 'versions' exist in the config
+    if 'Scraping' not in config:
+        config['Scraping'] = {}
+    if 'versions' not in config['Scraping']:
+        config['Scraping']['versions'] = {}
+    
+    return render_template('settings_base.html', 
+                           settings=config, 
+                           scraper_types=scraper_types, 
+                           scraper_settings=scraper_manager.scraper_settings)
 
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
