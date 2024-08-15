@@ -503,19 +503,23 @@ def add_collected_items(media_items_batch, recent=False):
                 WHERE id = ?
             ''', updates)
 
-        # Perform batch inserts
-        if inserts:
-            conn.executemany('''
-                INSERT INTO media_items
-                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
-            ''', [insert for insert in inserts if len(insert) == 10])  # Movies
-            
-            conn.executemany('''
-                INSERT INTO media_items
-                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ''', [insert for insert in inserts if len(insert) == 13])  # Episodes
+        # Perform batch inserts and skip duplicates
+        try:
+            if inserts:
+                conn.executemany('''
+                    INSERT INTO media_items
+                    (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                ''', [insert for insert in inserts if len(insert) == 10])  # Movies
+
+                conn.executemany('''
+                    INSERT INTO media_items
+                    (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ''', [insert for insert in inserts if len(insert) == 13])  # Episodes
+        except sqlite3.IntegrityError as e:
+            logging.warning(f"Skipping duplicate item: {e}")
+            # Continue processing even if some duplicates were found
 
         # Handle items not in the batch if not recent
         if not recent:
@@ -539,6 +543,7 @@ def add_collected_items(media_items_batch, recent=False):
         raise
     finally:
         conn.close()
+
         
 @retry_on_db_lock()
 def update_media_item_state(item_id, state, **kwargs):

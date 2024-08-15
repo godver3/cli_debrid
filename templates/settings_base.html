@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2>Settings</h2>
+    <form id="settingsForm">
+        <div class="tabs">
+            <button type="button" class="tab-button active" data-tab="required">Required Settings</button>
+            <button type="button" class="tab-button" data-tab="scrapers">Scrapers</button>
+            <button type="button" class="tab-button" data-tab="scraping">Scraping Settings</button>
+            <button type="button" class="tab-button" data-tab="content">Content Settings</button>
+            <button type="button" class="tab-button" data-tab="additional">Additional Settings</button>
+            <button type="button" class="tab-button" data-tab="debug">Debug Settings</button>
+        </div>
+
+        <div id="required" class="tab-content active">
+            {% include 'settings_tabs/required.html' %}
+        </div>
+        <div id="scrapers" class="tab-content">
+            {% include 'settings_tabs/scrapers.html' %}
+        </div>
+        <div id="scraping" class="tab-content">
+            {% include 'settings_tabs/scraping.html' %}
+        </div>
+        <div id="content" class="tab-content">
+            {% include 'settings_tabs/content.html' %}
+        </div>
+        <div id="additional" class="tab-content">
+            {% include 'settings_tabs/additional.html' %}
+        </div>
+        <div id="debug" class="tab-content">
+            {% include 'settings_tabs/debug.html' %}
+        </div>
+
+        <button type="submit" class="submit-button">Save Settings</button>
+    </form>
+    <div id="saveStatus"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}

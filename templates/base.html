@@ -25,6 +25,8 @@
     
     <!-- Theme Color for Mobile Browsers -->
     <meta name="theme-color" content="#007bff">
+    
+    {% block head %}{% endblock %}
 </head>
 <body>
     <header>
@@ -48,5 +50,6 @@
         {% block content %}{% endblock %}
     </main>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
+    {% block scripts %}{% endblock %}
 </body>
 </html>

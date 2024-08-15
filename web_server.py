@@ -14,6 +14,8 @@ from datetime import datetime
 import sqlite3
 from database import get_db_connection
 import string
+from settings_web import get_settings_page, update_settings, get_settings
+from template_utils import render_settings, render_content_sources
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -33,6 +35,10 @@ start_time = time.time()
 total_processed = 0
 successful_additions = 0
 failed_additions = 0
+
+@app.context_processor
+def utility_processor():
+    return dict(render_settings=render_settings, render_content_sources=render_content_sources)
 
 @app.template_filter('datetime')
 def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
@@ -229,56 +235,29 @@ def logs():
     logs = get_recent_logs(100)  # Get the last 100 log entries
     return render_template('logs.html', logs=logs)
 
-@app.route('/settings', methods=['GET', 'POST'])
+@app.route('/settings', methods=['GET'])
 def settings():
-    if request.method == 'POST':
-        new_settings = request.json
-        current_settings = get_all_settings()
-        update_nested_settings(current_settings, new_settings)
-        save_config(current_settings)
-        return jsonify({"status": "success"})
-    else:
-        settings = get_all_settings()
-        return render_template('settings.html', settings=settings)
-    
+    settings = load_config()
+    return render_template('settings_base.html', settings=settings)
+
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     if request.method == 'POST':
         new_settings = request.json
-        current_settings = get_all_settings()
+        current_settings = load_config()
         update_nested_settings(current_settings, new_settings)
         save_config(current_settings)
         return jsonify({"status": "success"})
     else:
-        # Return all settings for GET request
-        return jsonify(get_all_settings())
+        return jsonify(load_config())
 
 def update_nested_settings(current, new):
     for key, value in new.items():
-        if key == 'Content Sources':
-            if key not in current:
-                current[key] = {}
-            for source, source_settings in value.items():
-                current[key][source] = source_settings
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             if key not in current or not isinstance(current[key], dict):
                 current[key] = {}
             update_nested_settings(current[key], value)
-        elif isinstance(value, list):
-            if all(isinstance(item, list) and len(item) == 2 for item in value):
-                # Handle paired lists
-                current[key] = [[str(item[0]), int(item[1])] for item in value]
-            else:
-                # Handle simple lists
-                current[key] = [str(item) for item in value]
         else:
-            # Handle boolean and numeric values
-            if isinstance(value, str):
-                if value.lower() in ('true', 'false'):
-                    value = to_bool(value)
-                elif value.replace('.', '', 1).isdigit():
-                    # Convert to float or int
-                    value = float(value) if '.' in value else int(value)
             current[key] = value
 
 @app.route('/queues')
