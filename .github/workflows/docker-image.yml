@@ -2,7 +2,7 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "dev" ]
+    branches: [ "2_webui_settings" ]
 
 jobs:
   build-and-push:
@@ -18,7 +18,6 @@ jobs:
         DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
       run: |
-        docker build . --file Dockerfile --tag godver3/cli_debrid:latest --tag godver3/cli_debrid:dev
+        docker build . --file Dockerfile --tag godver3/cli_debrid:webui
         echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-        docker push godver3/cli_debrid:latest
-        docker push godver3/cli_debrid:dev
+        docker push godver3/cli_debrid:webui
