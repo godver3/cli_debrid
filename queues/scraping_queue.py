@@ -63,7 +63,7 @@ class ScrapingQueue:
 
                 logging.info(f"Scraping for {item_identifier}")
 
-                results = self.scrape_with_fallback(item, is_multi_pack, queue_manager)
+                results, filtered_out_results = self.scrape_with_fallback(item, is_multi_pack, queue_manager)
 
                 if not results:
                     logging.warning(f"No results found for {item_identifier} after fallback.")
@@ -77,7 +77,7 @@ class ScrapingQueue:
                 if not filtered_results:
                     logging.warning(f"All results for {item_identifier} were filtered out as 'not wanted'. Retrying with individual scraping.")
                     # Retry with individual scraping
-                    individual_results = self.scrape_with_fallback(item, False)
+                    individual_results, individual_filtered_out = self.scrape_with_fallback(item, False, queue_manager)
                     filtered_individual_results = [r for r in individual_results if not is_magnet_not_wanted(r['magnet'])]
                     
                     if not filtered_individual_results:
@@ -98,11 +98,12 @@ class ScrapingQueue:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
                 queue_manager.move_to_sleeping(item, "Scraping")
 
+
     def scrape_with_fallback(self, item, is_multi_pack, queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Scraping for {item_identifier} with is_multi_pack={is_multi_pack}")
 
-        results = scrape(
+        results, filtered_out = scrape(
             item['imdb_id'],
             item['tmdb_id'],
             item['title'],
@@ -115,11 +116,11 @@ class ScrapingQueue:
         )
 
         if results or item['type'] != 'episode':
-            return results
+            return results, filtered_out
 
         logging.info(f"No results for multi-pack {item_identifier}. Falling back to individual episode scraping.")
 
-        individual_results = scrape(
+        individual_results, individual_filtered_out = scrape(
             item['imdb_id'],
             item['tmdb_id'],
             item['title'],
@@ -136,7 +137,7 @@ class ScrapingQueue:
         else:
             logging.warning(f"No results found even after individual episode scraping for {item_identifier}.")
 
-        return individual_results
+        return individual_results, individual_filtered_out
      
     def handle_no_results(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)

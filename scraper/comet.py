@@ -4,7 +4,7 @@ import re
 from typing import List, Dict, Any
 from settings import load_config
 
-def scrape_comet(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_comet(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     all_results = []
     config = load_config()
     comet_instances = config.get('Scrapers', {})
