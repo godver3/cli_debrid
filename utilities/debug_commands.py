@@ -461,7 +461,8 @@ def get_all_wanted_from_enabled_sources():
                 trakt_list = trakt_list.strip()
                 wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
         elif source_type == 'Collected':
-            wanted_content = get_wanted_from_collected()
+            #wanted_content = get_wanted_from_collected()
+            logging.info("Add through debug menu, otherwise will populate daily")
 
         if wanted_content:
             total_items = 0

@@ -86,9 +86,18 @@ def validate_url(url):
         return url if all([result.scheme, result.netloc]) else ''
     except:
         return ''
-        
-def get_setting(section, key=None, default=''):
+
+def get_setting(section, key=None, default=None):
     config = load_config()
+    
+    if section == 'Scrapers' and key is None:
+        return config.get('Scrapers', {})
+    
+    if section == 'Scrapers' and key:
+        scraper_settings = config.get('Scrapers', {}).get(key, {})
+        if isinstance(scraper_settings, dict):
+            return scraper_settings
+        return default
     
     if section == 'Content Sources':
         content_sources = config.get(section, {})
@@ -102,16 +111,15 @@ def get_setting(section, key=None, default=''):
     
     value = config.get(section, {}).get(key, default)
     
-    if key.lower() == 'enabled':
-        if isinstance(value, str):
-            return value.lower() == 'true'
-        return bool(value)
+    # Handle boolean values
+    if isinstance(value, str):
+        if value.lower() == 'true':
+            return True
+        elif value.lower() == 'false':
+            return False
     
     if key.lower().endswith('url'):
-        validated_url = validate_url(value)
-        if validated_url != value:
-            logging.debug(f"URL validation changed value for {section}.{key}: '{value}' -> '{validated_url}'")
-        return validated_url
+        return validate_url(value)
 
     return value
 
@@ -119,29 +127,16 @@ def set_setting(section, key, value):
     config = load_config()
     if section not in config:
         config[section] = {}
-    
-    keys = key.split('.')
-    current = config[section]
-    for k in keys[:-1]:
-        if k not in current:
-            current[k] = {}
-        current = current[k]
-    
-    # Convert 'True' and 'False' strings to boolean
+    if key.lower().endswith('url'):
+        value = validate_url(value)
+    # Ensure boolean values are stored as actual booleans
     if isinstance(value, str):
         if value.lower() == 'true':
             value = True
         elif value.lower() == 'false':
             value = False
-        elif value.isdigit():
-            value = int(value)
-        elif value.replace('.', '', 1).isdigit():
-            value = float(value)
-    
-    if keys[-1].lower().endswith('url'):
-        value = validate_url(value)
-    
-    current[keys[-1]] = value
+    config[section][key] = value
+
     save_config(config)
 
 def get_all_settings():
@@ -212,10 +207,10 @@ def ensure_settings_file():
             'api_key': ''
         },
         'Torrentio': {
-            'enabled': 'False'
+            'enabled': False
         },
         'Debug': {
-            'skip_menu': 'False',
+            'skip_menu': False,
             'logging_level': 'INFO'
         }
     }
@@ -304,7 +299,8 @@ class SettingsEditor:
             ('Debug', 'skip_initial_plex_update', 'Menu - Skip Plex initial collection scan (True/False)'),
             ('Debug', 'skip_menu', 'Menu - Skip menu? (True/False)'),
             ('Debug', 'disable_initialization', 'Menu - Disable initialization tasks? (True/False)'),
-            ('Debug', 'api_key', 'TMDB - TMDB API Key')
+            ('Debug', 'api_key', 'TMDB - TMDB API Key'),
+            ('Debug', 'jackett_seeders_only', 'Scraper - Return only results with seeders in Jackett? (True/False)')
         ])
 
     def start_trakt_oauth(self, button):

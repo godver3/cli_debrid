@@ -209,14 +209,14 @@ def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode
     season = int(season) if season is not None else None
     episode = int(episode) if episode is not None else None
     year = int(year) if year is not None else None
-    multi = multi.lower() == 'true' if isinstance(multi, str) else bool(multi)
+    multi = multi if isinstance(multi, bool) else (multi.lower() in ['true', '1', 'yes', 'on'] if isinstance(multi, str) else False)
 
     logger.debug(f"Scrape parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
                  f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, "
                  f"version={version}")
 
     # Call the scrape function with the version
-    scrape_result = scrape(imdb_id, tmdb_id, title, year, movie_or_episode, version, season, episode, multi)
+    scrape_result, filtered_out_results = scrape(imdb_id, tmdb_id, title, year, movie_or_episode, version, season, episode, multi)
 
     # Log the type and structure of scrape_result
     #logger.debug(f"Type of scrape_result: {type(scrape_result)}")
@@ -277,7 +277,7 @@ def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode
         #logger.debug(f"  Result {index}: title='{result.get('title')}', "
                      #f"size='{result.get('size')}', magnet='{result.get('magnet')[:50]}...'")
 
-    selected_item = display_results(processed_results)
+    selected_item = display_results(processed_results, filtered_out_results)
     if selected_item:
         #logger.debug(f"Selected item: title='{selected_item.get('title')}', "
                      #f"size='{selected_item.get('size')}', magnet='{selected_item.get('magnet')[:50]}...'")

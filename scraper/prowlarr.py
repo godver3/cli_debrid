@@ -6,7 +6,7 @@ from metadata.metadata import get_year_from_imdb_id
 from settings import load_config
 from urllib.parse import quote
 
-def scrape_prowlarr(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_prowlarr(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     all_results = []
     config = load_config()
     prowlarr_instances = config.get('Scrapers', {})
@@ -22,14 +22,14 @@ def scrape_prowlarr(imdb_id: str, title: str, year: int, content_type: str, seas
             logging.info(f"Scraping Prowlarr instance: {instance}")
             
             try:
-                instance_results = scrape_prowlarr_instance(instance, settings, title, year, content_type, season, episode)
+                instance_results = scrape_prowlarr_instance(instance, settings, title, year, content_type, season, episode, multi)
                 all_results.extend(instance_results)
             except Exception as e:
                 logging.error(f"Error scraping Prowlarr instance '{instance}': {str(e)}", exc_info=True)
 
     return all_results
 
-def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     prowlarr_url = settings.get('url', '')
     prowlarr_api = settings.get('api', '')
 
@@ -37,11 +37,10 @@ def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], title: str
         params = f"{title} {year}"
     else:
         params = f"{title}"
-    
-    if content_type.lower() == 'tv' and season is not None:
-        params = f"{params}.s{season:02d}"
-        if episode is not None:
-            params = f"{params}.e{episode:02d}"
+        if season is not None:
+            params = f"{params}.s{season:02d}"
+            if episode is not None and not multi:
+                params = f"{params}e{episode:02d}"
 
     headers = {'X-Api-Key': prowlarr_api, 'accept': 'application/json'}
     encoded_params = quote(params)
@@ -77,8 +76,9 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], instance: str) -> List[Di
                 result = {
                     'title': item.get('title', 'N/A'),  
                     'size': item.get('size', 0) / (1024 * 1024 * 1024),  # Convert to GB
-                    'source': f"Prowlarr - {instance} - {item.get('indexer', 'N/A')}",
-                    'magnet': f"magnet:?xt=urn:btih:{item.get('infoHash', '')}"
-                }       
+                    'source': f"{instance} - {item.get('indexer', 'N/A')}",
+                    'magnet': f"magnet:?xt=urn:btih:{item.get('infoHash', '')}",
+                    'seeders': item.get('seeders', 0)
+                }   
                 results.append(result)
     return results
