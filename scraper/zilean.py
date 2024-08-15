@@ -73,7 +73,7 @@ def parse_zilean_results(data: List[Dict[str, Any]], instance: str) -> List[Dict
         result = {
             'title': item.get('rawTitle', 'N/A'),
             'size': item.get('size', 0) / (1024 * 1024 * 1024),  # Convert to GB
-            'source': f'Zilean - {instance}',
+            'source': f'{instance}',
             'magnet': f"magnet:?xt=urn:btih:{item.get('infoHash', '')}"
         }
         results.append(result)
