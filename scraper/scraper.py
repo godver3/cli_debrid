@@ -17,9 +17,9 @@ from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies
 from pprint import pformat
 import json
 from fuzzywuzzy import fuzz
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
+#import nltk
+#from nltk.corpus import stopwords
+#from nltk.tokenize import word_tokenize
 
 def log_filter_result(title: str, resolution: str, filter_reason: str = None):
     if filter_reason:
@@ -67,6 +67,7 @@ def smart_search(pattern, text):
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
+'''
 def download_nltk_data():
     resources = ['punkt', 'stopwords']
     for resource in resources:
@@ -78,6 +79,7 @@ def download_nltk_data():
                 logging.info(f"Downloaded NLTK resource: {resource}")
             except Exception as e:
                 logging.error(f"Failed to download NLTK resource {resource}: {e}")
+'''
 
 def improved_title_similarity(query_title: str, result_title: str) -> float:
     # Parse the result title using PTN
