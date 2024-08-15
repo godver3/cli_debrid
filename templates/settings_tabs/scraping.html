@@ -1,4 +1,53 @@
-<div id="scraping" class="tab-content">
-    <h3>Scraping Settings</h3>
-    {{ render_settings(settings.get('Scraping', {}), 'Scraping') }}
+<h3>Scraping Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+{% for version, config in settings.Scraping.versions.items() %}
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>{{ version }} Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% for key, value in config.items() %}
+        <div class="settings-form-group">
+            {% if value is boolean %}
+            <label class="settings-title">
+                {{ key|replace('_', ' ')|title }}
+                <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
+            </label>
+            {% else %}
+            <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+            {% if value is string %}
+            <input type="text" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input">
+            {% elif value is number %}
+            <input type="number" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input">
+            {% elif value is iterable %}
+            <textarea id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">{{ value|join(', ') }}</textarea>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Other Scraping Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-subsection">
+            <div class="settings-form-group">
+                <label for="scraping-uncached-handling" class="settings-title">Handling Method:</label>
+                <select id="scraping-uncached-handling" name="Scraping.uncached_content_handling" class="settings-input">
+                    <option value="Hybrid" {% if settings.Scraping.uncached_content_handling == 'Hybrid' %}selected{% endif %}>Hybrid</option>
+                    <option value="Full" {% if settings.Scraping.uncached_content_handling == 'Full' %}selected{% endif %}>Full</option>
+                    <option value="None" {% if settings.Scraping.uncached_content_handling == 'None' %}selected{% endif %}>None</option>
+                </select>
+                <p class="settings-description placeholder-description">TODO: Replace with actual description</p>
+            </div>
+        </div>
+    </div>
 </div>

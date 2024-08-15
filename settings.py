@@ -18,6 +18,8 @@ import ast
 
 CONFIG_FILE = './config/config.json'
 
+scraper_manager = ScraperManager()
+
 def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as config_file:

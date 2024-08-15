@@ -16,10 +16,7 @@ function updateDarkModeIcon() {
 }
 
 function loadDarkModePreference() {
-    if (localStorage.getItem('darkMode') === 'true') {
-        document.body.classList.add('dark-mode');
-    }
-    updateDarkModeIcon();
+    document.body.classList.add('dark-mode');
 }
 
 function updateSettings(event) {

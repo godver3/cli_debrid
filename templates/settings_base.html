@@ -1,48 +1,64 @@
 {% extends "base.html" %}
 {% block title %}Settings{% endblock %}
-
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+    <script>
+        console.log("Setting scraperSettings in head");
+        window.scraperSettings = {{ scraper_settings | tojson | safe }};
+        console.log("window.scraperSettings:", window.scraperSettings);
+    </script>
 {% endblock %}
-
 {% block content %}
-<div class="container">
+<div class="settings-container">
     <h2>Settings</h2>
-    <form id="settingsForm">
-        <div class="tabs">
-            <button type="button" class="tab-button active" data-tab="required">Required Settings</button>
-            <button type="button" class="tab-button" data-tab="scrapers">Scrapers</button>
-            <button type="button" class="tab-button" data-tab="scraping">Scraping Settings</button>
-            <button type="button" class="tab-button" data-tab="content">Content Settings</button>
-            <button type="button" class="tab-button" data-tab="additional">Additional Settings</button>
-            <button type="button" class="tab-button" data-tab="debug">Debug Settings</button>
+    <form id="settingsForm" onsubmit="updateSettings(event)">
+        <div class="settings-tabs">
+            <button type="button" class="settings-tab-button active" data-tab="required">Required Settings</button>
+            <button type="button" class="settings-tab-button" data-tab="scrapers">Scrapers</button>
+            <button type="button" class="settings-tab-button" data-tab="scraping">Scraping Settings</button>
+            <button type="button" class="settings-tab-button" data-tab="content">Content Settings</button>
+            <button type="button" class="settings-tab-button" data-tab="additional">Additional Settings</button>
+            <button type="button" class="settings-tab-button" data-tab="debug">Debug Settings</button>
         </div>
-
-        <div id="required" class="tab-content active">
+        <div id="required" class="settings-tab-content active">
             {% include 'settings_tabs/required.html' %}
         </div>
-        <div id="scrapers" class="tab-content">
+        <div id="scrapers" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/scrapers.html' %}
         </div>
-        <div id="scraping" class="tab-content">
+        <div id="scraping" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/scraping.html' %}
         </div>
-        <div id="content" class="tab-content">
+        <div id="content" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/content.html' %}
         </div>
-        <div id="additional" class="tab-content">
+        <div id="additional" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/additional.html' %}
         </div>
-        <div id="debug" class="tab-content">
+        <div id="debug" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/debug.html' %}
         </div>
-
-        <button type="submit" class="submit-button">Save Settings</button>
+        <button type="submit" class="settings-submit-button">Save Settings</button>
     </form>
     <div id="saveStatus"></div>
 </div>
 {% endblock %}
-
 {% block scripts %}
     <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const tabButtons = document.querySelectorAll('.settings-tab-button');
+            const tabContents = document.querySelectorAll('.settings-tab-content');
+
+            tabButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const tabName = this.getAttribute('data-tab');
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    tabContents.forEach(content => content.style.display = 'none');
+                    this.classList.add('active');
+                    document.getElementById(tabName).style.display = 'block';
+                });
+            });
+        });
+    </script>
 {% endblock %}

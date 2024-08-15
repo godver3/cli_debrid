@@ -1,5 +1,62 @@
-<div id="debug" class="tab-content">
-    <h3>Debug Settings</h3>
-    {{ render_settings(settings.get('Logging', {}), 'Logging') }}
-    {{ render_settings(settings.get('Menu', {}), 'Menu') }}
+<h3>Debug Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Debug Options</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label class="settings-title">
+                Skip Menu
+                <input type="checkbox" id="debug-skip-menu" name="Debug.skip_menu" {% if settings.Debug.skip_menu %}checked{% endif %}>
+            </label>
+            <p class="settings-description">Enable to skip the main menu on startup.</p>
+        </div>
+        
+        <div class="settings-form-group">
+            <label for="debug-logging-level" class="settings-title">Logging Level:</label>
+            <select id="debug-logging-level" name="Debug.logging_level" class="settings-input">
+                <option value="DEBUG" {% if settings.Debug.logging_level == "DEBUG" %}selected{% endif %}>DEBUG</option>
+                <option value="INFO" {% if settings.Debug.logging_level == "INFO" %}selected{% endif %}>INFO</option>
+                <option value="WARNING" {% if settings.Debug.logging_level == "WARNING" %}selected{% endif %}>WARNING</option>
+                <option value="ERROR" {% if settings.Debug.logging_level == "ERROR" %}selected{% endif %}>ERROR</option>
+                <option value="CRITICAL" {% if settings.Debug.logging_level == "CRITICAL" %}selected{% endif %}>CRITICAL</option>
+            </select>
+            <p class="settings-description">Set the logging level for the application.</p>
+        </div>
+        
+        <div class="settings-form-group">
+            <label class="settings-title">
+                Skip Initial Plex Update
+                <input type="checkbox" id="debug-skip-initial-plex-update" name="Debug.skip_initial_plex_update" {% if settings.Debug.skip_initial_plex_update %}checked{% endif %}>
+            </label>
+            <p class="settings-description">Enable to skip the initial Plex library update on startup.</p>
+        </div>
+        
+        <div class="settings-form-group">
+            <label class="settings-title">
+                Disable Initialization
+                <input type="checkbox" id="debug-disable-initialization" name="Debug.disable_initialization" {% if settings.Debug.disable_initialization %}checked{% endif %}>
+            </label>
+            <p class="settings-description">Enable to disable the initialization process on startup.</p>
+        </div>
+        
+        <div class="settings-form-group">
+            <label for="debug-api-key" class="settings-title">API Key:</label>
+            <input type="text" id="debug-api-key" name="Debug.api_key" value="{{ settings.Debug.api_key }}" class="settings-input">
+            <p class="settings-description">Enter an API key for debugging purposes.</p>
+        </div>
+        
+        <div class="settings-form-group">
+            <label class="settings-title">
+                Jackett Seeders Only
+                <input type="checkbox" id="debug-jackett-seeders-only" name="Debug.jackett_seeders_only" {% if settings.Debug.jackett_seeders_only %}checked{% endif %}>
+            </label>
+            <p class="settings-description">Enable to only return results that have seeders.</p>
+        </div>
+    </div>
 </div>

@@ -1,16 +1,11 @@
-body {
-    background-color: #333;
-    color: #fff;
-    font-family: Arial, sans-serif;
-}
-
-.container {
-    max-width: 800px;
-    margin: 0 auto;
+.settings-container {
+    width: 95%; 
+    max-width: 1200px;
+    margin: 0 auto; 
     padding: 20px;
 }
 
-.tabs {
+.settings-tabs {
     display: flex;
     justify-content: flex-start;
     background-color: #444;
@@ -19,7 +14,7 @@ body {
     margin-bottom: 20px;
 }
 
-.tab-button {
+.settings-tab-button {
     background-color: #555;
     border: none;
     color: #fff;
@@ -30,68 +25,245 @@ body {
     border-radius: 3px;
 }
 
-.tab-button:hover, .tab-button.active {
+.settings-tab-button:hover, .settings-tab-button.active {
     background-color: #777;
 }
 
-.section {
+.settings-section {
     background-color: #444;
     border-radius: 5px;
     margin-bottom: 20px;
     overflow: hidden;
 }
 
-.section-header {
-    background-color: #555;
+.settings-section-header {
+    background-color: #1a1a1a;
     padding: 10px 15px;
     cursor: pointer;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    font-size: 1.1em
 }
 
-.section-header h4 {
+.settings-section-header h4 {
     margin: 0;
     color: #fff;
 }
 
-.section-content {
+.settings-section-content {
     padding: 15px;
     display: none;
+    background-color: #333;
 }
 
-.section-content.active {
+.settings-section-content.active {
     display: block;
 }
 
-.form-group {
+.settings-form-group {
     margin-bottom: 15px;
 }
 
-.setting-title {
+.settings-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     font-weight: bold;
     color: #fff;
-    display: block;
     margin-bottom: 5px;
+    font-size: 0.9em
 }
 
-input[type="text"], select {
-    width: 100%;
-    padding: 8px;
-    background-color: #333;
-    border: 1px solid #666;
-    color: #fff;
-    border-radius: 3px;
+.settings-title input[type="checkbox"] {
+    margin-left: 10px;
+    order: 2;
 }
 
-.description {
+.settings-description {
     font-style: italic;
     color: #aaa;
     font-size: 0.9em;
     margin-top: 5px;
 }
 
-.toggle-icon {
+.settings-input {
+    width: 100%;
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+.settings-toggle-icon {
     color: #fff;
     font-weight: bold;
+}
+
+.settings-expand-collapse-buttons {
+    margin-bottom: 15px;
+}
+
+.settings-expand-all,
+.settings-collapse-all {
+    background-color: #555;
+    border: none;
+    color: white;
+    padding: 10px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin-right: 10px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.settings-expand-all:hover,
+.settings-collapse-all:hover {
+    background-color: #777;
+}
+
+.settings-submit-button {
+    background-color: #4CAF50;
+    border: none;
+    color: white;
+    padding: 15px 32px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+.settings-submit-button:hover {
+    background-color: #45a049;
+}
+
+/* Dark mode styles */
+body.dark-mode .settings-section {
+    background-color: #222;
+}
+
+body.dark-mode .settings-section-header {
+    background-color: #1a1a1a;
+}
+
+body.dark-mode .settings-section-content {
+    background-color: #1a1a1a;
+}
+
+body.dark-mode .settings-input {
+    background-color: #333;
+    border-color: #555;
+}
+
+body.dark-mode .settings-description {
+    color: #bbb;
+}
+
+.add-scraper-link {
+    display: inline-block;
+    margin-bottom: 10px;
+    padding: 5px 10px;
+    background-color: #4CAF50;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+}
+
+.add-scraper-link:hover {
+    background-color: #45a049;
+}
+
+.delete-scraper-btn {
+    background-color: #f44336;
+    color: white;
+    padding: 5px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.delete-scraper-btn:hover {
+    background-color: #d32f2f;
+}
+
+.popup {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.4);
+}
+
+.popup-content {
+    background-color: #333;
+    color: #fff;
+    margin: 15% auto;
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+    max-width: 500px;
+    border-radius: 5px;
+}
+
+.popup-content h2 {
+    margin-top: 0;
+    color: #fff;
+}
+
+.popup-content .form-group {
+    margin-bottom: 15px;
+}
+
+.popup-content label {
+    display: block;
+    margin-bottom: 5px;
+    color: #fff;
+}
+
+.popup-content input[type="text"],
+.popup-content select {
+    width: 100%;
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+}
+
+.popup-content button {
+    background-color: #4CAF50;
+    border: none;
+    color: white;
+    padding: 10px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin-right: 10px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.popup-content button:hover {
+    background-color: #45a049;
+}
+
+.popup-content button[type="button"] {
+    background-color: #f44336;
+}
+
+.popup-content button[type="button"]:hover {
+    background-color: #d32f2f;
 }
