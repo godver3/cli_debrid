@@ -21,20 +21,24 @@ def scrape_zilean(imdb_id: str, title: str, year: int, content_type: str, season
             logging.info(f"Scraping Zilean instance: {instance}")
             
             try:
-                instance_results = scrape_zilean_instance(instance, settings, title, year, content_type, season, episode, multi)
+                instance_results = scrape_zilean_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi)
                 all_results.extend(instance_results)
             except Exception as e:
                 logging.error(f"Error scraping Zilean instance '{instance}': {str(e)}", exc_info=True)
 
     return all_results
 
-def scrape_zilean_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+def scrape_zilean_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: str, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     zilean_url = settings.get('url', '')
     if not zilean_url:
         logging.warning(f"Zilean URL is not set or invalid for instance {instance}. Skipping.")
         return []
+    
+    # if imdb_id:
+    #     params = {'ImdbId': imdb_id, 'Query': title}
 
     params = {'Query': title}
+        
     if content_type.lower() == 'movie':
         params['Year'] = year
     else:
@@ -71,10 +75,10 @@ def parse_zilean_results(data: List[Dict[str, Any]], instance: str) -> List[Dict
     results = []
     for item in data:
         result = {
-            'title': item.get('rawTitle', 'N/A'),
+            'title': item.get('raw_title', 'N/A'),
             'size': item.get('size', 0) / (1024 * 1024 * 1024),  # Convert to GB
             'source': f'{instance}',
-            'magnet': f"magnet:?xt=urn:btih:{item.get('infoHash', '')}"
+            'magnet': f"magnet:?xt=urn:btih:{item.get('info_hash', '')}"
         }
         results.append(result)
     return results
