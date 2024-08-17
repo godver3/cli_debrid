@@ -4,26 +4,34 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 
-<form id="add-scraper-form">
-    <h4>Add New Scraper</h4>
-    <div class="form-group">
-        <label for="scraper-type">Scraper Type:</label>
-        <select id="scraper-type" name="type" required>
-            {% for type in scraper_types %}
-            <option value="{{ type }}">{{ type }}</option>
-            {% endfor %}
-        </select>
+<button id="add-scraper-btn" class="add-scraper-link">Add New Scraper</button>
+
+<div id="add-scraper-popup" class="popup">
+    <div class="popup-content">
+        <h4>Add New Scraper</h4>
+        <form id="add-scraper-form">
+            <div class="form-group">
+                <label for="scraper-type">Scraper Type:</label>
+                <select id="scraper-type" name="type" required>
+                    {% for type in scraper_types %}
+                    <option value="{{ type }}">{{ type }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div id="dynamic-fields"></div>
+            <button type="submit">Add Scraper</button>
+            <button type="button" id="cancel-add-scraper">Cancel</button>
+        </form>
     </div>
-    <div id="dynamic-fields"></div>
-    <button type="submit">Add Scraper</button>
-</form>
+</div>
 
 <!-- Existing scraper list -->
 {% for scraper, config in settings.Scrapers.items() %}
 <div class="settings-section">
     <div class="settings-section-header">
-        <h4>{{ scraper }}</h4>
         <span class="settings-toggle-icon">+</span>
+        <h4>{{ scraper }}</h4>
+        <button type="button" class="delete-scraper-btn" data-scraper-id="{{ scraper }}">Delete Scraper</button>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -54,9 +62,6 @@
             <input type="text" id="{{ scraper }}-opts" name="Scrapers.{{ scraper }}.opts" value="{{ config.opts }}" class="settings-input">
         </div>
         {% endif %}
-        <div class="settings-form-group">
-            <button type="button" class="delete-scraper-btn" data-scraper-id="{{ scraper }}">Delete Scraper</button>
-        </div>
     </div>
 </div>
 {% endfor %}

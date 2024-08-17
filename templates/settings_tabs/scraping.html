@@ -3,11 +3,29 @@
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
+
+<button id="add-version-btn" class="add-version-link">Add New Version</button>
+
+<div id="add-version-popup" class="popup">
+    <div class="popup-content">
+        <h4>Add New Version</h4>
+        <form id="add-version-form">
+            <div class="form-group">
+                <label for="version-name">Version Name:</label>
+                <input type="text" id="version-name" name="name" required>
+            </div>
+            <button type="submit">Add Version</button>
+            <button type="button" id="cancel-add-version">Cancel</button>
+        </form>
+    </div>
+</div>
+
 {% for version, config in settings.Scraping.versions.items() %}
 <div class="settings-section">
     <div class="settings-section-header">
-        <h4>{{ version }} Settings</h4>
         <span class="settings-toggle-icon">+</span>
+        <h4>{{ version }} Settings</h4>
+        <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete Version</button>
     </div>
     <div class="settings-section-content">
         {% for key, value in config.items() %}
@@ -32,6 +50,7 @@
     </div>
 </div>
 {% endfor %}
+
 <div class="settings-section">
     <div class="settings-section-header">
         <h4>Other Scraping Settings</h4>
@@ -51,3 +70,5 @@
         </div>
     </div>
 </div>
+
+<script src="{{ url_for('static', filename='js/versions.js') }}"></script>

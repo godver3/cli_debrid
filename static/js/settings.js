@@ -1,42 +1,15 @@
 document.addEventListener('DOMContentLoaded', function() {
     const tabButtons = document.querySelectorAll('.settings-tab-button');
-    const sections = document.querySelectorAll('.settings-section-header');
-    const expandAllButtons = document.querySelectorAll('.settings-expand-all');
-    const collapseAllButtons = document.querySelectorAll('.settings-collapse-all');
-    const settingsForm = document.getElementById('settingsForm');
     const saveButton = document.querySelector('.settings-submit-button');
     
     tabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const tabName = button.getAttribute('data-tab');
             openTab(tabName);
+            localStorage.setItem('currentTab', tabName);
         });
     });
     
-    sections.forEach(section => {
-        section.addEventListener('click', () => {
-            toggleSection(section);
-        });
-    });
-
-    expandAllButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            const tabContent = button.closest('.settings-tab-content');
-            expandAll(tabContent);
-        });
-    });
-
-    collapseAllButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            const tabContent = button.closest('.settings-tab-content');
-            collapseAll(tabContent);
-        });
-    });
-
-    if (settingsForm) {
-        settingsForm.addEventListener('submit', handleSettingsFormSubmit);
-    }
-
     if (saveButton) {
         saveButton.addEventListener('click', function(e) {
             e.preventDefault();
@@ -76,7 +49,102 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize scraper functionality
     initializeScrapersFunctionality();
+
+    // Restore the last active tab
+    const lastActiveTab = localStorage.getItem('currentTab');
+    if (lastActiveTab) {
+        openTab(lastActiveTab);
+    }
 });
+
+function initializeExpandCollapse() {
+    const allTabContents = document.querySelectorAll('.settings-tab-content');
+    
+    allTabContents.forEach(tabContent => {
+        const expandAllButton = tabContent.querySelector('.settings-expand-all');
+        const collapseAllButton = tabContent.querySelector('.settings-collapse-all');
+
+        // Use event delegation for section headers
+        tabContent.addEventListener('click', (event) => {
+            const sectionHeader = event.target.closest('.settings-section-header');
+            if (sectionHeader) {
+                event.stopPropagation();
+                toggleSection(sectionHeader);
+            }
+        });
+
+        if (expandAllButton) {
+            expandAllButton.addEventListener('click', () => {
+                expandAll(tabContent);
+            });
+        }
+
+        if (collapseAllButton) {
+            collapseAllButton.addEventListener('click', () => {
+                collapseAll(tabContent);
+            });
+        }
+    });
+
+    // Initialize Scrapers tab separately
+    initializeScrapersExpandCollapse();
+}
+
+function initializeScrapersExpandCollapse() {
+    const scrapersTab = document.getElementById('scrapers');
+    if (scrapersTab) {
+        const sectionHeaders = scrapersTab.querySelectorAll('.settings-section-header');
+        sectionHeaders.forEach(header => {
+            header.addEventListener('click', function(event) {
+                event.stopPropagation();
+                const content = this.nextElementSibling;
+                const toggleIcon = this.querySelector('.settings-toggle-icon');
+                if (content.style.display === 'none' || content.style.display === '') {
+                    content.style.display = 'block';
+                    toggleIcon.textContent = '-';
+                } else {
+                    content.style.display = 'none';
+                    toggleIcon.textContent = '+';
+                }
+            });
+        });
+    }
+}
+
+function toggleSection(sectionHeader) {
+    const sectionContent = sectionHeader.nextElementSibling;
+    const toggleIcon = sectionHeader.querySelector('.settings-toggle-icon');
+    
+    if (sectionContent.style.display === 'none' || sectionContent.style.display === '') {
+        sectionContent.style.display = 'block';
+        toggleIcon.textContent = '-';
+    } else {
+        sectionContent.style.display = 'none';
+        toggleIcon.textContent = '+';
+    }
+}
+
+function expandAll(tabContent) {
+    const sections = tabContent.querySelectorAll('.settings-section-content');
+    const toggleIcons = tabContent.querySelectorAll('.settings-toggle-icon');
+    sections.forEach(section => {
+        section.style.display = 'block';
+    });
+    toggleIcons.forEach(icon => {
+        icon.textContent = '-';
+    });
+}
+
+function collapseAll(tabContent) {
+    const sections = tabContent.querySelectorAll('.settings-section-content');
+    const toggleIcons = tabContent.querySelectorAll('.settings-toggle-icon');
+    sections.forEach(section => {
+        section.style.display = 'none';
+    });
+    toggleIcons.forEach(icon => {
+        icon.textContent = '+';
+    });
+}
 
 function openTab(tabName) {
     const tabContents = document.querySelectorAll('.settings-tab-content');
@@ -85,31 +153,35 @@ function openTab(tabName) {
     tabContents.forEach(content => content.style.display = 'none');
     tabButtons.forEach(button => button.classList.remove('active'));
     
-    document.getElementById(tabName).style.display = 'block';
+    const activeTab = document.getElementById(tabName);
+    activeTab.style.display = 'block';
     document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-}
-
-function toggleSection(sectionHeader) {
-    const sectionContent = sectionHeader.nextElementSibling;
-    const toggleIcon = sectionHeader.querySelector('.settings-toggle-icon');
     
-    sectionContent.classList.toggle('active');
-    toggleIcon.textContent = sectionContent.classList.contains('active') ? '-' : '+';
+    initializeTabExpandCollapse(activeTab);
 }
 
-function expandAll(tabContent) {
-    const sections = tabContent.querySelectorAll('.settings-section-content');
-    sections.forEach(section => {
-        section.classList.add('active');
-        section.previousElementSibling.querySelector('.settings-toggle-icon').textContent = '-';
-    });
-}
+function initializeTabExpandCollapse(tabContent) {
+    const expandAllButton = tabContent.querySelector('.settings-expand-all');
+    const collapseAllButton = tabContent.querySelector('.settings-collapse-all');
 
-function collapseAll(tabContent) {
-    const sections = tabContent.querySelectorAll('.settings-section-content');
-    sections.forEach(section => {
-        section.classList.remove('active');
-        section.previousElementSibling.querySelector('.settings-toggle-icon').textContent = '+';
+    if (expandAllButton) {
+        expandAllButton.addEventListener('click', () => {
+            expandAll(tabContent);
+        });
+    }
+
+    if (collapseAllButton) {
+        collapseAllButton.addEventListener('click', () => {
+            collapseAll(tabContent);
+        });
+    }
+
+    const sectionHeaders = tabContent.querySelectorAll('.settings-section-header');
+    sectionHeaders.forEach(header => {
+        header.addEventListener('click', function(event) {
+            event.stopPropagation();
+            toggleSection(this);
+        });
     });
 }
 
@@ -213,7 +285,8 @@ function handleAddScraperSubmit(e) {
                 addScraperPopup.style.display = 'none';
             }
             e.target.reset();
-            location.reload();
+            // Instead of reloading the page, update the Scrapers tab content
+            updateScrapersTab();
         } else {
             throw new Error(data.error || 'Unknown error');
         }
@@ -291,7 +364,8 @@ function initializeScrapersFunctionality() {
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        location.reload();
+                        // Instead of reloading the page, update the Scrapers tab content
+                        updateScrapersTab();
                     } else {
                         alert('Failed to delete scraper: ' + (data.error || 'Unknown error'));
                     }
@@ -303,6 +377,22 @@ function initializeScrapersFunctionality() {
             }
         });
     });
+}
+
+function updateScrapersTab() {
+    fetch('/scrapers/content')
+        .then(response => response.text())
+        .then(html => {
+            const scrapersTab = document.getElementById('scrapers');
+            if (scrapersTab) {
+                scrapersTab.innerHTML = html;
+                initializeScrapersFunctionality();
+                initializeScrapersExpandCollapse();
+            }
+        })
+        .catch(error => {
+            console.error('Error updating Scrapers tab:', error);
+        });
 }
 
 function displaySuccess(message) {
