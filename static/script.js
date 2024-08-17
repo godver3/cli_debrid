@@ -19,64 +19,6 @@ function loadDarkModePreference() {
     document.body.classList.add('dark-mode');
 }
 
-function updateSettings(event) {
-    event.preventDefault();
-    
-    let formData = new FormData(event.target);
-    let settings = {};
-
-    for (let [key, value] of formData.entries()) {
-        let keys = key.split('.');
-        let current = settings;
-        for (let i = 0; i < keys.length - 1; i++) {
-            if (!(keys[i] in current)) {
-                current[keys[i]] = {};
-            }
-            current = current[keys[i]];
-        }
-        if (value === 'true') {
-            value = true;
-        } else if (value === 'false') {
-            value = false;
-        } else if (!isNaN(value) && value !== '') {
-            value = Number(value);
-        }
-        current[keys[keys.length - 1]] = value;
-    }
-
-    fetch('/settings', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(settings)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === 'success') {
-            displaySuccess('Settings saved successfully!');
-        } else {
-            displayError('Error saving settings.');
-        }
-    })
-    .catch((error) => {
-        console.error('Error:', error);
-        displayError('Error saving settings.');
-    });
-}
-
-function displaySuccess(message) {
-    const saveStatus = document.getElementById('saveStatus');
-    saveStatus.textContent = message;
-    saveStatus.style.color = 'green';
-}
-
-function displayError(message) {
-    const saveStatus = document.getElementById('saveStatus');
-    saveStatus.textContent = message;
-    saveStatus.style.color = 'red';
-}
-
 function updateStats() {
     fetch('/api/stats')
         .then(response => response.json())

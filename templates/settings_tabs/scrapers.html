@@ -1,9 +1,22 @@
 <h3>Scrapers Settings</h3>
-<button id="add-scraper-btn" class="add-scraper-link" type="button">Add New Scraper</button>
 <div class="settings-expand-collapse-buttons">
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
+
+<form id="add-scraper-form">
+    <h4>Add New Scraper</h4>
+    <div class="form-group">
+        <label for="scraper-type">Scraper Type:</label>
+        <select id="scraper-type" name="type" required>
+            {% for type in scraper_types %}
+            <option value="{{ type }}">{{ type }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div id="dynamic-fields"></div>
+    <button type="submit">Add Scraper</button>
+</form>
 
 <!-- Existing scraper list -->
 {% for scraper, config in settings.Scrapers.items() %}
@@ -47,183 +60,3 @@
     </div>
 </div>
 {% endfor %}
-
-<!-- Add Scraper Popup -->
-<div id="add-scraper-popup" class="popup">
-    <div class="popup-content">
-        <h2>Add New Scraper</h2>
-        <form id="add-scraper-form">
-            <div class="form-group">
-                <label for="scraper-type">Scraper Type:</label>
-                <select id="scraper-type" name="type" required>
-                    {% for type in scraper_types %}
-                    <option value="{{ type }}">{{ type }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div id="dynamic-fields"></div>
-            <button type="submit">Add Scraper</button>
-            <button type="button" id="cancel-add-scraper">Cancel</button>
-        </form>
-    </div>
-</div>
-
-<script>
-console.log("Scrapers.html script starting");
-console.log("Initial scraperSettings in scrapers.html:", window.scraperSettings);
-
-function initializeScrapersFunctionality() {
-    console.log("Initializing scrapers functionality");
-    console.log("scraperSettings when initializing:", window.scraperSettings);
-
-    const addScraperBtn = document.getElementById('add-scraper-btn');
-    const addScraperPopup = document.getElementById('add-scraper-popup');
-    const cancelAddScraperBtn = document.getElementById('cancel-add-scraper');
-    const addScraperForm = document.getElementById('add-scraper-form');
-    const dynamicFields = document.getElementById('dynamic-fields');
-    const scraperTypeSelect = document.getElementById('scraper-type');
-
-    console.log("addScraperBtn:", addScraperBtn);
-    console.log("addScraperPopup:", addScraperPopup);
-    console.log("cancelAddScraperBtn:", cancelAddScraperBtn);
-    console.log("addScraperForm:", addScraperForm);
-    console.log("dynamicFields:", dynamicFields);
-    console.log("scraperTypeSelect:", scraperTypeSelect);
-
-    if (addScraperBtn && addScraperPopup && cancelAddScraperBtn && addScraperForm && dynamicFields && scraperTypeSelect) {
-        console.log("All required elements found, setting up event listeners");
-
-        addScraperBtn.addEventListener('click', function() {
-            console.log("Add Scraper button clicked");
-            addScraperPopup.style.display = 'block';
-            updateDynamicFields();
-        });
-
-        cancelAddScraperBtn.addEventListener('click', function() {
-            console.log("Cancel Add Scraper button clicked");
-            addScraperPopup.style.display = 'none';
-        });
-
-        scraperTypeSelect.addEventListener('change', updateDynamicFields);
-
-        addScraperForm.addEventListener('submit', function(e) {
-            console.log("Add Scraper form submitted");
-            e.preventDefault();
-            const formData = new FormData(addScraperForm);
-            fetch('{{ url_for("add_scraper") }}', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    console.log("Scraper added successfully");
-                    addScraperPopup.style.display = 'none';
-                    location.reload();
-                } else {
-                    console.error("Failed to add scraper:", data.error);
-                    alert('Failed to add scraper: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('An error occurred while adding the scraper.');
-            });
-        });
-
-        function updateDynamicFields() {
-            console.log("Updating dynamic fields");
-            const selectedType = scraperTypeSelect.value;
-            dynamicFields.innerHTML = '';
-            if (window.scraperSettings && window.scraperSettings[selectedType]) {
-                window.scraperSettings[selectedType].forEach(setting => {
-                    if (setting !== 'enabled') {
-                        const div = document.createElement('div');
-                        div.className = 'form-group';
-                        
-                        const label = document.createElement('label');
-                        label.htmlFor = setting;
-                        label.textContent = setting.charAt(0).toUpperCase() + setting.slice(1) + ':';
-                        
-                        const input = document.createElement('input');
-                        input.type = 'text';
-                        input.id = setting;
-                        input.name = setting;
-                        
-                        div.appendChild(label);
-                        div.appendChild(input);
-                        dynamicFields.appendChild(div);
-                    }
-                });
-
-                // Add enabled checkbox
-                const enabledDiv = document.createElement('div');
-                enabledDiv.className = 'form-group';
-                
-                const enabledLabel = document.createElement('label');
-                enabledLabel.htmlFor = 'enabled';
-                enabledLabel.textContent = 'Enabled:';
-                
-                const enabledInput = document.createElement('input');
-                enabledInput.type = 'checkbox';
-                enabledInput.id = 'enabled';
-                enabledInput.name = 'enabled';
-                
-                enabledDiv.appendChild(enabledLabel);
-                enabledDiv.appendChild(enabledInput);
-                dynamicFields.appendChild(enabledDiv);
-            } else {
-                console.error('Scraper settings not found for type:', selectedType);
-            }
-        }
-    } else {
-        console.error('One or more required elements are missing from the DOM');
-    }
-
-    // Existing delete scraper functionality
-    document.querySelectorAll('.delete-scraper-btn').forEach(button => {
-        button.addEventListener('click', function() {
-            const scraperId = this.getAttribute('data-scraper-id');
-            if (confirm(`Are you sure you want to delete the scraper "${scraperId}"?`)) {
-                fetch('{{ url_for("delete_scraper") }}', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ scraper_id: scraperId }),
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        location.reload();
-                    } else {
-                        alert('Failed to delete scraper: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('An error occurred while deleting the scraper.');
-                });
-            }
-        });
-    });
-}
-
-// Wait for the scrapers tab to be visible before initializing
-function waitForScrapersTab() {
-    const scrapersTab = document.getElementById('scrapers');
-    if (scrapersTab && window.getComputedStyle(scrapersTab).display !== 'none') {
-        console.log("Scrapers tab is visible, initializing functionality");
-        initializeScrapersFunctionality();
-    } else {
-        console.log("Scrapers tab is not visible yet, waiting...");
-        setTimeout(waitForScrapersTab, 100);
-    }
-}
-
-// Call the waitForScrapersTab function after the DOM is fully loaded
-document.addEventListener('DOMContentLoaded', function() {
-    console.log("DOM fully loaded in scrapers.html");
-    waitForScrapersTab();
-});
-</script>

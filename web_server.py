@@ -18,6 +18,7 @@ from settings_web import get_settings_page, update_settings, get_settings
 from template_utils import render_settings, render_content_sources
 import json
 from scraper_manager import ScraperManager
+import uuid
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -27,8 +28,8 @@ queue_manager = QueueManager()
 scraper_manager = ScraperManager()
 
 # Disable Werkzeug request logging
-log = logging.getLogger('werkzeug')
-log.disabled = True
+#log = logging.getLogger('werkzeug')
+#log.disabled = True
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -63,46 +64,60 @@ def utility_processor():
 
 @app.route('/scrapers/add', methods=['POST'])
 def add_scraper():
-    scraper_type = request.form.get('type')
-    
-    if scraper_type not in scraper_manager.scraper_settings:
-        return jsonify({'success': False, 'error': 'Invalid scraper type'})
-    
-    # Load the current configuration
-    config = load_config()
-    
-    # Ensure 'Scrapers' key exists in the config
-    if 'Scrapers' not in config:
-        config['Scrapers'] = {}
-    
-    # Generate a new scraper ID
-    index = 1
-    while f"{scraper_type}_{index}" in config['Scrapers']:
-        index += 1
-    new_scraper_id = f"{scraper_type}_{index}"
-    
-    # Create the new scraper configuration
-    new_scraper = {setting: '' for setting in scraper_manager.scraper_settings[scraper_type]}
-    new_scraper['enabled'] = False
-    
-    # Update the new scraper with form data
-    for setting in scraper_manager.scraper_settings[scraper_type]:
-        value = request.form.get(setting, '')
-        if setting == 'enabled':
-            value = value == 'on'
-        new_scraper[setting] = value
-    
-    # Add the new scraper to the configuration
-    config['Scrapers'][new_scraper_id] = new_scraper
-    
-    # Save the updated configuration
-    save_config(config)
-    
-    # Update the scraper manager's internal state
-    scraper_manager.config = config
-    scraper_manager.scrapers = config.get('Scrapers', {})
-    
-    return jsonify({'success': True})
+    request_id = str(uuid.uuid4())[:8]
+    source = request.headers.get('X-Request-Source', 'Unknown')
+    logging.info(f"[{request_id}] add_scraper function called from {source}")
+    try:
+        logging.debug(f"[{request_id}] Request method: {request.method}")
+        logging.debug(f"[{request_id}] Request form: {request.form}")
+        logging.debug(f"[{request_id}] Request headers: {request.headers}")
+        
+        scraper_type = request.form.get('type')
+        
+        logging.debug(f"[{request_id}] Scraper type: {scraper_type}")
+        
+        if not scraper_type:
+            return jsonify({'success': False, 'error': 'No scraper type provided', 'request_id': request_id}), 400
+        
+        if scraper_type not in scraper_manager.scraper_settings:
+            logging.error(f"[{request_id}] Invalid scraper type: {scraper_type}")
+            return jsonify({'success': False, 'error': 'Invalid scraper type', 'request_id': request_id}), 400
+        
+        # Load the current configuration
+        config = load_config()
+        
+        # Ensure 'Scrapers' key exists in the config
+        if 'Scrapers' not in config:
+            config['Scrapers'] = {}
+        
+        # Generate a new scraper ID
+        index = 1
+        while f"{scraper_type}_{index}" in config['Scrapers']:
+            index += 1
+        new_scraper_id = f"{scraper_type}_{index}"
+        
+        # Create the new scraper configuration
+        new_scraper = {setting: '' for setting in scraper_manager.scraper_settings[scraper_type]}
+        new_scraper['enabled'] = False
+        
+        # Update the new scraper with form data
+        for setting in scraper_manager.scraper_settings[scraper_type]:
+            value = request.form.get(setting, '')
+            if setting == 'enabled':
+                value = value == 'on'
+            new_scraper[setting] = value
+        
+        # Add the new scraper to the configuration
+        config['Scrapers'][new_scraper_id] = new_scraper
+        
+        # Save the updated configuration
+        save_config(config)
+        
+        logging.info(f"[{request_id}] Successfully added new scraper: {new_scraper_id}")
+        return jsonify({'success': True, 'request_id': request_id})
+    except Exception as e:
+        logging.error(f"[{request_id}] Error adding scraper: {str(e)}")
+        return jsonify({'success': False, 'error': str(e), 'request_id': request_id}), 500
 
 @app.route('/scrapers/delete', methods=['POST'])
 def delete_scraper():
