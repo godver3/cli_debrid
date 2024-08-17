@@ -49,6 +49,8 @@
 .settings-section-header h4 {
     margin: 0;
     color: #fff;
+    text-align: left;
+    flex-grow: 1;
 }
 
 .settings-section-content {
@@ -166,7 +168,7 @@ body.dark-mode .settings-description {
     color: #bbb;
 }
 
-.add-scraper-link {
+.add-scraper-link, .add-version-link {
     display: inline-block;
     margin-bottom: 10px;
     padding: 5px 10px;
@@ -176,7 +178,7 @@ body.dark-mode .settings-description {
     border-radius: 4px;
 }
 
-.add-scraper-link:hover {
+.add-scraper-link:hover, .add-version-link:hover {
     background-color: #45a049;
 }
 
@@ -244,16 +246,12 @@ body.dark-mode .settings-description {
 
 .popup-content button {
     background-color: #4CAF50;
-    border: none;
     color: white;
     padding: 10px 15px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 14px;
-    margin-right: 10px;
-    cursor: pointer;
+    border: none;
     border-radius: 3px;
+    cursor: pointer;
+    margin-right: 10px;
 }
 
 .popup-content button:hover {
@@ -265,5 +263,28 @@ body.dark-mode .settings-description {
 }
 
 .popup-content button[type="button"]:hover {
+    background-color: #d32f2f;
+}
+
+.settings-section-header {
+    display: flex;
+    align-items: center;
+}
+
+.settings-toggle-icon {
+    margin-right: 10px;
+}
+
+.delete-version-btn {
+    background-color: #f44336;
+    color: white;
+    padding: 5px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: auto;
+}
+
+.delete-version-btn:hover {
     background-color: #d32f2f;
 }

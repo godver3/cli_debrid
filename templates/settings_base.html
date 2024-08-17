@@ -49,6 +49,7 @@
 {% endblock %}
 {% block scripts %}
     <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/versions.js') }}"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const tabButtons = document.querySelectorAll('.settings-tab-button');

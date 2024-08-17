@@ -7,6 +7,7 @@ from settings import SettingsEditor, get_setting, load_config, save_config, CONF
 from database import verify_database
 import shutil
 from datetime import datetime
+from web_server import start_server
 
 # Ensure logs directory exists
 if not os.path.exists('logs'):
@@ -35,6 +36,9 @@ else:
 # Ensure settings file exists and populate with default keys
 ensure_settings_file()
 verify_database()
+
+# Start web server
+start_server()
 
 from questionary import select
 from run_program import run_program

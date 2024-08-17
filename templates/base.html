@@ -44,11 +44,15 @@
                 <li><a href="{{ url_for('database') }}">Database</a></li>
             </ul>
         </nav>
+        <div class="program-controls">
+            <button id="programControlButton">Start Program</button>
+        </div>
     </header>
     <main>
         {% block content %}{% endblock %}
     </main>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/program_controls.js') }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

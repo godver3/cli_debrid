@@ -19,6 +19,11 @@ from template_utils import render_settings, render_content_sources
 import json
 from scraper_manager import ScraperManager
 import uuid
+from flask import jsonify
+from shared import app, update_stats
+from run_program import ProgramRunner
+from queue_utils import safe_process_queue
+from run_program import process_overseerr_webhook, ProgramRunner
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -28,8 +33,8 @@ queue_manager = QueueManager()
 scraper_manager = ScraperManager()
 
 # Disable Werkzeug request logging
-#log = logging.getLogger('werkzeug')
-#log.disabled = True
+log = logging.getLogger('werkzeug')
+log.disabled = True
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -118,6 +123,14 @@ def add_scraper():
     except Exception as e:
         logging.error(f"[{request_id}] Error adding scraper: {str(e)}")
         return jsonify({'success': False, 'error': str(e), 'request_id': request_id}), 500
+
+@app.route('/scrapers/content')
+def scrapers_content():
+    scrapers = scraper_manager.load_scrapers()
+    settings = load_config()
+    scraper_types = list(scraper_manager.scraper_settings.keys())
+    return render_template('settings_tabs/scrapers.html', settings=settings, scraper_types=scraper_types, scraper_settings=scraper_manager.scraper_settings)
+
 
 @app.route('/scrapers/delete', methods=['POST'])
 def delete_scraper():
@@ -462,7 +475,7 @@ def update_stats(processed=0, successful=0, failed=0):
     total_processed += processed
     successful_additions += successful
     failed_additions += failed
-
+'''
 def safe_process_queue(queue_name):
     try:
         getattr(queue_manager, f'process_{queue_name.lower()}')()
@@ -470,6 +483,99 @@ def safe_process_queue(queue_name):
     except Exception as e:
         logging.error(f"Error processing {queue_name} queue: {str(e)}")
         update_stats(failed=1)
+'''
+program_runner = None
+
+@app.route('/api/start_program', methods=['POST'])
+def start_program():
+    global program_runner
+    if program_runner is None or not program_runner.is_running():
+        program_runner = ProgramRunner()
+        program_runner.start()
+        return jsonify({"status": "success", "message": "Program started"})
+    else:
+        return jsonify({"status": "error", "message": "Program is already running"})
+
+@app.route('/api/reset_program', methods=['POST'])
+def reset_program():
+    global program_runner
+    if program_runner is not None:
+        program_runner.stop()
+    program_runner = None
+    return jsonify({"status": "success", "message": "Program reset"})
+    
+@app.route('/api/program_status', methods=['GET'])
+def program_status():
+    global program_runner
+    status = "Running" if program_runner is not None and program_runner.is_running() else "Initialized"
+    return jsonify({"status": status})
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.json
+    logging.debug(f"Received webhook: {data}")
+    try:
+        process_overseerr_webhook(data)
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        logging.error(f"Error processing webhook: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/versions/add', methods=['POST'])
+def add_version():
+    version_name = request.form.get('name')
+    if not version_name:
+        return jsonify({'success': False, 'error': 'No version name provided'}), 400
+
+    config = load_config()
+    if 'Scraping' not in config:
+        config['Scraping'] = {}
+    if 'versions' not in config['Scraping']:
+        config['Scraping']['versions'] = {}
+
+    if version_name in config['Scraping']['versions']:
+        return jsonify({'success': False, 'error': 'Version already exists'}), 400
+
+    # Add the new version with default settings
+    config['Scraping']['versions'][version_name] = {
+        'enable_hdr': False,
+        'max_resolution': '1080p',
+        'resolution_wanted': '<=',
+        'resolution_weight': 3,
+        'hdr_weight': 3,
+        'similarity_weight': 3,
+        'size_weight': 3,
+        'bitrate_weight': 3,
+        'preferred_filter_in': [],
+        'preferred_filter_out': [],
+        'filter_in': [],
+        'filter_out': [],
+        'min_size_gb': 0.01
+    }
+
+    save_config(config)
+    return jsonify({'success': True})
+
+@app.route('/versions/delete', methods=['POST'])
+def delete_version():
+    data = request.json
+    version_id = data.get('version_id')
+    
+    if not version_id:
+        return jsonify({'success': False, 'error': 'No version ID provided'}), 400
+
+    config = load_config()
+    if 'Scraping' in config and 'versions' in config['Scraping'] and version_id in config['Scraping']['versions']:
+        del config['Scraping']['versions'][version_id]
+        save_config(config)
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False, 'error': 'Version not found'}), 404
+
+@app.route('/scraping/content')
+def scraping_content():
+    config = load_config()
+    return render_template('settings_tabs/scraping.html', settings=config)
 
 if __name__ == '__main__':
     app.run(debug=True)
