@@ -6,6 +6,10 @@
 
 <button id="add-scraper-btn" class="add-scraper-link">Add New Scraper</button>
 
+<script>
+    window.scraperSettings = {{ scraper_settings | default({}) | tojson | safe }};
+</script>
+
 <div id="add-scraper-popup" class="popup">
     <div class="popup-content">
         <h4>Add New Scraper</h4>
@@ -35,15 +39,15 @@
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
-            <label class="settings-title">
-                Enabled
-                <input type="checkbox" id="{{ scraper }}-enabled" name="Scrapers.{{ scraper }}.enabled" {% if config.enabled %}checked{% endif %}>
-            </label>
+            <label for="{{ scraper }}-enabled" class="settings-title">Enabled:</label>
+            <input type="checkbox" id="{{ scraper }}-enabled" name="Scrapers.{{ scraper }}.enabled" {% if config.enabled %}checked{% endif %}>
         </div>
+        {% if 'url' in config %}
         <div class="settings-form-group">
             <label for="{{ scraper }}-url" class="settings-title">URL:</label>
             <input type="text" id="{{ scraper }}-url" name="Scrapers.{{ scraper }}.url" value="{{ config.url }}" class="settings-input">
         </div>
+        {% endif %}
         {% if 'api' in config %}
         <div class="settings-form-group">
             <label for="{{ scraper }}-api" class="settings-title">API Key:</label>

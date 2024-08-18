@@ -3,77 +3,28 @@
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
+{% for section in ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio'] %}
 <div class="settings-section">
     <div class="settings-section-header">
-        <h4>Plex</h4>
+        <h4>{{ section }}</h4>
         <span class="settings-toggle-icon">+</span>
     </div>
     <div class="settings-section-content">
+        {% for key, value in settings[section].items() %}
         <div class="settings-form-group">
-            <label for="plex-url" class="settings-title">Plex URL:</label>
-            <input type="text" id="plex-url" name="Plex.url" value="{{ settings.Plex.url }}" class="settings-input">
-            <p class="settings-description">Enter the URL of your Plex server, including http:// or https:// and the port number if necessary.</p>
-        </div>
-        <div class="settings-form-group">
-            <label for="plex-token" class="settings-title">Plex Token:</label>
-            <input type="text" id="plex-token" name="Plex.token" value="{{ settings.Plex.token }}" class="settings-input">
-            <p class="settings-description">Enter your Plex authentication token. This can be found by following the instructions at https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/</p>
-        </div>
-        <div class="settings-form-group">
-            <label for="plex-movie-libraries" class="settings-title">Plex Movie Libraries:</label>
-            <input type="text" id="plex-movie-libraries" name="Plex.movie_libraries" value="{{ settings.Plex.movie_libraries }}" class="settings-input">
-            <p class="settings-description">Enter the names of your Plex movie libraries, separated by commas.</p>
-        </div>
-        <div class="settings-form-group">
-            <label for="plex-shows-libraries" class="settings-title">Plex Shows Libraries:</label>
-            <input type="text" id="plex-shows-libraries" name="Plex.shows_libraries" value="{{ settings.Plex.shows_libraries }}" class="settings-input">
-            <p class="settings-description">Enter the names of your Plex TV show libraries, separated by commas.</p>
-        </div>
-    </div>
-</div>
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>Overseerr</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label for="overseerr-url" class="settings-title">Overseerr URL:</label>
-            <input type="text" id="overseerr-url" name="Overseerr.url" value="{{ settings.Overseerr.url }}" class="settings-input">
-            <p class="settings-description">Enter the URL of your Overseerr instance, including http:// or https:// and the port number if necessary.</p>
-        </div>
-        <div class="settings-form-group">
-            <label for="overseerr-api-key" class="settings-title">Overseerr API Key:</label>
-            <input type="text" id="overseerr-api-key" name="Overseerr.api_key" value="{{ settings.Overseerr.api_key }}" class="settings-input">
-            <p class="settings-description">Enter your Overseerr API key. This can be found in your Overseerr settings.</p>
-        </div>
-    </div>
-</div>
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>Real Debrid</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label for="realdebrid-api-key" class="settings-title">Real Debrid API Key:</label>
-            <input type="text" id="realdebrid-api-key" name="RealDebrid.api_key" value="{{ settings.RealDebrid.api_key }}" class="settings-input">
-            <p class="settings-description">Enter your Real Debrid API key. This can be found in your Real Debrid account settings.</p>
-        </div>
-    </div>
-</div>
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>Torrentio</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-form-group">
+            <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+            {% if value is boolean %}
             <label class="settings-title">
-                Enable Torrentio
-                <input type="checkbox" id="torrentio-enabled" name="Torrentio.enabled" {% if settings.Torrentio.enabled %}checked{% endif %}>
+                <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if value %}checked{% endif %}>
             </label>
-            <p class="settings-description">Enable or disable Torrentio integration.</p>
+            {% else %}
+            <input type="text" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ value }}" class="settings-input">
+            {% endif %}
+            {% if settings_schema[section][key].description %}
+            <p class="settings-description">{{ settings_schema[section][key].description }}</p>
+            {% endif %}
         </div>
+        {% endfor %}
     </div>
 </div>
+{% endfor %}

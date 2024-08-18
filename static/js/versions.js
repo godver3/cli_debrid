@@ -1,8 +1,8 @@
 document.addEventListener('DOMContentLoaded', function() {
-    initializeVersionsFunctionality();
+    initializeScrapingFunctionality();
 });
 
-function initializeVersionsFunctionality() {
+function initializeScrapingFunctionality() {
     const addVersionBtn = document.getElementById('add-version-btn');
     const addVersionPopup = document.getElementById('add-version-popup');
     const cancelAddVersionBtn = document.getElementById('cancel-add-version');
@@ -115,7 +115,7 @@ function updateScrapingTab() {
             const scrapingTab = document.getElementById('scraping');
             if (scrapingTab) {
                 scrapingTab.innerHTML = html;
-                initializeVersionsFunctionality();
+                initializeScrapingFunctionality();
             }
         })
         .catch(error => {

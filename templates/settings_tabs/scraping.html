@@ -24,7 +24,7 @@
 <div class="settings-section">
     <div class="settings-section-header">
         <span class="settings-toggle-icon">+</span>
-        <h4>{{ version }} Settings</h4>
+        <h4>{{ version }} Version</h4>
         <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete Version</button>
     </div>
     <div class="settings-section-content">
@@ -32,8 +32,10 @@
         <div class="settings-form-group">
             {% if value is boolean %}
             <label class="settings-title">
-                {{ key|replace('_', ' ')|title }}
-                <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
+            {{ key|replace('_', ' ')|title }}
+            </label>
+            <label class="settings-title">
+            <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
             </label>
             {% else %}
             <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
@@ -44,6 +46,9 @@
             {% elif value is iterable %}
             <textarea id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">{{ value|join(', ') }}</textarea>
             {% endif %}
+            {% endif %}
+            {% if settings_schema.Scraping.versions.schema is defined and settings_schema.Scraping.versions.schema[key] is defined and settings_schema.Scraping.versions.schema[key].description is defined %}
+            <p class="settings-description">{{ settings_schema.Scraping.versions.schema[key].description }}</p>
             {% endif %}
         </div>
         {% endfor %}
@@ -65,10 +70,11 @@
                     <option value="Full" {% if settings.Scraping.uncached_content_handling == 'Full' %}selected{% endif %}>Full</option>
                     <option value="None" {% if settings.Scraping.uncached_content_handling == 'None' %}selected{% endif %}>None</option>
                 </select>
-                <p class="settings-description placeholder-description">TODO: Replace with actual description</p>
+                {% if settings_schema.Scraping.uncached_content_handling.description %}
+                <p class="settings-description">{{ settings_schema.Scraping.uncached_content_handling.description }}</p>
+                {% endif %}
             </div>
         </div>
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/versions.js') }}"></script>

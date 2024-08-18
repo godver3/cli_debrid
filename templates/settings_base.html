@@ -1,11 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Settings{% endblock %}
 {% block head %}
+    {{ super() }}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
     <script>
         console.log("Setting scraperSettings in head");
         window.scraperSettings = {{ scraper_settings | tojson | safe }};
         console.log("window.scraperSettings:", window.scraperSettings);
+
+        // Add content source settings
+        window.contentSourceSettings = {{ content_source_settings | tojson | safe }};
+        console.log("window.contentSourceSettings:", window.contentSourceSettings);
     </script>
 {% endblock %}
 {% block content %}
@@ -15,7 +20,7 @@
         <button type="button" class="settings-tab-button active" data-tab="required">Required Settings</button>
         <button type="button" class="settings-tab-button" data-tab="scrapers">Scrapers</button>
         <button type="button" class="settings-tab-button" data-tab="scraping">Scraping Settings</button>
-        <button type="button" class="settings-tab-button" data-tab="content">Content Settings</button>
+        <button type="button" class="settings-tab-button" data-tab="content-sources">Content Sources</button>
         <button type="button" class="settings-tab-button" data-tab="additional">Additional Settings</button>
         <button type="button" class="settings-tab-button" data-tab="debug">Debug Settings</button>
     </div>
@@ -27,8 +32,8 @@
         <div id="scraping" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/scraping.html' %}
         </div>
-        <div id="content" class="settings-tab-content" style="display: none;">
-            {% include 'settings_tabs/content.html' %}
+        <div id="content-sources" class="settings-tab-content" style="display: none;">
+            {% include 'settings_tabs/content_sources.html' %}
         </div>
         <div id="additional" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/additional.html' %}
@@ -43,27 +48,12 @@
     </div>
 
     <button type="button" id="saveSettingsButton" class="settings-submit-button">Save Settings</button>
-
+    
     <div id="saveStatus"></div>
 </div>
 {% endblock %}
-{% block scripts %}
-    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/versions.js') }}"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const tabButtons = document.querySelectorAll('.settings-tab-button');
-            const tabContents = document.querySelectorAll('.settings-tab-content');
 
-            tabButtons.forEach(button => {
-                button.addEventListener('click', function() {
-                    const tabName = this.getAttribute('data-tab');
-                    tabButtons.forEach(btn => btn.classList.remove('active'));
-                    tabContents.forEach(content => content.style.display = 'none');
-                    this.classList.add('active');
-                    document.getElementById(tabName).style.display = 'block';
-                });
-            });
-        });
-    </script>
+{% block scripts %}
+    {{ super() }}
+    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
 {% endblock %}

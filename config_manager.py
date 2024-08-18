@@ -25,24 +25,135 @@ def load_config():
     try:
         with open(CONFIG_FILE, 'r') as config_file:
             config = json.load(config_file)
-            log_config_state("Config loaded", config)
-            return config
+            
+        # Ensure all required top-level keys are present
+        for key in SETTINGS_SCHEMA.keys():
+            if key not in config:
+                config[key] = {}
+        
+        # Fix any potential issues with Content Sources
+        config = fix_content_sources(config)
+        
+        logging.debug(f"Config loaded: {json.dumps(config, indent=2)}")
+        log_config_state("Config loaded", config)
+        return config
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}")
         return {}
     finally:
         release_lock(lock_file)
-
 def save_config(config):
     lock_file = acquire_lock()
     try:
-        with open(CONFIG_FILE, 'w') as config_file:
-            json.dump(config, config_file, indent=2)
-        log_config_state("Config saved", config)
+        # Ensure only valid top-level keys are present
+        valid_keys = set(SETTINGS_SCHEMA.keys())
+        cleaned_config = {}
+        
+        for key, value in config.items():
+            if key in valid_keys:
+                if isinstance(value, dict):
+                    # For nested structures, keep all keys
+                    cleaned_config[key] = value
+                else:
+                    cleaned_config[key] = value
+        
+        # Write the entire config to a temporary file first
+        temp_file = CONFIG_FILE + '.tmp'
+        with open(temp_file, 'w') as config_file:
+            json.dump(cleaned_config, config_file, indent=2)
+        
+        # If the write was successful, rename the temp file to the actual config file
+        os.replace(temp_file, CONFIG_FILE)
+        
+        log_config_state("Config saved", cleaned_config)
     except Exception as e:
-        logging.error(f"Error saving config: {str(e)}")
+        logging.error(f"Error saving config: {str(e)}", exc_info=True)
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
     finally:
         release_lock(lock_file)
+
+def json_serializer(obj):
+    """Custom JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+def fix_content_sources(config):
+    if 'Content Sources' in config:
+        for source_id, source_config in config['Content Sources'].items():
+            if isinstance(source_config, str):
+                try:
+                    config['Content Sources'][source_id] = json.loads(source_config)
+                except json.JSONDecodeError:
+                    logging.warning(f"Invalid JSON in Content Sources for key {source_id}")
+    return config
+
+def add_content_source(source_type, source_config):
+    process_id = str(uuid.uuid4())[:8]
+    logging.debug(f"[{process_id}] Starting add_content_source process for source_type: {source_type}")
+    
+    config = load_config()
+    log_config_state(f"[{process_id}] Config before modification", config)
+    
+    if 'Content Sources' not in config:
+        config['Content Sources'] = {}
+
+    index = 1
+    while f"{source_type}_{index}" in config['Content Sources']:
+        index += 1
+    
+    new_source_id = f"{source_type}_{index}"
+    new_source = {
+        'type': source_type,
+        'enabled': source_config.get('enabled', False),
+        'versions': source_config.get('versions', {'Default': True}),
+        'display_name': source_config.get('display_name', f"{source_type} {index}"),
+    }
+    
+    # Validate and add other fields from source_config
+    schema = SETTINGS_SCHEMA['Content Sources']['schema'].get(source_type, {})
+    for key, value in source_config.items():
+        if key in schema and key not in ['type', 'enabled', 'versions', 'display_name']:
+            new_source[key] = value
+    
+    config['Content Sources'][new_source_id] = new_source
+    log_config_state(f"[{process_id}] Config after adding content source", config)
+    save_config(config)
+    logging.debug(f"[{process_id}] Successfully added content source: {new_source_id}")
+    return new_source_id
+
+def delete_content_source(source_id):
+    logging.info(f"Attempting to delete content source: {source_id}")
+    config = load_config()
+    if 'Content Sources' in config and source_id in config['Content Sources']:
+        del config['Content Sources'][source_id]
+        save_config(config)
+        logging.info(f"Content source {source_id} deleted successfully")
+        return True
+    else:
+        logging.warning(f"Content source not found: {source_id}")
+        return False
+
+def update_content_source(source_id, source_config):
+    process_id = str(uuid.uuid4())[:8]
+    logging.debug(f"[{process_id}] Starting update_content_source process for source_id: {source_id}")
+    
+    config = load_config()
+    if 'Content Sources' in config and source_id in config['Content Sources']:
+        # Validate and update only the fields present in the schema
+        source_type = source_id.split('_')[0]
+        schema = SETTINGS_SCHEMA['Content Sources']['schema'][source_type]
+        for key, value in source_config.items():
+            if key in schema:
+                config['Content Sources'][source_id][key] = value
+        log_config_state(f"[{process_id}] Config after updating content source", config)
+        save_config(config)
+        logging.debug(f"[{process_id}] Successfully updated content source: {source_id}")
+        return True
+    else:
+        logging.warning(f"[{process_id}] Content source not found for update: {source_id}")
+        return False
 
 def add_scraper(scraper_type, scraper_config):
     process_id = str(uuid.uuid4())[:8]  # Generate a unique ID for this process
