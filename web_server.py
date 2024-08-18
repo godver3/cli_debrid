@@ -24,6 +24,8 @@ from shared import app, update_stats
 from run_program import ProgramRunner
 from queue_utils import safe_process_queue
 from run_program import process_overseerr_webhook, ProgramRunner
+from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper
+from settings_schema import SETTINGS_SCHEMA
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -59,78 +61,111 @@ def save_config(config):
     try:
         with open(CONFIG_FILE, 'w') as config_file:
             json.dump(config, config_file, indent=2)
-        print("Config saved successfully")
+        logging.info(f"Config saved successfully: {config}")
     except Exception as e:
-        print(f"Error saving config: {str(e)}")
+        logging.error(f"Error saving config: {str(e)}")
 
 @app.context_processor
 def utility_processor():
     return dict(render_settings=render_settings, render_content_sources=render_content_sources)
 
-@app.route('/scrapers/add', methods=['POST'])
-def add_scraper():
-    request_id = str(uuid.uuid4())[:8]
-    source = request.headers.get('X-Request-Source', 'Unknown')
-    logging.info(f"[{request_id}] add_scraper function called from {source}")
+@app.route('/content_sources/content')
+def content_sources_content():
+    config = load_config()
+    source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+    return render_template('settings_tabs/content_sources.html', 
+                           settings=config, 
+                           source_types=source_types, 
+                           settings_schema=SETTINGS_SCHEMA)
+
+@app.route('/content_sources/add', methods=['POST'])
+def add_content_source_route():
+    logging.info(f"Received request to add content source. Content-Type: {request.content_type}")
+    logging.info(f"Request data: {request.data}")
     try:
-        logging.debug(f"[{request_id}] Request method: {request.method}")
-        logging.debug(f"[{request_id}] Request form: {request.form}")
-        logging.debug(f"[{request_id}] Request headers: {request.headers}")
+        if request.is_json:
+            source_config = request.json
+        elif request.content_type.startswith('multipart/form-data'):
+            source_config = request.form.to_dict()
+        else:
+            return jsonify({'success': False, 'error': f'Unsupported Content-Type: {request.content_type}'}), 415
         
-        scraper_type = request.form.get('type')
+        logging.info(f"Parsed data: {source_config}")
         
-        logging.debug(f"[{request_id}] Scraper type: {scraper_type}")
+        if not source_config:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
         
-        if not scraper_type:
-            return jsonify({'success': False, 'error': 'No scraper type provided', 'request_id': request_id}), 400
+        source_type = source_config.pop('type', None)
+        if not source_type:
+            return jsonify({'success': False, 'error': 'No source type provided'}), 400
         
-        if scraper_type not in scraper_manager.scraper_settings:
-            logging.error(f"[{request_id}] Invalid scraper type: {scraper_type}")
-            return jsonify({'success': False, 'error': 'Invalid scraper type', 'request_id': request_id}), 400
-        
-        # Load the current configuration
-        config = load_config()
-        
-        # Ensure 'Scrapers' key exists in the config
-        if 'Scrapers' not in config:
-            config['Scrapers'] = {}
-        
-        # Generate a new scraper ID
-        index = 1
-        while f"{scraper_type}_{index}" in config['Scrapers']:
-            index += 1
-        new_scraper_id = f"{scraper_type}_{index}"
-        
-        # Create the new scraper configuration
-        new_scraper = {setting: '' for setting in scraper_manager.scraper_settings[scraper_type]}
-        new_scraper['enabled'] = False
-        
-        # Update the new scraper with form data
-        for setting in scraper_manager.scraper_settings[scraper_type]:
-            value = request.form.get(setting, '')
-            if setting == 'enabled':
-                value = value == 'on'
-            new_scraper[setting] = value
-        
-        # Add the new scraper to the configuration
-        config['Scrapers'][new_scraper_id] = new_scraper
-        
-        # Save the updated configuration
-        save_config(config)
-        
-        logging.info(f"[{request_id}] Successfully added new scraper: {new_scraper_id}")
-        return jsonify({'success': True, 'request_id': request_id})
+        new_source_id = add_content_source(source_type, source_config)
+        return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
-        logging.error(f"[{request_id}] Error adding scraper: {str(e)}")
-        return jsonify({'success': False, 'error': str(e), 'request_id': request_id}), 500
+        logging.error(f"Error adding content source: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/content_sources/delete', methods=['POST'])
+def delete_content_source_route():
+    data = request.json
+    source_id = data.get('source_id')
+    
+    if not source_id:
+        return jsonify({'success': False, 'error': 'No source ID provided'}), 400
+
+    result = delete_content_source(source_id)
+    if result:
+        return jsonify({'success': True, 'message': f'Content source {source_id} deleted successfully'})
+    else:
+        return jsonify({'success': False, 'error': f'Content source {source_id} not found'}), 404
+
+@app.route('/scrapers/add', methods=['POST'])
+def add_scraper_route():
+    logging.info(f"Received request to add scraper. Content-Type: {request.content_type}")
+    logging.info(f"Request data: {request.data}")
+    try:
+        if request.is_json:
+            scraper_config = request.json
+        else:
+            return jsonify({'success': False, 'error': f'Unsupported Content-Type: {request.content_type}'}), 415
+        
+        logging.info(f"Parsed data: {scraper_config}")
+        
+        if not scraper_config:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        scraper_type = scraper_config.pop('type', None)
+        if not scraper_type:
+            return jsonify({'success': False, 'error': 'No scraper type provided'}), 400
+        
+        new_scraper_id = add_scraper(scraper_type, scraper_config)
+        
+        # Log the updated config after adding the scraper
+        updated_config = load_config()
+        logging.info(f"Updated config after adding scraper: {updated_config}")
+        
+        return jsonify({'success': True, 'scraper_id': new_scraper_id})
+    except Exception as e:
+        logging.error(f"Error adding scraper: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/scrapers/content')
 def scrapers_content():
-    scrapers = scraper_manager.load_scrapers()
-    settings = load_config()
-    scraper_types = list(scraper_manager.scraper_settings.keys())
-    return render_template('settings_tabs/scrapers.html', settings=settings, scraper_types=scraper_types, scraper_settings=scraper_manager.scraper_settings)
+    try:
+        scrapers = scraper_manager.load_scrapers()
+        settings = load_config()
+        scraper_types = list(scraper_manager.scraper_settings.keys())
+        scraper_settings = scraper_manager.scraper_settings or {}
+        return render_template('settings_tabs/scrapers.html', settings=settings, scraper_types=scraper_types, scraper_settings=scraper_settings)
+    except Exception as e:
+        app.logger.error(f"Error in scrapers_content route: {str(e)}", exc_info=True)
+        return jsonify({'error': 'An error occurred while loading scraper settings'}), 500
 
+@app.route('/scrapers/get', methods=['GET'])
+def get_scrapers():
+    config = load_config()
+    scraper_types = scraper_manager.get_scraper_types()
+    return render_template('settings_tabs/scrapers.html', settings=config, scraper_types=scraper_types)
 
 @app.route('/scrapers/delete', methods=['POST'])
 def delete_scraper():
@@ -386,19 +421,49 @@ def logs():
 
 @app.route('/settings', methods=['GET'])
 def settings():
+    try:
+        config = load_config()
+        scraper_types = list(scraper_manager.scraper_settings.keys())
+        source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+        
+        # Ensure 'Scrapers' exists in the config
+        if 'Scrapers' not in config:
+            config['Scrapers'] = {}
+        
+        # Only keep the scrapers that are actually configured
+        configured_scrapers = {}
+        for scraper, scraper_config in config['Scrapers'].items():
+            scraper_type = scraper.split('_')[0]  # Assuming format like 'Zilean_1'
+            if scraper_type in scraper_manager.scraper_settings:
+                configured_scrapers[scraper] = scraper_config
+        
+        config['Scrapers'] = configured_scrapers
+        
+        # Ensure 'Content Sources' exists in the config
+        if 'Content Sources' not in config:
+            config['Content Sources'] = {}
+        
+        # Ensure each content source is a dictionary
+        for source, source_config in config['Content Sources'].items():
+            if not isinstance(source_config, dict):
+                config['Content Sources'][source] = {}
+        
+        return render_template('settings_base.html', 
+                               settings=config, 
+                               scraper_types=scraper_types, 
+                               scraper_settings=scraper_manager.scraper_settings,
+                               source_types=source_types,
+                               content_source_settings=SETTINGS_SCHEMA['Content Sources']['schema'],
+                               settings_schema=SETTINGS_SCHEMA)
+    except Exception as e:
+        app.logger.error(f"Error in settings route: {str(e)}", exc_info=True)
+        return render_template('error.html', error_message="An error occurred while loading settings."), 500
+
+@app.route('/scraping/get')
+def get_scraping_settings():
     config = load_config()
-    scraper_types = list(scraper_manager.scraper_settings.keys())
-    
-    # Ensure 'Scraping' and 'versions' exist in the config
-    if 'Scraping' not in config:
-        config['Scraping'] = {}
-    if 'versions' not in config['Scraping']:
-        config['Scraping']['versions'] = {}
-    
-    return render_template('settings_base.html', 
-                           settings=config, 
-                           scraper_types=scraper_types, 
-                           scraper_settings=scraper_manager.scraper_settings)
+    scraping_settings = config.get('Scraping', {})
+    return jsonify(scraping_settings)
 
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
@@ -416,7 +481,14 @@ def update_nested_settings(current, new):
         if isinstance(value, dict):
             if key not in current or not isinstance(current[key], dict):
                 current[key] = {}
-            update_nested_settings(current[key], value)
+            if key == 'Content Sources':
+                for source_id, source_config in value.items():
+                    if source_id in current[key]:
+                        update_content_source(source_id, source_config)
+                    else:
+                        add_content_source(source_config['type'], source_config)
+            else:
+                update_nested_settings(current[key], value)
         else:
             current[key] = value
 
@@ -491,7 +563,8 @@ def start_program():
     global program_runner
     if program_runner is None or not program_runner.is_running():
         program_runner = ProgramRunner()
-        program_runner.start()
+        # Start the program runner in a separate thread to avoid blocking the Flask server
+        threading.Thread(target=program_runner.start).start()
         return jsonify({"status": "success", "message": "Program started"})
     else:
         return jsonify({"status": "error", "message": "Program is already running"})
@@ -575,7 +648,6 @@ def delete_version():
 @app.route('/scraping/content')
 def scraping_content():
     config = load_config()
-    return render_template('settings_tabs/scraping.html', settings=config)
-
+    return render_template('settings_tabs/scraping.html', settings=config, settings_schema=SETTINGS_SCHEMA)
 if __name__ == '__main__':
     app.run(debug=True)

@@ -24,10 +24,12 @@ function createScraperElement(id, config) {
             Enabled:
             <input type="checkbox" ${config.enabled ? 'checked' : ''} onchange="updateScraper('${id}', 'enabled', this.checked)">
         </label>
+        ${config.url !== undefined ? `
         <label>
             URL:
             <input type="text" value="${config.url}" onchange="updateScraper('${id}', 'url', this.value)">
         </label>
+        ` : ''}
         ${config.api !== undefined ? `
         <label>
             API Key:

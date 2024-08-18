@@ -21,21 +21,97 @@ CONFIG_FILE = './config/config.json'
 scraper_manager = ScraperManager()
 
 def load_config():
+    logging.debug("Starting load_config()")
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as config_file:
             try:
                 config = json.load(config_file)
+                logging.debug(f"Raw loaded config: {json.dumps(config, indent=2)}")
+                
                 # Parse string representations in Content Sources
                 if 'Content Sources' in config:
+                    logging.debug("Content Sources before parsing: %s", json.dumps(config['Content Sources'], indent=2))
                     for key, value in config['Content Sources'].items():
                         if isinstance(value, str):
-                            # Replace 'True' and 'False' with 'true' and 'false' for JSON compatibility
-                            value = value.replace('True', 'true').replace('False', 'false')
-                            config['Content Sources'][key] = json.loads(value)
+                            try:
+                                parsed_value = json.loads(value)
+                                config['Content Sources'][key] = parsed_value
+                                logging.debug(f"Parsed value for {key}: {parsed_value}")
+                            except json.JSONDecodeError:
+                                # If it's not valid JSON, keep it as is
+                                logging.debug(f"Keeping original string value for {key}: {value}")
+                    logging.debug("Content Sources after parsing: %s", json.dumps(config['Content Sources'], indent=2))
+                
+                logging.debug(f"Final loaded config: {json.dumps(config, indent=2)}")
                 return config
             except json.JSONDecodeError as e:
                 logging.error(f"Error decoding JSON from {CONFIG_FILE}: {str(e)}. Using empty config.")
+    logging.debug("Config file not found or empty, returning empty dict")
     return {}
+
+def save_config(config):
+    logging.debug("Starting save_config()")
+    logging.debug(f"Config before saving: {json.dumps(config, indent=2)}")
+    
+    # Ensure Content Sources are saved as proper JSON
+    if 'Content Sources' in config:
+        for key, value in config['Content Sources'].items():
+            if isinstance(value, str):
+                try:
+                    # Try to parse it as JSON
+                    json.loads(value)
+                except json.JSONDecodeError:
+                    # If it's not valid JSON, convert it to a JSON string
+                    config['Content Sources'][key] = json.dumps(value)
+    
+    with open(CONFIG_FILE, 'w') as config_file:
+        json.dump(config, config_file, indent=2)
+    
+    logging.debug(f"Final saved config: {json.dumps(config, indent=2)}")
+
+# Helper function to safely parse boolean values
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ('true', 'yes', '1', 'on')
+    return bool(value)
+
+# Update the get_setting function to use parse_bool for boolean values
+def get_setting(section, key=None, default=None):
+    config = load_config()
+    
+    if section == 'Content Sources':
+        content_sources = config.get(section, {})
+        if not isinstance(content_sources, dict):
+            logging.warning(f"'Content Sources' setting is not a dictionary. Resetting to empty dict.")
+            content_sources = {}
+        return content_sources
+
+    if key is None:
+        return config.get(section, {})
+    
+    value = config.get(section, {}).get(key, default)
+    
+    # Handle boolean values
+    if isinstance(value, str) and value.lower() in ('true', 'false'):
+        return parse_bool(value)
+    
+    return value
+
+# Update the set_setting function to handle boolean values correctly
+def set_setting(section, key, value):
+    config = load_config()
+    if section not in config:
+        config[section] = {}
+    if key.lower().endswith('url'):
+        value = validate_url(value)
+    # Convert boolean strings to actual booleans
+    if isinstance(value, str) and value.lower() in ('true', 'false'):
+        value = parse_bool(value)
+    config[section][key] = value
+
+    save_config(config)
 
 def parse_string_dicts(obj):
     if isinstance(obj, dict):
@@ -61,16 +137,6 @@ def deserialize_config(config):
     else:
         return config
 
-def save_config(config):
-    # Convert Content Sources dictionaries to JSON-compatible strings
-    if 'Content Sources' in config:
-        for key, value in config['Content Sources'].items():
-            if isinstance(value, dict):
-                config['Content Sources'][key] = json.dumps(value)
-
-    with open(CONFIG_FILE, 'w') as config_file:
-        json.dump(config, config_file, indent=2)
-
 def to_bool(value):
     if isinstance(value, bool):
         return value
@@ -88,58 +154,6 @@ def validate_url(url):
         return url if all([result.scheme, result.netloc]) else ''
     except:
         return ''
-
-def get_setting(section, key=None, default=None):
-    config = load_config()
-    
-    if section == 'Scrapers' and key is None:
-        return config.get('Scrapers', {})
-    
-    if section == 'Scrapers' and key:
-        scraper_settings = config.get('Scrapers', {}).get(key, {})
-        if isinstance(scraper_settings, dict):
-            return scraper_settings
-        return default
-    
-    if section == 'Content Sources':
-        content_sources = config.get(section, {})
-        if not isinstance(content_sources, dict):
-            logging.warning(f"'Content Sources' setting is not a dictionary. Resetting to empty dict.")
-            content_sources = {}
-        return content_sources
-
-    if key is None:
-        return config.get(section, {})
-    
-    value = config.get(section, {}).get(key, default)
-    
-    # Handle boolean values
-    if isinstance(value, str):
-        if value.lower() == 'true':
-            return True
-        elif value.lower() == 'false':
-            return False
-    
-    if key.lower().endswith('url'):
-        return validate_url(value)
-
-    return value
-
-def set_setting(section, key, value):
-    config = load_config()
-    if section not in config:
-        config[section] = {}
-    if key.lower().endswith('url'):
-        value = validate_url(value)
-    # Ensure boolean values are stored as actual booleans
-    if isinstance(value, str):
-        if value.lower() == 'true':
-            value = True
-        elif value.lower() == 'false':
-            value = False
-    config[section][key] = value
-
-    save_config(config)
 
 def get_all_settings():
     config = load_config()
@@ -209,11 +223,45 @@ def ensure_settings_file():
             'api_key': ''
         },
         'Torrentio': {
-            'enabled': False
+            'enabled': False,
         },
         'Debug': {
             'skip_menu': False,
             'logging_level': 'INFO'
+        },
+        'Scrapers': {},
+        'Scraping': {
+            'versions': {
+                'Default': {
+                    'enable_hdr': False,
+                    'max_resolution': '1080p',
+                    'resolution_wanted': '<=',
+                    'resolution_weight': '3',
+                    'hdr_weight': '3',
+                    'similarity_weight': '3',
+                    'size_weight': '3',
+                    'bitrate_weight': '3',
+                    'preferred_filter_in': '',
+                    'preferred_filter_out': '',
+                    'filter_in': '',
+                    'filter_out': '',
+                    'min_size_gb': '0.01'
+                },
+            },
+            'uncached_content_handling': ''
+        },
+        'Content Sources': {},
+        'TMDB': {
+            'api_key': ''
+        },
+        'Queue': {
+            'wake_limit': '',
+            'movie_airtime_offset': '',
+            'episode_airtime_offset': ''
+        },
+        'Trakt': {
+            'client_id': '',
+            'client_secret': ''
         }
     }
 

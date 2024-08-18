@@ -12,9 +12,14 @@
         <div class="settings-form-group">
             <label class="settings-title">
                 Skip Menu
+            </label>
+            <label class="settings-title">
                 <input type="checkbox" id="debug-skip-menu" name="Debug.skip_menu" {% if settings.Debug.skip_menu %}checked{% endif %}>
             </label>
-            <p class="settings-description">Enable to skip the main menu on startup.</p>
+
+            {% if settings_schema.Debug.skip_menu.description %}
+            <p class="settings-description">{{ settings_schema.Debug.skip_menu.description }}</p>
+            {% endif %}
         </div>
         
         <div class="settings-form-group">
@@ -26,37 +31,50 @@
                 <option value="ERROR" {% if settings.Debug.logging_level == "ERROR" %}selected{% endif %}>ERROR</option>
                 <option value="CRITICAL" {% if settings.Debug.logging_level == "CRITICAL" %}selected{% endif %}>CRITICAL</option>
             </select>
-            <p class="settings-description">Set the logging level for the application.</p>
+            {% if settings_schema.Debug.logging_level.description %}
+            <p class="settings-description">{{ settings_schema.Debug.logging_level.description }}</p>
+            {% endif %}
         </div>
         
         <div class="settings-form-group">
             <label class="settings-title">
                 Skip Initial Plex Update
-                <input type="checkbox" id="debug-skip-initial-plex-update" name="Debug.skip_initial_plex_update" {% if settings.Debug.skip_initial_plex_update %}checked{% endif %}>
             </label>
-            <p class="settings-description">Enable to skip the initial Plex library update on startup.</p>
+            <input type="checkbox" id="debug-skip-initial-plex-update" name="Debug.skip_initial_plex_update" {% if settings.Debug.skip_initial_plex_update %}checked{% endif %}>
+
+            {% if settings_schema.Debug.skip_initial_plex_update.description %}
+            <p class="settings-description">{{ settings_schema.Debug.skip_initial_plex_update.description }}</p>
+            {% endif %}
         </div>
         
         <div class="settings-form-group">
             <label class="settings-title">
                 Disable Initialization
-                <input type="checkbox" id="debug-disable-initialization" name="Debug.disable_initialization" {% if settings.Debug.disable_initialization %}checked{% endif %}>
             </label>
-            <p class="settings-description">Enable to disable the initialization process on startup.</p>
+            <input type="checkbox" id="debug-disable-initialization" name="Debug.disable_initialization" {% if settings.Debug.disable_initialization %}checked{% endif %}>
+
+            {% if settings_schema.Debug.disable_initialization.description %}
+            <p class="settings-description">{{ settings_schema.Debug.disable_initialization.description }}</p>
+            {% endif %}
         </div>
         
         <div class="settings-form-group">
             <label for="debug-api-key" class="settings-title">API Key:</label>
             <input type="text" id="debug-api-key" name="Debug.api_key" value="{{ settings.Debug.api_key }}" class="settings-input">
-            <p class="settings-description">Enter an API key for debugging purposes.</p>
+            {% if settings_schema.Debug.api_key.description %}
+            <p class="settings-description">{{ settings_schema.Debug.api_key.description }}</p>
+            {% endif %}
         </div>
         
         <div class="settings-form-group">
             <label class="settings-title">
                 Jackett Seeders Only
-                <input type="checkbox" id="debug-jackett-seeders-only" name="Debug.jackett_seeders_only" {% if settings.Debug.jackett_seeders_only %}checked{% endif %}>
             </label>
-            <p class="settings-description">Enable to only return results that have seeders.</p>
+            <input type="checkbox" id="debug-jackett-seeders-only" name="Debug.jackett_seeders_only" {% if settings.Debug.jackett_seeders_only %}checked{% endif %}>
+
+            {% if settings_schema.Debug.jackett_seeders_only.description %}
+            <p class="settings-description">{{ settings_schema.Debug.jackett_seeders_only.description }}</p>
+            {% endif %}
         </div>
     </div>
 </div>

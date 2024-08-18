@@ -12,17 +12,23 @@
         <div class="settings-form-group">
             <label for="queue-wake-limit" class="settings-title">Wake Limit:</label>
             <input type="number" id="queue-wake-limit" name="Queue.wake_limit" value="{{ settings.Queue.wake_limit }}" class="settings-input">
-            <p class="settings-description">Set the maximum number of hours to wait before waking up the queue.</p>
+            {% if settings_schema.Queue.wake_limit.description %}
+            <p class="settings-description">{{ settings_schema.Queue.wake_limit.description }}</p>
+            {% endif %}
         </div>
         <div class="settings-form-group">
             <label for="queue-movie-airtime-offset" class="settings-title">Movie Airtime Offset:</label>
             <input type="number" id="queue-movie-airtime-offset" name="Queue.movie_airtime_offset" value="{{ settings.Queue.movie_airtime_offset }}" class="settings-input">
-            <p class="settings-description">Set the number of hours to offset the airtime for movies.</p>
+            {% if settings_schema.Queue.movie_airtime_offset.description %}
+            <p class="settings-description">{{ settings_schema.Queue.movie_airtime_offset.description }}</p>
+            {% endif %}
         </div>
         <div class="settings-form-group">
             <label for="queue-episode-airtime-offset" class="settings-title">Episode Airtime Offset:</label>
             <input type="number" id="queue-episode-airtime-offset" name="Queue.episode_airtime_offset" value="{{ settings.Queue.episode_airtime_offset }}" class="settings-input">
-            <p class="settings-description">Set the number of hours to offset the airtime for TV episodes.</p>
+            {% if settings_schema.Queue.episode_airtime_offset.description %}
+            <p class="settings-description">{{ settings_schema.Queue.episode_airtime_offset.description }}</p>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -35,12 +41,16 @@
         <div class="settings-form-group">
             <label for="trakt-client-id" class="settings-title">Client ID:</label>
             <input type="text" id="trakt-client-id" name="Trakt.client_id" value="{{ settings.Trakt.client_id }}" class="settings-input">
-            <p class="settings-description">Enter your Trakt API Client ID.</p>
+            {% if settings_schema.Trakt.client_id.description %}
+            <p class="settings-description">{{ settings_schema.Trakt.client_id.description }}</p>
+            {% endif %}
         </div>
         <div class="settings-form-group">
             <label for="trakt-client-secret" class="settings-title">Client Secret:</label>
             <input type="text" id="trakt-client-secret" name="Trakt.client_secret" value="{{ settings.Trakt.client_secret }}" class="settings-input">
-            <p class="settings-description">Enter your Trakt API Client Secret.</p>
+            {% if settings_schema.Trakt.client_secret.description %}
+            <p class="settings-description">{{ settings_schema.Trakt.client_secret.description }}</p>
+            {% endif %}
         </div>
     </div>
 </div>

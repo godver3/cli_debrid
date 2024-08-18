@@ -83,6 +83,9 @@ class ScraperManager:
     def get_all_scrapers(self):
         return self.scrapers
 
+    def get_scraper_types(self):
+        return list(self.scraper_settings.keys())
+
     def show_scrapers_menu(self, back_callback):
         if self.main_loop:
             self.back_callback = back_callback

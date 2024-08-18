@@ -17,8 +17,10 @@ from shared import update_stats
 from shared import app
 import threading
 from queue_utils import safe_process_queue
+import signal
 
 queue_logger = logging.getLogger('queue_logger')
+program_runner = None
 
 class ProgramRunner:
     _instance = None
@@ -288,13 +290,10 @@ class ProgramRunner:
     def start(self):
         if not self.running:
             self.running = True
-            self.thread = threading.Thread(target=self.run)
-            self.thread.start()
+            self.run()
 
     def stop(self):
         self.running = False
-        if self.thread:
-            self.thread.join()
 
     def is_running(self):
         return self.running
@@ -341,9 +340,14 @@ def process_overseerr_webhook(data):
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
 
 def run_program():
+    global program_runner
     logging.info("Program started")
-    runner = ProgramRunner()
-    runner.run()
+    if program_runner is None or not program_runner.is_running():
+        program_runner = ProgramRunner()
+        #program_runner.start()  # This will now run the main loop directly
+    else:
+        logging.info("Program is already running")
+    return program_runner
 
 if __name__ == "__main__":
     run_program()
