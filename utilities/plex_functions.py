@@ -93,7 +93,6 @@ def get_collected_from_plex(request='all'):
         plex_url = get_setting('Plex', 'url')
         plex_token = get_setting('Plex', 'token')
         
-        # Parse library names or section numbers, assuming they are comma-separated
         movie_libraries = [lib.strip() for lib in get_setting('Plex', 'movie_libraries', '').split(',') if lib.strip()]
         show_libraries = [lib.strip() for lib in get_setting('Plex', 'shows_libraries', '').split(',') if lib.strip()]
         
@@ -102,14 +101,14 @@ def get_collected_from_plex(request='all'):
         logging.debug(f"Movie libraries: {movie_libraries}")
         logging.debug(f"TV Show libraries: {show_libraries}")
         
-        plex = PlexServer(plex_url, plex_token, timeout=60)  # Increased timeout
+        plex = PlexServer(plex_url, plex_token, timeout=60)
         collected_content = {'movies': [], 'episodes': []}
         missing_guid_items = {'movies': [], 'episodes': []}
         current_time = datetime.now()
         time_limit = current_time - timedelta(minutes=240)
-        #logging.debug(f"Current time: {current_time}")
-        #logging.debug(f"Time limit: {time_limit}")
-        #logging.debug(f"Time window: {current_time - time_limit}")
+        logging.debug(f"Current time: {current_time}")
+        logging.debug(f"Time limit: {time_limit}")
+        logging.debug(f"Time window: {current_time - time_limit}")
 
         def log_progress(current, total, item_type):
             progress = (current / total) * 100
@@ -118,7 +117,6 @@ def get_collected_from_plex(request='all'):
 
         def get_library_section(plex, library_identifier):
             if library_identifier.isdigit():
-                # If it's a number, treat it as a section ID
                 section = next((section for section in plex.library.sections() if str(section.key) == library_identifier), None)
                 if section:
                     return section
@@ -126,7 +124,6 @@ def get_collected_from_plex(request='all'):
                     logging.error(f"No library found with section ID: {library_identifier}")
                     return None
             else:
-                # If it's not a number, treat it as a library name
                 try:
                     return plex.library.section(library_identifier)
                 except:
@@ -136,7 +133,6 @@ def get_collected_from_plex(request='all'):
         if request == 'recent':
             logging.info("Gathering recently added from Plex")
 
-            # Fetch recently added movies from all specified movie libraries
             for library_identifier in movie_libraries:
                 try:
                     movies_section = get_library_section(plex, library_identifier)
@@ -144,15 +140,15 @@ def get_collected_from_plex(request='all'):
                         recent_movies = movies_section.recentlyAdded()
                         logging.debug(f"Number of recent movies found in '{movies_section.title}': {len(recent_movies)}")
                         for i, movie in enumerate(recent_movies, start=1):
+                            logging.debug(f"Processing movie: {movie.title}, Added at: {movie.addedAt}, Current time: {current_time}")
                             if movie.addedAt >= time_limit:
                                 process_movie(movie, collected_content, missing_guid_items)
                                 log_progress(i, len(recent_movies), f"Recent movies in '{movies_section.title}'")
                             else:
-                                logging.debug(f"Skipping movie {movie.title} due to time limit")
+                                logging.debug(f"Skipping movie {movie.title} due to time limit. Added at: {movie.addedAt}, Time limit: {time_limit}")
                 except Exception as e:
                     logging.error(f"Error processing movie library '{library_identifier}': {str(e)}")
 
-            # Fetch recently added TV shows from all specified show libraries
             for library_identifier in show_libraries:
                 try:
                     shows_section = get_library_section(plex, library_identifier)
@@ -163,6 +159,7 @@ def get_collected_from_plex(request='all'):
                             recent_episodes = [ep for ep in show.episodes() if ep.addedAt >= time_limit]
                             logging.debug(f"Processing show: {show.title}, Recent episodes: {len(recent_episodes)}")
                             for episode in recent_episodes:
+                                logging.debug(f"Processing episode: {episode.title}, Added at: {episode.addedAt}, Current time: {current_time}")
                                 process_episode(show, episode, collected_content, missing_guid_items)
                             log_progress(i, len(recent_shows), f"Recent shows in '{shows_section.title}'")
                 except Exception as e:
@@ -170,7 +167,6 @@ def get_collected_from_plex(request='all'):
 
         else:
             logging.info("Gathering all collected from Plex")
-            # Fetch all movies from all specified movie libraries
             for library_identifier in movie_libraries:
                 try:
                     movies_section = get_library_section(plex, library_identifier)
@@ -178,12 +174,12 @@ def get_collected_from_plex(request='all'):
                         movies = movies_section.all()
                         logging.debug(f"Number of movies found in '{movies_section.title}': {len(movies)}")
                         for i, movie in enumerate(movies, start=1):
+                            logging.debug(f"Processing movie: {movie.title}, Added at: {movie.addedAt}, Current time: {current_time}")
                             process_movie(movie, collected_content, missing_guid_items)
                             log_progress(i, len(movies), f"Movies in '{movies_section.title}'")
                 except Exception as e:
                     logging.error(f"Error processing movie library '{library_identifier}': {str(e)}")
 
-            # Fetch all TV shows from all specified show libraries
             for library_identifier in show_libraries:
                 try:
                     shows_section = get_library_section(plex, library_identifier)
@@ -193,6 +189,7 @@ def get_collected_from_plex(request='all'):
                         for i, show in enumerate(shows, start=1):
                             all_episodes = show.episodes()
                             for episode in all_episodes:
+                                logging.debug(f"Processing episode: {episode.title}, Added at: {episode.addedAt}, Current time: {current_time}")
                                 process_episode(show, episode, collected_content, missing_guid_items)
                             log_progress(i, len(shows), f"Shows in '{shows_section.title}'")
                 except Exception as e:
@@ -201,7 +198,6 @@ def get_collected_from_plex(request='all'):
         logging.debug(f"Collection complete: {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes collected.")
         logging.debug(f"Content collected: {collected_content}")
 
-        # Log missing GUID items
         if missing_guid_items['movies']:
             logging.debug(f"Movies without valid IMDb or TMDb IDs: {missing_guid_items['movies']}")
         if missing_guid_items['episodes']:
