@@ -84,6 +84,34 @@ function initializeExpandCollapse() {
     });
 }
 
+function reinitializeExpandCollapse() {
+    const allSections = document.querySelectorAll('.settings-section');
+    allSections.forEach(section => {
+        const header = section.querySelector('.settings-section-header');
+        const content = section.querySelector('.settings-section-content');
+        const toggleIcon = header.querySelector('.settings-toggle-icon');
+
+        if (header && content && toggleIcon) {
+            header.addEventListener('click', function(event) {
+                if (!event.target.classList.contains('delete-source-btn') &&
+                    !event.target.classList.contains('delete-scraper-btn') &&
+                    !event.target.classList.contains('delete-version-btn')) {
+                    event.stopPropagation();
+                    if (content.style.display === 'none' || content.style.display === '') {
+                        content.style.display = 'block';
+                        toggleIcon.textContent = '-';
+                    } else {
+                        content.style.display = 'none';
+                        toggleIcon.textContent = '+';
+                    }
+                }
+            });
+        }
+    });
+
+    console.log(`Reinitialized expand/collapse for ${allSections.length} sections`);
+}
+
 function toggleSection(sectionHeader) {
     const sectionContent = sectionHeader.nextElementSibling;
     const toggleIcon = sectionHeader.querySelector('.settings-toggle-icon');
@@ -206,8 +234,14 @@ function updateSettings() {
     }
 
     // Process scraper sections
-    const scraperSections = document.querySelectorAll('#scrapers-tab .settings-section');
-    console.log(`Found ${scraperSections.length} scraper sections`);
+    const scraperSections = document.querySelectorAll('.settings-section');
+    console.log(`Found ${scraperSections.length} total settings sections`);
+
+    const scraperTab = document.getElementById('scrapers-tab');
+    console.log(`Scrapers tab found: ${scraperTab !== null}`);
+
+    const scrapersInTab = scraperTab ? scraperTab.querySelectorAll('.settings-section') : [];
+    console.log(`Found ${scrapersInTab.length} scraper sections within the scrapers tab`);
 
     if (!settingsData['Scrapers']) {
         settingsData['Scrapers'] = {};
@@ -284,7 +318,11 @@ function updateSettings() {
             // Update tabs sequentially
             return updateContentSourcesTab()
                 .then(() => updateScrapersTab())
-                .then(() => updateScrapingTab());
+                .then(() => updateScrapingTab())
+                .then(() => {
+                    reinitializeExpandCollapse();
+                    console.log("Expand/collapse functionality reinitialized");
+                });
         } else {
             throw new Error('Error saving settings');
         }
@@ -292,7 +330,6 @@ function updateSettings() {
     .catch(error => {
         console.error('Error:', error);
         showNotification('Error saving settings', 'error');
-        // Re-throw the error to be caught by the caller
         throw error;
     });
 }
