@@ -44,8 +44,11 @@ def load_config():
         release_lock(lock_file)
         
 def save_config(config):
+    process_id = str(uuid.uuid4())[:8]
     lock_file = acquire_lock()
     try:
+        logging.debug(f"[{process_id}] Saving config: {json.dumps(config, indent=2)}")
+        
         # Ensure only valid top-level keys are present
         valid_keys = set(SETTINGS_SCHEMA.keys())
         cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
@@ -59,9 +62,14 @@ def save_config(config):
         os.replace(temp_file, CONFIG_FILE)
         
         log_config_state("Config saved", cleaned_config)
-        logging.info(f"Config saved successfully: {json.dumps(cleaned_config, indent=2)}")
+        logging.info(f"[{process_id}] Config saved successfully: {json.dumps(cleaned_config, indent=2)}")
+        
+        # Verify that the changes were saved
+        with open(CONFIG_FILE, 'r') as verify_file:
+            verified_config = json.load(verify_file)
+        logging.debug(f"[{process_id}] Verified saved config: {json.dumps(verified_config, indent=2)}")
     except Exception as e:
-        logging.error(f"Error saving config: {str(e)}", exc_info=True)
+        logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
         if os.path.exists(temp_file):
             os.remove(temp_file)
     finally:
@@ -123,7 +131,14 @@ def add_content_source(source_type, source_config):
     
     logging.debug(f"[{process_id}] Config after adding content source: {json.dumps(config, indent=2)}")
     save_config(config)
-    logging.debug(f"[{process_id}] Successfully added content source: {new_source_id}")
+    
+    # Verify that the changes were saved
+    updated_config = load_config()
+    if new_source_id in updated_config.get('Content Sources', {}):
+        logging.debug(f"[{process_id}] Successfully added and saved content source: {new_source_id}")
+    else:
+        logging.error(f"[{process_id}] Failed to save content source: {new_source_id}")
+    
     return new_source_id
 
 def delete_content_source(source_id):
