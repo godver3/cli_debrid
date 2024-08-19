@@ -3,6 +3,10 @@ document.addEventListener('DOMContentLoaded', function() {
     if (saveSettingsButton) {
         saveSettingsButton.addEventListener('click', handleSettingsFormSubmit);
     }
+
+    window.contentSourceSettings = window.contentSourceSettings || {};
+    window.scraperSettings = window.scraperSettings || {};
+    window.scrapingVersions = window.scrapingVersions || {};
     
     initializeAllFunctionalities();
     
@@ -487,6 +491,16 @@ function updateDynamicFields(type) {
 
     const settings = type === 'source' ? window.contentSourceSettings : window.scraperSettings;
 
+    if (!settings) {
+        console.error(`Settings for ${type} are not defined`);
+        return;
+    }
+
+    if (!settings[selectedType]) {
+        console.error(`Settings for ${selectedType} are not defined`);
+        return;
+    }
+
     if (settings && settings[selectedType]) {
         Object.entries(settings[selectedType]).forEach(([setting, config]) => {
             if (setting !== 'enabled' && setting !== 'versions') {
@@ -526,7 +540,7 @@ function updateDynamicFields(type) {
         dynamicFields.appendChild(enabledDiv);
 
         // Add version checkboxes
-        if (type === 'source') {
+        if (type === 'source' && window.scrapingVersions) {
             const versionsDiv = document.createElement('div');
             versionsDiv.className = 'form-group';
             const versionsLabel = document.createElement('label');
