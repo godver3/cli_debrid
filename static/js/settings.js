@@ -491,79 +491,22 @@ function updateDynamicFields(type) {
 
     const settings = type === 'source' ? window.contentSourceSettings : window.scraperSettings;
 
-    if (!settings) {
-        console.error(`Settings for ${type} are not defined`);
-        return;
-    }
-
-    if (!settings[selectedType]) {
+    if (!settings || !settings[selectedType]) {
         console.error(`Settings for ${selectedType} are not defined`);
         return;
     }
 
-    if (settings && settings[selectedType]) {
-        Object.entries(settings[selectedType]).forEach(([setting, config]) => {
-            if (setting !== 'enabled' && setting !== 'versions') {
-                const div = document.createElement('div');
-                div.className = 'form-group';
-                
-                const label = document.createElement('label');
-                label.htmlFor = setting;
-                label.textContent = setting.charAt(0).toUpperCase() + setting.slice(1) + ':';
-                
-                const input = document.createElement('input');
-                input.type = config.type === 'boolean' ? 'checkbox' : 'text';
-                input.id = setting;
-                input.name = setting;
-                
-                div.appendChild(label);
-                div.appendChild(input);
-                dynamicFields.appendChild(div);
-            }
-        });
-
-        // Add enabled checkbox
-        const enabledDiv = document.createElement('div');
-        enabledDiv.className = 'form-group';
-        
-        const enabledLabel = document.createElement('label');
-        enabledLabel.htmlFor = 'enabled';
-        enabledLabel.textContent = 'Enabled:';
-        
-        const enabledInput = document.createElement('input');
-        enabledInput.type = 'checkbox';
-        enabledInput.id = 'enabled';
-        enabledInput.name = 'enabled';
-        
-        enabledDiv.appendChild(enabledLabel);
-        enabledDiv.appendChild(enabledInput);
-        dynamicFields.appendChild(enabledDiv);
-
-        // Add version checkboxes
-        if (type === 'source' && window.scrapingVersions) {
-            const versionsDiv = document.createElement('div');
-            versionsDiv.className = 'form-group';
-            const versionsLabel = document.createElement('label');
-            versionsLabel.textContent = 'Versions:';
-            versionsDiv.appendChild(versionsLabel);
-
-            const versionCheckboxes = document.createElement('div');
-            versionCheckboxes.className = 'version-checkboxes';
-
-            Object.keys(window.scrapingVersions).forEach(version => {
-                const label = document.createElement('label');
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.name = 'versions';
-                checkbox.value = version;
-                label.appendChild(checkbox);
-                label.appendChild(document.createTextNode(` ${version}`));
-                versionCheckboxes.appendChild(label);
-            });
-
-            versionsDiv.appendChild(versionCheckboxes);
-            dynamicFields.appendChild(versionsDiv);
+    Object.entries(settings[selectedType]).forEach(([setting, config]) => {
+        if (setting !== 'type') {
+            const field = createFormField(setting, '', config.type);
+            dynamicFields.appendChild(field);
         }
+    });
+
+    // Add version checkboxes for content sources
+    if (type === 'source' && window.scrapingVersions) {
+        const versionsField = createVersionsField();
+        dynamicFields.appendChild(versionsField);
     }
 }
 
@@ -852,7 +795,32 @@ function updateScrapingTab() {
         });
 }
 
-// Utility function to create form fields dynamically
+function createVersionsField() {
+    const div = document.createElement('div');
+    div.className = 'form-group';
+    
+    const label = document.createElement('label');
+    label.textContent = 'Versions:';
+    div.appendChild(label);
+
+    const versionsDiv = document.createElement('div');
+    versionsDiv.className = 'version-checkboxes';
+
+    Object.keys(window.scrapingVersions).forEach(version => {
+        const checkboxLabel = document.createElement('label');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.name = 'versions';
+        checkbox.value = version;
+        checkboxLabel.appendChild(checkbox);
+        checkboxLabel.appendChild(document.createTextNode(` ${version}`));
+        versionsDiv.appendChild(checkboxLabel);
+    });
+
+    div.appendChild(versionsDiv);
+    return div;
+}
+
 function createFormField(setting, value, type) {
     const div = document.createElement('div');
     div.className = 'form-group';
@@ -866,16 +834,6 @@ function createFormField(setting, value, type) {
         input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = value;
-    } else if (Array.isArray(value)) {
-        input = document.createElement('select');
-        input.multiple = true;
-        value.forEach(option => {
-            const optionElement = document.createElement('option');
-            optionElement.value = option;
-            optionElement.textContent = option;
-            optionElement.selected = true;
-            input.appendChild(optionElement);
-        });
     } else {
         input = document.createElement('input');
         input.type = 'text';
