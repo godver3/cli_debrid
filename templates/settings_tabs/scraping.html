@@ -25,8 +25,8 @@
     <div class="settings-section-header">
         <span class="settings-toggle-icon">+</span>
         <h4>{{ config.get('display_name', version) }}</h4>
-        <button type="button" class="duplicate-version-btn" data-version-id="{{ version }}">Duplicate Version</button>
         <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete Version</button>
+        <button type="button" class="duplicate-version-btn" data-version-id="{{ version }}" style="color: green;">Duplicate Version</button>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
@@ -34,30 +34,54 @@
             <input type="text" id="scraping-{{ version }}-display_name" name="Scraping.versions.{{ version }}.display_name" value="{{ config.get('display_name', version) }}" class="settings-input">
         </div>
         {% for key, value in config.items() %}
-        {% if key != 'display_name' %}
-        <div class="settings-form-group">
-            {% if value is boolean %}
-            <label class="settings-title">
-            {{ key|replace('_', ' ')|title }}
-            </label>
-            <label class="settings-title">
-            <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
-            </label>
-            {% else %}
-            <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-            {% if value is string %}
-            <input type="text" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input">
-            {% elif value is number %}
-            <input type="number" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input">
-            {% elif value is iterable %}
-            <textarea id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">{{ value|join(', ') }}</textarea>
+            {% if key not in ['display_name', 'filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+                <div class="settings-form-group">
+                    {% if value is boolean %}
+                        <label class="settings-title">
+                            <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
+                            {{ key|replace('_', ' ')|title }}
+                        </label>
+                    {% elif key == 'max_resolution' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <select id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">
+                            {% for option in ['2160p', '1080p', '720p', 'SD'] %}
+                                <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                    {% elif key == 'resolution_wanted' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <select id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">
+                            {% for option in ['<=', '==', '>='] %}
+                                <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="{{ 'number' if value is number else 'text' }}" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input">
+                    {% endif %}
+                </div>
             {% endif %}
-            {% endif %}
-            {% if settings_schema.Scraping.versions.schema is defined and settings_schema.Scraping.versions.schema[key] is defined and settings_schema.Scraping.versions.schema[key].description is defined %}
-            <p class="settings-description">{{ settings_schema.Scraping.versions.schema[key].description }}</p>
-            {% endif %}
-        </div>
-        {% endif %}
+        {% endfor %}
+        
+        <!-- Filter lists -->
+        {% for filter_type in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+            <div class="settings-form-group">
+                <label class="settings-title">{{ filter_type|replace('_', ' ')|title }}:</label>
+                <div id="{{ version }}-{{ filter_type }}" class="filter-list">
+                    {% for item in config.get(filter_type, []) %}
+                        <div class="filter-item">
+                            {% if filter_type.startswith('preferred_') %}
+                                <input type="text" value="{{ item[0] }}" class="filter-term">
+                                <input type="number" value="{{ item[1] }}" class="filter-weight" min="1">
+                            {% else %}
+                                <input type="text" value="{{ item }}" class="filter-term">
+                            {% endif %}
+                            <button type="button" class="remove-filter">Remove</button>
+                        </div>
+                    {% endfor %}
+                </div>
+                <button type="button" class="add-filter" data-version="{{ version }}" data-filter-type="{{ filter_type }}">Add {{ filter_type|replace('_', ' ')|title }}</button>
+            </div>
         {% endfor %}
     </div>
 </div>
