@@ -329,6 +329,41 @@ function updateSettings() {
         }
     });
 
+    const versions = {};
+    document.querySelectorAll('.settings-section[data-version-id]').forEach(section => {
+        const versionId = section.getAttribute('data-version-id');
+        const versionData = {};
+
+        section.querySelectorAll('input, select').forEach(input => {
+            if (input.type === 'checkbox') {
+                versionData[input.name.split('.').pop()] = input.checked;
+            } else if (input.type === 'number') {
+                versionData[input.name.split('.').pop()] = parseFloat(input.value);
+            } else {
+                versionData[input.name.split('.').pop()] = input.value;
+            }
+        });
+
+        // Handle filter lists
+        ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
+            const filterList = section.querySelector(`#${versionId}-${filterType}`);
+            versionData[filterType] = [];
+            filterList.querySelectorAll('.filter-item').forEach(item => {
+                const term = item.querySelector('.filter-term').value;
+                if (filterType.startsWith('preferred_')) {
+                    const weight = parseInt(item.querySelector('.filter-weight').value) || 1;
+                    versionData[filterType].push([term, weight]);
+                } else {
+                    versionData[filterType].push(term);
+                }
+            });
+        });
+
+        versions[versionId] = versionData;
+    });
+
+    settingsData['Scraping'] = { versions: versions };
+    
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/api/settings', {
@@ -499,6 +534,51 @@ function initializeScrapingFunctionality() {
             }
         });
     });
+
+    document.querySelectorAll('.add-filter').forEach(button => {
+        button.addEventListener('click', function() {
+            const version = this.getAttribute('data-version');
+            const filterType = this.getAttribute('data-filter-type');
+            addFilterItem(version, filterType);
+        });
+    });
+
+    document.querySelectorAll('.filter-list').forEach(list => {
+        list.addEventListener('click', function(e) {
+            if (e.target.classList.contains('remove-filter')) {
+                e.target.closest('.filter-item').remove();
+                updateSettings();
+            }
+        });
+
+        list.addEventListener('change', function(e) {
+            if (e.target.classList.contains('filter-term') || e.target.classList.contains('filter-weight')) {
+                updateSettings();
+            }
+        });
+    });
+}
+
+function addFilterItem(version, filterType) {
+    const list = document.getElementById(`${version}-${filterType}`);
+    const newItem = document.createElement('div');
+    newItem.className = 'filter-item';
+
+    if (filterType.startsWith('preferred_')) {
+        newItem.innerHTML = `
+            <input type="text" class="filter-term">
+            <input type="number" class="filter-weight" min="1" value="1">
+            <button type="button" class="remove-filter">Remove</button>
+        `;
+    } else {
+        newItem.innerHTML = `
+            <input type="text" class="filter-term">
+            <button type="button" class="remove-filter">Remove</button>
+        `;
+    }
+
+    list.appendChild(newItem);
+    updateSettings();
 }
 
 function duplicateVersion(versionId) {
