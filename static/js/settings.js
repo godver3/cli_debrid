@@ -552,30 +552,17 @@ function handleAddSourceSubmit(e) {
         if (data.success) {
             document.getElementById('add-source-popup').style.display = 'none';
             form.reset();
-            updateContentSourcesTab().then(() => {
-                const newSection = document.querySelector(`.settings-section[data-source-id="${data.source_id}"]`);
-                if (newSection) {
-                    initializeExpandCollapseForSection(newSection);
-                    // Add event listener for the delete button
-                    const deleteButton = newSection.querySelector('.delete-source-btn');
-                    if (deleteButton) {
-                        deleteButton.addEventListener('click', function() {
-                            const sourceId = this.getAttribute('data-source-id');
-                            if (confirm(`Are you sure you want to delete the source "${sourceId}"?`)) {
-                                deleteContentSource(sourceId);
-                            }
-                        });
-                    }
-                }
-            });
-            showNotification('Content source added successfully', 'success');
+            return updateContentSourcesTab();
         } else {
-            showNotification('Error adding content source: ' + (data.error || 'Unknown error'), 'error');
+            throw new Error(data.error || 'Unknown error');
         }
+    })
+    .then(() => {
+        showNotification('Content source added successfully', 'success');
     })
     .catch(error => {
         console.error('Error:', error);
-        showNotification('Error adding content source', 'error');
+        showNotification('Error adding content source: ' + error.message, 'error');
     });
 }
 
@@ -771,7 +758,6 @@ function updateContentSourcesTab() {
             if (contentSourcesTab) {
                 contentSourcesTab.innerHTML = html;
                 initializeContentSourcesFunctionality();
-                reinitializeExpandCollapse();
             }
         })
         .catch(error => {
