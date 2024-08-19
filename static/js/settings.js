@@ -648,23 +648,25 @@ function deleteContentSource(sourceId) {
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ source_id: sourceId }),
+        body: JSON.stringify({ source_id: sourceId })
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            const sourceElement = document.querySelector(`.settings-section[data-source-id="${sourceId}"]`);
+            console.log(`Content source ${sourceId} deleted successfully`);
+            // Remove the deleted source from the UI
+            const sourceElement = document.getElementById(`content-source-${sourceId}`);
             if (sourceElement) {
                 sourceElement.remove();
             }
-            showNotification('Content source deleted successfully', 'success');
         } else {
-            showNotification('Failed to delete content source: ' + (data.error || 'Unknown error'), 'error');
+            console.error(`Failed to delete content source ${sourceId}: ${data.error}`);
+            alert(`Failed to delete content source: ${data.error}`);
         }
     })
     .catch(error => {
         console.error('Error:', error);
-        showNotification('Error deleting content source', 'error');
+        alert('An error occurred while deleting the content source');
     });
 }
 
