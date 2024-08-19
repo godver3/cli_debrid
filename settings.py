@@ -8,6 +8,7 @@ import inspect
 import time
 from urllib.parse import urlparse
 from trakt import init
+from trakt.core import get_device_code, get_device_token
 import trakt.core
 import io
 import json
@@ -15,6 +16,9 @@ import copy
 from scraper_manager import ScraperManager
 from content_manager import ContentManager
 import ast
+import re
+import threading
+import queue
 
 CONFIG_FILE = './config/config.json'
 
@@ -274,6 +278,48 @@ def ensure_settings_file():
 
     save_config(config)
 
+class OutputCapture:
+    def __init__(self):
+        self.queue = queue.Queue()
+
+    def write(self, data):
+        self.queue.put(data)
+
+    def flush(self):
+        pass
+
+def ensure_trakt_auth():
+    logging.info("Starting Trakt authentication check")
+    
+    client_id = get_setting('Trakt', 'client_id')
+    client_secret = get_setting('Trakt', 'client_secret')
+    
+    logging.info(f"Client ID: {client_id}, Client Secret: {'*' * len(client_secret) if client_secret else 'Not set'}")
+    
+    if not client_id or not client_secret:
+        logging.error("Trakt client ID or secret not set. Please configure in settings.")
+        return None
+    
+    try:
+        device_code_response = get_device_code(client_id, client_secret)
+        user_code = device_code_response['user_code']
+        device_code = device_code_response['device_code']
+        verification_url = device_code_response['verification_url']
+        
+        logging.info(f"Authorization code generated: {user_code}")
+        logging.info(f"Verification URL: {verification_url}")
+        
+        return {
+            'user_code': user_code,
+            'device_code': device_code,
+            'verification_url': verification_url
+        }
+    except Exception as e:
+        logging.error(f"Error during Trakt authorization: {str(e)}")
+        return None
+
+    logging.info("Trakt authentication check completed")
+
 class SettingsEditor:
     def __init__(self):
         self.config = load_config()
@@ -367,28 +413,20 @@ class SettingsEditor:
         client_id = get_setting('Trakt', 'client_id')
         client_secret = get_setting('Trakt', 'client_secret')
 
-        trakt.core.AUTH_METHOD = trakt.core.DEVICE_AUTH
-        trakt.APPLICATION_ID = client_id
-
-        # Set the CONFIG_PATH to ./config/.pytrakt.json
-        trakt.core.CONFIG_PATH = './config/.pytrakt.json'
-
-        try:
-            # Initialize Trakt
-            trakt.core.OAUTH_CLIENT_ID = client_id
-            trakt.core.OAUTH_CLIENT_SECRET = client_secret
-            logging.debug("Initializing Trakt...")
-            auth = trakt.init(store=True, client_id=client_id, client_secret=client_secret)
-            logging.debug("Trakt initialized successfully.")
-            success_message = "Trakt authorization completed successfully."
-
-        except Exception as e:
-            logging.exception("Error during Trakt authorization")
-            success_message = f"Error during Trakt authorization: {str(e)}"
-
-        print(success_message)
-        print("\nPress Enter to return to the settings menu...")
-        input()
+        if not client_id or not client_secret:
+            print("Trakt client ID or secret is not set.")
+            print("Please visit http://trakt.tv/oauth/applications to create a new application.")
+            print("Then, enter the client ID and secret in the settings.")
+            input("Press Enter to return to the settings menu...")
+        else:
+            auth_data = ensure_trakt_auth()
+            if auth_data:
+                print(f"Please go to {auth_data['verification_url']} and enter the following code: {auth_data['user_code']}")
+                print("After entering the code, the authorization process will complete automatically.")
+                input("Press Enter when you've completed this step...")
+            else:
+                print("Trakt authorization failed or was not needed. Please check the logs for more information.")
+                input("Press Enter to return to the settings menu...")
 
         # Resume urwid
         self.main_loop.screen = saved_screen

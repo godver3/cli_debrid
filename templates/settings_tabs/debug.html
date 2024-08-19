@@ -57,15 +57,7 @@
             <p class="settings-description">{{ settings_schema.Debug.disable_initialization.description }}</p>
             {% endif %}
         </div>
-        
-        <div class="settings-form-group">
-            <label for="debug-api-key" class="settings-title">API Key:</label>
-            <input type="text" id="debug-api-key" name="Debug.api_key" value="{{ settings.Debug.api_key }}" class="settings-input">
-            {% if settings_schema.Debug.api_key.description %}
-            <p class="settings-description">{{ settings_schema.Debug.api_key.description }}</p>
-            {% endif %}
-        </div>
-        
+                
         <div class="settings-form-group">
             <label class="settings-title">
                 Jackett Seeders Only

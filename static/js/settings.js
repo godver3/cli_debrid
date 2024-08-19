@@ -16,6 +16,7 @@ function initializeAllFunctionalities() {
     initializeContentSourcesFunctionality();
     initializeScrapersFunctionality();
     initializeScrapingFunctionality();
+    initializeTraktAuthorization();
 }
 
 function initializeTabSwitching() {
@@ -144,24 +145,29 @@ function updateSettings() {
         current[nameParts[nameParts.length - 1]] = value;
     });
 
-    // Ensure 'Content Sources' and 'Scrapers' sections exist
+    // Ensure 'Content Sources' section exists
     if (!settingsData['Content Sources']) {
         settingsData['Content Sources'] = {};
     }
-    if (!settingsData['Scrapers']) {
-        settingsData['Scrapers'] = {};
-    }
 
-    // Correctly structure MDBList content source
-    if (settingsData['Content Sources']['MDBList_1']) {
-        const mdbList = settingsData['Content Sources']['MDBList_1'];
-        if (typeof mdbList === 'object') {
-            mdbList.enabled = mdbList.enabled || false;
-            mdbList.versions = mdbList.versions || '';
-            mdbList.display_name = mdbList.display_name || '';
-            mdbList.urls = mdbList.urls || '';
+    // Correctly structure Content Sources
+    Object.keys(settingsData['Content Sources']).forEach(sourceId => {
+        const sourceData = settingsData['Content Sources'][sourceId];
+        
+        // Handle versions as a list
+        if (sourceData.versions) {
+            if (typeof sourceData.versions === 'string') {
+                sourceData.versions = sourceData.versions.split(',').map(v => v.trim()).filter(v => v);
+            } else if (typeof sourceData.versions === 'boolean') {
+                // If it's a boolean, we need to determine which versions to include
+                // This assumes you have a list of available versions somewhere
+                const availableVersions = ['1080p', '2160p']; // Adjust this list as needed
+                sourceData.versions = sourceData.versions ? availableVersions : [];
+            }
+        } else {
+            sourceData.versions = [];
         }
-    }
+    });
 
     // Remove any 'Unknown' content sources
     Object.keys(settingsData['Content Sources']).forEach(key => {
@@ -170,33 +176,55 @@ function updateSettings() {
         }
     });
 
-    // Preserve existing scrapers
-    const existingScrapers = document.querySelectorAll('[data-scraper-id]');
-    console.log(`Found ${existingScrapers.length} existing scrapers`);
+    // Process scraper sections
+    const scraperSections = document.querySelectorAll('.settings-section');
+    console.log(`Found ${scraperSections.length} scraper sections`);
 
-    existingScrapers.forEach(scraper => {
-        try {
-            const scraperId = scraper.getAttribute('data-scraper-id');
-            console.log(`Processing scraper: ${scraperId}`);
-            
-            const scraperData = {
-                type: scraperId.split('_')[0] // Extract type from the scraper ID
-            };
+    if (!settingsData['Scrapers']) {
+        settingsData['Scrapers'] = {};
+    }
 
-            // Collect all input fields for this scraper
-            scraper.querySelectorAll('input, select, textarea').forEach(input => {
-                const fieldName = input.name.split('.').pop();
-                if (input.type === 'checkbox') {
-                    scraperData[fieldName] = input.checked;
-                } else {
-                    scraperData[fieldName] = input.value;
-                }
-            });
+    scraperSections.forEach(section => {
+        let scraperId;
+        const deleteButton = section.querySelector('.delete-scraper-btn');
+        if (deleteButton) {
+            scraperId = deleteButton.getAttribute('data-scraper-id');
+        } else {
+            // Fallback: try to get the ID from the section header
+            const header = section.querySelector('.settings-section-header h4');
+            scraperId = header ? header.textContent.trim() : null;
+        }
 
-            console.log(`Collected data for scraper ${scraperId}:`, scraperData);
-            settingsData['Scrapers'][scraperId] = scraperData;
-        } catch (error) {
-            console.error(`Error processing scraper:`, error);
+        if (!scraperId) {
+            console.warn('Could not determine scraper ID for a section, skipping...');
+            return;
+        }
+
+        console.log(`Processing scraper: ${scraperId}`);
+        
+        const scraperData = {
+            type: scraperId.split('_')[0] // Extract type from the scraper ID
+        };
+
+        // Collect all input fields for this scraper
+        section.querySelectorAll('input, select, textarea').forEach(input => {
+            const fieldName = input.name.split('.').pop();
+            if (input.type === 'checkbox') {
+                scraperData[fieldName] = input.checked;
+            } else {
+                scraperData[fieldName] = input.value;
+            }
+        });
+
+        console.log(`Collected data for scraper ${scraperId}:`, scraperData);
+        settingsData['Scrapers'][scraperId] = scraperData;
+    });
+
+    // Remove any scrapers that are not actual scrapers
+    const validScraperTypes = ['Zilean', 'Comet', 'Jackett', 'Torrentio'];
+    Object.keys(settingsData['Scrapers']).forEach(key => {
+        if (!validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
+            delete settingsData['Scrapers'][key];
         }
     });
 
@@ -367,7 +395,7 @@ function updateDynamicFields(type) {
 
     if (settings && settings[selectedType]) {
         Object.entries(settings[selectedType]).forEach(([setting, config]) => {
-            if (setting !== 'enabled') {
+            if (setting !== 'enabled' && setting !== 'versions') {
                 const div = document.createElement('div');
                 div.className = 'form-group';
                 
@@ -402,6 +430,32 @@ function updateDynamicFields(type) {
         enabledDiv.appendChild(enabledLabel);
         enabledDiv.appendChild(enabledInput);
         dynamicFields.appendChild(enabledDiv);
+
+        // Add version checkboxes
+        if (type === 'source') {
+            const versionsDiv = document.createElement('div');
+            versionsDiv.className = 'form-group';
+            const versionsLabel = document.createElement('label');
+            versionsLabel.textContent = 'Versions:';
+            versionsDiv.appendChild(versionsLabel);
+
+            const versionCheckboxes = document.createElement('div');
+            versionCheckboxes.className = 'version-checkboxes';
+
+            Object.keys(window.scrapingVersions).forEach(version => {
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.name = 'versions';
+                checkbox.value = version;
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(` ${version}`));
+                versionCheckboxes.appendChild(label);
+            });
+
+            versionsDiv.appendChild(versionCheckboxes);
+            dynamicFields.appendChild(versionsDiv);
+        }
     }
 }
 
@@ -414,15 +468,28 @@ function handleAddSourceSubmit(e) {
     formData.forEach((value, key) => {
         if (value === 'true') value = true;
         if (value === 'false') value = false;
-        if (form.elements[key].type === 'checkbox') value = form.elements[key].checked;
-        jsonData[key] = value;
+        if (form.elements[key].type === 'checkbox') {
+            if (key === 'versions') {
+                if (!jsonData.versions) {
+                    jsonData.versions = [];
+                }
+                if (form.elements[key].checked) {
+                    jsonData.versions.push(value);
+                }
+            } else {
+                value = form.elements[key].checked;
+            }
+        }
+        if (key !== 'versions') {
+            jsonData[key] = value;
+        }
     });
 
     // Ensure the correct structure for the new content source
     const sourceData = {
         type: jsonData.type,
         enabled: jsonData.enabled || false,
-        versions: jsonData.versions || "",
+        versions: jsonData.versions || [],
         display_name: jsonData.display_name || "",
         urls: jsonData.urls || ""
     };
@@ -717,4 +784,97 @@ function createFormField(setting, value, type) {
     div.appendChild(label);
     div.appendChild(input);
     return div;
+}
+
+function initializeTraktAuthorization() {
+    const traktAuthBtn = document.getElementById('trakt-auth-btn');
+    const traktAuthStatus = document.getElementById('trakt-auth-status');
+    const traktAuthCode = document.getElementById('trakt-auth-code');
+    const traktCode = document.getElementById('trakt-code');
+    const traktActivateLink = document.getElementById('trakt-activate-link');
+
+    if (traktAuthBtn) {
+        traktAuthBtn.addEventListener('click', function() {
+            traktAuthBtn.disabled = true;
+            traktAuthStatus.textContent = 'Initializing Trakt authorization...';
+            traktAuthCode.style.display = 'none';
+
+            fetch('/trakt_auth', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Trakt auth response:', data);
+                    if (data.user_code) {
+                        traktCode.textContent = data.user_code;
+                        traktActivateLink.href = data.verification_url;
+                        traktAuthCode.style.display = 'block';
+                        traktAuthStatus.textContent = 'Please enter the code on the Trakt website to complete authorization.';
+                        pollTraktAuthStatus(data.device_code);
+                    } else {
+                        traktAuthStatus.textContent = 'Error: ' + (data.error || 'Unable to get authorization code');
+                    }
+                })
+                .catch(error => {
+                    console.error('Trakt auth error:', error);
+                    traktAuthStatus.textContent = 'Error: Unable to start authorization process';
+                })
+                .finally(() => {
+                    traktAuthBtn.disabled = false;
+                });
+        });
+    }
+
+    // Check initial Trakt authorization status
+    checkTraktAuthStatus();
+}
+
+function pollTraktAuthStatus(device_code) {
+    const traktAuthStatus = document.getElementById('trakt-auth-status');
+    const traktAuthCode = document.getElementById('trakt-auth-code');
+    const pollInterval = setInterval(() => {
+        fetch('/trakt_auth_status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ device_code: device_code }),
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'authorized') {
+                    clearInterval(pollInterval);
+                    traktAuthStatus.textContent = 'Trakt authorization successful!';
+                    traktAuthStatus.classList.add('authorized');
+                    traktAuthCode.style.display = 'none';
+                    setTimeout(() => {
+                        traktAuthStatus.textContent = 'Trakt is currently authorized.';
+                    }, 5000);
+                } else if (data.status === 'error') {
+                    clearInterval(pollInterval);
+                    traktAuthStatus.textContent = 'Error: ' + (data.message || 'Unknown error occurred');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                traktAuthStatus.textContent = 'Error checking authorization status. Please try again.';
+            });
+    }, 5000); // Check every 5 seconds
+}
+
+function checkTraktAuthStatus() {
+    const traktAuthStatus = document.getElementById('trakt-auth-status');
+    fetch('/trakt_auth_status', { method: 'GET' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'authorized') {
+                traktAuthStatus.textContent = 'Trakt is currently authorized.';
+                traktAuthStatus.classList.add('authorized');
+            } else {
+                traktAuthStatus.textContent = 'Trakt is not authorized.';
+                traktAuthStatus.classList.remove('authorized');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            traktAuthStatus.textContent = 'Unable to check Trakt authorization status.';
+        });
 }

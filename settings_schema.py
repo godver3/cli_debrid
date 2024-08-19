@@ -170,12 +170,6 @@ SETTINGS_SCHEMA = {
             "description": "Disable initialization tasks",
             "default": False
         },
-        "api_key": {
-            "type": "string",
-            "description": "Debug API key",
-            "default": "",
-            "sensitive": True
-        },
         "jackett_seeders_only": {
             "type": "boolean",
             "description": "Return only results with seeders in Jackett",
