@@ -48,11 +48,7 @@ def save_config(config):
     try:
         # Ensure only valid top-level keys are present
         valid_keys = set(SETTINGS_SCHEMA.keys())
-        cleaned_config = {}
-        
-        for key, value in config.items():
-            if key in valid_keys:
-                cleaned_config[key] = value  # Keep all nested structures intact
+        cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
         
         # Write the entire config to a temporary file first
         temp_file = CONFIG_FILE + '.tmp'
