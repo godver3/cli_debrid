@@ -127,13 +127,17 @@ const debouncedUpdateSettings = debounce(updateSettings, 300);
 
 function handleSettingsFormSubmit(event) {
     event.preventDefault();
-    updateSettings()
-        .then(() => {
-            console.log("Settings updated successfully");
-        })
-        .catch(error => {
-            console.error("Error updating settings:", error);
-        });
+    try {
+        updateSettings()
+            .then(() => {
+                console.log("Settings updated successfully");
+            })
+            .catch(error => {
+                console.error("Error updating settings:", error);
+            });
+    } catch (error) {
+        console.error("Error in handleSettingsFormSubmit:", error);
+    }
 }
 
 function updateSettings() {
@@ -170,36 +174,45 @@ function updateSettings() {
         settingsData['Content Sources'] = {};
     }
 
-    // Correctly structure Content Sources
-    Object.keys(settingsData['Content Sources']).forEach(sourceId => {
-        const sourceData = settingsData['Content Sources'][sourceId];
-        
-        // Handle versions as a list
-        if (sourceData.versions) {
-            if (typeof sourceData.versions === 'string') {
-                sourceData.versions = sourceData.versions.split(',').map(v => v.trim()).filter(v => v);
-            } else if (typeof sourceData.versions === 'boolean') {
-                // If it's a boolean, we need to determine which versions to include
-                // This assumes you have a list of available versions somewhere
-                const availableVersions = ['1080p', '2160p']; // Adjust this list as needed
-                sourceData.versions = sourceData.versions ? availableVersions : [];
+    // Safely process Content Sources
+    if (settingsData['Content Sources'] && typeof settingsData['Content Sources'] === 'object') {
+        Object.keys(settingsData['Content Sources']).forEach(sourceId => {
+            const sourceData = settingsData['Content Sources'][sourceId];
+            if (sourceData && typeof sourceData === 'object') {
+                // Handle versions as a list
+                if (sourceData.versions) {
+                    if (typeof sourceData.versions === 'string') {
+                        sourceData.versions = sourceData.versions.split(',').map(v => v.trim()).filter(v => v);
+                    } else if (typeof sourceData.versions === 'boolean') {
+                        // If it's a boolean, we need to determine which versions to include
+                        // This assumes you have a list of available versions somewhere
+                        const availableVersions = ['1080p', '2160p']; // Adjust this list as needed
+                        sourceData.versions = sourceData.versions ? availableVersions : [];
+                    }
+                } else {
+                    sourceData.versions = [];
+                }
             }
-        } else {
-            sourceData.versions = [];
-        }
-    });
+        });
+    }
 
     // Remove any 'Unknown' content sources
-    Object.keys(settingsData['Content Sources']).forEach(key => {
-        if (key.startsWith('Unknown_')) {
-            delete settingsData['Content Sources'][key];
-        }
-    });
+    if (settingsData['Content Sources'] && typeof settingsData['Content Sources'] === 'object') {
+        Object.keys(settingsData['Content Sources']).forEach(key => {
+            if (key.startsWith('Unknown_')) {
+                delete settingsData['Content Sources'][key];
+            }
+        });
+    }
 
     // Process scraper sections
     const scraperSections = document.querySelectorAll('#scrapers-tab .settings-section');
     console.log(`Found ${scraperSections.length} scraper sections`);
-    
+
+    if (!settingsData['Scrapers']) {
+        settingsData['Scrapers'] = {};
+    }
+
     scraperSections.forEach(section => {
         let scraperId;
         const deleteButton = section.querySelector('.delete-scraper-btn');
@@ -210,14 +223,14 @@ function updateSettings() {
             const header = section.querySelector('.settings-section-header h4');
             scraperId = header ? header.textContent.trim() : null;
         }
-    
+
         if (!scraperId) {
             console.warn('Could not determine scraper ID for a section, skipping...');
             return;
         }
-    
+
         console.log(`Processing scraper: ${scraperId}`);
-                
+        
         const scraperData = {
             type: scraperId.split('_')[0] // Extract type from the scraper ID
         };
@@ -238,11 +251,13 @@ function updateSettings() {
 
     // Remove any scrapers that are not actual scrapers
     const validScraperTypes = ['Zilean', 'Comet', 'Jackett', 'Torrentio'];
-    Object.keys(settingsData['Scrapers']).forEach(key => {
-        if (!validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
-            delete settingsData['Scrapers'][key];
-        }
-    });
+    if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
+        Object.keys(settingsData['Scrapers']).forEach(key => {
+            if (settingsData['Scrapers'][key] && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
+                delete settingsData['Scrapers'][key];
+            }
+        });
+    }
 
     // Remove any top-level fields that should be nested
     const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers'];
