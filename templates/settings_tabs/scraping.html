@@ -25,8 +25,8 @@
     <div class="settings-section-header">
         <span class="settings-toggle-icon">+</span>
         <h4>{{ config.get('display_name', version) }}</h4>
+        <button type="button" class="duplicate-version-btn" data-version-id="{{ version }}">Duplicate Version</button>
         <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete Version</button>
-        <button type="button" class="duplicate-version-btn" data-version-id="{{ version }}" style="color: green;">Duplicate Version</button>
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
