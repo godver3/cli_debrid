@@ -489,10 +489,10 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Add event listener for settings form
-    const settingsForm = document.getElementById('settingsForm');
-    if (settingsForm) {
-        settingsForm.addEventListener('submit', updateSettings);
-    }
+    // const settingsForm = document.getElementById('settingsForm');
+    // if (settingsForm) {
+    //     settingsForm.addEventListener('submit', updateSettings);
+    // }
     
     // Add event listeners for tab buttons
     const tabButtons = document.querySelectorAll('.tab-button');
