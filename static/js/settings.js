@@ -335,12 +335,15 @@ function updateSettings() {
         const versionData = {};
 
         section.querySelectorAll('input, select').forEach(input => {
-            if (input.type === 'checkbox') {
-                versionData[input.name.split('.').pop()] = input.checked;
-            } else if (input.type === 'number') {
-                versionData[input.name.split('.').pop()] = parseFloat(input.value);
-            } else {
-                versionData[input.name.split('.').pop()] = input.value;
+            if (input.name && input.name.split('.').pop() !== 'display_name') {
+                const key = input.name.split('.').pop();
+                if (input.type === 'checkbox') {
+                    versionData[key] = input.checked;
+                } else if (input.type === 'number') {
+                    versionData[key] = parseFloat(input.value) || 0;
+                } else {
+                    versionData[key] = input.value;
+                }
             }
         });
 
@@ -349,15 +352,23 @@ function updateSettings() {
             const filterList = section.querySelector(`.filter-list[data-version="${versionId}"][data-filter-type="${filterType}"]`);
             versionData[filterType] = [];
             filterList.querySelectorAll('.filter-item').forEach(item => {
-                const term = item.querySelector('.filter-term').value;
-                if (filterType.startsWith('preferred_')) {
-                    const weight = parseInt(item.querySelector('.filter-weight').value) || 1;
-                    versionData[filterType].push([term, weight]);
-                } else {
-                    versionData[filterType].push(term);
+                const term = item.querySelector('.filter-term').value.trim();
+                if (term) {  // Only add non-empty terms
+                    if (filterType.startsWith('preferred_')) {
+                        const weight = parseInt(item.querySelector('.filter-weight').value) || 1;
+                        versionData[filterType].push([term, weight]);
+                    } else {
+                        versionData[filterType].push(term);
+                    }
                 }
             });
         });
+
+        // Add display_name separately to ensure it's always included
+        const displayNameInput = section.querySelector('input[name$=".display_name"]');
+        if (displayNameInput) {
+            versionData['display_name'] = displayNameInput.value;
+        }
 
         versions[versionId] = versionData;
     });
