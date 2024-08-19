@@ -1,0 +1,30 @@
+<h3>Required Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+{% for section in ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio'] %}
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>{{ section }}</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% for key, value in settings[section].items() %}
+        <div class="settings-form-group">
+            <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+            {% if value is boolean %}
+            <label class="settings-title">
+                <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if value %}checked{% endif %}>
+            </label>
+            {% else %}
+            <input type="text" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ value }}" class="settings-input">
+            {% endif %}
+            {% if settings_schema[section][key].description %}
+            <p class="settings-description">{{ settings_schema[section][key].description }}</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}

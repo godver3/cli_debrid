@@ -7,6 +7,11 @@ from settings import SettingsEditor, get_setting, load_config, save_config, CONF
 from database import verify_database
 import shutil
 from datetime import datetime
+from web_server import start_server
+import signal
+from run_program import run_program, ProgramRunner
+
+program_runner = None
 
 # Ensure logs directory exists
 if not os.path.exists('logs'):
@@ -35,6 +40,9 @@ else:
 # Ensure settings file exists and populate with default keys
 ensure_settings_file()
 verify_database()
+
+# Start web server
+start_server()
 
 from questionary import select
 from run_program import run_program
@@ -128,6 +136,8 @@ def main_menu():
     logging.debug("Debug logging started")
     os.system('clear')
 
+    global program_runner
+
     version = get_version()
     while True:
         print(f"""
@@ -164,7 +174,17 @@ def main_menu():
                 for error in errors:
                     print(f"- {error}")
             else:
-                run_program()
+                program_runner = run_program()
+                print("Program is running. Press Ctrl+C to stop and return to the menu.")
+                try:
+                    # This will block until the program is stopped
+                    program_runner.start()
+                except KeyboardInterrupt:
+                    # This will be caught by our signal handler
+                    pass
+                finally:
+                    program_runner = None
+                print("Returned to main menu.")
         elif action == "Edit Settings":
             SettingsEditor()
         elif action == "Manual Scrape":
@@ -178,6 +198,18 @@ def main_menu():
             break
         logging.debug("Returned to main menu.")
 
+def signal_handler(signum, frame):
+    global program_runner
+    if program_runner:
+        os.system('clear')
+        
+        print("\nStopping the program...")
+        program_runner.stop()
+        print("Program stopped. Returning to the main menu.")
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 def wait_for_valid_key():
     while True:
         key_press = input()
@@ -188,6 +220,7 @@ def wait_for_valid_key():
             print("Press Enter to continue to Main Menu...")
 
 def main():
+
     # Ensure db_content directory exists
     if not os.path.exists('db_content'):
         os.makedirs('db_content')
@@ -199,10 +232,10 @@ def main():
     # display_settings()
     
     # Check if required settings are in place
-    errors = check_required_settings()
-    if errors:
-        print("Starting initial setup...")
-        prompt_for_required_settings()
+    #errors = check_required_settings()
+    #if errors:
+        #print("Starting initial setup...")
+        #prompt_for_required_settings()
 
     # Check for the debug flag
     skip_menu = get_setting('Debug', 'skip_menu', False)

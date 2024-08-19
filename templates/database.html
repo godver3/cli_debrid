@@ -43,12 +43,14 @@
         </form>
     </div>
     <div class="pagination">
-        {% for letter in alphabet %}
-        <a href="{{ url_for('database', letter=letter, filter_column=filter_column, filter_value=filter_value, sort_column=sort_column, sort_order=sort_order) }}" 
-           {% if letter == current_letter %}class="active"{% endif %}>
-            {{ letter }}
-        </a>
-        {% endfor %}
+        {% if alphabet %}
+            {% for letter in alphabet %}
+            <a href="{{ url_for('database', letter=letter, filter_column=filter_column, filter_value=filter_value, sort_column=sort_column, sort_order=sort_order) }}" 
+               {% if letter == current_letter %}class="active"{% endif %}>{{ letter }}</a>
+            {% endfor %}
+        {% else %}
+            <p>No pagination data available</p>
+        {% endif %}
     </div>
     <div class="table-container">
         <table id="database-table">
