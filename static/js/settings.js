@@ -541,7 +541,7 @@ function handleAddSourceSubmit(e) {
         }
     })
     .then(() => {
-        reinitializeAllExpandCollapse();
+        reinitializeExpandCollapse();
         showNotification('Content source added successfully', 'success');
     })
     .catch(error => {
@@ -550,7 +550,7 @@ function handleAddSourceSubmit(e) {
         return updateContentSourcesTab();
     })
     .then(() => {
-        reinitializeAllExpandCollapse();
+        reinitializeExpandCollapse();
     });
 }
 
@@ -747,6 +747,7 @@ function updateContentSourcesTab() {
                 contentSourcesTab.innerHTML = html;
                 initializeContentSourcesFunctionality();
                 displayContentSourceNames();
+                reinitializeExpandCollapse();
             }
         })
         .catch(error => {
