@@ -24,7 +24,7 @@ from shared import app, update_stats
 from run_program import ProgramRunner
 from queue_utils import safe_process_queue
 from run_program import process_overseerr_webhook, ProgramRunner
-from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper
+from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config
 from settings_schema import SETTINGS_SCHEMA
 from trakt.core import get_device_code, get_device_token
 
@@ -65,14 +65,6 @@ def update_trakt_config(key, value):
     config = get_trakt_config()
     config[key] = value
     save_trakt_config(config)
-
-def load_config():
-    try:
-        with open(CONFIG_FILE, 'r') as config_file:
-            return json.load(config_file)
-    except Exception as e:
-        print(f"Error loading config: {str(e)}")
-        return {}
 
 @app.context_processor
 def utility_processor():
@@ -140,14 +132,6 @@ def add_content_source_route():
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
-
-def save_config(config):
-    try:
-        with open(CONFIG_FILE, 'w') as config_file:
-            json.dump(config, config_file, indent=2)
-        logging.info("Config saved successfully")
-    except Exception as e:
-        logging.error(f"Error saving config: {str(e)}")
 
 @app.route('/content_sources/delete', methods=['POST'])
 def delete_content_source_route():
@@ -518,16 +502,30 @@ def get_scraping_settings():
     scraping_settings = config.get('Scraping', {})
     return jsonify(scraping_settings)
 
-@app.route('/api/settings', methods=['GET', 'POST'])
-def api_settings():
-    if request.method == 'POST':
+@app.route('/api/settings', methods=['POST'])
+def update_settings():
+    try:
         new_settings = request.json
-        current_settings = load_config()
-        update_nested_settings(current_settings, new_settings)
-        save_config(current_settings)
-        return jsonify({"status": "success"})
-    else:
-        return jsonify(load_config())
+        logging.debug(f"Received new settings: {json.dumps(new_settings, indent=2)}")
+        
+        config = load_config()
+        logging.debug(f"Current config before update: {json.dumps(config, indent=2)}")
+        
+        # Update the config with new settings
+        for section, settings in new_settings.items():
+            if section not in config:
+                config[section] = {}
+            config[section].update(settings)
+        
+        logging.debug(f"Updated config before saving: {json.dumps(config, indent=2)}")
+        
+        # Save the updated config
+        save_config(config)
+        
+        return jsonify({"status": "success", "message": "Settings updated successfully"})
+    except Exception as e:
+        logging.error(f"Error updating settings: {str(e)}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 def update_nested_settings(current, new):
     for key, value in new.items():
