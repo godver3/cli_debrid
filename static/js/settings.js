@@ -571,40 +571,22 @@ function handleAddSourceSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
-    const jsonData = {};
+    const sourceData = {};
     
     formData.forEach((value, key) => {
-        if (value === 'true') value = true;
-        if (value === 'false') value = false;
-        if (form.elements[key].type === 'checkbox') {
-            if (key === 'versions') {
-                if (!jsonData.versions) {
-                    jsonData.versions = [];
-                }
-                if (form.elements[key].checked) {
-                    jsonData.versions.push(value);
-                }
-            } else {
-                value = form.elements[key].checked;
+        if (key === 'versions') {
+            if (!sourceData.versions) {
+                sourceData.versions = [];
             }
-        }
-        if (key !== 'versions') {
-            jsonData[key] = value;
+            if (form.elements[key].checked) {
+                sourceData.versions.push(value);
+            }
+        } else if (form.elements[key].type === 'checkbox') {
+            sourceData[key] = form.elements[key].checked;
+        } else {
+            sourceData[key] = value === 'true' ? true : (value === 'false' ? false : value);
         }
     });
-
-    // Ensure the correct structure for the new content source
-    const sourceData = {
-        type: jsonData.type,
-        enabled: jsonData.enabled || false,
-        versions: jsonData.versions || [],
-        display_name: jsonData.display_name || "",
-        urls: jsonData.urls || ""
-    };
-
-    // Add any additional fields that might be specific to certain source types
-    if (jsonData.url) sourceData.url = jsonData.url;
-    if (jsonData.api_key) sourceData.api_key = jsonData.api_key;
 
     fetch('/content_sources/add', {
         method: 'POST',
