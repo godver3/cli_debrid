@@ -548,7 +548,7 @@ function initializeScrapingFunctionality() {
 
     document.querySelectorAll('.add-filter').forEach(button => {
         button.addEventListener('click', function(e) {
-            e.preventDefault(); // Prevent form submission
+            e.preventDefault();
             const version = this.getAttribute('data-version');
             const filterType = this.getAttribute('data-filter-type');
             addFilterItem(version, filterType);
@@ -559,13 +559,7 @@ function initializeScrapingFunctionality() {
         list.addEventListener('click', function(e) {
             if (e.target.classList.contains('remove-filter')) {
                 e.target.closest('.filter-item').remove();
-                updateSettings();
-            }
-        });
-
-        list.addEventListener('change', function(e) {
-            if (e.target.classList.contains('filter-term') || e.target.classList.contains('filter-weight')) {
-                updateSettings();
+                // Remove updateSettings() call from here
             }
         });
     });
@@ -590,7 +584,6 @@ function addFilterItem(version, filterType) {
     }
 
     list.appendChild(newItem);
-    // Don't call updateSettings() here
 }
 
 function duplicateVersion(versionId) {
