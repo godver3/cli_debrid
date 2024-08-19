@@ -87,7 +87,6 @@ def content_sources_content():
                            source_types=source_types, 
                            settings_schema=SETTINGS_SCHEMA)
 
-# Update the add_content_source_route function:
 @app.route('/content_sources/add', methods=['POST'])
 def add_content_source_route():
     logging.info(f"Received request to add content source. Content-Type: {request.content_type}")
@@ -109,13 +108,29 @@ def add_content_source_route():
         if not source_type:
             return jsonify({'success': False, 'error': 'No source type provided'}), 400
         
-        new_source_id, validated_config = add_content_source(source_type, source_config)
-        
-        # Update the config
+        # Load the current config
         config = load_config()
+        
+        # Generate a new content source ID
+        base_name = source_type
+        index = 1
+        while f"{base_name}_{index}" in config.get('Content Sources', {}):
+            index += 1
+        new_source_id = f"{base_name}_{index}"
+        
+        # Prepare the new source config
+        new_source_config = {
+            'enabled': source_config.get('enabled', False),
+            'urls': source_config.get('urls', ''),
+            'versions': source_config.get('versions', []),
+            'display_name': source_config.get('display_name', ''),
+            'type': source_type
+        }
+        
+        # Add the new source to the config
         if 'Content Sources' not in config:
             config['Content Sources'] = {}
-        config['Content Sources'][new_source_id] = validated_config
+        config['Content Sources'][new_source_id] = new_source_config
         
         # Save the config only once
         save_config(config)
@@ -126,7 +141,6 @@ def add_content_source_route():
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
-# Update the save_config function to log only once
 def save_config(config):
     try:
         with open(CONFIG_FILE, 'w') as config_file:
