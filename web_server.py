@@ -86,8 +86,6 @@ def add_content_source_route():
     try:
         if request.is_json:
             source_config = request.json
-        elif request.content_type.startswith('multipart/form-data'):
-            source_config = request.form.to_dict()
         else:
             return jsonify({'success': False, 'error': f'Unsupported Content-Type: {request.content_type}'}), 415
         
@@ -100,34 +98,8 @@ def add_content_source_route():
         if not source_type:
             return jsonify({'success': False, 'error': 'No source type provided'}), 400
         
-        # Load the current config
-        config = load_config()
+        new_source_id = add_content_source(source_type, source_config)
         
-        # Generate a new content source ID
-        base_name = source_type
-        index = 1
-        while f"{base_name}_{index}" in config.get('Content Sources', {}):
-            index += 1
-        new_source_id = f"{base_name}_{index}"
-        
-        # Prepare the new source config
-        new_source_config = {
-            'enabled': source_config.get('enabled', False),
-            'urls': source_config.get('urls', ''),
-            'versions': source_config.get('versions', []),
-            'display_name': source_config.get('display_name', ''),
-            'type': source_type
-        }
-        
-        # Add the new source to the config
-        if 'Content Sources' not in config:
-            config['Content Sources'] = {}
-        config['Content Sources'][new_source_id] = new_source_config
-        
-        # Save the config only once
-        save_config(config)
-        
-        logging.info(f"New content source added and config saved: {new_source_id}")
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
