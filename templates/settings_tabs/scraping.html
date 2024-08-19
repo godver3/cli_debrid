@@ -1,0 +1,110 @@
+<h3>Scraping Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+
+<button id="add-version-btn" class="add-version-link">Add New Version</button>
+
+<div id="add-version-popup" class="popup">
+    <div class="popup-content">
+        <h4>Add New Version</h4>
+        <form id="add-version-form">
+            <div class="form-group">
+                <label for="version-name">Version Name:</label>
+                <input type="text" id="version-name" name="name" required>
+            </div>
+            <button type="submit">Add Version</button>
+            <button type="button" id="cancel-add-version">Cancel</button>
+        </form>
+    </div>
+</div>
+
+{% for version, config in settings.Scraping.versions.items() %}
+<div class="settings-section" data-version-id="{{ version }}">
+    <div class="settings-section-header">
+        <span class="settings-toggle-icon">+</span>
+        <h4>{{ config.get('display_name', version) }}</h4>
+        <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete Version</button>
+        <button type="button" class="duplicate-version-btn" data-version-id="{{ version }}">Duplicate Version</button>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="scraping-{{ version }}-display_name" class="settings-title">Display Name:</label>
+            <input type="text" id="scraping-{{ version }}-display_name" name="Scraping.versions.{{ version }}.display_name" value="{{ config.get('display_name', version) }}" class="settings-input">
+        </div>
+        {% for key, value in config.items() %}
+            {% if key not in ['display_name', 'filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+                <div class="settings-form-group">
+                    {% if value is boolean %}
+                        <label class="settings-title">
+                            <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
+                            {{ key|replace('_', ' ')|title }}
+                        </label>
+                    {% elif key == 'max_resolution' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <select id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">
+                            {% for option in ['2160p', '1080p', '720p', 'SD'] %}
+                                <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                    {% elif key == 'resolution_wanted' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <select id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">
+                            {% for option in ['<=', '==', '>='] %}
+                                <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="{{ 'number' if value is number else 'text' }}" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input">
+                    {% endif %}
+                </div>
+            {% endif %}
+        {% endfor %}
+        
+        {% for filter_type in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+            <div class="settings-form-group">
+                <label class="settings-title">{{ filter_type|replace('_', ' ')|title }}:</label>
+                <div class="filter-list" data-version="{{ version }}" data-filter-type="{{ filter_type }}">
+                    {% for item in config.get(filter_type, []) %}
+                        <div class="filter-item">
+                            {% if filter_type.startswith('preferred_') %}
+                                <input type="text" value="{{ item[0] }}" class="filter-term">
+                                <input type="number" value="{{ item[1] }}" class="filter-weight" min="1">
+                            {% else %}
+                                <input type="text" value="{{ item }}" class="filter-term">
+                            {% endif %}
+                            <button type="button" class="remove-filter">Remove</button>
+                        </div>
+                    {% endfor %}
+                </div>
+                <button type="button" class="add-filter" data-version="{{ version }}" data-filter-type="{{ filter_type }}">Add {{ filter_type|replace('_', ' ')|title }}</button>
+            </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Other Scraping Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-subsection">
+            <div class="settings-form-group">
+                <label for="scraping-uncached-handling" class="settings-title">Handling Method:</label>
+                <select id="scraping-uncached-handling" name="Scraping.uncached_content_handling" class="settings-input">
+                    <option value="Hybrid" {% if settings.Scraping.uncached_content_handling == 'Hybrid' %}selected{% endif %}>Hybrid</option>
+                    <option value="Full" {% if settings.Scraping.uncached_content_handling == 'Full' %}selected{% endif %}>Full</option>
+                    <option value="None" {% if settings.Scraping.uncached_content_handling == 'None' %}selected{% endif %}>None</option>
+                </select>
+                {% if settings_schema.Scraping.uncached_content_handling.description %}
+                <p class="settings-description">{{ settings_schema.Scraping.uncached_content_handling.description }}</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+

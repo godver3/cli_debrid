@@ -5,7 +5,7 @@ import time
 from queue_manager import QueueManager
 import logging
 import os
-from settings import get_all_settings, set_setting, get_setting, load_config, save_config, to_bool
+from settings import get_all_settings, set_setting, get_setting, load_config, save_config, to_bool, ensure_trakt_auth
 from collections import OrderedDict
 from web_scraper import web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection, get_available_versions
 from debrid.real_debrid import add_to_real_debrid
@@ -14,12 +14,26 @@ from datetime import datetime
 import sqlite3
 from database import get_db_connection
 import string
+from settings_web import get_settings_page, update_settings, get_settings
+from template_utils import render_settings, render_content_sources
+import json
+from scraper_manager import ScraperManager
+import uuid
+from flask import jsonify
+from shared import app, update_stats
+from run_program import ProgramRunner
+from queue_utils import safe_process_queue
+from run_program import process_overseerr_webhook, ProgramRunner
+from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config
+from settings_schema import SETTINGS_SCHEMA
+from trakt.core import get_device_code, get_device_token
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
 app.secret_key = '9683650475'
 queue_manager = QueueManager()
+scraper_manager = ScraperManager()
 
 # Disable Werkzeug request logging
 log = logging.getLogger('werkzeug')
@@ -33,6 +47,154 @@ start_time = time.time()
 total_processed = 0
 successful_additions = 0
 failed_additions = 0
+
+CONFIG_FILE = './config/config.json'
+TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+
+def get_trakt_config():
+    if os.path.exists(TRAKT_CONFIG_PATH):
+        with open(TRAKT_CONFIG_PATH, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_trakt_config(config):
+    with open(TRAKT_CONFIG_PATH, 'w') as f:
+        json.dump(config, f, indent=2)
+
+def update_trakt_config(key, value):
+    config = get_trakt_config()
+    config[key] = value
+    save_trakt_config(config)
+
+@app.context_processor
+def utility_processor():
+    return dict(render_settings=render_settings, render_content_sources=render_content_sources)
+
+@app.route('/content_sources/content')
+def content_sources_content():
+    config = load_config()
+    source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+    return render_template('settings_tabs/content_sources.html', 
+                           settings=config, 
+                           source_types=source_types, 
+                           settings_schema=SETTINGS_SCHEMA)
+
+@app.route('/content_sources/add', methods=['POST'])
+def add_content_source_route():
+    try:
+        if request.is_json:
+            source_config = request.json
+        else:
+            return jsonify({'success': False, 'error': f'Unsupported Content-Type: {request.content_type}'}), 415
+        
+        source_type = source_config.pop('type', None)
+        if not source_type:
+            return jsonify({'success': False, 'error': 'No source type provided'}), 400
+        
+        new_source_id = add_content_source(source_type, source_config)
+        
+        # Instead of triggering a full settings update, just return the new source ID
+        return jsonify({'success': True, 'source_id': new_source_id})
+    except Exception as e:
+        logging.error(f"Error adding content source: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/content_sources/delete', methods=['POST'])
+def delete_content_source_route():
+    source_id = request.json.get('source_id')
+    if not source_id:
+        return jsonify({'success': False, 'error': 'No source ID provided'}), 400
+
+    logging.info(f"Attempting to delete content source: {source_id}")
+    
+    success = delete_content_source(source_id)
+    
+    if success:
+        # Update the config in web_server.py
+        config = load_config()
+        if 'Content Sources' in config and source_id in config['Content Sources']:
+            del config['Content Sources'][source_id]
+            save_config(config)
+        
+        logging.info(f"Content source {source_id} deleted successfully")
+        return jsonify({'success': True})
+    else:
+        logging.warning(f"Failed to delete content source: {source_id}")
+        return jsonify({'success': False, 'error': 'Source not found or already deleted'}), 404
+
+@app.route('/scrapers/add', methods=['POST'])
+def add_scraper_route():
+    logging.info(f"Received request to add scraper. Content-Type: {request.content_type}")
+    logging.info(f"Request data: {request.data}")
+    try:
+        if request.is_json:
+            scraper_config = request.json
+        else:
+            return jsonify({'success': False, 'error': f'Unsupported Content-Type: {request.content_type}'}), 415
+        
+        logging.info(f"Parsed data: {scraper_config}")
+        
+        if not scraper_config:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        scraper_type = scraper_config.pop('type', None)
+        if not scraper_type:
+            return jsonify({'success': False, 'error': 'No scraper type provided'}), 400
+        
+        new_scraper_id = add_scraper(scraper_type, scraper_config)
+        
+        # Log the updated config after adding the scraper
+        updated_config = load_config()
+        logging.info(f"Updated config after adding scraper: {updated_config}")
+        
+        return jsonify({'success': True, 'scraper_id': new_scraper_id})
+    except Exception as e:
+        logging.error(f"Error adding scraper: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/scrapers/content')
+def scrapers_content():
+    try:
+        scrapers = scraper_manager.load_scrapers()
+        settings = load_config()
+        scraper_types = list(scraper_manager.scraper_settings.keys())
+        scraper_settings = scraper_manager.scraper_settings or {}
+        return render_template('settings_tabs/scrapers.html', settings=settings, scraper_types=scraper_types, scraper_settings=scraper_settings)
+    except Exception as e:
+        app.logger.error(f"Error in scrapers_content route: {str(e)}", exc_info=True)
+        return jsonify({'error': 'An error occurred while loading scraper settings'}), 500
+
+@app.route('/scrapers/get', methods=['GET'])
+def get_scrapers():
+    config = load_config()
+    scraper_types = scraper_manager.get_scraper_types()
+    return render_template('settings_tabs/scrapers.html', settings=config, scraper_types=scraper_types)
+
+@app.route('/scrapers/delete', methods=['POST'])
+def delete_scraper():
+    data = request.json
+    scraper_id = data.get('scraper_id')
+    
+    if not scraper_id:
+        return jsonify({'success': False, 'error': 'No scraper ID provided'}), 400
+
+    config = load_config()
+    scrapers = config.get('Scrapers', {})
+    
+    if scraper_id in scrapers:
+        del scrapers[scraper_id]
+        config['Scrapers'] = scrapers
+        save_config(config)
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False, 'error': 'Scraper not found'}), 404
+
+@app.template_filter('from_json')
+def from_json_filter(value):
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return {}
 
 @app.template_filter('datetime')
 def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
@@ -260,56 +422,91 @@ def logs():
     logs = get_recent_logs(100)  # Get the last 100 log entries
     return render_template('logs.html', logs=logs)
 
-@app.route('/settings', methods=['GET', 'POST'])
+@app.route('/settings', methods=['GET'])
 def settings():
-    if request.method == 'POST':
+    try:
+        config = load_config()
+        scraper_types = list(scraper_manager.scraper_settings.keys())
+        source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+        
+        # Ensure 'Scrapers' exists in the config
+        if 'Scrapers' not in config:
+            config['Scrapers'] = {}
+        
+        # Only keep the scrapers that are actually configured
+        configured_scrapers = {}
+        for scraper, scraper_config in config['Scrapers'].items():
+            scraper_type = scraper.split('_')[0]  # Assuming format like 'Zilean_1'
+            if scraper_type in scraper_manager.scraper_settings:
+                configured_scrapers[scraper] = scraper_config
+        
+        config['Scrapers'] = configured_scrapers
+        
+        # Ensure 'Content Sources' exists in the config
+        if 'Content Sources' not in config:
+            config['Content Sources'] = {}
+        
+        # Ensure each content source is a dictionary
+        for source, source_config in config['Content Sources'].items():
+            if not isinstance(source_config, dict):
+                config['Content Sources'][source] = {}
+        
+        return render_template('settings_base.html', 
+                               settings=config, 
+                               scraper_types=scraper_types, 
+                               scraper_settings=scraper_manager.scraper_settings,
+                               source_types=source_types,
+                               content_source_settings=SETTINGS_SCHEMA['Content Sources']['schema'],
+                               settings_schema=SETTINGS_SCHEMA)
+    except Exception as e:
+        app.logger.error(f"Error in settings route: {str(e)}", exc_info=True)
+        return render_template('error.html', error_message="An error occurred while loading settings."), 500
+
+@app.route('/scraping/get')
+def get_scraping_settings():
+    config = load_config()
+    scraping_settings = config.get('Scraping', {})
+    return jsonify(scraping_settings)
+
+@app.route('/api/settings', methods=['POST'])
+def update_settings():
+    try:
         new_settings = request.json
-        current_settings = get_all_settings()
-        update_nested_settings(current_settings, new_settings)
-        save_config(current_settings)
-        return jsonify({"status": "success"})
-    else:
-        settings = get_all_settings()
-        return render_template('settings.html', settings=settings)
-    
-@app.route('/api/settings', methods=['GET', 'POST'])
-def api_settings():
-    if request.method == 'POST':
-        new_settings = request.json
-        current_settings = get_all_settings()
-        update_nested_settings(current_settings, new_settings)
-        save_config(current_settings)
-        return jsonify({"status": "success"})
-    else:
-        # Return all settings for GET request
-        return jsonify(get_all_settings())
+        logging.debug(f"Received new settings: {json.dumps(new_settings, indent=2)}")
+        
+        config = load_config()
+        logging.debug(f"Current config before update: {json.dumps(config, indent=2)}")
+        
+        # Update the config with new settings
+        for section, settings in new_settings.items():
+            if section not in config:
+                config[section] = {}
+            config[section].update(settings)
+        
+        logging.debug(f"Updated config before saving: {json.dumps(config, indent=2)}")
+        
+        # Save the updated config
+        save_config(config)
+        
+        return jsonify({"status": "success", "message": "Settings updated successfully"})
+    except Exception as e:
+        logging.error(f"Error updating settings: {str(e)}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 def update_nested_settings(current, new):
     for key, value in new.items():
-        if key == 'Content Sources':
-            if key not in current:
-                current[key] = {}
-            for source, source_settings in value.items():
-                current[key][source] = source_settings
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             if key not in current or not isinstance(current[key], dict):
                 current[key] = {}
-            update_nested_settings(current[key], value)
-        elif isinstance(value, list):
-            if all(isinstance(item, list) and len(item) == 2 for item in value):
-                # Handle paired lists
-                current[key] = [[str(item[0]), int(item[1])] for item in value]
+            if key == 'Content Sources':
+                for source_id, source_config in value.items():
+                    if source_id in current[key]:
+                        update_content_source(source_id, source_config)
+                    else:
+                        add_content_source(source_config['type'], source_config)
             else:
-                # Handle simple lists
-                current[key] = [str(item) for item in value]
+                update_nested_settings(current[key], value)
         else:
-            # Handle boolean and numeric values
-            if isinstance(value, str):
-                if value.lower() in ('true', 'false'):
-                    value = to_bool(value)
-                elif value.replace('.', '', 1).isdigit():
-                    # Convert to float or int
-                    value = float(value) if '.' in value else int(value)
             current[key] = value
 
 @app.route('/queues')
@@ -367,7 +564,7 @@ def update_stats(processed=0, successful=0, failed=0):
     total_processed += processed
     successful_additions += successful
     failed_additions += failed
-
+'''
 def safe_process_queue(queue_name):
     try:
         getattr(queue_manager, f'process_{queue_name.lower()}')()
@@ -375,6 +572,197 @@ def safe_process_queue(queue_name):
     except Exception as e:
         logging.error(f"Error processing {queue_name} queue: {str(e)}")
         update_stats(failed=1)
+'''
+program_runner = None
+
+@app.route('/api/start_program', methods=['POST'])
+def start_program():
+    global program_runner
+    if program_runner is None or not program_runner.is_running():
+        program_runner = ProgramRunner()
+        # Start the program runner in a separate thread to avoid blocking the Flask server
+        threading.Thread(target=program_runner.start).start()
+        return jsonify({"status": "success", "message": "Program started"})
+    else:
+        return jsonify({"status": "error", "message": "Program is already running"})
+
+@app.route('/api/reset_program', methods=['POST'])
+def reset_program():
+    global program_runner
+    if program_runner is not None:
+        program_runner.stop()
+    program_runner = None
+    return jsonify({"status": "success", "message": "Program reset"})
+    
+@app.route('/api/program_status', methods=['GET'])
+def program_status():
+    global program_runner
+    status = "Running" if program_runner is not None and program_runner.is_running() else "Initialized"
+    return jsonify({"status": status})
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.json
+    logging.debug(f"Received webhook: {data}")
+    try:
+        process_overseerr_webhook(data)
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        logging.error(f"Error processing webhook: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/versions/add', methods=['POST'])
+def add_version():
+    data = request.json
+    version_name = data.get('name')
+    if not version_name:
+        return jsonify({'success': False, 'error': 'No version name provided'}), 400
+
+    config = load_config()
+    if 'Scraping' not in config:
+        config['Scraping'] = {}
+    if 'versions' not in config['Scraping']:
+        config['Scraping']['versions'] = {}
+
+    if version_name in config['Scraping']['versions']:
+        return jsonify({'success': False, 'error': 'Version already exists'}), 400
+
+    # Add the new version with default settings
+    config['Scraping']['versions'][version_name] = {
+        'enable_hdr': False,
+        'max_resolution': '1080p',
+        'resolution_wanted': '<=',
+        'resolution_weight': 3,
+        'hdr_weight': 3,
+        'similarity_weight': 3,
+        'size_weight': 3,
+        'bitrate_weight': 3,
+        'preferred_filter_in': [],
+        'preferred_filter_out': [],
+        'filter_in': [],
+        'filter_out': [],
+        'min_size_gb': 0.01
+    }
+
+    save_config(config)
+    return jsonify({'success': True, 'version_id': version_name})
+
+@app.route('/versions/delete', methods=['POST'])
+def delete_version():
+    data = request.json
+    version_id = data.get('version_id')
+    
+    if not version_id:
+        return jsonify({'success': False, 'error': 'No version ID provided'}), 400
+
+    config = load_config()
+    if 'Scraping' in config and 'versions' in config['Scraping'] and version_id in config['Scraping']['versions']:
+        del config['Scraping']['versions'][version_id]
+        save_config(config)
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False, 'error': 'Version not found'}), 404
+
+@app.route('/versions/duplicate', methods=['POST'])
+def duplicate_version():
+    data = request.json
+    version_id = data.get('version_id')
+    
+    if not version_id:
+        return jsonify({'success': False, 'error': 'No version ID provided'}), 400
+
+    config = load_config()
+    if 'Scraping' not in config or 'versions' not in config['Scraping'] or version_id not in config['Scraping']['versions']:
+        return jsonify({'success': False, 'error': 'Version not found'}), 404
+
+    new_version_id = f"{version_id} Copy"
+    counter = 1
+    while new_version_id in config['Scraping']['versions']:
+        new_version_id = f"{version_id} Copy {counter}"
+        counter += 1
+
+    config['Scraping']['versions'][new_version_id] = config['Scraping']['versions'][version_id].copy()
+    config['Scraping']['versions'][new_version_id]['display_name'] = new_version_id
+
+    save_config(config)
+    return jsonify({'success': True, 'new_version_id': new_version_id})
+
+@app.route('/scraping/content')
+def scraping_content():
+    config = load_config()
+    return render_template('settings_tabs/scraping.html', settings=config, settings_schema=SETTINGS_SCHEMA)
+
+@app.route('/trakt_auth', methods=['POST'])
+def trakt_auth():
+    try:
+        client_id = get_setting('Trakt', 'client_id')
+        client_secret = get_setting('Trakt', 'client_secret')
+        
+        if not client_id or not client_secret:
+            return jsonify({'error': 'Trakt client ID or secret not set. Please configure in settings.'}), 400
+        
+        device_code_response = get_device_code(client_id, client_secret)
+        
+        # Store the device code response in the Trakt config file
+        update_trakt_config('device_code_response', device_code_response)
+        
+        return jsonify({
+            'user_code': device_code_response['user_code'],
+            'verification_url': device_code_response['verification_url'],
+            'device_code': device_code_response['device_code']
+        })
+    except Exception as e:
+        app.logger.error(f"Error in Trakt authorization: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Unable to start authorization process'}), 500
+
+# Update the existing trakt_auth_status route
+@app.route('/trakt_auth_status', methods=['POST'])
+def trakt_auth_status():
+    try:
+        trakt_config = get_trakt_config()
+        device_code_response = trakt_config.get('device_code_response')
+        
+        if not device_code_response:
+            return jsonify({'error': 'No pending Trakt authorization'}), 400
+        
+        client_id = get_setting('Trakt', 'client_id')
+        client_secret = get_setting('Trakt', 'client_secret')
+        device_code = device_code_response['device_code']
+        
+        response = get_device_token(device_code, client_id, client_secret)
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            
+            # Store the new tokens
+            update_trakt_config('CLIENT_ID', client_id)
+            update_trakt_config('CLIENT_SECRET', client_secret)
+            update_trakt_config('OAUTH_TOKEN', token_data['access_token'])
+            update_trakt_config('OAUTH_REFRESH', token_data['refresh_token'])
+            update_trakt_config('OAUTH_EXPIRES_AT', int(time.time()) + token_data['expires_in'])
+            
+            # Remove the device code response as it's no longer needed
+            trakt_config = get_trakt_config()
+            trakt_config.pop('device_code_response', None)
+            save_trakt_config(trakt_config)
+            
+            return jsonify({'status': 'authorized'})
+        elif response.status_code == 400:
+            return jsonify({'status': 'pending'})
+        else:
+            return jsonify({'status': 'error', 'message': response.text}), response.status_code
+    except Exception as e:
+        app.logger.error(f"Error checking Trakt authorization status: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# Add a new route to check if Trakt is already authorized
+@app.route('/trakt_auth_status', methods=['GET'])
+def check_trakt_auth_status():
+    trakt_config = get_trakt_config()
+    if 'OAUTH_TOKEN' in trakt_config and 'OAUTH_EXPIRES_AT' in trakt_config:
+        if trakt_config['OAUTH_EXPIRES_AT'] > time.time():
+            return jsonify({'status': 'authorized'})
+    return jsonify({'status': 'unauthorized'})
 
 if __name__ == '__main__':
     app.run(debug=True)
