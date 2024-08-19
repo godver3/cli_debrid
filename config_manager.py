@@ -74,9 +74,12 @@ def add_content_source(source_type, source_config):
     # Generate a new content source ID
     base_name = source_type
     index = 1
-    while f"{base_name}_{index}" in config['Content Sources']:
-        index += 1
+    existing_ids = [id for id in config['Content Sources'] if id.startswith(f"{base_name}_")]
+    if existing_ids:
+        max_index = max(int(id.split('_')[-1]) for id in existing_ids)
+        index = max_index + 1
     new_source_id = f"{base_name}_{index}"
+    
     
     # Validate and set values based on the schema
     validated_config = {}
@@ -94,6 +97,12 @@ def add_content_source(source_type, source_config):
     validated_config['display_name'] = source_config.get('display_name', '')
     
     logging.debug(f"[{process_id}] Validated config for {new_source_id}: {validated_config}")
+    
+    # Add the new content source to the config
+    config['Content Sources'][new_source_id] = validated_config
+    
+    # Save the updated config
+    save_config(config)
     
     return new_source_id, validated_config
 
