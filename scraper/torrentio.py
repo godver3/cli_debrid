@@ -75,13 +75,16 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             title_parts = title.split('\n')
             if len(title_parts) >= 3:  # TV Show format
                 name = title_parts[0].strip()
+                #seeder_info = title_parts[1].strip()
                 size_info = title_parts[2].strip()
             elif len(title_parts) == 2:  # Movie format
                 name = title_parts[0].strip()
+                #seeder_info = title_parts[2].strip()
                 size_info = title_parts[1].strip()
             else:
                 continue  # Skip if the format is unexpected
             size = parse_size(size_info)
+            seeders = parse_seeder(size_info)
             info_hash = stream.get("infoHash", "")
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
             if stream.get('fileIdx') is not None:
@@ -89,8 +92,9 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             results.append({
                 'title': name,
                 'size': size,
-                'source': f'Torrentio - {instance}',
-                'magnet': magnet_link
+                'source': f'{instance}',
+                'magnet': magnet_link,
+                'seeders': seeders
             })
         except Exception as e:
             logging.error(f"Error parsing result: {str(e)}")
@@ -107,3 +111,10 @@ def parse_size(size_info: str) -> float:
         elif unit.lower() == 'mb':
             return size / 1024
     return 0.0
+
+def parse_seeder(seeder_info: str) -> float:
+    seeder_match = re.search(r'👤.+?([\d]+).+?💾', seeder_info)
+    if seeder_match:
+        seeders = seeder_match.groups()
+        return int(seeders[0])
+    return 0
