@@ -621,14 +621,7 @@ function handleAddVersionSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
-    const jsonData = {};
-    
-    formData.forEach((value, key) => {
-        if (value === 'true') value = true;
-        if (value === 'false') value = false;
-        if (form.elements[key].type === 'checkbox') value = form.elements[key].checked;
-        jsonData[key] = value;
-    });
+    const jsonData = Object.fromEntries(formData.entries());
 
     fetch('/versions/add', {
         method: 'POST',
