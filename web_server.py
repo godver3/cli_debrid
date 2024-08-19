@@ -613,7 +613,8 @@ def webhook():
 
 @app.route('/versions/add', methods=['POST'])
 def add_version():
-    version_name = request.form.get('name')
+    data = request.json
+    version_name = data.get('name')
     if not version_name:
         return jsonify({'success': False, 'error': 'No version name provided'}), 400
 
@@ -644,7 +645,7 @@ def add_version():
     }
 
     save_config(config)
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'version_id': version_name})
 
 @app.route('/versions/delete', methods=['POST'])
 def delete_version():
