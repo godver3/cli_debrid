@@ -42,6 +42,7 @@ def load_config():
         return {}
     finally:
         release_lock(lock_file)
+        
 def save_config(config):
     lock_file = acquire_lock()
     try:
@@ -51,11 +52,7 @@ def save_config(config):
         
         for key, value in config.items():
             if key in valid_keys:
-                if isinstance(value, dict):
-                    # For nested structures, keep all keys
-                    cleaned_config[key] = value
-                else:
-                    cleaned_config[key] = value
+                cleaned_config[key] = value  # Keep all nested structures intact
         
         # Write the entire config to a temporary file first
         temp_file = CONFIG_FILE + '.tmp'
@@ -66,6 +63,7 @@ def save_config(config):
         os.replace(temp_file, CONFIG_FILE)
         
         log_config_state("Config saved", cleaned_config)
+        logging.info(f"Config saved successfully: {json.dumps(cleaned_config, indent=2)}")
     except Exception as e:
         logging.error(f"Error saving config: {str(e)}", exc_info=True)
         if os.path.exists(temp_file):
@@ -94,7 +92,7 @@ def add_content_source(source_type, source_config):
     logging.debug(f"[{process_id}] Starting add_content_source process for source_type: {source_type}")
     
     config = load_config()
-    log_config_state(f"[{process_id}] Config before modification", config)
+    logging.debug(f"[{process_id}] Config before modification: {json.dumps(config, indent=2)}")
     
     if 'Content Sources' not in config:
         config['Content Sources'] = {}
@@ -127,7 +125,7 @@ def add_content_source(source_type, source_config):
     # Add the new content source to the 'Content Sources' section
     config['Content Sources'][new_source_id] = validated_config
     
-    log_config_state(f"[{process_id}] Config after adding content source", config)
+    logging.debug(f"[{process_id}] Config after adding content source: {json.dumps(config, indent=2)}")
     save_config(config)
     logging.debug(f"[{process_id}] Successfully added content source: {new_source_id}")
     return new_source_id
