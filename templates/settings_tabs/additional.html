@@ -1,0 +1,73 @@
+<h3>Additional Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Queue Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="queue-wake-limit" class="settings-title">Wake Limit:</label>
+            <input type="number" id="queue-wake-limit" name="Queue.wake_limit" value="{{ settings.Queue.wake_limit }}" class="settings-input">
+            {% if settings_schema.Queue.wake_limit.description %}
+            <p class="settings-description">{{ settings_schema.Queue.wake_limit.description }}</p>
+            {% endif %}
+        </div>
+        <div class="settings-form-group">
+            <label for="queue-movie-airtime-offset" class="settings-title">Movie Airtime Offset:</label>
+            <input type="number" id="queue-movie-airtime-offset" name="Queue.movie_airtime_offset" value="{{ settings.Queue.movie_airtime_offset }}" class="settings-input">
+            {% if settings_schema.Queue.movie_airtime_offset.description %}
+            <p class="settings-description">{{ settings_schema.Queue.movie_airtime_offset.description }}</p>
+            {% endif %}
+        </div>
+        <div class="settings-form-group">
+            <label for="queue-episode-airtime-offset" class="settings-title">Episode Airtime Offset:</label>
+            <input type="number" id="queue-episode-airtime-offset" name="Queue.episode_airtime_offset" value="{{ settings.Queue.episode_airtime_offset }}" class="settings-input">
+            {% if settings_schema.Queue.episode_airtime_offset.description %}
+            <p class="settings-description">{{ settings_schema.Queue.episode_airtime_offset.description }}</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Trakt Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="trakt-client-id" class="settings-title">Client ID:</label>
+            <input type="text" id="trakt-client-id" name="Trakt.client_id" value="{{ settings.Trakt.client_id }}" class="settings-input">
+            {% if settings_schema.Trakt.client_id.description %}
+            <p class="settings-description">{{ settings_schema.Trakt.client_id.description }}</p>
+            {% endif %}
+        </div>
+        <div class="settings-form-group">
+            <label for="trakt-client-secret" class="settings-title">Client Secret:</label>
+            <input type="text" id="trakt-client-secret" name="Trakt.client_secret" value="{{ settings.Trakt.client_secret }}" class="settings-input">
+            {% if settings_schema.Trakt.client_secret.description %}
+            <p class="settings-description">{{ settings_schema.Trakt.client_secret.description }}</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Trakt Authorization</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <p class="settings-description">Click the button below to authorize Trakt. You must first enter your Client ID and Client Secret. These can be retrieved by creating an app at 
+            <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a>
+            </p>
+        <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
+        <div id="trakt-auth-status" class="trakt-status"></div>
+        <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
+            <p>Your authorization code is: <strong id="trakt-code"></strong></p>
+            <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
+        </div>
+    </div>
+</div>

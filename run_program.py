@@ -3,7 +3,6 @@ import time
 from queue_manager import QueueManager
 from initialization import initialize
 from settings import get_setting, get_all_settings
-from web_server import start_server, update_stats, app
 from utilities.plex_functions import get_collected_from_plex
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
@@ -14,8 +13,14 @@ from database import add_collected_items, add_wanted_items
 from flask import request, jsonify
 from not_wanted_magnets import task_purge_not_wanted_magnets_file
 import traceback
+from shared import update_stats
+from shared import app
+import threading
+from queue_utils import safe_process_queue
+import signal
 
 queue_logger = logging.getLogger('queue_logger')
+program_runner = None
 
 class ProgramRunner:
     _instance = None
@@ -30,6 +35,7 @@ class ProgramRunner:
         if self._initialized:
             return
         self._initialized = True
+        self.running = False
 
         self.queue_manager = QueueManager()
         self.tick_counter = 0
@@ -281,12 +287,20 @@ class ProgramRunner:
             initialize(skip_initial_plex_update)
         logging.info("Initialization complete")
 
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.run()
+
+    def stop(self):
+        self.running = False
+
+    def is_running(self):
+        return self.running
+
     def run(self):
-        start_server()  # Start the web server
-
         self.run_initialization()
-
-        while True:
+        while self.running:
             self.process_queues()
             time.sleep(1)  # Main loop runs every second
 
@@ -325,21 +339,15 @@ def process_overseerr_webhook(data):
         add_wanted_items(all_items, versions)
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.json
-    logging.debug(f"Received webhook: {data}")
-    try:
-        process_overseerr_webhook(data)
-        return jsonify({"status": "success"}), 200
-    except Exception as e:
-        logging.error(f"Error processing webhook: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
 def run_program():
+    global program_runner
     logging.info("Program started")
-    runner = ProgramRunner()
-    runner.run()
+    if program_runner is None or not program_runner.is_running():
+        program_runner = ProgramRunner()
+        #program_runner.start()  # This will now run the main loop directly
+    else:
+        logging.info("Program is already running")
+    return program_runner
 
 if __name__ == "__main__":
     run_program()

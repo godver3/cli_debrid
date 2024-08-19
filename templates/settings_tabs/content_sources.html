@@ -1,0 +1,81 @@
+<h3>Content Sources Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+<button id="add-source-btn" class="add-source-link">Add New Source</button>
+<div id="add-source-popup" class="popup">
+    <div class="popup-content">
+        <h4>Add New Content Source</h4>
+        <form id="add-source-form">
+            <div class="form-group">
+                <label for="source-type">Source Type:</label>
+                <select id="source-type" name="type" required>
+                    {% for source_type in source_types %}
+                        <option value="{{ source_type }}">{{ source_type }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit">Add Source</button>
+            <button type="button" id="cancel-add-source">Cancel</button>
+        </form>
+    </div>
+</div>
+{% if settings['Content Sources'] is defined and settings['Content Sources'] is mapping %}
+    {% for source_id, config in settings['Content Sources'].items() %}
+    <div class="settings-section" data-source-id="{{ source_id }}">
+        <div class="settings-section-header">
+            <span class="settings-toggle-icon">+</span>
+            <h4>
+                {% if config.display_name %}
+                    {{ config.display_name }} [{{ source_id.split('_')[0] }}]
+                {% else %}
+                    {{ source_id }}
+                {% endif %}
+            </h4>
+            <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
+        </div>
+        <div class="settings-section-content" style="display: none;">
+            {% for key, value in config.items() %}
+            {% if key != 'type' %}
+            <div class="settings-form-group">
+                {% if key == 'versions' %}
+                    <label class="settings-title">Versions:</label>
+                    <div class="version-checkboxes">
+                        {% for version in settings.Scraping.versions.keys() %}
+                        <label>
+                            <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version }}"
+                                   {% if version in value %}checked{% endif %}>
+                            {{ version }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                {% elif key == 'enabled' %}
+                    <label class="settings-title">
+                        <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}" name="Content Sources.{{ source_id }}.{{ key }}" {% if value %}checked{% endif %}>
+                        {{ key|replace('_', ' ')|title }}
+                    </label>
+                {% else %}
+                    <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    {% if value is iterable and (value is not string) %}
+                    <select id="content-sources-{{ source_id }}-{{ key }}" name="Content Sources.{{ source_id }}.{{ key }}" multiple class="settings-input">
+                        {% for option in value %}
+                        <option value="{{ option }}" selected>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                    {% else %}
+                    <input type="text" id="content-sources-{{ source_id }}-{{ key }}" name="Content Sources.{{ source_id }}.{{ key }}" value="{{ value }}" class="settings-input">
+                    {% endif %}
+                {% endif %}
+                {% if settings_schema['Content Sources'] is defined and settings_schema['Content Sources'].schema is defined and settings_schema['Content Sources'].schema[config.type] is defined and settings_schema['Content Sources'].schema[config.type][key] is defined and settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <p>No Content Sources configured or invalid configuration.</p>
+{% endif %}

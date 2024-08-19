@@ -1,0 +1,94 @@
+{
+  "Plex": {
+    "url": "http://192.168.1.51:32400",
+    "token": "Ym4Z8pNx4Bqjdz3HVPhb",
+    "movie_libraries": "Films",
+    "shows_libraries": "TV Shows"
+  },
+  "Overseerr": {
+    "url": "http://192.168.1.51:5055",
+    "api_key": "MTcyMDM1MTE5MjU1Mjk2ZjUwNzkzLTMzMjctNDU4MC04Mzg4LTk5MGE1NWRkNDJmNg=="
+  },
+  "RealDebrid": {
+    "api_key": "5CJXB4D5NJ6RNKYGBKCA5M6TGP2KRBDSXFRZSUBJIUJIMY54NC4Q"
+  },
+  "Torrentio": {
+    "enabled": true
+  },
+  "Debug": {
+    "skip_menu": false,
+    "logging_level": "INFO",
+    "skip_initial_plex_update": false,
+    "disable_initialization": false,
+    "api_key": "",
+    "jackett_seeders_only": false
+  },
+  "Scrapers": {
+    "Torrentio_1": {
+      "enabled": true,
+      "opts": ""
+    },
+    "Torrentio_2": {
+      "enabled": false,
+      "opts": ""
+    }
+  },
+  "Scraping": {
+    "versions": {
+      "Default": {
+        "enable_hdr": false,
+        "max_resolution": "1080p",
+        "resolution_wanted": "<=",
+        "resolution_weight": "3",
+        "hdr_weight": "3",
+        "similarity_weight": "3",
+        "size_weight": "3",
+        "bitrate_weight": "3",
+        "preferred_filter_in": "",
+        "preferred_filter_out": "",
+        "filter_in": "",
+        "filter_out": "",
+        "min_size_gb": "0.01"
+      },
+      "Test": {
+        "enable_hdr": false,
+        "max_resolution": "1080p",
+        "resolution_wanted": "<=",
+        "resolution_weight": "3",
+        "hdr_weight": "3",
+        "similarity_weight": "3",
+        "size_weight": "3",
+        "bitrate_weight": "3",
+        "preferred_filter_in": "",
+        "preferred_filter_out": "",
+        "filter_in": "",
+        "filter_out": "",
+        "min_size_gb": "0.01"
+      }
+    },
+    "uncached_content_handling": "Hybrid"
+  },
+  "Content Sources": {
+    "Overseerr_1": {
+      "enabled": true,
+      "url": "192.168.1.51:5055",
+      "api_key": "MTcyMDM1MTE5MjU1Mjk2ZjUwNzkzLTMzMjctNDU4MC04Mzg4LTk5MGE1NWRkNDJmNg==",
+      "versions": "Default, Test",
+      "display_name": "Overseerr 1"
+    }
+  },
+  "TMDB": {
+    "api_key": ""
+  },
+  "Queue": {
+    "wake_limit": "24",
+    "movie_airtime_offset": "19",
+    "episode_airtime_offset": "19"
+  },
+  "Trakt": {
+    "client_id": "",
+    "client_secret": ""
+  },
+  "name": "",
+  "type": "MDBList"
+}
