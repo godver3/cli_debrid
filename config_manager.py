@@ -74,11 +74,17 @@ def add_content_source(source_type, source_config):
         config['Content Sources'] = {}
 
     # Generate a new content source ID
-    base_name = source_type
-    index = 1
-    while f"{base_name}_{index}" in config['Content Sources']:
-        index += 1
-    new_source_id = f"{base_name}_{index}"
+    existing_sources = config['Content Sources']
+    existing_indices = [int(key.split('_')[-1]) for key in existing_sources.keys() 
+                        if key.startswith(f"{source_type}_") and key.split('_')[-1].isdigit()]
+    
+    if existing_indices:
+        index = max(existing_indices) + 1
+    else:
+        index = 1
+    
+    new_source_id = f"{source_type}_{index}"
+    logging.debug(f"[{process_id}] Generated new source ID: {new_source_id}")
     
     # Validate and set values based on the schema
     validated_config = {}
