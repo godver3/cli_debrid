@@ -478,7 +478,8 @@ function updateDynamicFields(type) {
     }
 
     Object.entries(settings[selectedType]).forEach(([setting, config]) => {
-        if (setting !== 'type') {
+        // Exclude 'type' field and any field that starts with an underscore
+        if (setting !== 'type' && !setting.startsWith('_')) {
             const field = createFormField(setting, '', config.type);
             dynamicFields.appendChild(field);
         }
@@ -495,7 +496,9 @@ function handleAddSourceSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
-    const sourceData = {};
+    const sourceData = {
+        type: form.elements['source-type'].value // Add type separately
+    };
     
     formData.forEach((value, key) => {
         if (key === 'versions') {
@@ -507,13 +510,10 @@ function handleAddSourceSubmit(e) {
             }
         } else if (form.elements[key].type === 'checkbox') {
             sourceData[key] = form.elements[key].checked;
-        } else if (key !== 'type') {  // Exclude the 'type' field
+        } else if (key !== 'source-type') { // Exclude the 'source-type' field
             sourceData[key] = value === 'true' ? true : (value === 'false' ? false : value);
         }
     });
-
-    // Add the type separately
-    sourceData.type = form.elements['source-type'].value;
 
     fetch('/content_sources/add', {
         method: 'POST',
