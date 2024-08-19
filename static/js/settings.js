@@ -111,9 +111,29 @@ function collapseAll(tabContent) {
     toggleIcons.forEach(icon => icon.textContent = '+');
 }
 
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+const debouncedUpdateSettings = debounce(updateSettings, 300);
+
 function handleSettingsFormSubmit(event) {
     event.preventDefault();
-    updateSettings();
+    debouncedUpdateSettings()
+        .then(() => {
+            console.log('All updates completed successfully');
+        })
+        .catch(error => {
+            console.error('Error during updates:', error);
+        });
 }
 
 function updateSettings() {
@@ -238,7 +258,7 @@ function updateSettings() {
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
-    fetch('/api/settings', {
+    return fetch('/api/settings', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -250,8 +270,12 @@ function updateSettings() {
         console.log("Server response:", data);
         if (data.status === 'success') {
             showNotification('Settings saved successfully', 'success');
+            // Update tabs sequentially
+            return updateContentSourcesTab()
+                .then(() => updateScrapersTab())
+                .then(() => updateScrapingTab());
         } else {
-            showNotification('Error saving settings', 'error');
+            throw new Error('Error saving settings');
         }
     })
     .catch(error => {
@@ -698,7 +722,12 @@ function deleteVersion(versionId) {
 
 function updateContentSourcesTab() {
     return fetch('/content_sources/content')
-        .then(response => response.text())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.text();
+        })
         .then(html => {
             const contentSourcesTab = document.getElementById('content-sources');
             if (contentSourcesTab) {
