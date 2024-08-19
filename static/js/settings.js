@@ -751,18 +751,25 @@ function deleteScraper(scraperId) {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
+            // Remove the scraper element from the UI
             const scraperElement = document.querySelector(`.settings-section[data-scraper-id="${scraperId}"]`);
             if (scraperElement) {
                 scraperElement.remove();
             }
             showNotification('Scraper deleted successfully', 'success');
+            
+            // Update the Scrapers tab content
+            return updateScrapersTab();
         } else {
-            showNotification('Failed to delete scraper: ' + (data.error || 'Unknown error'), 'error');
+            throw new Error(data.error || 'Unknown error');
         }
+    })
+    .then(() => {
+        console.log('Scrapers tab updated successfully');
     })
     .catch(error => {
         console.error('Error:', error);
-        showNotification('Error deleting scraper', 'error');
+        showNotification('Error deleting scraper: ' + error.message, 'error');
     });
 }
 
