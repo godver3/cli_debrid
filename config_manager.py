@@ -27,7 +27,7 @@ def load_config():
     try:
         with open(CONFIG_FILE, 'r') as config_file:
             config = json.load(config_file)
-        logging.debug(f"Config loaded: {json.dumps(config, indent=2)}")
+        # logging.debug(f"Config loaded: {json.dumps(config, indent=2)}")
         return config
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}")
@@ -116,7 +116,18 @@ def add_content_source(source_type, source_config):
     
     log_config_state(f"[{process_id}] Config after adding content source", config)
     
+    # Save the updated config
     save_config(config)
+    
+    # Verify that the changes were saved
+    updated_config = load_config()
+    if new_source_id in updated_config.get('Content Sources', {}):
+        logging.debug(f"[{process_id}] New content source {new_source_id} successfully added and saved")
+    else:
+        logging.error(f"[{process_id}] Failed to save new content source {new_source_id}")
+    
+    log_config_state(f"[{process_id}] Final config after add_content_source", updated_config)
+    
     logging.debug(f"[{process_id}] Finished add_content_source process")
     return new_source_id
 
