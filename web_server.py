@@ -76,9 +76,13 @@ def load_config():
 
 def save_config(config):
     try:
+        # Load the existing config
+        existing_config = load_config()
+        # Update the existing config with the new values
+        existing_config.update(config)
         with open(CONFIG_FILE, 'w') as config_file:
-            json.dump(config, config_file, indent=2)
-        logging.info(f"Config saved successfully: {config}")
+            json.dump(existing_config, config_file, indent=2)
+        logging.info(f"Config saved successfully: {json.dumps(existing_config, indent=2)}")
     except Exception as e:
         logging.error(f"Error saving config: {str(e)}")
 
@@ -95,6 +99,7 @@ def content_sources_content():
                            source_types=source_types, 
                            settings_schema=SETTINGS_SCHEMA)
 
+# Update the add_content_source_route function:
 @app.route('/content_sources/add', methods=['POST'])
 def add_content_source_route():
     logging.info(f"Received request to add content source. Content-Type: {request.content_type}")
@@ -116,9 +121,14 @@ def add_content_source_route():
         if not source_type:
             return jsonify({'success': False, 'error': 'No source type provided'}), 400
         
-        logging.info(f"Calling add_content_source with source_type: {source_type} and source_config: {source_config}")
         new_source_id = add_content_source(source_type, source_config)
-        logging.info(f"New source ID returned: {new_source_id}")
+        
+        # Update the config in web_server.py
+        config = load_config()
+        if 'Content Sources' not in config:
+            config['Content Sources'] = {}
+        config['Content Sources'][new_source_id] = {**source_config, 'type': source_type}
+        save_config(config)
         
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
