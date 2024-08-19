@@ -720,19 +720,20 @@ function deleteContentSource(sourceId) {
     .then(data => {
         if (data.success) {
             console.log(`Content source ${sourceId} deleted successfully`);
-            // Remove the deleted source from the UI
-            const sourceElement = document.getElementById(`content-source-${sourceId}`);
-            if (sourceElement) {
-                sourceElement.remove();
-            }
+            showNotification('Content source deleted successfully', 'success');
+            
+            // Update the Content Sources tab content
+            return updateContentSourcesTab();
         } else {
-            console.error(`Failed to delete content source ${sourceId}: ${data.error}`);
-            alert(`Failed to delete content source: ${data.error}`);
+            throw new Error(data.error || 'Unknown error');
         }
+    })
+    .then(() => {
+        console.log('Content Sources tab updated successfully');
     })
     .catch(error => {
         console.error('Error:', error);
-        alert('An error occurred while deleting the content source');
+        showNotification('Error deleting content source: ' + error.message, 'error');
     });
 }
 
