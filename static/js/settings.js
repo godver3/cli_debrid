@@ -225,18 +225,23 @@ function updateSettings() {
         settingsData['Content Sources'] = {};
     }
 
-    // Safely process Content Sources
+    // Preserve the 'type' field for each content source
     if (settingsData['Content Sources'] && typeof settingsData['Content Sources'] === 'object') {
         Object.keys(settingsData['Content Sources']).forEach(sourceId => {
             const sourceData = settingsData['Content Sources'][sourceId];
             if (sourceData && typeof sourceData === 'object') {
+                // Preserve the existing type if it's not in the form
+                if (!sourceData.type) {
+                    const existingSource = window.contentSourceSettings[sourceId];
+                    if (existingSource && existingSource.type) {
+                        sourceData.type = existingSource.type;
+                    }
+                }
                 // Handle versions as a list
                 if (sourceData.versions) {
                     if (typeof sourceData.versions === 'string') {
                         sourceData.versions = sourceData.versions.split(',').map(v => v.trim()).filter(v => v);
                     } else if (typeof sourceData.versions === 'boolean') {
-                        // If it's a boolean, we need to determine which versions to include
-                        // This assumes you have a list of available versions somewhere
                         const availableVersions = ['1080p', '2160p']; // Adjust this list as needed
                         sourceData.versions = sourceData.versions ? availableVersions : [];
                     }
