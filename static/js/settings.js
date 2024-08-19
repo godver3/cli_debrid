@@ -507,10 +507,13 @@ function handleAddSourceSubmit(e) {
             }
         } else if (form.elements[key].type === 'checkbox') {
             sourceData[key] = form.elements[key].checked;
-        } else {
+        } else if (key !== 'type') {  // Exclude the 'type' field
             sourceData[key] = value === 'true' ? true : (value === 'false' ? false : value);
         }
     });
+
+    // Add the type separately
+    sourceData.type = form.elements['source-type'].value;
 
     fetch('/content_sources/add', {
         method: 'POST',
@@ -524,21 +527,9 @@ function handleAddSourceSubmit(e) {
         if (data.success) {
             document.getElementById('add-source-popup').style.display = 'none';
             form.reset();
-            return fetch('/content_sources/single/' + data.source_id);
+            return updateContentSourcesTab();
         } else {
             throw new Error(data.error || 'Unknown error');
-        }
-    })
-    .then(response => response.text())
-    .then(html => {
-        const contentSourcesContainer = document.querySelector('#content-sources .settings-sections-container');
-        if (contentSourcesContainer) {
-            contentSourcesContainer.insertAdjacentHTML('beforeend', html);
-            const newSection = contentSourcesContainer.lastElementChild;
-            initializeExpandCollapseForSection(newSection);
-        } else {
-            // Fallback: update the entire content sources tab
-            return updateContentSourcesTab();
         }
     })
     .then(() => {
@@ -548,7 +539,6 @@ function handleAddSourceSubmit(e) {
     .catch(error => {
         console.error('Error:', error);
         showNotification('Error adding content source: ' + error.message, 'error');
-        // Fallback: update the entire content sources tab
         return updateContentSourcesTab();
     })
     .then(() => {
@@ -748,12 +738,24 @@ function updateContentSourcesTab() {
             if (contentSourcesTab) {
                 contentSourcesTab.innerHTML = html;
                 initializeContentSourcesFunctionality();
+                displayContentSourceNames();
             }
         })
         .catch(error => {
             console.error('Error updating Content Sources tab:', error);
             showNotification('Error updating Content Sources tab', 'error');
         });
+}
+
+function displayContentSourceNames() {
+    const sourceHeaders = document.querySelectorAll('#content-sources .settings-section-header h4');
+    sourceHeaders.forEach(header => {
+        const sourceId = header.textContent.trim();
+        const displayNameInput = document.querySelector(`input[name="Content Sources.${sourceId}.display_name"]`);
+        if (displayNameInput && displayNameInput.value) {
+            header.textContent = displayNameInput.value;
+        }
+    });
 }
 
 function updateScrapersTab() {
