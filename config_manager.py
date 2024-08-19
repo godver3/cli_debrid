@@ -9,7 +9,6 @@ from datetime import datetime
 
 CONFIG_LOCK_FILE = './config/config.lock'
 CONFIG_FILE = './config/config.json'
-CONFIG_BACKUP_DIR = './config/backups'
 
 def log_config_state(message, config):
     logging.debug(f"[CONFIG_STATE] {message}: {json.dumps(config, indent=2)}")
@@ -22,15 +21,6 @@ def acquire_lock():
 def release_lock(lock_file):
     fcntl.flock(lock_file, fcntl.LOCK_UN)
     lock_file.close()
-
-def create_backup():
-    if not os.path.exists(CONFIG_BACKUP_DIR):
-        os.makedirs(CONFIG_BACKUP_DIR)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_file = f"{CONFIG_BACKUP_DIR}/config_backup_{timestamp}.json"
-    shutil.copy2(CONFIG_FILE, backup_file)
-    logging.info(f"Created backup: {backup_file}")
-
 
 def load_config():
     lock_file = acquire_lock()
@@ -51,16 +41,7 @@ def load_config():
         return config
     except json.JSONDecodeError as e:
         logging.error(f"Error decoding JSON in config file: {str(e)}")
-        # Try to load the most recent backup
-        backup_files = sorted([f for f in os.listdir(CONFIG_BACKUP_DIR) if f.startswith("config_backup_")], reverse=True)
-        if backup_files:
-            latest_backup = os.path.join(CONFIG_BACKUP_DIR, backup_files[0])
-            logging.warning(f"Attempting to load the latest backup: {latest_backup}")
-            with open(latest_backup, 'r') as backup_file:
-                return json.load(backup_file)
-        else:
-            logging.error("No backup found. Returning empty config.")
-            return {}
+        return {}
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}")
         return {}
@@ -72,9 +53,6 @@ def save_config(config):
     lock_file = acquire_lock()
     try:
         logging.debug(f"[{process_id}] Saving config: {json.dumps(config, indent=2)}")
-        
-        # Create a backup before saving
-        create_backup()
         
         # Ensure only valid top-level keys are present
         valid_keys = set(SETTINGS_SCHEMA.keys())
@@ -94,33 +72,12 @@ def save_config(config):
         os.replace(temp_file, CONFIG_FILE)
         
         logging.info(f"[{process_id}] Config saved successfully: {json.dumps(current_config, indent=2)}")
-        
-        # Verify that the changes were saved
-        with open(CONFIG_FILE, 'r') as verify_file:
-            verified_config = json.load(verify_file)
-        logging.debug(f"[{process_id}] Verified saved config: {json.dumps(verified_config, indent=2)}")
     except Exception as e:
         logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
         if os.path.exists(temp_file):
             os.remove(temp_file)
     finally:
         release_lock(lock_file)
-
-def json_serializer(obj):
-    """Custom JSON serializer for objects not serializable by default json code"""
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    raise TypeError(f"Type {type(obj)} not serializable")
-
-def fix_content_sources(config):
-    if 'Content Sources' in config:
-        for source_id, source_config in config['Content Sources'].items():
-            if isinstance(source_config, str):
-                try:
-                    config['Content Sources'][source_id] = json.loads(source_config)
-                except json.JSONDecodeError:
-                    logging.warning(f"Invalid JSON in Content Sources for key {source_id}")
-    return config
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
@@ -138,7 +95,6 @@ def add_content_source(source_type, source_config):
     while f"{base_name}_{index}" in config['Content Sources']:
         index += 1
     new_source_id = f"{base_name}_{index}"
-    logging.debug(f"[{process_id}] Generated new content source ID: {new_source_id}")
     
     # Validate and set values based on the schema
     validated_config = {}
@@ -163,26 +119,36 @@ def add_content_source(source_type, source_config):
     logging.debug(f"[{process_id}] Config after adding content source: {json.dumps(config, indent=2)}")
     save_config(config)
     
-    # Verify that the changes were saved
-    updated_config = load_config()
-    if new_source_id in updated_config.get('Content Sources', {}):
-        logging.debug(f"[{process_id}] Successfully added and saved content source: {new_source_id}")
-    else:
-        logging.error(f"[{process_id}] Failed to save content source: {new_source_id}")
-    
+    logging.debug(f"[{process_id}] Successfully added content source: {new_source_id}")
     return new_source_id
 
+def json_serializer(obj):
+    """Custom JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+def fix_content_sources(config):
+    if 'Content Sources' in config:
+        for source_id, source_config in config['Content Sources'].items():
+            if isinstance(source_config, str):
+                try:
+                    config['Content Sources'][source_id] = json.loads(source_config)
+                except json.JSONDecodeError:
+                    logging.warning(f"Invalid JSON in Content Sources for key {source_id}")
+    return config
+
 def delete_content_source(source_id):
-    logging.info(f"Attempting to delete content source: {source_id}")
+    process_id = str(uuid.uuid4())[:8]
+    logging.info(f"[{process_id}] Attempting to delete content source: {source_id}")
+    
     config = load_config()
     if 'Content Sources' in config and source_id in config['Content Sources']:
         del config['Content Sources'][source_id]
         save_config(config)
-        logging.info(f"Content source {source_id} deleted successfully")
-        return True
+        logging.info(f"[{process_id}] Content source {source_id} deleted successfully")
     else:
-        logging.warning(f"Content source not found: {source_id}")
-        return False
+        logging.warning(f"[{process_id}] Content source {source_id} not found in config")
 
 def update_content_source(source_id, source_config):
     process_id = str(uuid.uuid4())[:8]
