@@ -346,7 +346,7 @@ function updateSettings() {
 
         // Handle filter lists
         ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
-            const filterList = section.querySelector(`#${versionId}-${filterType}`);
+            const filterList = section.querySelector(`.filter-list[data-version="${versionId}"][data-filter-type="${filterType}"]`);
             versionData[filterType] = [];
             filterList.querySelectorAll('.filter-item').forEach(item => {
                 const term = item.querySelector('.filter-term').value;
@@ -560,7 +560,7 @@ function initializeScrapingFunctionality() {
 }
 
 function addFilterItem(version, filterType) {
-    const list = document.getElementById(`${version}-${filterType}`);
+    const list = document.querySelector(`.filter-list[data-version="${version}"][data-filter-type="${filterType}"]`);
     const newItem = document.createElement('div');
     newItem.className = 'filter-item';
 
