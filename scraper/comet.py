@@ -96,7 +96,7 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 results.append({
                     'title': torrent_title,
                     'size': size,
-                    'source': f'Comet - {instance}',
+                    'source': f'{instance}',
                     'magnet': magnet_link
                 })
             else:
