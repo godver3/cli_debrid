@@ -11,7 +11,8 @@ CONFIG_LOCK_FILE = './config/config.lock'
 CONFIG_FILE = './config/config.json'
 
 def log_config_state(message, config):
-    logging.debug(f"[CONFIG_STATE] {message}: {json.dumps(config, indent=2)}")
+    content_sources = config.get('Content Sources', {})
+    logging.debug(f"[CONFIG_STATE] {message} (Content Sources only): {json.dumps(content_sources, indent=2)}")
 
 def acquire_lock():
     lock_file = open(CONFIG_LOCK_FILE, 'w')
@@ -36,7 +37,8 @@ def save_config(config):
     process_id = str(uuid.uuid4())[:8]
     lock_file = acquire_lock()
     try:
-        logging.debug(f"[{process_id}] Saving config: {json.dumps(config, indent=2)}")
+        logging.debug(f"[{process_id}] Saving config")
+        log_config_state(f"[{process_id}] Config before saving", config)
         
         # Ensure only valid top-level keys are present
         valid_keys = set(SETTINGS_SCHEMA.keys())
@@ -50,12 +52,18 @@ def save_config(config):
         # If the write was successful, rename the temp file to the actual config file
         os.replace(temp_file, CONFIG_FILE)
         
-        logging.info(f"[{process_id}] Config saved successfully: {json.dumps(cleaned_config, indent=2)}")
+        logging.info(f"[{process_id}] Config saved successfully")
         
         # Verify that the changes were saved
         with open(CONFIG_FILE, 'r') as verify_file:
             verified_config = json.load(verify_file)
-        logging.debug(f"[{process_id}] Verified saved config: {json.dumps(verified_config, indent=2)}")
+        log_config_state(f"[{process_id}] Verified saved config", verified_config)
+        
+        # Double-check if the verified config matches the cleaned config
+        if verified_config != cleaned_config:
+            logging.error(f"[{process_id}] Verified config does not match cleaned config")
+            log_config_state(f"[{process_id}] Cleaned config", cleaned_config)
+            log_config_state(f"[{process_id}] Verified config", verified_config)
     except Exception as e:
         logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
         if os.path.exists(temp_file):
