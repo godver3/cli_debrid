@@ -51,8 +51,6 @@ def add_content_source(source_type, source_config):
     logging.debug(f"[{process_id}] Starting add_content_source process for source_type: {source_type}")
     
     config = load_config()
-    logging.debug(f"[{process_id}] Config before modification: {json.dumps(config, indent=2)}")
-    
     if 'Content Sources' not in config:
         config['Content Sources'] = {}
 
@@ -80,20 +78,7 @@ def add_content_source(source_type, source_config):
     
     logging.debug(f"[{process_id}] Validated config for {new_source_id}: {validated_config}")
     
-    # Add the new content source to the 'Content Sources' section
-    config['Content Sources'][new_source_id] = validated_config
-    
-    logging.debug(f"[{process_id}] Config after adding content source: {json.dumps(config, indent=2)}")
-    save_config(config)
-    
-    # Verify that the changes were saved
-    updated_config = load_config()
-    if new_source_id in updated_config.get('Content Sources', {}):
-        logging.debug(f"[{process_id}] Successfully added and saved content source: {new_source_id}")
-    else:
-        logging.error(f"[{process_id}] Failed to save content source: {new_source_id}")
-    
-    return new_source_id
+    return new_source_id, validated_config
 
 def save_config(config):
     process_id = str(uuid.uuid4())[:8]
