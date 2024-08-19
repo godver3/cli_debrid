@@ -109,7 +109,7 @@ def add_content_source(source_type, source_config):
     
     # Validate and set values based on the schema
     validated_config = {}
-    schema = SETTINGS_SCHEMA['Content Sources']['schema'][source_type]
+    schema = SETTINGS_SCHEMA['Content Sources']['schema'].get(source_type, {})
     for key, value in schema.items():
         if key in source_config:
             validated_config[key] = source_config[key]
