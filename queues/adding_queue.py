@@ -540,6 +540,10 @@ class AddingQueue:
     def file_matches_item(self, file_path: str, item: Dict[str, Any]) -> bool:
         logging.debug(f"Checking if file {file_path} matches item {item.get('id')}")
         file_name = file_path.split('/')[-1].lower()
+
+        if 'sample' in file_name:
+            logging.debug(f"Skipping sample file: {file_name}")
+            return False
         
         if item['type'] == 'movie':
             # For movies, check if the file has a common video extension
