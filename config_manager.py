@@ -46,27 +46,6 @@ def load_config():
         release_lock(lock_file)
         logging.debug(f"[{process_id}] Lock released after loading config")
 
-def save_config(config):
-    process_id = str(uuid.uuid4())[:8]
-    lock_file = acquire_lock()
-    try:
-        logging.debug(f"[{process_id}] Attempting to save config")
-        
-        temp_file = CONFIG_FILE + '.tmp'
-        with open(temp_file, 'w') as config_file:
-            json.dump(config, config_file, indent=2)
-        
-        os.replace(temp_file, CONFIG_FILE)
-        
-        logging.debug(f"[{process_id}] Config saved successfully")
-    except Exception as e:
-        logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-    finally:
-        release_lock(lock_file)
-        logging.debug(f"[{process_id}] Lock released after saving config")
-
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
     logging.debug(f"[{process_id}] Starting add_content_source process for source_type: {source_type}")
@@ -107,8 +86,45 @@ def add_content_source(source_type, source_config):
     logging.debug(f"[{process_id}] Config after adding content source: {json.dumps(config, indent=2)}")
     save_config(config)
     
-    logging.debug(f"[{process_id}] Successfully added content source: {new_source_id}")
+    # Verify that the changes were saved
+    updated_config = load_config()
+    if new_source_id in updated_config.get('Content Sources', {}):
+        logging.debug(f"[{process_id}] Successfully added and saved content source: {new_source_id}")
+    else:
+        logging.error(f"[{process_id}] Failed to save content source: {new_source_id}")
+    
     return new_source_id
+
+def save_config(config):
+    process_id = str(uuid.uuid4())[:8]
+    lock_file = acquire_lock()
+    try:
+        logging.debug(f"[{process_id}] Saving config: {json.dumps(config, indent=2)}")
+        
+        # Ensure only valid top-level keys are present
+        valid_keys = set(SETTINGS_SCHEMA.keys())
+        cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
+        
+        # Write the entire config to a temporary file first
+        temp_file = CONFIG_FILE + '.tmp'
+        with open(temp_file, 'w') as config_file:
+            json.dump(cleaned_config, config_file, indent=2)
+        
+        # If the write was successful, rename the temp file to the actual config file
+        os.replace(temp_file, CONFIG_FILE)
+        
+        logging.info(f"[{process_id}] Config saved successfully: {json.dumps(cleaned_config, indent=2)}")
+        
+        # Verify that the changes were saved
+        with open(CONFIG_FILE, 'r') as verify_file:
+            verified_config = json.load(verify_file)
+        logging.debug(f"[{process_id}] Verified saved config: {json.dumps(verified_config, indent=2)}")
+    except Exception as e:
+        logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+    finally:
+        release_lock(lock_file)
 
 def json_serializer(obj):
     """Custom JSON serializer for objects not serializable by default json code"""
