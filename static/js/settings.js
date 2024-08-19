@@ -79,20 +79,10 @@ function initializeExpandCollapseForSection(section) {
     const content = section.querySelector('.settings-section-content');
     const toggleIcon = header.querySelector('.settings-toggle-icon');
 
-    header.addEventListener('click', function(event) {
-        if (!event.target.classList.contains('delete-source-btn') &&
-            !event.target.classList.contains('delete-scraper-btn') &&
-            !event.target.classList.contains('delete-version-btn')) {
-            event.stopPropagation();
-            if (content.style.display === 'none' || content.style.display === '') {
-                content.style.display = 'block';
-                toggleIcon.textContent = '-';
-            } else {
-                content.style.display = 'none';
-                toggleIcon.textContent = '+';
-            }
-        }
-    });
+    if (header && content && toggleIcon) {
+        header.removeEventListener('click', toggleSection);
+        header.addEventListener('click', toggleSection);
+    }
 }
 
 function initializeExpandCollapse() {
@@ -115,7 +105,7 @@ function initializeExpandCollapse() {
     });
 }
 
-function reinitializeExpandCollapse() {
+function reinitializeAllExpandCollapse() {
     const allSections = document.querySelectorAll('.settings-section');
     allSections.forEach(section => {
         initializeExpandCollapseForSection(section);
@@ -124,7 +114,7 @@ function reinitializeExpandCollapse() {
 }
 
 function toggleSection(event) {
-    if (!event.target.classList.contains('delete-scraper-btn')) {
+    if (!event.target.classList.contains('delete-source-btn')) {
         event.stopPropagation();
         const content = this.nextElementSibling;
         const toggleIcon = this.querySelector('.settings-toggle-icon');
@@ -388,34 +378,16 @@ function initializeContentSourcesFunctionality() {
         sourceTypeSelect.addEventListener('change', () => updateDynamicFields('source'));
     }
 
-    // Use event delegation for delete buttons
-    document.getElementById('content-sources').addEventListener('click', function(e) {
-        if (e.target.classList.contains('delete-source-btn')) {
-            const sourceId = e.target.getAttribute('data-source-id');
+    document.querySelectorAll('.delete-source-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const sourceId = this.getAttribute('data-source-id');
             if (confirm(`Are you sure you want to delete the source "${sourceId}"?`)) {
                 deleteContentSource(sourceId);
             }
-        }
+        });
     });
 
-    // Use event delegation for expand/collapse
-    document.getElementById('content-sources').addEventListener('click', function(e) {
-        if (e.target.classList.contains('settings-section-header') || e.target.closest('.settings-section-header')) {
-            const header = e.target.closest('.settings-section-header');
-            const content = header.nextElementSibling;
-            const toggleIcon = header.querySelector('.settings-toggle-icon');
-            
-            if (content && toggleIcon) {
-                if (content.style.display === 'none' || content.style.display === '') {
-                    content.style.display = 'block';
-                    toggleIcon.textContent = '-';
-                } else {
-                    content.style.display = 'none';
-                    toggleIcon.textContent = '+';
-                }
-            }
-        }
-    });
+    reinitializeAllExpandCollapse();
 }
 
 function initializeScrapersFunctionality() {
@@ -552,12 +524,18 @@ function handleAddSourceSubmit(e) {
         if (data.success) {
             document.getElementById('add-source-popup').style.display = 'none';
             form.reset();
-            return updateContentSourcesTab();
+            return fetch('/content_sources/single/' + data.source_id);
         } else {
             throw new Error(data.error || 'Unknown error');
         }
     })
-    .then(() => {
+    .then(response => response.text())
+    .then(html => {
+        const contentSourcesContainer = document.querySelector('#content-sources .settings-sections-container');
+        contentSourcesContainer.insertAdjacentHTML('beforeend', html);
+        const newSection = contentSourcesContainer.lastElementChild;
+        initializeExpandCollapseForSection(newSection);
+        reinitializeAllExpandCollapse();
         showNotification('Content source added successfully', 'success');
     })
     .catch(error => {
