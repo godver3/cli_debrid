@@ -104,11 +104,13 @@ function initializeExpandCollapse() {
         sections.forEach(section => initializeExpandCollapseForSection(section));
 
         if (expandAllButton) {
-            expandAllButton.addEventListener('click', () => expandAll(tabContent));
+            expandAllButton.removeEventListener('click', expandAllHandler);
+            expandAllButton.addEventListener('click', expandAllHandler);
         }
 
         if (collapseAllButton) {
-            collapseAllButton.addEventListener('click', () => collapseAll(tabContent));
+            collapseAllButton.removeEventListener('click', collapseAllHandler);
+            collapseAllButton.addEventListener('click', collapseAllHandler);
         }
     });
 }
@@ -134,6 +136,16 @@ function toggleSection(event) {
             toggleIcon.textContent = '+';
         }
     }
+}
+
+function expandAllHandler(event) {
+    const tabContent = event.target.closest('.settings-tab-content');
+    expandAll(tabContent);
+}
+
+function collapseAllHandler(event) {
+    const tabContent = event.target.closest('.settings-tab-content');
+    collapseAll(tabContent);
 }
 
 function expandAll(tabContent) {
@@ -396,6 +408,7 @@ function initializeContentSourcesFunctionality() {
     });
 
     reinitializeAllExpandCollapse();
+    initializeExpandCollapse();
 }
 
 function initializeScrapersFunctionality() {
@@ -541,16 +554,12 @@ function handleAddSourceSubmit(e) {
         }
     })
     .then(() => {
-        reinitializeExpandCollapse();
         showNotification('Content source added successfully', 'success');
     })
     .catch(error => {
         console.error('Error:', error);
         showNotification('Error adding content source: ' + error.message, 'error');
         return updateContentSourcesTab();
-    })
-    .then(() => {
-        reinitializeExpandCollapse();
     });
 }
 
@@ -747,7 +756,7 @@ function updateContentSourcesTab() {
                 contentSourcesTab.innerHTML = html;
                 initializeContentSourcesFunctionality();
                 displayContentSourceNames();
-                reinitializeExpandCollapse();
+                initializeExpandCollapse();  // Re-initialize expand/collapse functionality
             }
         })
         .catch(error => {
