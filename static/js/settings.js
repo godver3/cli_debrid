@@ -8,7 +8,30 @@ document.addEventListener('DOMContentLoaded', function() {
     
     const lastActiveTab = localStorage.getItem('currentTab') || 'required';
     openTab(lastActiveTab);
+
+    debugDOMStructure();
 });
+
+function debugDOMStructure() {
+    console.log('Debugging DOM structure:');
+    const settingsForm = document.getElementById('settingsForm');
+    if (settingsForm) {
+        console.log('Settings form found');
+        const tabContents = settingsForm.querySelector('.tab-content');
+        if (tabContents) {
+            console.log('Tab content found');
+            const tabs = tabContents.children;
+            console.log(`Found ${tabs.length} tabs:`);
+            Array.from(tabs).forEach((tab, index) => {
+                console.log(`Tab ${index + 1}: id="${tab.id}", class="${tab.className}"`);
+            });
+        } else {
+            console.log('Tab content not found');
+        }
+    } else {
+        console.log('Settings form not found');
+    }
+}
 
 function initializeAllFunctionalities() {
     initializeTabSwitching();
@@ -226,38 +249,56 @@ function updateSettings() {
         });
     }
 
-    // Process scraper sections
-    const scraperSections = document.querySelectorAll('#scrapers-tab .settings-section');
-    console.log(`Found ${scraperSections.length} scraper sections`);
-
-    if (!settingsData['Scrapers']) {
-        settingsData['Scrapers'] = {};
-    }
-
-    scraperSections.forEach(section => {
-        const header = section.querySelector('.settings-section-header h4');
-        if (!header) return;
-
-        const scraperId = header.textContent.trim();
-        console.log(`Processing scraper: ${scraperId}`);
-        
-        const scraperData = {
-            type: scraperId.split('_')[0] // Extract type from the scraper ID
-        };
-
-        // Collect all input fields for this scraper
-        section.querySelectorAll('input, select, textarea').forEach(input => {
-            const fieldName = input.name.split('.').pop();
-            if (input.type === 'checkbox') {
-                scraperData[fieldName] = input.checked;
-            } else {
-                scraperData[fieldName] = input.value;
-            }
-        });
-
-        console.log(`Collected data for scraper ${scraperId}:`, scraperData);
-        settingsData['Scrapers'][scraperId] = scraperData;
+    // Debug: Log all tabs
+    const allTabs = document.querySelectorAll('.tab-content > div');
+    console.log(`Found ${allTabs.length} tabs:`);
+    allTabs.forEach((tab, index) => {
+        console.log(`Tab ${index + 1} id: ${tab.id}`);
     });
+
+    // Debug: Check for scrapers-tab
+    const scrapersTab = document.getElementById('scrapers-tab');
+    console.log(`Scrapers tab found: ${scrapersTab !== null}`);
+
+    if (scrapersTab) {
+        // Process scraper sections
+        const scraperSections = scrapersTab.querySelectorAll('.settings-section');
+        console.log(`Found ${scraperSections.length} scraper sections`);
+
+        if (!settingsData['Scrapers']) {
+            settingsData['Scrapers'] = {};
+        }
+
+        scraperSections.forEach(section => {
+            const header = section.querySelector('.settings-section-header h4');
+            if (!header) {
+                console.log('Skipping section: No header found');
+                return;
+            }
+
+            const scraperId = header.textContent.trim();
+            console.log(`Processing scraper: ${scraperId}`);
+            
+            const scraperData = {
+                type: scraperId.split('_')[0] // Extract type from the scraper ID
+            };
+
+            // Collect all input fields for this scraper
+            section.querySelectorAll('input, select, textarea').forEach(input => {
+                const fieldName = input.name.split('.').pop();
+                if (input.type === 'checkbox') {
+                    scraperData[fieldName] = input.checked;
+                } else {
+                    scraperData[fieldName] = input.value;
+                }
+            });
+
+            console.log(`Collected data for scraper ${scraperId}:`, scraperData);
+            settingsData['Scrapers'][scraperId] = scraperData;
+        });
+    } else {
+        console.error('Scrapers tab not found!');
+    }
 
     // Remove any scrapers that are not actual scrapers
     const validScraperTypes = ['Zilean', 'Comet', 'Jackett', 'Torrentio'];
