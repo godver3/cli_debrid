@@ -127,12 +127,12 @@ const debouncedUpdateSettings = debounce(updateSettings, 300);
 
 function handleSettingsFormSubmit(event) {
     event.preventDefault();
-    debouncedUpdateSettings()
+    updateSettings()
         .then(() => {
-            console.log('All updates completed successfully');
+            console.log("Settings updated successfully");
         })
         .catch(error => {
-            console.error('Error during updates:', error);
+            console.error("Error updating settings:", error);
         });
 }
 
@@ -197,13 +197,9 @@ function updateSettings() {
     });
 
     // Process scraper sections
-    const scraperSections = document.querySelectorAll('.settings-section');
+    const scraperSections = document.querySelectorAll('#scrapers-tab .settings-section');
     console.log(`Found ${scraperSections.length} scraper sections`);
-
-    if (!settingsData['Scrapers']) {
-        settingsData['Scrapers'] = {};
-    }
-
+    
     scraperSections.forEach(section => {
         let scraperId;
         const deleteButton = section.querySelector('.delete-scraper-btn');
@@ -214,14 +210,14 @@ function updateSettings() {
             const header = section.querySelector('.settings-section-header h4');
             scraperId = header ? header.textContent.trim() : null;
         }
-
+    
         if (!scraperId) {
             console.warn('Could not determine scraper ID for a section, skipping...');
             return;
         }
-
+    
         console.log(`Processing scraper: ${scraperId}`);
-        
+                
         const scraperData = {
             type: scraperId.split('_')[0] // Extract type from the scraper ID
         };
@@ -281,6 +277,8 @@ function updateSettings() {
     .catch(error => {
         console.error('Error:', error);
         showNotification('Error saving settings', 'error');
+        // Re-throw the error to be caught by the caller
+        throw error;
     });
 }
 
