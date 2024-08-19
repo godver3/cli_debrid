@@ -23,28 +23,45 @@ def release_lock(lock_file):
     lock_file.close()
 
 def load_config():
+    try:
+        with open(CONFIG_FILE, 'r') as config_file:
+            config = json.load(config_file)
+        logging.debug(f"Config loaded: {json.dumps(config, indent=2)}")
+        return config
+    except Exception as e:
+        logging.error(f"Error loading config: {str(e)}")
+        return {}
+
+def save_config(config):
     process_id = str(uuid.uuid4())[:8]
     lock_file = acquire_lock()
     try:
-        logging.debug(f"[{process_id}] Attempting to load config")
-        if not os.path.exists(CONFIG_FILE):
-            logging.warning(f"[{process_id}] Config file not found. Creating a new one.")
-            return {}
+        logging.debug(f"[{process_id}] Saving config: {json.dumps(config, indent=2)}")
         
-        with open(CONFIG_FILE, 'r') as config_file:
-            config = json.load(config_file)
+        # Ensure only valid top-level keys are present
+        valid_keys = set(SETTINGS_SCHEMA.keys())
+        cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
         
-        logging.debug(f"[{process_id}] Config loaded successfully")
-        return config
-    except json.JSONDecodeError as e:
-        logging.error(f"[{process_id}] Error decoding JSON in config file: {str(e)}")
-        return {}
+        # Write the entire config to a temporary file first
+        temp_file = CONFIG_FILE + '.tmp'
+        with open(temp_file, 'w') as config_file:
+            json.dump(cleaned_config, config_file, indent=2)
+        
+        # If the write was successful, rename the temp file to the actual config file
+        os.replace(temp_file, CONFIG_FILE)
+        
+        logging.info(f"[{process_id}] Config saved successfully: {json.dumps(cleaned_config, indent=2)}")
+        
+        # Verify that the changes were saved
+        with open(CONFIG_FILE, 'r') as verify_file:
+            verified_config = json.load(verify_file)
+        logging.debug(f"[{process_id}] Verified saved config: {json.dumps(verified_config, indent=2)}")
     except Exception as e:
-        logging.error(f"[{process_id}] Error loading config: {str(e)}")
-        return {}
+        logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
     finally:
         release_lock(lock_file)
-        logging.debug(f"[{process_id}] Lock released after loading config")
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
@@ -79,45 +96,6 @@ def add_content_source(source_type, source_config):
     logging.debug(f"[{process_id}] Validated config for {new_source_id}: {validated_config}")
     
     return new_source_id, validated_config
-
-def save_config(config):
-    process_id = str(uuid.uuid4())[:8]
-    lock_file = acquire_lock()
-    try:
-        logging.debug(f"[{process_id}] Saving config: {json.dumps(config, indent=2)}")
-        
-        # Ensure only valid top-level keys are present
-        valid_keys = set(SETTINGS_SCHEMA.keys())
-        cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
-        
-        # Ensure that 'Scrapers' only contains valid scraper entries
-        if 'Scrapers' in cleaned_config:
-            valid_scrapers = {}
-            for scraper_id, scraper_config in cleaned_config['Scrapers'].items():
-                if isinstance(scraper_config, dict) and 'type' in scraper_config:
-                    valid_scrapers[scraper_id] = scraper_config
-            cleaned_config['Scrapers'] = valid_scrapers
-        
-        # Write the entire config to a temporary file first
-        temp_file = CONFIG_FILE + '.tmp'
-        with open(temp_file, 'w') as config_file:
-            json.dump(cleaned_config, config_file, indent=2)
-        
-        # If the write was successful, rename the temp file to the actual config file
-        os.replace(temp_file, CONFIG_FILE)
-        
-        logging.info(f"[{process_id}] Config saved successfully: {json.dumps(cleaned_config, indent=2)}")
-        
-        # Verify that the changes were saved
-        with open(CONFIG_FILE, 'r') as verify_file:
-            verified_config = json.load(verify_file)
-        logging.debug(f"[{process_id}] Verified saved config: {json.dumps(verified_config, indent=2)}")
-    except Exception as e:
-        logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-    finally:
-        release_lock(lock_file)
 
 def json_serializer(obj):
     """Custom JSON serializer for objects not serializable by default json code"""
