@@ -65,11 +65,11 @@ def save_config(config):
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
-    logging.info(f"[{process_id}] Starting add_content_source process for source_type: {source_type}")
-    logging.info(f"[{process_id}] Source config: {json.dumps(source_config)}")
+    logging.debug(f"[{process_id}] Starting add_content_source process for source_type: {source_type}")
+    logging.debug(f"[{process_id}] Adding content source of type {source_type} with config: {source_config}")
     
     config = load_config()
-    log_config_state(f"[{process_id}] Config before adding content source", config)
+    log_config_state(f"[{process_id}] Config before modification", config)
     
     if 'Content Sources' not in config:
         config['Content Sources'] = {}
@@ -77,12 +77,10 @@ def add_content_source(source_type, source_config):
     # Generate a new content source ID
     base_name = source_type
     index = 1
-    existing_ids = [id for id in config['Content Sources'] if id.startswith(f"{base_name}_")]
-    if existing_ids:
-        max_index = max(int(id.split('_')[-1]) for id in existing_ids)
-        index = max_index + 1
+    while f"{base_name}_{index}" in config['Content Sources']:
+        index += 1
     new_source_id = f"{base_name}_{index}"
-    logging.info(f"[{process_id}] Generated new source ID: {new_source_id}")
+    logging.debug(f"[{process_id}] Generated new content source ID: {new_source_id}")
     
     # Validate and set values based on the schema
     validated_config = {}
@@ -99,18 +97,19 @@ def add_content_source(source_type, source_config):
     validated_config['versions'] = source_config.get('versions', [])
     validated_config['display_name'] = source_config.get('display_name', '')
     
-    logging.info(f"[{process_id}] Validated config for {new_source_id}: {json.dumps(validated_config)}")
+    logging.debug(f"[{process_id}] Validated config for {new_source_id}: {validated_config}")
     
-    # Add the new content source to the config
+    # Add the new content source to the 'Content Sources' section
     config['Content Sources'][new_source_id] = validated_config
     
+    # Remove any keys that might have been accidentally added to the root
+    root_keys = list(SETTINGS_SCHEMA.keys())
+    config = {key: value for key, value in config.items() if key in root_keys}
     log_config_state(f"[{process_id}] Config after adding content source", config)
     
-    # Save the updated config
     save_config(config)
-    
-    logging.info(f"[{process_id}] Content source {new_source_id} added successfully")
-    return new_source_id, validated_config
+    logging.debug(f"[{process_id}] Finished add_content_source process")
+    return new_source_id
 
 def json_serializer(obj):
     """Custom JSON serializer for objects not serializable by default json code"""
