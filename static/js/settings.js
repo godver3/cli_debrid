@@ -74,6 +74,14 @@ function openTab(tabName) {
     localStorage.setItem('currentTab', tabName);
 }
 
+function reinitializeExpandCollapse() {
+    const allSections = document.querySelectorAll('.settings-section');
+    allSections.forEach(section => {
+        initializeExpandCollapseForSection(section);
+    });
+    console.log(`Reinitialized expand/collapse for ${allSections.length} sections`);
+}
+
 function initializeExpandCollapseForSection(section) {
     const header = section.querySelector('.settings-section-header');
     const content = section.querySelector('.settings-section-content');
