@@ -1,0 +1,70 @@
+<h3>Scrapers Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+
+<button id="add-scraper-btn" class="add-scraper-link">Add New Scraper</button>
+
+<script>
+    window.scraperSettings = {{ scraper_settings | default({}) | tojson | safe }};
+</script>
+
+<div id="add-scraper-popup" class="popup">
+    <div class="popup-content">
+        <h4>Add New Scraper</h4>
+        <form id="add-scraper-form">
+            <div class="form-group">
+                <label for="scraper-type">Scraper Type:</label>
+                <select id="scraper-type" name="type" required>
+                    {% for type in scraper_types %}
+                    <option value="{{ type }}">{{ type }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit">Add Scraper</button>
+            <button type="button" id="cancel-add-scraper">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<!-- Existing scraper list -->
+{% for scraper, config in settings.Scrapers.items() %}
+<div class="settings-section">
+    <div class="settings-section-header">
+        <span class="settings-toggle-icon">+</span>
+        <h4>{{ scraper }}</h4>
+        <button type="button" class="delete-scraper-btn" data-scraper-id="{{ scraper }}">Delete Scraper</button>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="{{ scraper }}-enabled" class="settings-title">Enabled:</label>
+            <input type="checkbox" id="{{ scraper }}-enabled" name="Scrapers.{{ scraper }}.enabled" {% if config.enabled %}checked{% endif %}>
+        </div>
+        {% if 'url' in config %}
+        <div class="settings-form-group">
+            <label for="{{ scraper }}-url" class="settings-title">URL:</label>
+            <input type="text" id="{{ scraper }}-url" name="Scrapers.{{ scraper }}.url" value="{{ config.url }}" class="settings-input">
+        </div>
+        {% endif %}
+        {% if 'api' in config %}
+        <div class="settings-form-group">
+            <label for="{{ scraper }}-api" class="settings-title">API Key:</label>
+            <input type="text" id="{{ scraper }}-api" name="Scrapers.{{ scraper }}.api" value="{{ config.api }}" class="settings-input">
+        </div>
+        {% endif %}
+        {% if 'enabled_indexers' in config %}
+        <div class="settings-form-group">
+            <label for="{{ scraper }}-enabled-indexers" class="settings-title">Enabled Indexers:</label>
+            <input type="text" id="{{ scraper }}-enabled-indexers" name="Scrapers.{{ scraper }}.enabled_indexers" value="{{ config.enabled_indexers }}" class="settings-input">
+        </div>
+        {% endif %}
+        {% if 'opts' in config %}
+        <div class="settings-form-group">
+            <label for="{{ scraper }}-opts" class="settings-title">Options:</label>
+            <input type="text" id="{{ scraper }}-opts" name="Scrapers.{{ scraper }}.opts" value="{{ config.opts }}" class="settings-input">
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}

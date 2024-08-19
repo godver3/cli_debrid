@@ -17,7 +17,7 @@ from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies
 from pprint import pformat
 import json
 from fuzzywuzzy import fuzz
-#import nltk
+
 #from nltk.corpus import stopwords
 #from nltk.tokenize import word_tokenize
 
