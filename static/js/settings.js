@@ -478,6 +478,19 @@ function initializeScrapingFunctionality() {
         addVersionForm.addEventListener('submit', handleAddVersionSubmit);
     }
 
+    document.querySelectorAll('.duplicate-version-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const versionId = this.getAttribute('data-version-id');
+            duplicateVersion(versionId);
+        });
+    });
+
+    document.querySelectorAll('input[name$=".display_name"]').forEach(input => {
+        input.addEventListener('change', function() {
+            updateVersionDisplayName(this);
+        });
+    });
+    
     document.querySelectorAll('.delete-version-btn').forEach(button => {
         button.addEventListener('click', function() {
             const versionId = this.getAttribute('data-version-id');
@@ -486,6 +499,40 @@ function initializeScrapingFunctionality() {
             }
         });
     });
+}
+
+function duplicateVersion(versionId) {
+    fetch('/versions/duplicate', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ version_id: versionId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            updateScrapingTab().then(() => {
+                showNotification('Version duplicated successfully', 'success');
+            });
+        } else {
+            showNotification('Error duplicating version: ' + (data.error || 'Unknown error'), 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('Error duplicating version', 'error');
+    });
+}
+
+function updateVersionDisplayName(input) {
+    const versionId = input.name.split('.')[2];
+    const newDisplayName = input.value;
+    const header = input.closest('.settings-section').querySelector('h4');
+    header.textContent = newDisplayName;
+
+    // Update the server with the new display name
+    updateSettings();
 }
 
 function updateDynamicFields(type) {
