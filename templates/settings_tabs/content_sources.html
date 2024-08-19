@@ -31,6 +31,7 @@
         </div>
         <div class="settings-section-content" style="display: none;">
             {% for key, value in config.items() %}
+            {% if key != 'type' %} 
             <div class="settings-form-group">
                 {% if key == 'versions' %}
                     <label class="settings-title">Versions:</label>
@@ -64,6 +65,7 @@
                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                 {% endif %}
             </div>
+            {% endif %}
             {% endfor %}
         </div>
     </div>
