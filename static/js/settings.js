@@ -92,36 +92,29 @@ function reinitializeExpandCollapse() {
         const toggleIcon = header.querySelector('.settings-toggle-icon');
 
         if (header && content && toggleIcon) {
-            header.addEventListener('click', function(event) {
-                if (!event.target.classList.contains('delete-source-btn') &&
-                    !event.target.classList.contains('delete-scraper-btn') &&
-                    !event.target.classList.contains('delete-version-btn')) {
-                    event.stopPropagation();
-                    if (content.style.display === 'none' || content.style.display === '') {
-                        content.style.display = 'block';
-                        toggleIcon.textContent = '-';
-                    } else {
-                        content.style.display = 'none';
-                        toggleIcon.textContent = '+';
-                    }
-                }
-            });
+            // Remove existing event listeners
+            header.removeEventListener('click', toggleSection);
+            
+            // Add new event listener
+            header.addEventListener('click', toggleSection);
         }
     });
 
     console.log(`Reinitialized expand/collapse for ${allSections.length} sections`);
 }
 
-function toggleSection(sectionHeader) {
-    const sectionContent = sectionHeader.nextElementSibling;
-    const toggleIcon = sectionHeader.querySelector('.settings-toggle-icon');
-    
-    if (sectionContent.style.display === 'none' || sectionContent.style.display === '') {
-        sectionContent.style.display = 'block';
-        toggleIcon.textContent = '-';
-    } else {
-        sectionContent.style.display = 'none';
-        toggleIcon.textContent = '+';
+function toggleSection(event) {
+    if (!event.target.classList.contains('delete-scraper-btn')) {
+        event.stopPropagation();
+        const content = this.nextElementSibling;
+        const toggleIcon = this.querySelector('.settings-toggle-icon');
+        if (content.style.display === 'none' || content.style.display === '') {
+            content.style.display = 'block';
+            toggleIcon.textContent = '-';
+        } else {
+            content.style.display = 'none';
+            toggleIcon.textContent = '+';
+        }
     }
 }
 
