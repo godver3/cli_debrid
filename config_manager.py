@@ -90,6 +90,14 @@ def save_config(config):
         valid_keys = set(SETTINGS_SCHEMA.keys())
         cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
         
+        # Ensure that 'Scrapers' only contains valid scraper entries
+        if 'Scrapers' in cleaned_config:
+            valid_scrapers = {}
+            for scraper_id, scraper_config in cleaned_config['Scrapers'].items():
+                if isinstance(scraper_config, dict) and 'type' in scraper_config:
+                    valid_scrapers[scraper_id] = scraper_config
+            cleaned_config['Scrapers'] = valid_scrapers
+        
         # Write the entire config to a temporary file first
         temp_file = CONFIG_FILE + '.tmp'
         with open(temp_file, 'w') as config_file:
