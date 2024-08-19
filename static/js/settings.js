@@ -15,21 +15,25 @@ document.addEventListener('DOMContentLoaded', function() {
 function debugDOMStructure() {
     console.log('Debugging DOM structure:');
     const settingsForm = document.getElementById('settingsForm');
+    const scrapersTab = document.getElementById('scrapers');
+    
     if (settingsForm) {
         console.log('Settings form found');
-        const tabContents = settingsForm.querySelector('.tab-content');
-        if (tabContents) {
-            console.log('Tab content found');
-            const tabs = tabContents.children;
-            console.log(`Found ${tabs.length} tabs:`);
-            Array.from(tabs).forEach((tab, index) => {
-                console.log(`Tab ${index + 1}: id="${tab.id}", class="${tab.className}"`);
-            });
-        } else {
-            console.log('Tab content not found');
-        }
+        const tabContents = settingsForm.querySelectorAll('.settings-tab-content');
+        console.log(`Found ${tabContents.length} tab contents inside settingsForm`);
+        tabContents.forEach((tab, index) => {
+            console.log(`Tab ${index + 1}: id="${tab.id}", class="${tab.className}"`);
+        });
     } else {
         console.log('Settings form not found');
+    }
+
+    if (scrapersTab) {
+        console.log('Scrapers tab found');
+        const scraperSections = scrapersTab.querySelectorAll('.settings-section');
+        console.log(`Found ${scraperSections.length} scraper sections`);
+    } else {
+        console.log('Scrapers tab not found');
     }
 }
 
@@ -256,12 +260,11 @@ function updateSettings() {
         console.log(`Tab ${index + 1} id: ${tab.id}`);
     });
 
-    // Debug: Check for scrapers-tab
-    const scrapersTab = document.getElementById('scrapers-tab');
+    // Process scraper sections
+    const scrapersTab = document.getElementById('scrapers');
     console.log(`Scrapers tab found: ${scrapersTab !== null}`);
 
     if (scrapersTab) {
-        // Process scraper sections
         const scraperSections = scrapersTab.querySelectorAll('.settings-section');
         console.log(`Found ${scraperSections.length} scraper sections`);
 
