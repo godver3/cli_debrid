@@ -351,3 +351,58 @@ body.dark-mode .settings-description {
     position: static;
     transform: none;
 }
+
+#trakt-auth-btn {
+    background-color: #ed1c24;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.3s;
+}
+
+#trakt-auth-btn:hover {
+    background-color: #c1151b;
+}
+
+#trakt-auth-btn:disabled {
+    background-color: #888;
+    cursor: not-allowed;
+}
+
+#trakt-auth-status {
+    margin-top: 10px;
+    font-weight: bold;
+    color: #f1f1f1;
+}
+
+#trakt-auth-status.authorized {
+    color: #4CAF50;
+}
+
+#trakt-auth-code {
+    margin-top: 15px;
+    padding: 15px;
+    background-color: #2a2a2a;
+    border-radius: 5px;
+    color: #f1f1f1;
+}
+
+#trakt-code {
+    font-size: 1.2em;
+    color: #ed1c24;
+    background-color: #1a1a1a;
+    padding: 5px 10px;
+    border-radius: 3px;
+}
+
+#trakt-activate-link {
+    color: #ed1c24;
+    text-decoration: none;
+}
+
+#trakt-activate-link:hover {
+    text-decoration: underline;
+}

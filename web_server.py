@@ -5,7 +5,7 @@ import time
 from queue_manager import QueueManager
 import logging
 import os
-from settings import get_all_settings, set_setting, get_setting, load_config, save_config, to_bool
+from settings import get_all_settings, set_setting, get_setting, load_config, save_config, to_bool, ensure_trakt_auth
 from collections import OrderedDict
 from web_scraper import web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection, get_available_versions
 from debrid.real_debrid import add_to_real_debrid
@@ -26,6 +26,7 @@ from queue_utils import safe_process_queue
 from run_program import process_overseerr_webhook, ProgramRunner
 from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper
 from settings_schema import SETTINGS_SCHEMA
+from trakt.core import get_device_code, get_device_token
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -48,6 +49,22 @@ successful_additions = 0
 failed_additions = 0
 
 CONFIG_FILE = './config/config.json'
+TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+
+def get_trakt_config():
+    if os.path.exists(TRAKT_CONFIG_PATH):
+        with open(TRAKT_CONFIG_PATH, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_trakt_config(config):
+    with open(TRAKT_CONFIG_PATH, 'w') as f:
+        json.dump(config, f, indent=2)
+
+def update_trakt_config(key, value):
+    config = get_trakt_config()
+    config[key] = value
+    save_trakt_config(config)
 
 def load_config():
     try:
@@ -649,5 +666,78 @@ def delete_version():
 def scraping_content():
     config = load_config()
     return render_template('settings_tabs/scraping.html', settings=config, settings_schema=SETTINGS_SCHEMA)
+
+@app.route('/trakt_auth', methods=['POST'])
+def trakt_auth():
+    try:
+        client_id = get_setting('Trakt', 'client_id')
+        client_secret = get_setting('Trakt', 'client_secret')
+        
+        if not client_id or not client_secret:
+            return jsonify({'error': 'Trakt client ID or secret not set. Please configure in settings.'}), 400
+        
+        device_code_response = get_device_code(client_id, client_secret)
+        
+        # Store the device code response in the Trakt config file
+        update_trakt_config('device_code_response', device_code_response)
+        
+        return jsonify({
+            'user_code': device_code_response['user_code'],
+            'verification_url': device_code_response['verification_url'],
+            'device_code': device_code_response['device_code']
+        })
+    except Exception as e:
+        app.logger.error(f"Error in Trakt authorization: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Unable to start authorization process'}), 500
+
+# Update the existing trakt_auth_status route
+@app.route('/trakt_auth_status', methods=['POST'])
+def trakt_auth_status():
+    try:
+        trakt_config = get_trakt_config()
+        device_code_response = trakt_config.get('device_code_response')
+        
+        if not device_code_response:
+            return jsonify({'error': 'No pending Trakt authorization'}), 400
+        
+        client_id = get_setting('Trakt', 'client_id')
+        client_secret = get_setting('Trakt', 'client_secret')
+        device_code = device_code_response['device_code']
+        
+        response = get_device_token(device_code, client_id, client_secret)
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            
+            # Store the new tokens
+            update_trakt_config('CLIENT_ID', client_id)
+            update_trakt_config('CLIENT_SECRET', client_secret)
+            update_trakt_config('OAUTH_TOKEN', token_data['access_token'])
+            update_trakt_config('OAUTH_REFRESH', token_data['refresh_token'])
+            update_trakt_config('OAUTH_EXPIRES_AT', int(time.time()) + token_data['expires_in'])
+            
+            # Remove the device code response as it's no longer needed
+            trakt_config = get_trakt_config()
+            trakt_config.pop('device_code_response', None)
+            save_trakt_config(trakt_config)
+            
+            return jsonify({'status': 'authorized'})
+        elif response.status_code == 400:
+            return jsonify({'status': 'pending'})
+        else:
+            return jsonify({'status': 'error', 'message': response.text}), response.status_code
+    except Exception as e:
+        app.logger.error(f"Error checking Trakt authorization status: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# Add a new route to check if Trakt is already authorized
+@app.route('/trakt_auth_status', methods=['GET'])
+def check_trakt_auth_status():
+    trakt_config = get_trakt_config()
+    if 'OAUTH_TOKEN' in trakt_config and 'OAUTH_EXPIRES_AT' in trakt_config:
+        if trakt_config['OAUTH_EXPIRES_AT'] > time.time():
+            return jsonify({'status': 'authorized'})
+    return jsonify({'status': 'unauthorized'})
+
 if __name__ == '__main__':
     app.run(debug=True)
