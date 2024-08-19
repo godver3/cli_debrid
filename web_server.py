@@ -663,6 +663,30 @@ def delete_version():
     else:
         return jsonify({'success': False, 'error': 'Version not found'}), 404
 
+@app.route('/versions/duplicate', methods=['POST'])
+def duplicate_version():
+    data = request.json
+    version_id = data.get('version_id')
+    
+    if not version_id:
+        return jsonify({'success': False, 'error': 'No version ID provided'}), 400
+
+    config = load_config()
+    if 'Scraping' not in config or 'versions' not in config['Scraping'] or version_id not in config['Scraping']['versions']:
+        return jsonify({'success': False, 'error': 'Version not found'}), 404
+
+    new_version_id = f"{version_id} Copy"
+    counter = 1
+    while new_version_id in config['Scraping']['versions']:
+        new_version_id = f"{version_id} Copy {counter}"
+        counter += 1
+
+    config['Scraping']['versions'][new_version_id] = config['Scraping']['versions'][version_id].copy()
+    config['Scraping']['versions'][new_version_id]['display_name'] = new_version_id
+
+    save_config(config)
+    return jsonify({'success': True, 'new_version_id': new_version_id})
+
 @app.route('/scraping/content')
 def scraping_content():
     config = load_config()
