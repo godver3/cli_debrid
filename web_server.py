@@ -116,7 +116,10 @@ def add_content_source_route():
         if not source_type:
             return jsonify({'success': False, 'error': 'No source type provided'}), 400
         
+        logging.info(f"Calling add_content_source with source_type: {source_type} and source_config: {source_config}")
         new_source_id = add_content_source(source_type, source_config)
+        logging.info(f"New source ID returned: {new_source_id}")
+        
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
