@@ -7,6 +7,7 @@ import os
 
 CONFIG_LOCK_FILE = './config/config.lock'
 CONFIG_FILE = './config/config.json'
+CONFIG_BACKUP_DIR = './config/backups'
 
 def log_config_state(message, config):
     logging.debug(f"[CONFIG_STATE] {message}: {json.dumps(config, indent=2)}")
@@ -20,49 +21,77 @@ def release_lock(lock_file):
     fcntl.flock(lock_file, fcntl.LOCK_UN)
     lock_file.close()
 
+def create_backup():
+    if not os.path.exists(CONFIG_BACKUP_DIR):
+        os.makedirs(CONFIG_BACKUP_DIR)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = f"{CONFIG_BACKUP_DIR}/config_backup_{timestamp}.json"
+    shutil.copy2(CONFIG_FILE, backup_file)
+    logging.info(f"Created backup: {backup_file}")
+
+
 def load_config():
     lock_file = acquire_lock()
     try:
+        if not os.path.exists(CONFIG_FILE):
+            logging.warning("Config file not found. Creating a new one.")
+            return {}
+        
         with open(CONFIG_FILE, 'r') as config_file:
             config = json.load(config_file)
-            
+        
         # Ensure all required top-level keys are present
         for key in SETTINGS_SCHEMA.keys():
             if key not in config:
                 config[key] = {}
         
-        # Fix any potential issues with Content Sources
-        config = fix_content_sources(config)
-        
         logging.debug(f"Config loaded: {json.dumps(config, indent=2)}")
-        log_config_state("Config loaded", config)
         return config
+    except json.JSONDecodeError as e:
+        logging.error(f"Error decoding JSON in config file: {str(e)}")
+        # Try to load the most recent backup
+        backup_files = sorted([f for f in os.listdir(CONFIG_BACKUP_DIR) if f.startswith("config_backup_")], reverse=True)
+        if backup_files:
+            latest_backup = os.path.join(CONFIG_BACKUP_DIR, backup_files[0])
+            logging.warning(f"Attempting to load the latest backup: {latest_backup}")
+            with open(latest_backup, 'r') as backup_file:
+                return json.load(backup_file)
+        else:
+            logging.error("No backup found. Returning empty config.")
+            return {}
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}")
         return {}
     finally:
         release_lock(lock_file)
-        
+
 def save_config(config):
     process_id = str(uuid.uuid4())[:8]
     lock_file = acquire_lock()
     try:
         logging.debug(f"[{process_id}] Saving config: {json.dumps(config, indent=2)}")
         
+        # Create a backup before saving
+        create_backup()
+        
         # Ensure only valid top-level keys are present
         valid_keys = set(SETTINGS_SCHEMA.keys())
-        cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
+        current_config = load_config()  # Load the existing config
+        
+        # Update the current config with the new values
+        for key in valid_keys:
+            if key in config:
+                current_config[key] = config[key]
         
         # Write the entire config to a temporary file first
         temp_file = CONFIG_FILE + '.tmp'
         with open(temp_file, 'w') as config_file:
-            json.dump(cleaned_config, config_file, indent=2)
+            json.dump(current_config, config_file, indent=2)
         
         # If the write was successful, rename the temp file to the actual config file
         os.replace(temp_file, CONFIG_FILE)
         
-        log_config_state("Config saved", cleaned_config)
-        logging.info(f"[{process_id}] Config saved successfully: {json.dumps(cleaned_config, indent=2)}")
+        logging.info(f"[{process_id}] Config saved successfully: {json.dumps(current_config, indent=2)}")
         
         # Verify that the changes were saved
         with open(CONFIG_FILE, 'r') as verify_file:
