@@ -26,7 +26,13 @@
     <div class="settings-section" data-source-id="{{ source_id }}">
         <div class="settings-section-header">
             <span class="settings-toggle-icon">+</span>
-            <h4>{{ config.display_name if config.display_name else source_id }}</h4>
+            <h4>
+                {% if config.display_name %}
+                    {{ config.display_name }} [{{ config.type }}]
+                {% else %}
+                    {{ source_id }}
+                {% endif %}
+            </h4>
             <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
         </div>
         <div class="settings-section-content" style="display: none;">
