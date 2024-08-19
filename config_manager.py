@@ -23,61 +23,49 @@ def release_lock(lock_file):
     lock_file.close()
 
 def load_config():
+    process_id = str(uuid.uuid4())[:8]
     lock_file = acquire_lock()
     try:
+        logging.debug(f"[{process_id}] Attempting to load config")
         if not os.path.exists(CONFIG_FILE):
-            logging.warning("Config file not found. Creating a new one.")
+            logging.warning(f"[{process_id}] Config file not found. Creating a new one.")
             return {}
         
         with open(CONFIG_FILE, 'r') as config_file:
             config = json.load(config_file)
         
-        # Ensure all required top-level keys are present
-        for key in SETTINGS_SCHEMA.keys():
-            if key not in config:
-                config[key] = {}
-        
-        logging.debug(f"Config loaded: {json.dumps(config, indent=2)}")
+        logging.debug(f"[{process_id}] Config loaded successfully")
         return config
     except json.JSONDecodeError as e:
-        logging.error(f"Error decoding JSON in config file: {str(e)}")
+        logging.error(f"[{process_id}] Error decoding JSON in config file: {str(e)}")
         return {}
     except Exception as e:
-        logging.error(f"Error loading config: {str(e)}")
+        logging.error(f"[{process_id}] Error loading config: {str(e)}")
         return {}
     finally:
         release_lock(lock_file)
+        logging.debug(f"[{process_id}] Lock released after loading config")
 
 def save_config(config):
     process_id = str(uuid.uuid4())[:8]
     lock_file = acquire_lock()
     try:
-        logging.debug(f"[{process_id}] Saving config: {json.dumps(config, indent=2)}")
+        logging.debug(f"[{process_id}] Attempting to save config")
         
-        # Ensure only valid top-level keys are present
-        valid_keys = set(SETTINGS_SCHEMA.keys())
-        current_config = load_config()  # Load the existing config
-        
-        # Update the current config with the new values
-        for key in valid_keys:
-            if key in config:
-                current_config[key] = config[key]
-        
-        # Write the entire config to a temporary file first
         temp_file = CONFIG_FILE + '.tmp'
         with open(temp_file, 'w') as config_file:
-            json.dump(current_config, config_file, indent=2)
+            json.dump(config, config_file, indent=2)
         
-        # If the write was successful, rename the temp file to the actual config file
         os.replace(temp_file, CONFIG_FILE)
         
-        logging.info(f"[{process_id}] Config saved successfully: {json.dumps(current_config, indent=2)}")
+        logging.debug(f"[{process_id}] Config saved successfully")
     except Exception as e:
         logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
         if os.path.exists(temp_file):
             os.remove(temp_file)
     finally:
         release_lock(lock_file)
+        logging.debug(f"[{process_id}] Lock released after saving config")
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
@@ -142,13 +130,27 @@ def delete_content_source(source_id):
     process_id = str(uuid.uuid4())[:8]
     logging.info(f"[{process_id}] Attempting to delete content source: {source_id}")
     
-    config = load_config()
-    if 'Content Sources' in config and source_id in config['Content Sources']:
-        del config['Content Sources'][source_id]
-        save_config(config)
-        logging.info(f"[{process_id}] Content source {source_id} deleted successfully")
-    else:
-        logging.warning(f"[{process_id}] Content source {source_id} not found in config")
+    try:
+        logging.debug(f"[{process_id}] Loading config")
+        config = load_config()
+        logging.debug(f"[{process_id}] Config loaded successfully")
+        
+        if 'Content Sources' in config and source_id in config['Content Sources']:
+            logging.debug(f"[{process_id}] Found content source {source_id} in config")
+            del config['Content Sources'][source_id]
+            logging.debug(f"[{process_id}] Deleted content source {source_id} from config")
+            
+            logging.debug(f"[{process_id}] Saving updated config")
+            save_config(config)
+            logging.debug(f"[{process_id}] Config saved successfully")
+            
+            logging.info(f"[{process_id}] Content source {source_id} deleted successfully")
+        else:
+            logging.warning(f"[{process_id}] Content source {source_id} not found in config")
+        
+        logging.debug(f"[{process_id}] Delete operation completed")
+    except Exception as e:
+        logging.error(f"[{process_id}] Error during delete operation: {str(e)}", exc_info=True)
 
 def update_content_source(source_id, source_config):
     process_id = str(uuid.uuid4())[:8]
