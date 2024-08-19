@@ -536,7 +536,8 @@ function initializeScrapingFunctionality() {
     });
 
     document.querySelectorAll('.add-filter').forEach(button => {
-        button.addEventListener('click', function() {
+        button.addEventListener('click', function(e) {
+            e.preventDefault(); // Prevent form submission
             const version = this.getAttribute('data-version');
             const filterType = this.getAttribute('data-filter-type');
             addFilterItem(version, filterType);
@@ -566,19 +567,19 @@ function addFilterItem(version, filterType) {
 
     if (filterType.startsWith('preferred_')) {
         newItem.innerHTML = `
-            <input type="text" class="filter-term">
-            <input type="number" class="filter-weight" min="1" value="1">
+            <input type="text" class="filter-term" placeholder="Term">
+            <input type="number" class="filter-weight" min="1" value="1" placeholder="Weight">
             <button type="button" class="remove-filter">Remove</button>
         `;
     } else {
         newItem.innerHTML = `
-            <input type="text" class="filter-term">
+            <input type="text" class="filter-term" placeholder="Term">
             <button type="button" class="remove-filter">Remove</button>
         `;
     }
 
     list.appendChild(newItem);
-    updateSettings();
+    // Don't call updateSettings() here
 }
 
 function duplicateVersion(versionId) {
