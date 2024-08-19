@@ -66,7 +66,6 @@ def save_config(config):
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
     logging.debug(f"[{process_id}] Starting add_content_source process for source_type: {source_type}")
-    logging.debug(f"[{process_id}] Adding content source of type {source_type} with config: {source_config}")
     
     config = load_config()
     log_config_state(f"[{process_id}] Config before modification", config)
@@ -80,7 +79,6 @@ def add_content_source(source_type, source_config):
     while f"{base_name}_{index}" in config['Content Sources']:
         index += 1
     new_source_id = f"{base_name}_{index}"
-    logging.debug(f"[{process_id}] Generated new content source ID: {new_source_id}")
     
     # Validate and set values based on the schema
     validated_config = {}
@@ -99,12 +97,9 @@ def add_content_source(source_type, source_config):
     
     logging.debug(f"[{process_id}] Validated config for {new_source_id}: {validated_config}")
     
-    # Add the new content source to the 'Content Sources' section
+    # Add the new content source to the config
     config['Content Sources'][new_source_id] = validated_config
     
-    # Remove any keys that might have been accidentally added to the root
-    root_keys = list(SETTINGS_SCHEMA.keys())
-    config = {key: value for key, value in config.items() if key in root_keys}
     log_config_state(f"[{process_id}] Config after adding content source", config)
     
     save_config(config)
