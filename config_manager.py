@@ -99,25 +99,34 @@ def add_content_source(source_type, source_config):
     if 'Content Sources' not in config:
         config['Content Sources'] = {}
 
+    # Generate a new content source ID
+    base_name = source_type
     index = 1
-    while f"{source_type}_{index}" in config['Content Sources']:
+    while f"{base_name}_{index}" in config['Content Sources']:
         index += 1
+    new_source_id = f"{base_name}_{index}"
+    logging.debug(f"[{process_id}] Generated new content source ID: {new_source_id}")
     
-    new_source_id = f"{source_type}_{index}"
-    new_source = {
-        'type': source_type,
-        'enabled': source_config.get('enabled', False),
-        'versions': source_config.get('versions', []),
-        'display_name': source_config.get('display_name', ''),
-    }
+    # Validate and set values based on the schema
+    validated_config = {}
+    schema = SETTINGS_SCHEMA['Content Sources']['schema'][source_type]
+    for key, value in schema.items():
+        if key in source_config:
+            validated_config[key] = source_config[key]
+        elif 'default' in value:
+            validated_config[key] = value['default']
     
-    # Validate and add other fields from source_config
-    schema = SETTINGS_SCHEMA['Content Sources']['schema'].get(source_type, {})
-    for key, value in source_config.items():
-        if key in schema and key not in ['type', 'enabled', 'versions', 'display_name']:
-            new_source[key] = value
+    # Add type, enabled, versions, and display_name
+    validated_config['type'] = source_type
+    validated_config['enabled'] = source_config.get('enabled', False)
+    validated_config['versions'] = source_config.get('versions', [])
+    validated_config['display_name'] = source_config.get('display_name', '')
     
-    config['Content Sources'][new_source_id] = new_source
+    logging.debug(f"[{process_id}] Validated config for {new_source_id}: {validated_config}")
+    
+    # Add the new content source to the 'Content Sources' section
+    config['Content Sources'][new_source_id] = validated_config
+    
     log_config_state(f"[{process_id}] Config after adding content source", config)
     save_config(config)
     logging.debug(f"[{process_id}] Successfully added content source: {new_source_id}")
