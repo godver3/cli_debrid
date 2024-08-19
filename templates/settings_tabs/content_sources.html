@@ -28,7 +28,7 @@
             <span class="settings-toggle-icon">+</span>
             <h4>
                 {% if config.display_name %}
-                    {{ config.display_name }} [{{ config.type }}]
+                    {{ config.display_name }} [{{ source_id.split('_')[0] }}]
                 {% else %}
                     {{ source_id }}
                 {% endif %}
