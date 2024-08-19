@@ -107,8 +107,8 @@ def add_content_source(source_type, source_config):
     new_source = {
         'type': source_type,
         'enabled': source_config.get('enabled', False),
-        'versions': source_config.get('versions', {'Default': True}),
-        'display_name': source_config.get('display_name', f"{source_type} {index}"),
+        'versions': source_config.get('versions', []),
+        'display_name': source_config.get('display_name', ''),
     }
     
     # Validate and add other fields from source_config
