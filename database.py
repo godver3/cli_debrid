@@ -478,7 +478,7 @@ def add_collected_items(media_items_batch, recent=False):
                         match_ratio = fuzz.ratio(filled_by_file.lower(), plex_filename.lower())
                         logging.debug(f"  Fuzzy match ratio: {match_ratio}%")
 
-                        if match_ratio >= 90:  # You can adjust this threshold
+                        if match_ratio >= 95:  # You can adjust this threshold
                             logging.debug(f"  Match found: DB Filled By File matches Plex Filename (Fuzzy match: {match_ratio}%)")
 
                             if current_state != 'Collected':
