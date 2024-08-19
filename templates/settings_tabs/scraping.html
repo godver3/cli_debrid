@@ -63,11 +63,10 @@
             {% endif %}
         {% endfor %}
         
-        <!-- Filter lists -->
         {% for filter_type in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
             <div class="settings-form-group">
                 <label class="settings-title">{{ filter_type|replace('_', ' ')|title }}:</label>
-                <div id="{{ version }}-{{ filter_type }}" class="filter-list">
+                <div class="filter-list" data-version="{{ version }}" data-filter-type="{{ filter_type }}">
                     {% for item in config.get(filter_type, []) %}
                         <div class="filter-item">
                             {% if filter_type.startswith('preferred_') %}
