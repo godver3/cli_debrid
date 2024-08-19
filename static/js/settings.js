@@ -234,35 +234,18 @@ function updateSettings() {
     }
 
     // Process scraper sections
-    const scraperSections = document.querySelectorAll('.settings-section');
-    console.log(`Found ${scraperSections.length} total settings sections`);
-
-    const scraperTab = document.getElementById('scrapers-tab');
-    console.log(`Scrapers tab found: ${scraperTab !== null}`);
-
-    const scrapersInTab = scraperTab ? scraperTab.querySelectorAll('.settings-section') : [];
-    console.log(`Found ${scrapersInTab.length} scraper sections within the scrapers tab`);
+    const scraperSections = document.querySelectorAll('#scrapers-tab .settings-section');
+    console.log(`Found ${scraperSections.length} scraper sections`);
 
     if (!settingsData['Scrapers']) {
         settingsData['Scrapers'] = {};
     }
 
     scraperSections.forEach(section => {
-        let scraperId;
-        const deleteButton = section.querySelector('.delete-scraper-btn');
-        if (deleteButton) {
-            scraperId = deleteButton.getAttribute('data-scraper-id');
-        } else {
-            // Fallback: try to get the ID from the section header
-            const header = section.querySelector('.settings-section-header h4');
-            scraperId = header ? header.textContent.trim() : null;
-        }
+        const header = section.querySelector('.settings-section-header h4');
+        if (!header) return;
 
-        if (!scraperId) {
-            console.warn('Could not determine scraper ID for a section, skipping...');
-            return;
-        }
-
+        const scraperId = header.textContent.trim();
         console.log(`Processing scraper: ${scraperId}`);
         
         const scraperData = {
