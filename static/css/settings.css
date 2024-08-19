@@ -420,3 +420,55 @@ body.dark-mode .settings-description {
 #trakt-activate-link:hover {
     text-decoration: underline;
 }
+
+.filter-list {
+    margin-bottom: 10px;
+}
+
+.filter-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.filter-term,
+.filter-weight {
+    flex: 1;
+    padding: 5px;
+    margin-right: 5px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+}
+
+.filter-weight {
+    flex: 0 0 60px;
+}
+
+.remove-filter {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.remove-filter:hover {
+    background-color: #d32f2f;
+}
+
+.add-filter {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    margin-top: 5px;
+}
+
+.add-filter:hover {
+    background-color: #45a049;
+}
