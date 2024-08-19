@@ -137,17 +137,26 @@ def add_content_source_route():
 
 @app.route('/content_sources/delete', methods=['POST'])
 def delete_content_source_route():
-    data = request.json
-    source_id = data.get('source_id')
-    
+    source_id = request.json.get('source_id')
     if not source_id:
         return jsonify({'success': False, 'error': 'No source ID provided'}), 400
 
-    result = delete_content_source(source_id)
-    if result:
-        return jsonify({'success': True, 'message': f'Content source {source_id} deleted successfully'})
+    logging.info(f"Attempting to delete content source: {source_id}")
+    
+    success = delete_content_source(source_id)
+    
+    if success:
+        # Update the config in web_server.py
+        config = load_config()
+        if 'Content Sources' in config and source_id in config['Content Sources']:
+            del config['Content Sources'][source_id]
+            save_config(config)
+        
+        logging.info(f"Content source {source_id} deleted successfully")
+        return jsonify({'success': True})
     else:
-        return jsonify({'success': False, 'error': f'Content source {source_id} not found'}), 404
+        logging.warning(f"Failed to delete content source: {source_id}")
+        return jsonify({'success': False, 'error': 'Source not found or already deleted'}), 404
 
 @app.route('/scrapers/add', methods=['POST'])
 def add_scraper_route():
