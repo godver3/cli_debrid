@@ -74,18 +74,6 @@ def load_config():
         print(f"Error loading config: {str(e)}")
         return {}
 
-def save_config(config):
-    try:
-        # Load the existing config
-        existing_config = load_config()
-        # Update the existing config with the new values
-        existing_config.update(config)
-        with open(CONFIG_FILE, 'w') as config_file:
-            json.dump(existing_config, config_file, indent=2)
-        logging.info(f"Config saved successfully: {json.dumps(existing_config, indent=2)}")
-    except Exception as e:
-        logging.error(f"Error saving config: {str(e)}")
-
 @app.context_processor
 def utility_processor():
     return dict(render_settings=render_settings, render_content_sources=render_content_sources)
@@ -121,19 +109,31 @@ def add_content_source_route():
         if not source_type:
             return jsonify({'success': False, 'error': 'No source type provided'}), 400
         
-        new_source_id = add_content_source(source_type, source_config)
+        new_source_id, validated_config = add_content_source(source_type, source_config)
         
-        # Update the config in web_server.py
+        # Update the config
         config = load_config()
         if 'Content Sources' not in config:
             config['Content Sources'] = {}
-        config['Content Sources'][new_source_id] = {**source_config, 'type': source_type}
+        config['Content Sources'][new_source_id] = validated_config
+        
+        # Save the config only once
         save_config(config)
         
+        logging.info(f"New content source added and config saved: {new_source_id}")
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# Update the save_config function to log only once
+def save_config(config):
+    try:
+        with open(CONFIG_FILE, 'w') as config_file:
+            json.dump(config, config_file, indent=2)
+        logging.info("Config saved successfully")
+    except Exception as e:
+        logging.error(f"Error saving config: {str(e)}")
 
 @app.route('/content_sources/delete', methods=['POST'])
 def delete_content_source_route():
