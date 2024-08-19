@@ -118,19 +118,8 @@ function initializeExpandCollapse() {
 function reinitializeExpandCollapse() {
     const allSections = document.querySelectorAll('.settings-section');
     allSections.forEach(section => {
-        const header = section.querySelector('.settings-section-header');
-        const content = section.querySelector('.settings-section-content');
-        const toggleIcon = header.querySelector('.settings-toggle-icon');
-
-        if (header && content && toggleIcon) {
-            // Remove existing event listeners
-            header.removeEventListener('click', toggleSection);
-            
-            // Add new event listener
-            header.addEventListener('click', toggleSection);
-        }
+        initializeExpandCollapseForSection(section);
     });
-
     console.log(`Reinitialized expand/collapse for ${allSections.length} sections`);
 }
 
@@ -375,13 +364,11 @@ function initializeContentSourcesFunctionality() {
     const addSourcePopup = document.getElementById('add-source-popup');
     const cancelAddSourceBtn = document.getElementById('cancel-add-source');
     const addSourceForm = document.getElementById('add-source-form');
-    const sourceTypeSelect = document.getElementById('source-type');
 
     if (addSourceBtn && addSourcePopup) {
         addSourceBtn.addEventListener('click', function(e) {
             e.preventDefault();
             addSourcePopup.style.display = 'block';
-            updateDynamicFields('source');
         });
     }
 
@@ -393,10 +380,6 @@ function initializeContentSourcesFunctionality() {
 
     if (addSourceForm) {
         addSourceForm.addEventListener('submit', handleAddSourceSubmit);
-    }
-
-    if (sourceTypeSelect) {
-        sourceTypeSelect.addEventListener('change', () => updateDynamicFields('source'));
     }
 
     document.querySelectorAll('.delete-source-btn').forEach(button => {
@@ -514,22 +497,9 @@ function handleAddSourceSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
-    const sourceData = {};
-    
-    formData.forEach((value, key) => {
-        if (key === 'versions') {
-            if (!sourceData.versions) {
-                sourceData.versions = [];
-            }
-            if (form.elements[key].checked) {
-                sourceData.versions.push(value);
-            }
-        } else if (form.elements[key].type === 'checkbox') {
-            sourceData[key] = form.elements[key].checked;
-        } else {
-            sourceData[key] = value === 'true' ? true : (value === 'false' ? false : value);
-        }
-    });
+    const sourceData = {
+        type: formData.get('type')
+    };
 
     fetch('/content_sources/add', {
         method: 'POST',
@@ -544,12 +514,9 @@ function handleAddSourceSubmit(e) {
             document.getElementById('add-source-popup').style.display = 'none';
             form.reset();
             updateContentSourcesTab().then(() => {
-                const newSection = document.querySelector(`.settings-section[data-source-id="${data.source_id}"]`);
-                if (newSection) {
-                    initializeExpandCollapseForSection(newSection);
-                }
+                reinitializeExpandCollapse();
+                showNotification('Content source added successfully', 'success');
             });
-            showNotification('Content source added successfully', 'success');
         } else {
             showNotification('Error adding content source: ' + (data.error || 'Unknown error'), 'error');
         }
@@ -752,7 +719,7 @@ function updateContentSourcesTab() {
             if (contentSourcesTab) {
                 contentSourcesTab.innerHTML = html;
                 initializeContentSourcesFunctionality();
-                initializeExpandCollapse();
+                reinitializeExpandCollapse();
             }
         })
         .catch(error => {
