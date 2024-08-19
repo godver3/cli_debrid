@@ -497,9 +497,22 @@ function handleAddSourceSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
-    const sourceData = {
-        type: formData.get('type')
-    };
+    const sourceData = {};
+    
+    formData.forEach((value, key) => {
+        if (key === 'versions') {
+            if (!sourceData.versions) {
+                sourceData.versions = [];
+            }
+            if (form.elements[key].checked) {
+                sourceData.versions.push(value);
+            }
+        } else if (form.elements[key].type === 'checkbox') {
+            sourceData[key] = form.elements[key].checked;
+        } else {
+            sourceData[key] = value === 'true' ? true : (value === 'false' ? false : value);
+        }
+    });
 
     fetch('/content_sources/add', {
         method: 'POST',
@@ -514,9 +527,22 @@ function handleAddSourceSubmit(e) {
             document.getElementById('add-source-popup').style.display = 'none';
             form.reset();
             updateContentSourcesTab().then(() => {
-                reinitializeExpandCollapse();
-                showNotification('Content source added successfully', 'success');
+                const newSection = document.querySelector(`.settings-section[data-source-id="${data.source_id}"]`);
+                if (newSection) {
+                    initializeExpandCollapseForSection(newSection);
+                    // Add event listener for the delete button
+                    const deleteButton = newSection.querySelector('.delete-source-btn');
+                    if (deleteButton) {
+                        deleteButton.addEventListener('click', function() {
+                            const sourceId = this.getAttribute('data-source-id');
+                            if (confirm(`Are you sure you want to delete the source "${sourceId}"?`)) {
+                                deleteContentSource(sourceId);
+                            }
+                        });
+                    }
+                }
             });
+            showNotification('Content source added successfully', 'success');
         } else {
             showNotification('Error adding content source: ' + (data.error || 'Unknown error'), 'error');
         }
