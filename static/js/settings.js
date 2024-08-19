@@ -364,11 +364,13 @@ function initializeContentSourcesFunctionality() {
     const addSourcePopup = document.getElementById('add-source-popup');
     const cancelAddSourceBtn = document.getElementById('cancel-add-source');
     const addSourceForm = document.getElementById('add-source-form');
+    const sourceTypeSelect = document.getElementById('source-type');
 
     if (addSourceBtn && addSourcePopup) {
         addSourceBtn.addEventListener('click', function(e) {
             e.preventDefault();
             addSourcePopup.style.display = 'block';
+            updateDynamicFields('source');
         });
     }
 
@@ -382,13 +384,37 @@ function initializeContentSourcesFunctionality() {
         addSourceForm.addEventListener('submit', handleAddSourceSubmit);
     }
 
-    document.querySelectorAll('.delete-source-btn').forEach(button => {
-        button.addEventListener('click', function() {
-            const sourceId = this.getAttribute('data-source-id');
+    if (sourceTypeSelect) {
+        sourceTypeSelect.addEventListener('change', () => updateDynamicFields('source'));
+    }
+
+    // Use event delegation for delete buttons
+    document.getElementById('content-sources').addEventListener('click', function(e) {
+        if (e.target.classList.contains('delete-source-btn')) {
+            const sourceId = e.target.getAttribute('data-source-id');
             if (confirm(`Are you sure you want to delete the source "${sourceId}"?`)) {
                 deleteContentSource(sourceId);
             }
-        });
+        }
+    });
+
+    // Use event delegation for expand/collapse
+    document.getElementById('content-sources').addEventListener('click', function(e) {
+        if (e.target.classList.contains('settings-section-header') || e.target.closest('.settings-section-header')) {
+            const header = e.target.closest('.settings-section-header');
+            const content = header.nextElementSibling;
+            const toggleIcon = header.querySelector('.settings-toggle-icon');
+            
+            if (content && toggleIcon) {
+                if (content.style.display === 'none' || content.style.display === '') {
+                    content.style.display = 'block';
+                    toggleIcon.textContent = '-';
+                } else {
+                    content.style.display = 'none';
+                    toggleIcon.textContent = '+';
+                }
+            }
+        }
     });
 }
 
