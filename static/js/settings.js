@@ -532,15 +532,27 @@ function handleAddSourceSubmit(e) {
     .then(response => response.text())
     .then(html => {
         const contentSourcesContainer = document.querySelector('#content-sources .settings-sections-container');
-        contentSourcesContainer.insertAdjacentHTML('beforeend', html);
-        const newSection = contentSourcesContainer.lastElementChild;
-        initializeExpandCollapseForSection(newSection);
+        if (contentSourcesContainer) {
+            contentSourcesContainer.insertAdjacentHTML('beforeend', html);
+            const newSection = contentSourcesContainer.lastElementChild;
+            initializeExpandCollapseForSection(newSection);
+        } else {
+            // Fallback: update the entire content sources tab
+            return updateContentSourcesTab();
+        }
+    })
+    .then(() => {
         reinitializeAllExpandCollapse();
         showNotification('Content source added successfully', 'success');
     })
     .catch(error => {
         console.error('Error:', error);
         showNotification('Error adding content source: ' + error.message, 'error');
+        // Fallback: update the entire content sources tab
+        return updateContentSourcesTab();
+    })
+    .then(() => {
+        reinitializeAllExpandCollapse();
     });
 }
 
