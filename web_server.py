@@ -81,18 +81,11 @@ def content_sources_content():
 
 @app.route('/content_sources/add', methods=['POST'])
 def add_content_source_route():
-    logging.info(f"Received request to add content source. Content-Type: {request.content_type}")
-    logging.info(f"Request data: {request.data}")
     try:
         if request.is_json:
             source_config = request.json
         else:
             return jsonify({'success': False, 'error': f'Unsupported Content-Type: {request.content_type}'}), 415
-        
-        logging.info(f"Parsed data: {source_config}")
-        
-        if not source_config:
-            return jsonify({'success': False, 'error': 'No data provided'}), 400
         
         source_type = source_config.pop('type', None)
         if not source_type:
@@ -100,6 +93,7 @@ def add_content_source_route():
         
         new_source_id = add_content_source(source_type, source_config)
         
+        # Instead of triggering a full settings update, just return the new source ID
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
