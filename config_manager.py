@@ -53,6 +53,10 @@ def save_config(config):
         valid_keys = set(SETTINGS_SCHEMA.keys())
         cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
         
+        # Ensure 'Content Sources' is included in the cleaned config
+        if 'Content Sources' in config:
+            cleaned_config['Content Sources'] = config['Content Sources']
+        
         # Write the entire config to a temporary file first
         temp_file = CONFIG_FILE + '.tmp'
         with open(temp_file, 'w') as config_file:
@@ -116,6 +120,10 @@ def add_content_source(source_type, source_config):
     validated_config['type'] = source_type
     validated_config['enabled'] = source_config.get('enabled', False)
     validated_config['versions'] = source_config.get('versions', [])
+    if isinstance(validated_config['versions'], bool):
+        validated_config['versions'] = []
+    elif isinstance(validated_config['versions'], str):
+        validated_config['versions'] = [validated_config['versions']]    
     validated_config['display_name'] = source_config.get('display_name', '')
     
     logging.debug(f"[{process_id}] Validated config for {new_source_id}: {validated_config}")
@@ -180,7 +188,15 @@ def update_content_source(source_id, source_config):
         source_type = source_id.split('_')[0]
         schema = SETTINGS_SCHEMA['Content Sources']['schema'][source_type]
         for key, value in source_config.items():
-            if key in schema:
+            if key in schema or key in ['versions', 'enabled', 'display_name']:
+                if key == 'versions':
+                    # Ensure versions is always a list
+                    if isinstance(value, bool):
+                        value = []
+                    elif isinstance(value, str):
+                        value = [value]
+                    elif not isinstance(value, list):
+                        value = list(value)
                 config['Content Sources'][source_id][key] = value
         log_config_state(f"[{process_id}] Config after updating content source", config)
         save_config(config)
@@ -189,6 +205,18 @@ def update_content_source(source_id, source_config):
     else:
         logging.warning(f"[{process_id}] Content source not found for update: {source_id}")
         return False
+
+def update_all_content_sources(content_sources):
+    process_id = str(uuid.uuid4())[:8]
+    logging.debug(f"[{process_id}] Starting update_all_content_sources process")
+    
+    config = load_config()
+    config['Content Sources'] = content_sources
+    
+    log_config_state(f"[{process_id}] Config after updating all content sources", config)
+    save_config(config)
+    logging.debug(f"[{process_id}] Finished update_all_content_sources process")
+    return True
 
 def add_scraper(scraper_type, scraper_config):
     process_id = str(uuid.uuid4())[:8]  # Generate a unique ID for this process

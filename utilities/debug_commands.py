@@ -418,12 +418,16 @@ def get_specific_wanted_content():
     elif source_type == 'Collected':
         wanted_content = get_wanted_from_collected()
 
+    logging.debug(f"wanted_content for {selected_source}: {wanted_content}")
+
     if wanted_content:
         total_items = 0
         for items, item_versions in wanted_content:
+            logging.debug(f"Processing items: {len(items)}, versions: {item_versions}")
             processed_items = process_metadata(items)
             if processed_items:
                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                logging.debug(f"Calling add_wanted_items with {len(all_items)} items and versions: {item_versions}")
                 add_wanted_items(all_items, item_versions)
                 total_items += len(all_items)
         
@@ -464,12 +468,16 @@ def get_all_wanted_from_enabled_sources():
             #wanted_content = get_wanted_from_collected()
             logging.info("Add through debug menu, otherwise will populate daily")
 
+        logging.debug(f"wanted_content for {source_id}: {wanted_content}")
+
         if wanted_content:
             total_items = 0
             for items, item_versions in wanted_content:
+                logging.debug(f"Processing items: {len(items)}, versions: {item_versions}")
                 processed_items = process_metadata(items)
                 if processed_items:
                     all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                    logging.debug(f"Calling add_wanted_items with {len(all_items)} items and versions: {item_versions}")
                     add_wanted_items(all_items, item_versions)
                     total_items += len(all_items)
             

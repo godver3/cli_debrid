@@ -235,11 +235,31 @@ def is_metadata_stale(metadata_date_str):
     return (datetime.now() - metadata_date) > timedelta(days=7)
 
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str, bool]):
+
+    logging.debug(f"add_wanted_items called with versions type: {type(versions)}")
+    logging.debug(f"versions content: {versions}")
+
     conn = get_db_connection()
     try:
         items_added = 0
         items_updated = 0
         items_skipped = 0
+
+        # Handle different types of versions input
+        if isinstance(versions, str):
+            try:
+                versions = json.loads(versions)
+            except json.JSONDecodeError:
+                logging.error(f"Invalid JSON string for versions: {versions}")
+                versions = {}
+        elif isinstance(versions, list):
+            versions = {version: True for version in versions}
+        
+        if not isinstance(versions, dict):
+            logging.error(f"Unexpected type for versions: {type(versions)}. Using empty dict.")
+            versions = {}
+
+        logging.debug(f"Processed versions: {versions}")
 
         for item in media_items_batch:
             if not item.get('imdb_id'):
