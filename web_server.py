@@ -24,7 +24,7 @@ from shared import app, update_stats
 from run_program import ProgramRunner
 from queue_utils import safe_process_queue
 from run_program import process_overseerr_webhook, ProgramRunner
-from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings
+from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings, update_all_content_sources
 from settings_schema import SETTINGS_SCHEMA
 from trakt.core import get_device_code, get_device_token
 from scraper.scraper import scrape
@@ -94,9 +94,15 @@ def add_content_source_route():
         if not source_type:
             return jsonify({'success': False, 'error': 'No source type provided'}), 400
         
+        # Ensure versions is a list
+        if 'versions' in source_config:
+            if isinstance(source_config['versions'], bool):
+                source_config['versions'] = []
+            elif isinstance(source_config['versions'], str):
+                source_config['versions'] = [source_config['versions']]
+        
         new_source_id = add_content_source(source_type, source_config)
         
-        # Instead of triggering a full settings update, just return the new source ID
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
@@ -484,12 +490,33 @@ def update_settings():
         for section, settings in new_settings.items():
             if section not in config:
                 config[section] = {}
-            config[section].update(settings)
+            if section == 'Content Sources':
+                # Update the Content Sources in the config dictionary
+                config['Content Sources'] = settings
+                logging.debug(f"Updated Content Sources in config: {json.dumps(config['Content Sources'], indent=2)}")
+            else:
+                config[section].update(settings)
+                logging.debug(f"Updated {section} in config: {json.dumps(config[section], indent=2)}")
         
-        logging.debug(f"Updated config before saving: {json.dumps(config, indent=2)}")
+        logging.debug(f"Config just before saving: {json.dumps(config, indent=2)}")
         
         # Save the updated config
         save_config(config)
+        
+        # Verify the saved config
+        saved_config = load_config()
+        logging.debug(f"Saved config after update: {json.dumps(saved_config, indent=2)}")
+        
+        if saved_config != config:
+            logging.warning("Saved config does not match updated config")
+            # Add detailed comparison
+            for section in config:
+                if section not in saved_config:
+                    logging.warning(f"Section {section} is missing in saved config")
+                elif config[section] != saved_config[section]:
+                    logging.warning(f"Section {section} differs in saved config")
+                    logging.warning(f"Expected: {json.dumps(config[section], indent=2)}")
+                    logging.warning(f"Actual: {json.dumps(saved_config[section], indent=2)}")
         
         return jsonify({"status": "success", "message": "Settings updated successfully"})
     except Exception as e:
