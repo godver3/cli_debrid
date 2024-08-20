@@ -45,7 +45,7 @@
                         {% for version in settings.Scraping.versions.keys() %}
                         <label>
                             <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version }}"
-                                   {% if version in value %}checked{% endif %}>
+                                {% if version in value %}checked{% endif %}>
                             {{ version }}
                         </label>
                         {% endfor %}
