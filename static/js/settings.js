@@ -225,32 +225,68 @@ function updateSettings() {
         settingsData['Content Sources'] = {};
     }
 
-    // Preserve the 'type' field for each content source
-    if (settingsData['Content Sources'] && typeof settingsData['Content Sources'] === 'object') {
-        Object.keys(settingsData['Content Sources']).forEach(sourceId => {
-            const sourceData = settingsData['Content Sources'][sourceId];
-            if (sourceData && typeof sourceData === 'object') {
-                // Preserve the existing type if it's not in the form
-                if (!sourceData.type) {
-                    const existingSource = window.contentSourceSettings[sourceId];
-                    if (existingSource && existingSource.type) {
-                        sourceData.type = existingSource.type;
+    // Process Content Sources
+    const contentSourcesTab = document.getElementById('content-sources');
+    if (contentSourcesTab) {
+        console.log("Processing Content Sources tab");
+        const contentSourceSections = contentSourcesTab.querySelectorAll('.settings-section');
+        console.log(`Found ${contentSourceSections.length} content source sections`);
+        
+        contentSourceSections.forEach(section => {
+            const sourceId = section.getAttribute('data-source-id');
+            if (!sourceId) {
+                console.log("Skipping section: No source ID found");
+                return;
+            }
+            console.log(`Processing source: ${sourceId}`);
+
+            const sourceData = {};
+            sourceData.versions = [];
+
+            section.querySelectorAll('input, select').forEach(input => {
+                const nameParts = input.name.split('.');
+                const fieldName = nameParts[nameParts.length - 1];
+                console.log(`Processing field: ${fieldName}, Type: ${input.type}, Value: ${input.value}, Checked: ${input.checked}`);
+                
+                if (input.type === 'checkbox') {
+                    if (fieldName === 'versions') {
+                        if (input.checked) {
+                            sourceData.versions.push(input.value);
+                        }
+                    } else {
+                        sourceData[fieldName] = input.checked;
                     }
-                }
-                // Handle versions as a list
-                if (sourceData.versions) {
-                    if (typeof sourceData.versions === 'string') {
-                        sourceData.versions = sourceData.versions.split(',').map(v => v.trim()).filter(v => v);
-                    } else if (typeof sourceData.versions === 'boolean') {
-                        const availableVersions = ['1080p', '2160p']; // Adjust this list as needed
-                        sourceData.versions = sourceData.versions ? availableVersions : [];
-                    }
+                } else if (input.type === 'select-multiple') {
+                    sourceData[fieldName] = Array.from(input.selectedOptions).map(option => option.value);
                 } else {
-                    sourceData.versions = [];
+                    sourceData[fieldName] = input.value;
+                }
+            });
+
+            console.log(`Source data before final processing:`, JSON.stringify(sourceData));
+
+            // If no versions were checked, ensure versions is an empty array
+            if (!sourceData.versions || sourceData.versions.length === 0) {
+                sourceData.versions = [];
+            }
+
+            // Preserve the existing type if it's not in the form
+            if (!sourceData.type) {
+                const existingSource = window.contentSourceSettings[sourceId.split('_')[0]];
+                if (existingSource && existingSource.type) {
+                    sourceData.type = existingSource.type;
+                    console.log(`Added type from existing settings: ${sourceData.type}`);
                 }
             }
+
+            console.log(`Final source data for ${sourceId}:`, JSON.stringify(sourceData));
+            settingsData['Content Sources'][sourceId] = sourceData;
         });
+    } else {
+        console.log("Content Sources tab not found");
     }
+
+    console.log("Final Content Sources data:", JSON.stringify(settingsData['Content Sources'], null, 2));
 
     // Remove any 'Unknown' content sources
     if (settingsData['Content Sources'] && typeof settingsData['Content Sources'] === 'object') {
