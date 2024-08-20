@@ -27,6 +27,9 @@ from run_program import process_overseerr_webhook, ProgramRunner
 from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config
 from settings_schema import SETTINGS_SCHEMA
 from trakt.core import get_device_code, get_device_token
+from scraper.scraper import scrape
+from utilities.manual_scrape import search_overseerr, get_details
+from settings import get_all_settings
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -764,5 +767,108 @@ def check_trakt_auth_status():
             return jsonify({'status': 'authorized'})
     return jsonify({'status': 'unauthorized'})
 
+@app.route('/scraper_tester', methods=['GET', 'POST'])
+def scraper_tester():
+    if request.method == 'POST':
+        if request.is_json:
+            data = request.json
+            search_term = data.get('search_term')
+        else:
+            search_term = request.form.get('search_term')
+        
+        if search_term:
+            search_results = search_overseerr(search_term)
+            return jsonify(search_results)
+        else:
+            return jsonify({'error': 'No search term provided'}), 400
+    
+    # GET request handling
+    all_settings = get_all_settings()
+    versions = all_settings.get('Scraping', {}).get('versions', {}).keys()
+    return render_template('scraper_tester.html', versions=versions)
+
+def get_item_details():
+    item = request.json
+    details = get_details(item)
+    
+    if details:
+        # Ensure IMDB ID is included
+        if 'externalIds' not in details or 'imdbId' not in details['externalIds']:
+            details['externalIds'] = details.get('externalIds', {})
+            details['externalIds']['imdbId'] = ''
+
+        # Ensure title and year are included
+        if item['mediaType'] == 'movie':
+            details['title'] = details.get('title', '')
+            details['year'] = details.get('releaseDate', '')[:4]
+        else:
+            details['title'] = details.get('name', '')
+            details['year'] = details.get('firstAirDate', '')[:4]
+
+        return jsonify(details)
+    else:
+        return jsonify({'error': 'Could not fetch details'}), 400
+
+@app.route('/run_scrape', methods=['POST'])
+def run_scrape():
+    data = request.json
+    logging.debug(f"Received scrape data: {data}")
+    try:
+        imdb_id = data.get('imdb_id', '')
+        tmdb_id = data.get('tmdb_id', '')
+        title = data['title']
+        year = data.get('year')
+        media_type = data['movie_or_episode']
+        version = data['version']
+
+        # Only set season and episode for TV shows
+        if media_type == 'episode':
+            season = data.get('season')
+            episode = data.get('episode')
+            season = int(season) if season else None
+            episode = int(episode) if episode else None
+            multi = data.get('multi', False)
+        else:
+            season = None
+            episode = None
+            multi = False
+
+        # Convert year to int
+        year = int(year) if year else None
+
+        # Convert multi to boolean
+        multi = str(multi).lower() in ['true', '1', 'yes', 'on']
+
+        logging.debug(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, media_type={media_type}, version={version}, season={season}, episode={episode}, multi={multi}")
+
+        results, filtered_out_results = scrape(
+            imdb_id,
+            tmdb_id,
+            title,
+            year,
+            media_type,
+            version,
+            season,
+            episode,
+            multi
+        )
+        return jsonify({
+            'originalResults': results,
+            'modifiedResults': filtered_out_results
+        })
+    except Exception as e:
+        logging.error(f"Error in run_scrape: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/get_version_settings')
+def get_version_settings():
+    version = request.args.get('version')
+    config = load_config()
+    scraping_config = config.get('Scraping', {})
+    versions = scraping_config.get('versions', {})
+    return jsonify({version: versions.get(version, {})})
+
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    start_server()
