@@ -1,0 +1,190 @@
+.scraper-tester {
+    max-width: 95%;
+    margin: 0 auto;
+    padding: 20px;
+    color: #f4f4f4;
+    background-color: #444;
+    border-radius: 5px;
+}
+
+.search-container {
+    display: flex;
+    margin-bottom: 20px;
+}
+
+#search-input {
+    flex-grow: 1;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #555;
+    border-radius: 4px 0 0 4px;
+    background-color: #333;
+    color: #f4f4f4;
+}
+
+#search-button {
+    padding: 10px 20px;
+    font-size: 16px;
+    background-color: #0056b3;
+    color: white;
+    border: none;
+    border-radius: 0 4px 4px 0;
+    cursor: pointer;
+}
+
+#search-button:hover {
+    background-color: #003d82;
+}
+
+.search-results, .scrape-results {
+    margin-top: 20px;
+}
+
+.result-item {
+    background-color: #555;
+    border: 1px solid #666;
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    word-break: break-word;
+}
+
+.result-item:hover {
+    background-color: #666;
+}
+
+.scrape-details {
+    margin-top: 20px;
+    padding: 20px;
+    background-color: #555;
+    border: 1px solid #666;
+    border-radius: 4px;
+}
+
+.version-selector {
+    margin-top: 10px;
+}
+
+#version-select {
+    padding: 5px;
+    background-color: #333;
+    color: #f4f4f4;
+    border: 1px solid #555;
+    border-radius: 3px;
+}
+
+#run-scrape-button {
+    margin-top: 10px;
+    padding: 10px 20px;
+    font-size: 16px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#run-scrape-button:hover {
+    background-color: #45a049;
+}
+
+.scrape-result-item {
+    background-color: #555;
+    border: 1px solid #666;
+    border-radius: 4px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.scrape-result-item .result-title {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #ffffff;
+    font-size: 1.2em;
+    font-weight: bold;
+}
+
+.scrape-result-item p {
+    margin: 5px 0;
+    color: #f4f4f4;
+}
+
+/* Additional styles for form elements */
+input[type="number"], input[type="checkbox"] {
+    background-color: #333;
+    color: #f4f4f4;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 5px;
+}
+
+label {
+    margin-right: 10px;
+    color: #f4f4f4;
+}
+
+.scraper-tester .search-container {
+    margin-bottom: 20px;
+}
+
+.scraper-tester .search-results {
+    margin-bottom: 20px;
+}
+
+.scraper-tester .result-item {
+    cursor: pointer;
+    padding: 5px;
+    margin-bottom: 5px;
+    background-color: #444;
+    border-radius: 3px;
+}
+
+.scraper-tester .result-item:hover {
+    background-color: #555;
+}
+
+.scraper-tester .results-columns {
+    display: flex;
+    justify-content: space-between;
+}
+
+.scraper-tester .results-column {
+    width: 48%;
+}
+
+.scraper-tester .settings-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.scraper-tester .settings-table th,
+.scraper-tester .settings-table td {
+    padding: 8px;
+    text-align: left;
+    border-bottom: 1px solid #555;
+}
+
+.scraper-tester .settings-table tr:hover {
+    background-color: #444;
+    cursor: pointer;
+}
+
+.scrape-results {
+    margin-top: 20px;
+    width: 100%;
+}
+
+.results-columns {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.results-column {
+    width: 49%;
+    overflow-y: auto;
+    max-height: 500px;
+    padding: 0 10px;
+    box-sizing: border-box;
+}
