@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Scraper Tester{% endblock %}
+
+{% block head %}
+    {{ super() }}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper_tester.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="settings-container scraper-tester">
+    <h1>Scraper Tester</h1>
+    <div id="search-section">
+        <div class="search-container">
+            <input type="text" id="search-input" placeholder="Enter search term..." class="settings-input">
+            <button id="search-button" class="settings-submit-button">Search</button>
+        </div>
+        <div id="search-results" class="search-results"></div>
+    </div>
+    <div id="scrape-section" style="display: none;">
+        <div id="scrape-details" class="settings-section">
+            <div class="settings-section-header">
+                <h4>Scrape Details</h4>
+            </div>
+            <div class="settings-section-content active">
+                <input type="hidden" id="imdbId">
+                <div id="selected-item"></div>
+                <div class="form-group">
+                    <label for="version-select">Version:</label>
+                    <select id="version-select" class="settings-input">
+                        {% for version in versions %}
+                            <option value="{{ version }}">{{ version }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="version-settings-container">
+                    <div id="originalSettings" class="settings-column">
+                        <h3>Original Settings</h3>
+                        <!-- Original settings will be populated here -->
+                    </div>
+                    <div id="modifiedSettings" class="settings-column">
+                        <h3>Modified Settings</h3>
+                        <!-- Editable settings will be populated here -->
+                    </div>
+                </div>
+                <button id="run-scrape-button" class="settings-submit-button">Run Scrape</button>
+            </div>
+        </div>
+        <div id="scrape-results" class="scrape-results">
+            <div class="results-columns">
+                <div id="original-results" class="results-column">
+                    <h3>Original Results</h3>
+                </div>
+                <div id="adjusted-results" class="results-column">
+                    <h3>Adjusted Results</h3>
+                </div>
+            </div>
+        </div>
+        <div id="score-breakdown" class="settings-section">
+            <div class="settings-section-header">
+                <h4>Score Breakdown</h4>
+            </div>
+            <div class="settings-section-content"></div>
+        </div>
+        <button id="save-settings-button" class="settings-submit-button" style="display: none;">Save Modified Settings</button>
+        <button id="new-search-button" class="settings-submit-button">New Search</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/scraper_tester.js') }}"></script>
+{% endblock %}

@@ -14,7 +14,7 @@ def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, seaso
     all_settings = get_jackett_settings()
     
     # Debug log to check the structure of all_settings
-    logging.debug(f"All settings: {json.dumps(all_settings, indent=2)}")
+    #logging.debug(f"All settings: {json.dumps(all_settings, indent=2)}")
     jackett_instances = all_settings.get('Scrapers', {})
     jackett_filter = "!status:failing,test:passed"
     for instance, settings in jackett_instances.items():
