@@ -12,7 +12,7 @@ CONFIG_FILE = './config/config.json'
 
 def log_config_state(message, config):
     content_sources = config.get('Content Sources', {})
-    logging.debug(f"[CONFIG_STATE] {message} (Content Sources only): {json.dumps(content_sources, indent=2)}")
+    #logging.debug(f"[CONFIG_STATE] {message} (Content Sources only): {json.dumps(content_sources, indent=2)}")
 
 def acquire_lock():
     lock_file = open(CONFIG_LOCK_FILE, 'w')
@@ -25,13 +25,22 @@ def release_lock(lock_file):
 
 def load_config():
     try:
+        if not os.path.exists(CONFIG_FILE):
+            return {'Scraping': {'versions': {}}}
         with open(CONFIG_FILE, 'r') as config_file:
             config = json.load(config_file)
+        
+        # Ensure 'Scraping' and 'versions' exist
+        if 'Scraping' not in config:
+            config['Scraping'] = {}
+        if 'versions' not in config['Scraping']:
+            config['Scraping']['versions'] = {}
+        
         # logging.debug(f"Config loaded: {json.dumps(config, indent=2)}")
         return config
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}")
-        return {}
+        return {'Scraping': {'versions': {}}}
 
 def save_config(config):
     process_id = str(uuid.uuid4())[:8]
@@ -229,6 +238,30 @@ def delete_scraper(scraper_id):
         save_config(config)
         return True
     return False
+
+# Add this function if it doesn't exist
+def save_version_settings(version, settings):
+    config = load_config()
+    if 'Scraping' not in config:
+        config['Scraping'] = {}
+    if 'versions' not in config['Scraping']:
+        config['Scraping']['versions'] = {}
+    
+    config['Scraping']['versions'][version] = settings
+    save_config(config)
+
+def get_version_settings(version):
+    config = load_config()
+    scraping_config = config.get('Scraping', {})
+    versions = scraping_config.get('versions', {})
+    settings = versions.get(version, {})
+    
+    logging.debug(f"Fetched settings for version '{version}': {settings}")
+    
+    if not settings:
+        logging.warning(f"No settings found for version: {version}")
+    
+    return settings
 
 def update_scraper(scraper_id, scraper_config):
     config = load_config()
