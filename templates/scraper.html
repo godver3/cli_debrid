@@ -11,73 +11,19 @@
             </select>
             <button type="submit">Search</button>
         </form>
-        <div id="results">
-            {% if error %}
-                <p style="color: red;">{{ error }}</p>
-            {% endif %}
-            {% if success_message %}
-                <p style="color: green;">{{ success_message }}</p>
-            {% endif %}
-            {% if results %}
-                <h3>Search Results</h3>
-                <table border="1">
-                    <thead>
-                        <tr>
-                            <th>Title</th>
-                            <th>Year</th>
-                            <th>Type</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in results %}
-                        <tr>
-                            <td>{{ item.title }}</td>
-                            <td>{{ item.year }}</td>
-                            <td>{{ item.media_type }}</td>
-                            <td>
-                                <form action="{{ url_for('select_media') }}" method="post">
-                                    <input type="hidden" name="media_id" value="{{ item.id }}">
-                                    <input type="hidden" name="title" value="{{ item.title }}">
-                                    <input type="hidden" name="year" value="{{ item.year }}">
-                                    <input type="hidden" name="media_type" value="{{ item.media_type }}">
-                                    <input type="hidden" name="version" value="{{ request.form.get('version') }}">
-                                    <button type="submit">Select</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            {% endif %}
-            {% if torrent_results %}
-                <h3>Torrent Results for {{ selected_media.title }} ({{ selected_media.year }}) - Version: {{ request.form.get('version') }}</h3>
-                <table border="1">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Size</th>
-                            <th>Seeders</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for torrent in torrent_results %}
-                        <tr>
-                            <td>{{ torrent.name }}</td>
-                            <td>{{ torrent.size }}</td>
-                            <td>{{ torrent.seeders }}</td>
-                            <td>
-                                <form action="{{ url_for('add_torrent') }}" method="post">
-                                    <input type="hidden" name="torrent_index" value="{{ loop.index0 }}">
-                                    <button type="submit">Add to Real-Debrid</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            {% endif %}
+        <div id="seasonResults" style="display: none;">
+            <div id="season-info"></div>
+            <select id="seasonDropdown"></select><button id="seasonPackButton">Season Pack</button>
+            <div id="episodeResults"></div>
         </div>
+        <div id="overlay" class="overlay">
+            <div class="overlay-content">                
+                <span class="close-btn">&times;</span>
+                <div id="overlayStatus"></div>
+                <div id="overlayContent"></div>
+                <div id="overlayContentRes"></div>
+            </div>
+        </div>
+        <div id="searchResult"></div>
     </div>
 {% endblock %}
