@@ -140,6 +140,8 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 "multi": multi
             }
             for result in search_results
+            if result['mediaType'] != 'person'
+            if result['posterPath'] is not None
         ]
     }
 
@@ -154,7 +156,7 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
     logging.info(f"Found results: {search_results}")
     if media_id and season is not None:
         return {
-            "results": [
+            "episodeResults": [
                 {
                     "id": media_id,
                     "title": title,
