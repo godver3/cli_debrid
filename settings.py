@@ -25,28 +25,28 @@ CONFIG_FILE = './config/config.json'
 scraper_manager = ScraperManager()
 
 def load_config():
-    logging.debug("Starting load_config()")
+    #logging.debug("Starting load_config()")
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as config_file:
             try:
                 config = json.load(config_file)
-                logging.debug(f"Raw loaded config: {json.dumps(config, indent=2)}")
+                #logging.debug(f"Raw loaded config: {json.dumps(config, indent=2)}")
                 
                 # Parse string representations in Content Sources
                 if 'Content Sources' in config:
-                    logging.debug("Content Sources before parsing: %s", json.dumps(config['Content Sources'], indent=2))
+                    #logging.debug("Content Sources before parsing: %s", json.dumps(config['Content Sources'], indent=2))
                     for key, value in config['Content Sources'].items():
                         if isinstance(value, str):
                             try:
                                 parsed_value = json.loads(value)
                                 config['Content Sources'][key] = parsed_value
-                                logging.debug(f"Parsed value for {key}: {parsed_value}")
+                                #logging.debug(f"Parsed value for {key}: {parsed_value}")
                             except json.JSONDecodeError:
                                 # If it's not valid JSON, keep it as is
                                 logging.debug(f"Keeping original string value for {key}: {value}")
-                    logging.debug("Content Sources after parsing: %s", json.dumps(config['Content Sources'], indent=2))
+                    #logging.debug("Content Sources after parsing: %s", json.dumps(config['Content Sources'], indent=2))
                 
-                logging.debug(f"Final loaded config: {json.dumps(config, indent=2)}")
+                #logging.debug(f"Final loaded config: {json.dumps(config, indent=2)}")
                 return config
             except json.JSONDecodeError as e:
                 logging.error(f"Error decoding JSON from {CONFIG_FILE}: {str(e)}. Using empty config.")
@@ -55,7 +55,7 @@ def load_config():
 
 def save_config(config):
     logging.debug("Starting save_config()")
-    logging.debug(f"Config before saving: {json.dumps(config, indent=2)}")
+    #logging.debug(f"Config before saving: {json.dumps(config, indent=2)}")
     
     # Ensure Content Sources are saved as proper JSON
     if 'Content Sources' in config:
@@ -71,7 +71,7 @@ def save_config(config):
     with open(CONFIG_FILE, 'w') as config_file:
         json.dump(config, config_file, indent=2)
     
-    logging.debug(f"Final saved config: {json.dumps(config, indent=2)}")
+    #logging.debug(f"Final saved config: {json.dumps(config, indent=2)}")
 
 # Helper function to safely parse boolean values
 def parse_bool(value):

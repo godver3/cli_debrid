@@ -24,7 +24,7 @@ from shared import app, update_stats
 from run_program import ProgramRunner
 from queue_utils import safe_process_queue
 from run_program import process_overseerr_webhook, ProgramRunner
-from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config
+from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings
 from settings_schema import SETTINGS_SCHEMA
 from trakt.core import get_device_code, get_device_token
 from scraper.scraper import scrape
@@ -778,6 +778,23 @@ def scraper_tester():
         
         if search_term:
             search_results = search_overseerr(search_term)
+            app.logger.debug(f"Search results: {search_results}")
+            
+            # Fetch IMDB IDs for each result
+            for result in search_results:
+                app.logger.debug(f"Processing result: {result}")
+                details = get_details(result)
+                app.logger.debug(f"Details for result: {details}")
+                
+                if details:
+                    imdb_id = details.get('externalIds', {}).get('imdbId', 'N/A')
+                    result['imdbId'] = imdb_id
+                    app.logger.debug(f"IMDB ID found: {imdb_id}")
+                else:
+                    result['imdbId'] = 'N/A'
+                    app.logger.debug("No details found for this result")
+            
+            app.logger.debug(f"Final search results with IMDB IDs: {search_results}")
             return jsonify(search_results)
         else:
             return jsonify({'error': 'No search term provided'}), 400
@@ -785,29 +802,81 @@ def scraper_tester():
     # GET request handling
     all_settings = get_all_settings()
     versions = all_settings.get('Scraping', {}).get('versions', {}).keys()
+    
+    # Log the versions for debugging
+    app.logger.debug(f"Available versions: {list(versions)}")
+    
     return render_template('scraper_tester.html', versions=versions)
 
+@app.route('/get_scraping_versions', methods=['GET'])
+def get_scraping_versions():
+    try:
+        config = load_config()
+        versions = config.get('Scraping', {}).get('versions', {}).keys()
+        return jsonify({'versions': list(versions)})
+    except Exception as e:
+        app.logger.error(f"Error getting scraping versions: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get_version_settings')
+def get_version_settings_route():
+    try:
+        version = request.args.get('version')
+        if not version:
+            return jsonify({'error': 'No version provided'}), 400
+        
+        version_settings = get_version_settings(version)
+        if not version_settings:
+            return jsonify({'error': f'No settings found for version: {version}'}), 404
+        
+        return jsonify({version: version_settings})
+    except Exception as e:
+        app.logger.error(f"Error in get_version_settings: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get_item_details', methods=['POST'])
 def get_item_details():
     item = request.json
     details = get_details(item)
     
     if details:
         # Ensure IMDB ID is included
-        if 'externalIds' not in details or 'imdbId' not in details['externalIds']:
-            details['externalIds'] = details.get('externalIds', {})
-            details['externalIds']['imdbId'] = ''
-
-        # Ensure title and year are included
-        if item['mediaType'] == 'movie':
-            details['title'] = details.get('title', '')
-            details['year'] = details.get('releaseDate', '')[:4]
-        else:
-            details['title'] = details.get('name', '')
-            details['year'] = details.get('firstAirDate', '')[:4]
-
-        return jsonify(details)
+        imdb_id = details.get('externalIds', {}).get('imdbId', '')
+        
+        response_data = {
+            'imdb_id': imdb_id,
+            'tmdb_id': str(details.get('id', '')),
+            'title': details.get('title') if item['mediaType'] == 'movie' else details.get('name', ''),
+            'year': details.get('releaseDate', '')[:4] if item['mediaType'] == 'movie' else details.get('firstAirDate', '')[:4],
+            'mediaType': item['mediaType']
+        }
+        return jsonify(response_data)
     else:
         return jsonify({'error': 'Could not fetch details'}), 400
+
+@app.route('/save_version_settings', methods=['POST'])
+def save_version_settings():
+    data = request.json
+    version = data.get('version')
+    settings = data.get('settings')
+
+    if not version or not settings:
+        return jsonify({'success': False, 'error': 'Invalid data provided'}), 400
+
+    try:
+        config = load_config()
+        if 'Scraping' not in config:
+            config['Scraping'] = {}
+        if 'versions' not in config['Scraping']:
+            config['Scraping']['versions'] = {}
+        
+        config['Scraping']['versions'][version] = settings
+        save_config(config)
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        app.logger.error(f"Error saving version settings: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/run_scrape', methods=['POST'])
 def run_scrape():
@@ -820,55 +889,64 @@ def run_scrape():
         year = data.get('year')
         media_type = data['movie_or_episode']
         version = data['version']
-
-        # Only set season and episode for TV shows
+        modified_settings = data.get('modifiedSettings', {})
+        
         if media_type == 'episode':
             season = data.get('season')
             episode = data.get('episode')
-            season = int(season) if season else None
-            episode = int(episode) if episode else None
             multi = data.get('multi', False)
         else:
             season = None
             episode = None
             multi = False
 
-        # Convert year to int
         year = int(year) if year else None
-
-        # Convert multi to boolean
-        multi = str(multi).lower() in ['true', '1', 'yes', 'on']
 
         logging.debug(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, media_type={media_type}, version={version}, season={season}, episode={episode}, multi={multi}")
 
-        results, filtered_out_results = scrape(
-            imdb_id,
-            tmdb_id,
-            title,
-            year,
-            media_type,
-            version,
-            season,
-            episode,
-            multi
+        # Load current config and get original version settings
+        config = load_config()
+        original_version_settings = config['Scraping']['versions'].get(version, {}).copy()
+        
+        # Run first scrape with current settings
+        original_results, _ = scrape(
+            imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi
         )
+
+        # Update version settings with modified settings
+        updated_version_settings = original_version_settings.copy()
+        updated_version_settings.update(modified_settings)
+
+        # Save modified settings temporarily
+        config['Scraping']['versions'][version] = updated_version_settings
+        save_config(config)
+
+        logging.debug(f"Original version settings: {original_version_settings}")
+        logging.debug(f"Modified version settings: {updated_version_settings}")
+
+        # Run second scrape with modified settings
+        try:
+            adjusted_results, _ = scrape(
+                imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi
+            )
+        finally:
+            # Revert settings back to original
+            config = load_config()
+            config['Scraping']['versions'][version] = original_version_settings
+            save_config(config)
+
+        # Ensure score_breakdown is included in the results
+        for result in original_results + adjusted_results:
+            if 'score_breakdown' not in result:
+                result['score_breakdown'] = {'total_score': result.get('score', 0)}
+
         return jsonify({
-            'originalResults': results,
-            'modifiedResults': filtered_out_results
+            'originalResults': original_results,
+            'adjustedResults': adjusted_results
         })
     except Exception as e:
         logging.error(f"Error in run_scrape: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
-
-
-@app.route('/get_version_settings')
-def get_version_settings():
-    version = request.args.get('version')
-    config = load_config()
-    scraping_config = config.get('Scraping', {})
-    versions = scraping_config.get('versions', {})
-    return jsonify({version: versions.get(version, {})})
-
 
 if __name__ == '__main__':
     start_server()
