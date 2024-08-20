@@ -232,7 +232,32 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi) {
         if (data.error) {
             displayError(data.error);
         } else {
-            displaySeasonResults(data.results, title, year, version);
+            //displaySeasonResults(data.results, title, year, version);
+            const seasonResults = data.results;
+            const resultsDiv = document.getElementById('seasonResults');
+            const dropdown = document.getElementById('seasonDropdown');
+            const seasonPackButton = document.getElementById('seasonPackButton');
+            
+
+            dropdown.innerHTML = '';
+            seasonResults.forEach(item => {
+                const option = document.createElement('option');
+                option.value = JSON.stringify(item);
+                option.textContent = `Season: ${item.season_num}`;
+                dropdown.appendChild(option);
+            });
+
+            dropdown.addEventListener('change', function() {
+                const selectedItem = JSON.parse(this.value);
+                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
+            });
+
+            seasonPackButton.onclick = function() {
+                const selectedItem = JSON.parse(dropdown.value);
+                selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
+            };
+
+            resultsDiv.style.display = 'block';
         }
     })
     .catch(error => {
@@ -262,7 +287,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) 
         if (data.error) {
             displayError(data.error);
         } else {
-            displayEpisodeResults(data.results, title, year, version);
+            displayEpisodeResults(data.episodeResults, title, year, version);
         }
     })
     .catch(error => {
@@ -270,8 +295,8 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) 
         displayError('An error occurred while selecting media.');
     });
 }
-
-function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
+async function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
+    showLoadingState(); // Show loading state before fetching results
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
     formData.append('media_id', mediaId);
@@ -282,26 +307,26 @@ function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
     if (episode !== null) formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
-
     fetch('/select_media', {
         method: 'POST',
         body: formData
     })
     .then(response => response.json())
     .then(data => {
-        if (data.error) {
-            displayError(data.error);
-        } else {
-            displayTorrentResults(data.torrent_results, title, year, version);
-        }
+        displayTorrentResults(data.torrent_results, title, year, version);
     })
     .catch(error => {
         console.error('Error:', error);
-        displayError('An error occurred while selecting media.');
     });
 }
 
+// Close the overlay when the close button is clicked
+document.querySelector('.close-btn').onclick = function() {
+    document.getElementById('overlay').style.display = 'none';
+};
+
 function addToRealDebrid(magnetLink) {
+    showLoadingState();
     fetch('/add_to_real_debrid', {
         method: 'POST',
         headers: {
@@ -329,93 +354,262 @@ function addToRealDebrid(magnetLink) {
 }
 
 function displayError(message) {
-    const resultsDiv = document.getElementById('results');
-    resultsDiv.innerHTML = `<p style="color: red;">${message}</p>`;
+    hideLoadingState();
+    const overlayContent = document.getElementById('overlayStatus');
+    overlayContent.innerHTML = `<p style="color: red;">${message}</p>`;
 }
 
 function displaySuccess(message) {
-    const resultsDiv = document.getElementById('results');
-    resultsDiv.innerHTML = `<p style="color: green;">${message}</p>`;
+    hideLoadingState();
+    const overlayContent = document.getElementById('overlayStatus');
+    overlayContent.innerHTML = `<p style="color: green;">${message}</p>`;
 }
 
-function displayEpisodeResults(results, title, year) {
-    const resultsDiv = document.getElementById('results');
-    let html = `<h3>Search Results for ${title}</h3><table border="1"><thead><tr><th> </th><th>Episodes</th><th>Action</th></tr></thead><tbody>`;
-    for (let item of results) {
-        html += `
-            <tr>
-                <td><span><img alt="" src="https://image.tmdb.org/t/p/original${item.still_path}" style="width: 150px; height: auto;"></span></td>
-                <td><div><p>Season: ${item.season_num} Episode: ${item.episode_num}</p><p>${item.episode_title}</p><p>Rating: ${item.vote_average}</p></div></td>
-                <td>
-                    <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode_num || 'null'}, ${item.multi})">Select</button>
-                </td>
-            </tr>
-        `;         
+function showLoadingState() {
+    // Create and display loading indicator
+    const loadingIndicator = document.createElement('div');
+    loadingIndicator.id = 'loadingIndicator';
+    loadingIndicator.style.position = 'fixed';
+    loadingIndicator.style.top = '50%';
+    loadingIndicator.style.left = '50%';
+    loadingIndicator.style.transform = 'translate(-50%, -50%)';
+    loadingIndicator.style.zIndex = '1000';
+    loadingIndicator.innerHTML = '<img src="/static/loadingimage.gif" alt="Loading..." style="width: 100px; height: 100px;">';
+    document.body.appendChild(loadingIndicator);
+
+    // Disable all buttons
+    const buttons = document.getElementsByTagName('button');
+    for (let button of buttons) {
+        button.disabled = true;
+        button.style.opacity = '0.5';
     }
-    html += '</tbody></table>';
-    resultsDiv.innerHTML = html;
-}
 
-function displaySeasonResults(results, title, year) {
-    const resultsDiv = document.getElementById('results');
-    let html = `<h3>Search Results for ${title}</h3><table border="1"><thead><tr><th> </th><th>Seasons</th><th>Action</th></tr></thead><tbody>`;
-    for (let item of results) {
-        html += `
-            <tr>
-                <td><span><img alt="" src="https://image.tmdb.org/t/p/w600_and_h900_bestv2${item.poster_path}" style="width: 90px; height: auto;"></span></td>
-                <td><div"><p>Season: ${item.season_num}</p><p>${item.season_overview}</p></div></td>
-                <td>
-                    <br><button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode || 'null'}, ${item.multi})">MultiPack</button></br>
-                    <button onclick="selectEpisode('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season_num || 'null'}, ${item.episode || 'null'}, ${item.multi})">Episodes (${item.episode_count})</button>
-                </td>
-            </tr>
-        `;         
+    const episodeDiv = document.getElementsByClassName('episode');
+    for (let episode of episodeDiv) {
+        episode.style.opacity = '0.5';
+        //episode.onclick = false;
     }
-    html += '</tbody></table>';
-    resultsDiv.innerHTML = html;
 }
 
-function displaySearchResults(results) {
-    const resultsDiv = document.getElementById('results');
-    let html = `<h3>Search Results</h3><table border="1"><thead><tr><th> </th><th>Title</th><th>Type</th><th>Action</th></tr></thead><tbody>`;
-    for (let item of results) {
-        if (item.year !== '') {
-            html += `
+// Function to hide loading state and re-enable buttons
+function hideLoadingState() {
+    // Remove loading indicator
+    const loadingIndicator = document.getElementById('loadingIndicator');
+    if (loadingIndicator) {
+        loadingIndicator.remove();
+    }
+
+    // Re-enable all buttons
+    const buttons = document.getElementsByTagName('button');
+    for (let button of buttons) {
+        button.disabled = false;
+        button.style.opacity = '1';
+    }
+
+    const episodeDiv = document.getElementsByClassName('episode');
+    for (let episode of episodeDiv) {
+        //episode.onclick = true;
+        episode.style.opacity = '1';
+    }
+}
+
+
+function displayEpisodeResults(episodeResults, title, year) {
+    toggleResultsVisibility(true);
+    const episodeResultsDiv = document.getElementById('episodeResults');
+    episodeResultsDiv.innerHTML = '';
+    
+    // Create a container for the grid layout
+    const gridContainer = document.createElement('div');
+    gridContainer.style.display = 'flex';
+    gridContainer.style.flexWrap = 'wrap';
+    gridContainer.style.gap = '20px';
+    const mediaQuery = window.matchMedia('(max-width: 1024px)');
+    function handleScreenChange(e) {
+        if (e.matches) {
+            gridContainer.style.justifyContent = 'center';
+        } else {
+            gridContainer.style.justifyContent = 'flex-start';
+        }
+    }
+    mediaQuery.addListener(handleScreenChange);
+    handleScreenChange(mediaQuery);
+
+    episodeResults.forEach(item => {
+        const episodeDiv = document.createElement('div');
+        episodeDiv.className = 'episode';
+        episodeDiv.style.width = '300px';
+        episodeDiv.style.marginBottom = '5px';
+        var options = {year: 'numeric', month: 'long', day: 'numeric' };
+        var date  = new Date(item.air_date);
+        episodeDiv.innerHTML = `        
+            <button><span class="episode-rating">${(item.vote_average).toFixed(1)}</span>
+            <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : `static/noimage-cli.png`}" alt="${item.episode_title}" style="width: 100%; height: auto;">
+            <div class="episode-info">
+                <h2 class="episode-title">${item.episode_num}. ${item.episode_title}</h2>
+                <p class="episode-sub">${date.toLocaleDateString("en-US", options)}</p>
+            </div></button>
+        `;
+        episodeDiv.onclick = function() {
+            selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi);
+        };
+        gridContainer.appendChild(episodeDiv);
+    });
+
+    episodeResultsDiv.appendChild(gridContainer);
+}
+
+
+
+
+function toggleResultsVisibility(showDetailed) {
+    const searchResult = document.getElementById('searchResult');
+    const seasonResults = document.getElementById('seasonResults');
+    const dropdown = document.getElementById('seasonDropdown');
+    const seasonPackButton = document.getElementById('seasonPackButton');
+    const episodeResultsDiv = document.getElementById('episodeResults');
+    if (showDetailed) {
+        searchResult.style.display = 'none';
+        seasonResults.style.display = 'block';
+        dropdown.style.display = 'block';
+        seasonPackButton.style.display = 'block';
+        episodeResultsDiv.style.display = 'block';
+    } else {
+        searchResult.style.display = 'block';
+        seasonResults.style.display = 'none';
+        episodeResultsDiv.style.display = 'none';
+    }
+}
+
+function displaySearchResults(searchResult) {
+    toggleResultsVisibility(false);
+    const searchResultsDiv = document.getElementById('searchResult');
+    searchResultsDiv.innerHTML = '';
+    
+    // Create a container for the grid layout
+    const gridContainer = document.createElement('div');
+    gridContainer.style.display = 'flex';
+    gridContainer.style.flexWrap = 'wrap';
+    gridContainer.style.gap = '20px';
+    const mediaQuery = window.matchMedia('(max-width: 1024px)');
+    function handleScreenChange(e) {
+        if (e.matches) {
+            gridContainer.style.justifyContent = 'center';
+        } else {
+            gridContainer.style.justifyContent = 'flex-start';
+        }
+    }
+    mediaQuery.addListener(handleScreenChange);
+    handleScreenChange(mediaQuery);
+
+    searchResult.forEach(item => {
+        if (item.year) {
+            const searchResDiv = document.createElement('div');
+            searchResDiv.className = 'sresult';
+            searchResDiv.style.width = '200px';
+            searchResDiv.style.marginBottom = '5px';
+            searchResDiv.innerHTML = `
+                <button>${item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
+                <img src="https://image.tmdb.org/t/p/w600_and_h900_bestv2${item.poster_path}" alt="${item.episode_title}" style="width: 100%; height: auto;">
+                <div class="searchresult-info">
+                    <h2 class="searchresult-item">${item.title} (${item.year})</h2>
+                </div></button>                
+            `;        
+            searchResDiv.onclick = function() {
+                //selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi);
+                if (item.media_type === 'movie') {
+                    selectMedia(item.id, item.title, item.year, item.media_type, item.season || 'null', item.episode || 'null', item.multi);
+                } else {
+                    selectSeason(item.id, item.title, item.year, item.media_type, item.season || 'null', item.episode || 'null', item.multi);
+                }
+            };
+            gridContainer.appendChild(searchResDiv);
+        }
+    });
+
+    searchResultsDiv.appendChild(gridContainer);
+}
+
+function displayTorrentResults(data, title, year) {
+    hideLoadingState();
+    const overlay = document.getElementById('overlay');
+
+    const mediaQuery = window.matchMedia('(max-width: 1024px)');
+    function handleScreenChange(e) {
+        if (e.matches) {
+            const overlayContentRes = document.getElementById('overlayContentRes');
+            overlayContentRes.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
+            const gridContainer = document.createElement('div');
+            gridContainer.style.display = 'flex';
+            gridContainer.style.flexWrap = 'wrap';
+            gridContainer.style.gap = '15px';
+            gridContainer.style.justifyContent = 'center';
+
+            data.forEach(torrent => {
+                const torResDiv = document.createElement('div');
+                torResDiv.className = 'torresult';
+                torResDiv.style.width = '300px';
+                torResDiv.style.marginBottom = '5px';
+                torResDiv.innerHTML = `
+                    <button>
+                    <div class="torresult-info">
+                        <p class="torresult-item">${torrent.title} (${(torrent.size).toFixed(1)})</p>
+                    </div>
+                    </button>                
+                `;        
+                torResDiv.onclick = function() {
+                    //selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi);
+                    addToRealDebrid(torrent.magnet)
+                };
+                gridContainer.appendChild(torResDiv);
+            });
+
+            overlayContentRes.appendChild(gridContainer);
+        } else {
+            const overlayContent = document.getElementById('overlayContent');
+            overlayContent.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
+            // Create table element
+            const table = document.createElement('table');
+            table.style.width = '100%';
+            table.style.borderCollapse = 'collapse';
+
+            // Create table header
+            const thead = document.createElement('thead');
+            thead.innerHTML = `
                 <tr>
-                    <td><span><img alt="" src="https://image.tmdb.org/t/p/w600_and_h900_bestv2${item.poster_path}" style="width: 90px; height: auto;"></span></td>
-                    <td><div><p>${item.title} (${item.year})</p><p>${item.overview}</p></div></td>
-                    <td>${item.media_type}</td>
-                    <td>
-                        ${item.media_type === 'movie' ? ` <button onclick="selectMedia('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'}, ${item.multi})">Select</button>` : 
-                            ` <button onclick="selectSeason('${item.id}', '${item.title}', '${item.year}', '${item.media_type}', ${item.season || 'null'}, ${item.episode || 'null'}, ${item.multi})">Select</button>`}
-                    </td>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Name</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Size</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Source</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Cached</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Score</th>
+                    <th style="border: 1px solid #ddd; padding: 8px;">Action</th>
                 </tr>
             `;
-        }   
-    }
-    html += '</tbody></table>';
-    resultsDiv.innerHTML = html;
-}
+            table.appendChild(thead);
 
-function displayTorrentResults(results, title, year) {
-    const resultsDiv = document.getElementById('results');
-    let html = `<h3>Torrent Results for ${title} (${year})</h3><table border="1"><thead><tr><th>Name</th><th>Size</th><th>Source</th><th>Cached</th><th>Score</th><th>Action</th></tr></thead><tbody>`;
-    for (let torrent of results) {
-        html += `
-            <tr>
-                <td>${torrent.title}</td>
-                <td>${(torrent.size).toFixed(1)} GB</td>
-                <td>${torrent.source}</td>
-                <td>${torrent.cached}</td>
-                <td>${torrent.score_breakdown.total_score}</td>
-                <td>
-                    <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button>
-                </td>
-            </tr>
-        `;
+            // Create table body
+            const tbody = document.createElement('tbody');
+            data.forEach(torrent => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td style="border: 1px solid #ddd; padding: 8px;">${torrent.title}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${(torrent.size).toFixed(1)} GB</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${torrent.source}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${torrent.cached}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${torrent.score_breakdown.total_score}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;"><button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button></td>
+                `;
+                tbody.appendChild(row);
+            });
+            table.appendChild(tbody);
+
+            overlayContent.appendChild(table);
+        }
     }
-    html += '</tbody></table>';
-    resultsDiv.innerHTML = html;
+    mediaQuery.addListener(handleScreenChange);
+    handleScreenChange(mediaQuery);
+    
+    overlay.style.display = 'block';
 }
 
 function openTab(event, tabName) {
@@ -439,6 +633,80 @@ function openTab(event, tabName) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    const resultsDiv = document.getElementById('seasonResults');
+    const dropdown = document.getElementById('seasonDropdown');
+    const seasonPackButton = document.getElementById('seasonPackButton');
+    const seasonInfo = document.getElementById('season-info');
+
+    function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path) {
+        seasonInfo.innerHTML = `   
+            <img src="https://image.tmdb.org/t/p/w300${poster_path}" alt="${title} Season ${season_num}">
+            <h2>${title} - Season ${season_num}</h2>
+            <p>Air Date: ${air_date}</p>
+            <p>${season_overview}</p>
+            </div>
+        `;
+    }
+
+    function selectSeason(mediaId, title, year, mediaType, season, episode, multi) {
+        const version = document.getElementById('version-select').value;
+        let formData = new FormData();
+        formData.append('media_id', mediaId);
+        formData.append('title', title);
+        formData.append('year', year);
+        formData.append('media_type', mediaType);
+        if (season !== null) formData.append('season', season);
+        if (episode !== null) formData.append('episode', episode);
+        formData.append('multi', multi);
+        formData.append('version', version);
+
+        fetch('/select_season', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                displayError(data.error);
+            } else {
+                const seasonResults = data.results;
+
+                dropdown.innerHTML = '';
+                seasonResults.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = JSON.stringify(item);
+                    option.textContent = `Season: ${item.season_num}`;
+                    dropdown.appendChild(option);
+                });
+
+                dropdown.addEventListener('change', function() {
+                    const selectedItem = JSON.parse(this.value);
+                    //displaySeasonInfo(selectedItem.title, selectedItem.season_num, selectedItem.air_date, selectedItem.season_overview, selectedItem.poster_path);
+                    selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
+                });
+
+                seasonPackButton.onclick = function() {
+                    const selectedItem = JSON.parse(dropdown.value);
+                    selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
+                };
+
+                resultsDiv.style.display = 'block';
+
+                // Trigger initial selection
+                if (dropdown.options.length > 0) {
+                    dropdown.selectedIndex = 0;
+                    dropdown.dispatchEvent(new Event('change'));
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            displayError('An error occurred while selecting media.');
+        });
+    }
+
+    // Make selectSeason function globally accessible
+    window.selectSeason = selectSeason;
     loadDarkModePreference();
     
     // Set up auto-refresh
