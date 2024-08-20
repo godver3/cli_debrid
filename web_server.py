@@ -351,8 +351,8 @@ def select_episode():
         title = request.form.get('title')
         year = request.form.get('year')
         if media_id:
-            results = web_scrape_tvshow(media_id, title, year, season)
-            return jsonify(results)
+            episodeResults = web_scrape_tvshow(media_id, title, year, season)
+            return jsonify(episodeResults)
         else:
             return jsonify({'error': 'No media_id provided'})
     
