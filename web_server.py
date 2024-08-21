@@ -30,6 +30,7 @@ from trakt.core import get_device_code, get_device_token
 from scraper.scraper import scrape
 from utilities.manual_scrape import search_overseerr, get_details
 from settings import get_all_settings
+import string
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -243,51 +244,91 @@ def database():
     else:
         selected_columns = session.get('selected_columns', all_columns[:10])  # Default to first 10 columns
 
-    # Pagination
-    page = request.args.get('page', 1, type=int)
-    per_page = 100  # Number of items per page
-
     # Get filter and sort parameters
     filter_column = request.args.get('filter_column', '')
     filter_value = request.args.get('filter_value', '')
     sort_column = request.args.get('sort_column', 'id')  # Default sort by id
     sort_order = request.args.get('sort_order', 'asc')
+    content_type = request.args.get('content_type', 'movie')  # Default to 'movie'
+    current_letter = request.args.get('letter', 'A')
+
+    # Define alphabet here
+    alphabet = list(string.ascii_uppercase)
 
     # Construct the SQL query
     query = f"SELECT {', '.join(selected_columns)} FROM media_items"
-    count_query = "SELECT COUNT(*) FROM media_items"
+    where_clauses = []
     params = []
 
+    # Apply custom filter if present, otherwise apply content type and letter filters
     if filter_column and filter_value:
-        where_clause = f" WHERE {filter_column} LIKE ?"
-        query += where_clause
-        count_query += where_clause
+        where_clauses.append(f"{filter_column} LIKE ?")
         params.append(f"%{filter_value}%")
+        # Reset content_type and current_letter when custom filter is applied
+        content_type = 'all'
+        current_letter = ''
+    else:
+        if content_type != 'all':
+            where_clauses.append("type = ?")
+            params.append(content_type)
+        
+        if current_letter:
+            if current_letter == '#':
+                where_clauses.append("title LIKE '0%' OR title LIKE '1%' OR title LIKE '2%' OR title LIKE '3%' OR title LIKE '4%' OR title LIKE '5%' OR title LIKE '6%' OR title LIKE '7%' OR title LIKE '8%' OR title LIKE '9%' OR title LIKE '[%' OR title LIKE '(%' OR title LIKE '{%'")
+            elif current_letter.isalpha():
+                where_clauses.append("title LIKE ?")
+                params.append(f"{current_letter}%")
+
+    if where_clauses:
+        query += " WHERE " + " AND ".join(where_clauses)
 
     query += f" ORDER BY {sort_column} {sort_order}"
-    query += f" LIMIT {per_page} OFFSET {(page - 1) * per_page}"
 
-    # Execute the queries
-    cursor.execute(count_query, params)
-    total_items = cursor.fetchone()[0]
-
+    # Execute the query
     cursor.execute(query, params)
-    items = [dict(zip(selected_columns, row)) for row in cursor.fetchall()]
+    items = cursor.fetchall()
 
     conn.close()
 
-    total_pages = (total_items + per_page - 1) // per_page
-
     return render_template('database.html', 
+                           items=items, 
                            all_columns=all_columns,
                            selected_columns=selected_columns,
-                           items=items,
                            filter_column=filter_column,
                            filter_value=filter_value,
                            sort_column=sort_column,
                            sort_order=sort_order,
-                           page=page,
-                           total_pages=total_pages)
+                           alphabet=alphabet,
+                           current_letter=current_letter,
+                           content_type=content_type)
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({
+            'table': render_template('database_table.html', 
+                                     items=items, 
+                                     selected_columns=selected_columns,
+                                     content_type=content_type),
+            'pagination': render_template('database_pagination.html',
+                                          alphabet=alphabet,
+                                          current_letter=current_letter,
+                                          content_type=content_type,
+                                          filter_column=filter_column,
+                                          filter_value=filter_value,
+                                          sort_column=sort_column,
+                                          sort_order=sort_order)
+        })
+
+    return render_template('database.html', 
+                           items=items, 
+                           all_columns=all_columns,
+                           selected_columns=selected_columns,
+                           filter_column=filter_column,
+                           filter_value=filter_value,
+                           sort_column=sort_column,
+                           sort_order=sort_order,
+                           alphabet=alphabet,
+                           current_letter=current_letter,
+                           content_type=content_type)
 
 @app.route('/add_to_real_debrid', methods=['POST'])
 def add_torrent_to_real_debrid():
