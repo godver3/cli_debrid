@@ -551,10 +551,10 @@ def get_scraping_settings():
 def update_settings():
     try:
         new_settings = request.json
-        logging.debug(f"Received new settings: {json.dumps(new_settings, indent=2)}")
+        #logging.debug(f"Received new settings: {json.dumps(new_settings, indent=2)}")
         
         config = load_config()
-        logging.debug(f"Current config before update: {json.dumps(config, indent=2)}")
+        #logging.debug(f"Current config before update: {json.dumps(config, indent=2)}")
         
         # Update the config with new settings
         for section, settings in new_settings.items():
@@ -563,19 +563,19 @@ def update_settings():
             if section == 'Content Sources':
                 # Update the Content Sources in the config dictionary
                 config['Content Sources'] = settings
-                logging.debug(f"Updated Content Sources in config: {json.dumps(config['Content Sources'], indent=2)}")
+                #logging.debug(f"Updated Content Sources in config: {json.dumps(config['Content Sources'], indent=2)}")
             else:
                 config[section].update(settings)
-                logging.debug(f"Updated {section} in config: {json.dumps(config[section], indent=2)}")
+                #logging.debug(f"Updated {section} in config: {json.dumps(config[section], indent=2)}")
         
-        logging.debug(f"Config just before saving: {json.dumps(config, indent=2)}")
+        #logging.debug(f"Config just before saving: {json.dumps(config, indent=2)}")
         
         # Save the updated config
         save_config(config)
         
         # Verify the saved config
         saved_config = load_config()
-        logging.debug(f"Saved config after update: {json.dumps(saved_config, indent=2)}")
+        #logging.debug(f"Saved config after update: {json.dumps(saved_config, indent=2)}")
         
         if saved_config != config:
             logging.warning("Saved config does not match updated config")

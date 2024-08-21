@@ -81,7 +81,7 @@ SETTINGS_SCHEMA = {
         },
         "episode_airtime_offset": {
             "type": "string",
-            "description": "Hours after midnight to start scraping for new episodes",
+            "description": "Offset from the show's airtime to start scraping for new episodes. Positive values are to delay scraping, negative values are to scrape early.",
             "default": "19"
         }
     },

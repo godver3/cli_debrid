@@ -17,9 +17,32 @@ from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies
 from pprint import pformat
 import json
 from fuzzywuzzy import fuzz
+import os
 
-#from nltk.corpus import stopwords
-#from nltk.tokenize import word_tokenize
+def setup_scraper_logger():
+    log_dir = 'logs'
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    scraper_logger = logging.getLogger('scraper_logger')
+    scraper_logger.setLevel(logging.DEBUG)
+    scraper_logger.propagate = False  # Prevent propagation to the root logger
+    
+    # Remove all existing handlers
+    for handler in scraper_logger.handlers[:]:
+        scraper_logger.removeHandler(handler)
+    
+    file_handler = logging.FileHandler(os.path.join(log_dir, 'scraper.log'))
+    file_handler.setLevel(logging.DEBUG)
+    
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    
+    scraper_logger.addHandler(file_handler)
+    
+    return scraper_logger
+
+scraper_logger = setup_scraper_logger()
 
 def log_filter_result(title: str, resolution: str, filter_reason: str = None):
     if filter_reason:
@@ -66,20 +89,6 @@ def smart_search(pattern, text):
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
-
-'''
-def download_nltk_data():
-    resources = ['punkt', 'stopwords']
-    for resource in resources:
-        try:
-            nltk.data.find(f'tokenizers/{resource}')
-        except LookupError:
-            try:
-                nltk.download(resource, quiet=True)
-                logging.info(f"Downloaded NLTK resource: {resource}")
-            except Exception as e:
-                logging.error(f"Failed to download NLTK resource {resource}: {e}")
-'''
 
 def improved_title_similarity(query_title: str, result_title: str) -> float:
     # Parse the result title using PTN
@@ -627,41 +636,41 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
         # Apply resolution filter
         if not resolution_filter(detected_resolution):
-            log_filter_result(original_title, detected_resolution, f"Resolution mismatch (max: {max_resolution}, wanted: {resolution_wanted})")
+            result['filter_reason'] = f"Resolution mismatch (max: {max_resolution}, wanted: {resolution_wanted})"
             continue
 
         # Apply HDR filter
         is_hdr = detect_hdr(original_title)
         if not enable_hdr and is_hdr:
-            log_filter_result(original_title, detected_resolution, "HDR content when HDR is disabled")
+            result['filter_reason'] = "HDR content when HDR is disabled"
             continue
 
         # Check title similarity
         title_sim = improved_title_similarity(title, original_title)
         #logging.debug(f"Title similarity for '{original_title}': {title_sim:.2f}")
         if title_sim < 0.65:  # Increased threshold from 0.8 to 0.7
-            logging.debug(f"Filtered out due to low title similarity: {title_sim:.2f}")
+            result['filter_reason'] = f"Low title similarity: {title_sim:.2f}"
             continue       
 
         # Content type specific filtering
         if content_type.lower() == 'movie':
             parsed_year = parsed_info.get('year')
             if not parsed_year:
-                log_filter_result(original_title, detected_resolution, "Missing year")
+                result['filter_reason'] = "Missing year"
                 continue
             if abs(int(parsed_year) - year) > 1:
-                log_filter_result(original_title, detected_resolution, f"Year mismatch: {parsed_year} vs {year}")
+                result['filter_reason'] = f"Year mismatch: {parsed_year} vs {year}"
                 continue
         elif content_type.lower() == 'episode':
             if multi:
                 if re.search(r'S\d{2}E\d{2}', original_title, re.IGNORECASE):
-                    log_filter_result(original_title, detected_resolution, "Single episode result when searching for multi")
+                    result['filter_reason'] = "Single episode result when searching for multi"
                     continue
             else:
                 result_season = parsed_info.get('season')
                 result_episode = parsed_info.get('episode')
                 if result_season != season or result_episode != episode:
-                    log_filter_result(original_title, detected_resolution, f"Season/episode mismatch: S{result_season}E{result_episode} vs S{season}E{episode}")
+                    result['filter_reason'] = f"Season/episode mismatch: S{result_season}E{result_episode} vs S{season}E{episode}"
                     continue
 
         size_gb = parse_size(result.get('size', 0))
@@ -697,37 +706,36 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
         # Apply custom filters with smart matching
         if filter_in and not any(smart_search(pattern, original_title) for pattern in filter_in):
-            log_filter_result(original_title, detected_resolution, "Not matching any filter_in patterns")
+            result['filter_reason'] = "Not matching any filter_in patterns"
             continue
         if filter_out:
             matched_patterns = [pattern for pattern in filter_out if smart_search(pattern, original_title)]
             if matched_patterns:
-                log_filter_result(original_title, detected_resolution, f"Matching filter_out pattern(s): {', '.join(matched_patterns)}")
+                result['filter_reason'] = f"Matching filter_out pattern(s): {', '.join(matched_patterns)}"
                 continue
 
         if content_type == "episode":
             season_pack = detect_season_pack(original_title)
             if multi:
                 if season_pack == 'Unknown':
-                    log_filter_result(original_title, detected_resolution, "Non-multi result when searching for multi")
+                    result['filter_reason'] = "Non-multi result when searching for multi"
                     continue
                 if season_pack != 'Complete':
                     season_numbers = [int(s) for s in season_pack.split(',')]
                     if len(season_numbers) == 2:
                         # It's a range
                         if season not in range(season_numbers[0], season_numbers[1] + 1):
-                            log_filter_result(original_title, detected_resolution, f"Season pack not containing the requested season: {season}")
+                            result['filter_reason'] = f"Season pack not containing the requested season: {season}"
                             continue
                     elif season not in season_numbers:
-                        log_filter_result(original_title, detected_resolution, f"Season pack not containing the requested season: {season}")
+                        result['filter_reason'] = f"Season pack not containing the requested season: {season}"
                         continue
             else:
                 if season_pack != 'Unknown' and season_pack != str(season):
-                    log_filter_result(original_title, detected_resolution, "Multi-episode release when searching for single episode")
+                    result['filter_reason'] = "Multi-episode release when searching for single episode"
                     continue
 
         # If the result passed all filters, add it to filtered_results
-        log_filter_result(original_title, detected_resolution)
         filtered_results.append(result)
 
     return filtered_results
@@ -808,7 +816,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             scraper_start = time.time()
             try:
                 logging.debug(f"Starting {scraper_name} scraper")
-                logging.debug(f"Scraper settings: {scraper_settings}")
+                #logging.debug(f"Scraper settings: {scraper_settings}")
                 
                 scraper_type = scraper_name.split('_')[0]
                 scraper_func = scraper_functions.get(scraper_type)
@@ -872,37 +880,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             result['is_multi_pack'] = is_multi_pack
             result['season_pack'] = season_pack
 
-            torrent_title = result.get('title', '')
-            season_pack = result.get('season_pack', 'Unknown')
-            if season_pack != 'Unknown' and season_pack != 'N/A':
-                if season_pack == 'Complete':
-                    logging.debug(f"Multi-episode result detected: {torrent_title} (Complete series)")
-                else:
-                    seasons = [int(s) for s in season_pack.split(',')]
-                    if len(seasons) == 1:
-                        logging.debug(f"Multi-episode result detected: {torrent_title} (Season: {seasons[0]})")
-                    else:
-                        start_season, end_season = min(seasons), max(seasons)
-                        if start_season == end_season:
-                            logging.debug(f"Multi-episode result detected: {torrent_title} (Season: {start_season})")
-                        elif list(range(start_season, end_season + 1)) == seasons:
-                            logging.debug(f"Multi-episode result detected: {torrent_title} (Seasons: {start_season} through {end_season})")
-                        else:
-                            logging.debug(f"Multi-episode result detected: {torrent_title} (Seasons: {', '.join(map(str, seasons))})")
-            else:
-                logging.debug(f"Single episode or movie result: {torrent_title}")
-
-            # Debug logging for multi-episode results
-            #if is_multi_pack:
-                #if season_pack == 'Complete':
-                    #logging.debug(f"Multi-episode result detected: {torrent_title} (Complete series)")
-                #else:
-                    #seasons = season_pack.split(',')
-                    #num_seasons = len(seasons)
-                    #logging.debug(f"Multi-episode result detected: {torrent_title} (Seasons: {season_pack}, Count: {num_seasons})")
-            #else:
-                #logging.debug(f"Single episode or movie result: {torrent_title}")
-
         # Sort results
         sorting_start = time.time()
 
@@ -926,22 +903,27 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         logging.debug(f"Total results in final output: {len(final_results)}")
         logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
 
-        # Debug printing for top 5 results
-        #logging.debug("Top 5 results details:")
-        #for i, result in enumerate(final_results[:5], 1):
-            #logging.debug(f"Rank {i}:")
-            #result_info = {
-                #'title': result.get('title', ''),
-                #'scraper': result.get('scraper', ''),
-                #'size': result.get('size', ''),
-                #'bitrate': result.get('bitrate', ''),
-                #'seeders': result.get('seeders', 0),
-                #'score': result.get('score_breakdown', {}).get('total_score', 0),
-                #'season_pack': result.get('season_pack', 'Unknown'),
-                #'is_multi_pack': result.get('is_multi_pack', False)
-            #}
-            #logging.debug(pformat(result_info, indent=2, width=120))
-            #logging.debug("-" * 80)  # Separator between results
+        # Log to scraper.log
+        scraper_logger.info(f"Scraping results for: {title} ({year})")
+        scraper_logger.info("All result titles:")
+        for result in all_results:
+            scraper_logger.info(f"- {result.get('title', '')}")
+
+        scraper_logger.info("Filtered out results:")
+        for result in filtered_out_results:
+            filter_reason = result.get('filter_reason', 'Unknown reason')
+            scraper_logger.info(f"- {result.get('title', '')}: {filter_reason}")
+
+        scraper_logger.info("Final results:")
+        for result in final_results:
+            result_info = (
+                f"- {result.get('title', '')}: "
+                f"Size: {result.get('size', 'N/A')} GB, "
+                f"Bitrate: {result.get('bitrate', 'N/A')} Mbps, "
+                f"Multi-pack: {'Yes' if result.get('is_multi_pack', False) else 'No'}, "
+                f"Season pack: {result.get('season_pack', 'N/A')}"
+            )
+            scraper_logger.info(result_info)
 
         return final_results, filtered_out_results if filtered_out_results else None
 
