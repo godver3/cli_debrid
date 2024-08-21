@@ -3,17 +3,35 @@
 {% block content %}
 <div class="container">
     <h2>Database Content</h2>
-    <div id="column-selector">
-        <h3>Select Columns to Display:</h3>
-        <form id="column-form">
-            {% for column in all_columns %}
-            <label>
-                <input type="checkbox" name="columns" value="{{ column }}" {% if column in selected_columns %}checked{% endif %}>
-                {{ column }}
-            </label>
-            {% endfor %}
-            <button type="submit">Update View</button>
-        </form>
+    <div id="column-selector-wrapper">
+        <button id="toggle-column-selector" class="toggle-button">Select Columns to Display</button>
+        <div id="column-selector" class="hidden">
+            <div class="column-selector-container">
+                <div class="column-list">
+                    <h4>Available Columns</h4>
+                    <select id="available-columns" multiple>
+                        {% for column in all_columns %}
+                            {% if column not in selected_columns %}
+                                <option value="{{ column }}">{{ column }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="column-buttons">
+                    <button id="add-column">&gt;</button>
+                    <button id="remove-column">&lt;</button>
+                </div>
+                <div class="column-list">
+                    <h4>Selected Columns</h4>
+                    <select id="selected-columns" multiple>
+                        {% for column in selected_columns %}
+                            <option value="{{ column }}">{{ column }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <button id="update-columns">Update View</button>
+        </div>
     </div>
     <div id="filter-sort">
         <h3>Filter and Sort:</h3>
@@ -42,11 +60,15 @@
             <button type="submit">Apply</button>
         </form>
     </div>
+    <div class="content-type-filter">
+        <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
+        <a href="#" data-content-type="episode" class="content-type-link {% if content_type == 'episode' %}active{% endif %}">Episodes</a>
+    </div>
     <div class="pagination">
         {% if alphabet %}
+            <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
             {% for letter in alphabet %}
-            <a href="{{ url_for('database', letter=letter, filter_column=filter_column, filter_value=filter_value, sort_column=sort_column, sort_order=sort_order) }}" 
-               {% if letter == current_letter %}class="active"{% endif %}>{{ letter }}</a>
+            <a href="#" data-letter="{{ letter }}" class="pagination-link {% if letter == current_letter %}active{% endif %}">{{ letter }}</a>
             {% endfor %}
         {% else %}
             <p>No pagination data available</p>
@@ -65,7 +87,15 @@
                 {% for item in items %}
                 <tr>
                     {% for column in selected_columns %}
-                    <td><div class="cell-content">{{ item[column] }}</div></td>
+                    <td>
+                        <div class="cell-content">
+                            {% if content_type == 'movie' and column in ['season_number', 'episode_number', 'episode_title'] %}
+                                <!-- Don't display these columns for movies -->
+                            {% elif item[loop.index0] is not none and item[loop.index0] != 'None' %}
+                                {{ item[loop.index0] }}
+                            {% endif %}
+                        </div>
+                    </td>
                     {% endfor %}
                 </tr>
                 {% endfor %}
@@ -73,4 +103,186 @@
         </table>
     </div>
 </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Handle content type filter clicks
+        document.querySelectorAll('.content-type-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                var contentType = this.getAttribute('data-content-type');
+                clearFilter();
+                updateContent(`{{ url_for('database') }}?content_type=${contentType}`);
+            });
+        });
+    
+        // Handle pagination clicks
+        document.querySelectorAll('.pagination-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                var letter = this.getAttribute('data-letter');
+                clearFilter();
+                updateContent(`{{ url_for('database') }}?letter=${letter}`);
+            });
+        });
+    
+        // Handle filter form submission
+        document.getElementById('filter-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            updateContent('{{ url_for('database') }}', new FormData(this));
+        });
+    
+        function clearFilter() {
+            document.getElementById('filter_column').value = '';
+            document.getElementById('filter_value').value = '';
+        }
+    
+        function updateContent(url, formData = null) {
+            var fetchOptions = {
+                method: 'GET',
+            };
+    
+            if (formData) {
+                url += '?' + new URLSearchParams(formData).toString();
+            }
+    
+            fetch(url, fetchOptions)
+                .then(response => response.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    document.querySelector('.table-container').innerHTML = doc.querySelector('.table-container').innerHTML;
+                    document.querySelector('.pagination').innerHTML = doc.querySelector('.pagination').innerHTML;
+                    
+                    // Update content type links
+                    document.querySelectorAll('.content-type-link').forEach(link => {
+                        if (doc.querySelector(`.content-type-link[data-content-type="${link.getAttribute('data-content-type')}"]`).classList.contains('active')) {
+                            link.classList.add('active');
+                        } else {
+                            link.classList.remove('active');
+                        }
+                    });
+    
+                    // Reattach event listeners
+                    attachEventListeners();
+                });
+        }
+    
+        function attachEventListeners() {
+            document.querySelectorAll('.content-type-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    var contentType = this.getAttribute('data-content-type');
+                    clearFilter();
+                    updateContent(`{{ url_for('database') }}?content_type=${contentType}`);
+                });
+            });
+    
+            document.querySelectorAll('.pagination-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    var letter = this.getAttribute('data-letter');
+                    clearFilter();
+                    updateContent(`{{ url_for('database') }}?letter=${letter}`);
+                });
+            });
+        }
+    });
+    </script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const contentTypeLinks = document.querySelectorAll('.content-type-link');
+    const paginationLinks = document.querySelectorAll('.pagination-link');
+    const availableColumns = document.getElementById('available-columns');
+    const selectedColumns = document.getElementById('selected-columns');
+    const addColumnBtn = document.getElementById('add-column');
+    const removeColumnBtn = document.getElementById('remove-column');
+    const updateColumnsBtn = document.getElementById('update-columns');
+    const toggleColumnSelectorBtn = document.getElementById('toggle-column-selector');
+    const columnSelector = document.getElementById('column-selector');
+
+    function moveOptions(from, to) {
+        const selectedOptions = Array.from(from.selectedOptions);
+        selectedOptions.forEach(option => {
+            to.appendChild(option);
+        });
+    }
+
+    addColumnBtn.addEventListener('click', () => moveOptions(availableColumns, selectedColumns));
+    removeColumnBtn.addEventListener('click', () => moveOptions(selectedColumns, availableColumns));
+
+    updateColumnsBtn.addEventListener('click', function() {
+        const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
+        
+        // Create a form and submit it
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = window.location.href;
+
+        selectedColumnValues.forEach(value => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'columns';
+            input.value = value;
+            form.appendChild(input);
+        });
+
+        document.body.appendChild(form);
+        form.submit();
+    });
+
+    toggleColumnSelectorBtn.addEventListener('click', function() {
+        columnSelector.classList.toggle('show');
+        this.classList.toggle('active');
+        if (this.classList.contains('active')) {
+            this.textContent = 'Select Columns to Display';
+        } else {
+            this.textContent = 'Select Columns to Display';
+        }
+    });
+
+    function updateContent(url) {
+        fetch(url)
+            .then(response => response.text())
+            .then(html => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                document.querySelector('.table-container').innerHTML = doc.querySelector('.table-container').innerHTML;
+                document.querySelector('.pagination').innerHTML = doc.querySelector('.pagination').innerHTML;
+                attachPaginationListeners();
+            });
+    }
+
+    function attachPaginationListeners() {
+        document.querySelectorAll('.pagination-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const letter = this.getAttribute('data-letter');
+                const url = new URL(window.location);
+                url.searchParams.set('letter', letter);
+                updateContent(url);
+                history.pushState({}, '', url);
+            });
+        });
+    }
+
+    contentTypeLinks.forEach(link => {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            const contentType = this.getAttribute('data-content-type');
+            const url = new URL(window.location);
+            url.searchParams.set('content_type', contentType);
+            updateContent(url);
+            history.pushState({}, '', url);
+            
+            // Update active class
+            contentTypeLinks.forEach(l => l.classList.remove('active'));
+            this.classList.add('active');
+        });
+    });
+
+    attachPaginationListeners();
+});
+</script>
 {% endblock %}

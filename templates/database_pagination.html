@@ -1,0 +1,8 @@
+{% if alphabet %}
+    <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
+    {% for letter in alphabet %}
+        <a href="#" data-letter="{{ letter }}" class="pagination-link {% if letter == current_letter %}active{% endif %}">{{ letter }}</a>
+    {% endfor %}
+{% else %}
+    <p>No pagination data available</p>
+{% endif %}
