@@ -625,7 +625,7 @@ def queues():
                 item['wake_count'] = queue_manager.get_wake_count(item['id'])  # Use the new get_wake_count method
 
     upgrading_queue = queue_contents.get('Upgrading', [])
-    logging.info(f"Rendering queues page. UpgradingQueue size: {len(upgrading_queue)}")
+    #logging.info(f"Rendering queues page. UpgradingQueue size: {len(upgrading_queue)}")
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
 
 @app.route('/api/queue_contents')
@@ -635,6 +635,7 @@ def api_queue_contents():
     if 'Sleeping' in contents:
         for item in contents['Sleeping']:
             item['wake_count'] = queue_manager.get_wake_count(item['id'])
+    #logging.info(f"Queue contents: {contents}")  # Add this line
     return jsonify(contents)
 
 def run_server():

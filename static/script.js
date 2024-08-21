@@ -54,8 +54,9 @@ function refreshCurrentPage() {
     } else if (window.location.pathname === '/logs') {
         updateLogs();
     }
-    // We've removed the else if for '/scraper' as it's now handled in the HTML file
 }
+
+setInterval(refreshCurrentPage, 1000);  // Refresh every 5 seconds
 
 function toggleQueue(element) {
     var items = element.nextElementSibling;
@@ -79,8 +80,10 @@ function updateQueueContents() {
                 queueContents.innerHTML = '';
                 const queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted'];
                 
+                let hasContent = false;
                 queueOrder.forEach(queueName => {
                     if (data[queueName] && data[queueName].length > 0) {
+                        hasContent = true;
                         let queueDiv = document.createElement('div');
                         queueDiv.className = 'queue';
                         let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
@@ -99,6 +102,10 @@ function updateQueueContents() {
                         queueContents.appendChild(queueDiv);
                     }
                 });
+
+                if (!hasContent) {
+                    queueContents.innerHTML = '<p>All queues are currently empty.</p>';
+                }
             }
         })
         .catch(error => console.error('Error fetching queue contents:', error));
@@ -709,9 +716,6 @@ document.addEventListener('DOMContentLoaded', function() {
     window.selectSeason = selectSeason;
     loadDarkModePreference();
     
-    // Set up auto-refresh
-    setInterval(refreshCurrentPage, 5000);  // Refresh every 5 seconds
-
     // Add event listener for search form
     const searchForm = document.getElementById('search-form');
     if (searchForm) {
@@ -756,12 +760,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Add event listener for settings form
-    // const settingsForm = document.getElementById('settingsForm');
-    // if (settingsForm) {
-    //     settingsForm.addEventListener('submit', updateSettings);
-    // }
-    
     // Add event listeners for tab buttons
     const tabButtons = document.querySelectorAll('.tab-button');
     tabButtons.forEach(button => {
