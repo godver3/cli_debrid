@@ -46,7 +46,7 @@ def save_config(config):
     process_id = str(uuid.uuid4())[:8]
     lock_file = acquire_lock()
     try:
-        logging.debug(f"[{process_id}] Saving config")
+        #logging.debug(f"[{process_id}] Saving config")
         log_config_state(f"[{process_id}] Config before saving", config)
         
         # Ensure only valid top-level keys are present
@@ -65,7 +65,7 @@ def save_config(config):
         # If the write was successful, rename the temp file to the actual config file
         os.replace(temp_file, CONFIG_FILE)
         
-        logging.info(f"[{process_id}] Config saved successfully")
+        logging.info(f"Config saved successfully")
         
         # Verify that the changes were saved
         with open(CONFIG_FILE, 'r') as verify_file:

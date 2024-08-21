@@ -111,7 +111,7 @@ def migrate_media_items_table():
         conn.close()
 
 def create_tables():
-    logging.info("Creating tables...")
+    #logging.info("Creating tables...")
     conn = get_db_connection()
 
     try:
@@ -234,7 +234,17 @@ def is_metadata_stale(metadata_date_str):
     
     return (datetime.now() - metadata_date) > timedelta(days=7)
 
+def get_existing_airtime(conn, imdb_id):
+    cursor = conn.execute('''
+        SELECT airtime FROM media_items
+        WHERE imdb_id = ? AND type = 'episode' AND airtime IS NOT NULL
+        LIMIT 1
+    ''', (imdb_id,))
+    result = cursor.fetchone()
+    return result[0] if result else None
+
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str, bool]):
+    from metadata.metadata import get_show_airtime_by_imdb_id
 
     logging.debug(f"add_wanted_items called with versions type: {type(versions)}")
     logging.debug(f"versions content: {versions}")
@@ -244,6 +254,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
         items_added = 0
         items_updated = 0
         items_skipped = 0
+        airtime_cache = {}  # Cache to store airtimes for each show
 
         # Handle different types of versions input
         if isinstance(versions, str):
@@ -340,21 +351,32 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                             item.get('release_date'), 'Wanted', 'movie', datetime.now(), version
                         ))
                     else:
+                         # For episodes, get the airtime
+                        if item['imdb_id'] not in airtime_cache:
+                            airtime_cache[item['imdb_id']] = get_existing_airtime(conn, item['imdb_id'])
+                            if airtime_cache[item['imdb_id']] is None:
+                                logging.debug(f"No existing airtime found for show {item['imdb_id']}, fetching from metadata")
+                                airtime_cache[item['imdb_id']] = get_show_airtime_by_imdb_id(item['imdb_id']) or '19:00'
+                            logging.debug(f"Airtime for show {item['imdb_id']} set to {airtime_cache[item['imdb_id']]}")
+                        
+                        airtime = airtime_cache[item['imdb_id']]
+                        
                         conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, airtime)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Wanted', 'episode',
                             item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), version
+                            datetime.now(), version, airtime
                         ))
                     logging.debug(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} (Version: {version})")
                     items_added += 1
 
         conn.commit()
         logging.debug(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
+        logging.debug(f"Airtime cache contents: {airtime_cache}")
     except Exception as e:
         logging.error(f"Error adding wanted items: {str(e)}")
         conn.rollback()
@@ -725,11 +747,11 @@ def get_media_item_presence(imdb_id=None, tmdb_id=None):
 def create_database():
     create_tables()
     create_upgrading_table()
-    logging.info("Database created and tables initialized.")
+    #logging.info("Database created and tables initialized.")
 
 # Modify the verify_database function to include verifying the upgrading table
 def verify_database():
-    logging.info("Starting database verification...")
+    #logging.info("Starting database verification...")
     create_tables()
     create_upgrading_table()
     
@@ -737,14 +759,13 @@ def verify_database():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='media_items'")
-    if cursor.fetchone():
-        logging.info("media_items table exists.")
-    else:
+    if not cursor.fetchone():
         logging.error("media_items table does not exist!")
     conn.close()
     
     add_hybrid_flag_column()
     add_filled_by_file_column()
+    add_airtime_column()
 
     logging.info("Database verification complete.")
 
@@ -926,9 +947,7 @@ def add_hybrid_flag_column():
         conn.commit()
         logging.info("Successfully added hybrid_flag column to media_items table.")
     except sqlite3.OperationalError as e:
-        if "duplicate column name" in str(e):
-            logging.info("hybrid_flag column already exists in media_items table.")
-        else:
+        if "duplicate column name" not in str(e):
             logging.error(f"Error adding hybrid_flag column: {str(e)}")
     except Exception as e:
         logging.error(f"Unexpected error adding hybrid_flag column: {str(e)}")
@@ -942,10 +961,19 @@ def add_filled_by_file_column():
         conn.commit()
         logging.info("Successfully added filled_by_file column to media_items table.")
     except sqlite3.OperationalError as e:
-        if "duplicate column name" in str(e):
+        if "duplicate column name" not in str(e):
             logging.info("filled_by_file column already exists in media_items table.")
-        else:
-            logging.error(f"Error adding filled_by_file column: {str(e)}")
+    finally:
+        conn.close()
+
+def add_airtime_column():
+    conn = get_db_connection()
+    try:
+        conn.execute('ALTER TABLE media_items ADD COLUMN airtime TEXT')
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e):
+            logging.error(f"Error adding airtime column: {str(e)}")
     finally:
         conn.close()
 

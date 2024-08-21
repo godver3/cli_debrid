@@ -36,7 +36,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str,
     jackett_api = settings['api']
     enabled_indexers = settings.get('enabled_indexers', '').lower()
     seeders_only = get_setting('Debug', 'jackett_seeders_only', False)
-    logging.debug(f"Seeders only status: {seeders_only}")
+    #logging.debug(f"Seeders only status: {seeders_only}")
 
     if content_type.lower() == 'movie':
         params = f"{title} {year}"
@@ -54,10 +54,10 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str,
         query_params.update({f'Tracker[]': {enabled_indexers}})
 
     full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
-    logging.debug(f"Jackett instance '{instance}' URL: {full_url}")
+    #logging.debug(f"Jackett instance '{instance}' URL: {full_url}")
 
     response = requests.get(full_url, headers={'accept': 'application/json'})
-    logging.debug(f"Jackett instance '{instance}' API status code: {response.status_code}")
+    #logging.debug(f"Jackett instance '{instance}' API status code: {response.status_code}")
 
     if response.status_code == 200:
         data = response.json()
@@ -78,7 +78,7 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
 
         seeders = item.get('Seeders', 0)
         if seeders_only and seeders == 0:
-            logging.debug(f"Filtered out [item.get('Title')] due to no seeders")
+            logging.debug(f"Filtered out {item.get('Title')} due to no seeders")
             continue
 
         if item.get('Tracker') and item.get('Size'):

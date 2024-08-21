@@ -9,7 +9,7 @@ def scrape_comet(imdb_id: str, title: str, year: int, content_type: str, season:
     config = load_config()
     comet_instances = config.get('Scrapers', {})
     
-    logging.debug(f"Comet settings: {comet_instances}")
+    #logging.debug(f"Comet settings: {comet_instances}")
 
     for instance, settings in comet_instances.items():
         if instance.startswith('Comet'):
@@ -32,14 +32,14 @@ def scrape_comet_instance(instance: str, settings: Dict[str, Any], imdb_id: str,
     
     try:
         url = construct_url(comet_base_url, imdb_id, content_type, season, episode)
-        logging.debug(f"Constructed URL for {instance}: {url}")
+        #logging.debug(f"Constructed URL for {instance}: {url}")
         response = fetch_data(url)
-        logging.debug(f"Response from URL for {instance}: {response}")
+        #logging.debug(f"Response from URL for {instance}: {response}")
         if not response or 'streams' not in response:
             logging.warning(f"No valid response received for IMDb ID: {imdb_id} from {instance}")
             return []
         parsed_results = parse_results(response['streams'], instance)
-        logging.debug(f"Parsed results from {instance}: {parsed_results}")
+        #logging.debug(f"Parsed results from {instance}: {parsed_results}")
         return parsed_results
     except Exception as e:
         logging.error(f"Error in scrape_comet_instance for {instance}: {str(e)}", exc_info=True)

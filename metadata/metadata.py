@@ -4,8 +4,10 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from settings import get_setting
 from database import get_all_media_items, update_release_date_and_state
+from content_checkers.trakt import load_trakt_credentials, ensure_trakt_auth, get_trakt_headers
 
 REQUEST_TIMEOUT = 15  # seconds
+TRAKT_API_URL = "https://api.trakt.tv"
 
 def get_overseerr_headers(api_key: str) -> Dict[str, str]:
     return {
@@ -476,3 +478,46 @@ def get_all_season_episode_counts(overseerr_url: str, overseerr_api_key: str, tm
 
     logging.debug(f"Episode counts for TMDB ID {tmdb_id}: {episode_counts}")
     return episode_counts
+
+def get_show_airtime_by_imdb_id(imdb_id: str) -> Optional[str]:
+    """
+    Get the airtime of a show using its IMDb ID.
+    
+    :param imdb_id: IMDb ID of the show
+    :return: Airtime as a string (e.g., "22:00") or None if not available
+    """
+    headers = get_trakt_headers()
+    if not headers:
+        logging.error("Failed to obtain Trakt headers")
+        return None
+
+    # First, search for the show using the IMDb ID
+    search_url = f"{TRAKT_API_URL}/search/imdb/{imdb_id}?type=show"
+    try:
+        response = requests.get(search_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        search_results = response.json()
+        
+        if not search_results:
+            logging.warning(f"No show found for IMDb ID: {imdb_id}")
+            return None
+        
+        # Get the Trakt ID of the show
+        trakt_id = search_results[0]['show']['ids']['trakt']
+        
+        # Now fetch the full show data
+        show_url = f"{TRAKT_API_URL}/shows/{trakt_id}?extended=full"
+        show_response = requests.get(show_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        show_response.raise_for_status()
+        show_data = show_response.json()
+        
+        # Extract and return the airtime
+        if 'airs' in show_data and 'time' in show_data['airs']:
+            return show_data['airs']['time']
+        else:
+            logging.warning(f"No airtime found for show with IMDb ID: {imdb_id}")
+            return None
+    
+    except requests.RequestException as e:
+        logging.error(f"Error fetching show data from Trakt: {e}")
+        return None

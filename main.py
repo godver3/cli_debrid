@@ -1,5 +1,8 @@
-import os
 import logging
+logging.getLogger('selector').setLevel(logging.WARNING)
+logging.getLogger('asyncio').setLevel(logging.WARNING)
+
+import os
 import requests
 import configparser
 import inspect
@@ -132,7 +135,7 @@ def prompt_for_required_settings():
 
 
 def main_menu():
-    logging.debug("Main menu started")
+    #logging.debug("Main menu started")
     logging.debug("Debug logging started")
     os.system('clear')
 
