@@ -88,9 +88,12 @@ class WantedQueue:
                     logging.info(f"Item {item_identifier} is not released yet. Moving to Unreleased state.")
                     items_to_unreleased.append(item)
                 else:
-                    # Check airtime cutoff
-                    if current_time < airtime_cutoff:
-                        logging.debug(f"Current time {current_time} is before the airtime cutoff {airtime_cutoff}. Deferring scraping for {item_identifier}.")
+                    # Calculate the release datetime with airtime offset
+                    release_datetime = datetime.combine(release_date, airtime_cutoff)
+                    current_datetime = datetime.combine(current_date, current_time)
+
+                    if current_datetime < release_datetime:
+                        logging.debug(f"Current datetime {current_datetime} is before the release datetime {release_datetime}. Deferring scraping for {item_identifier}.")
                         continue
                     
                     # Check if we've reached the scraping cap
