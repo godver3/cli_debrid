@@ -51,6 +51,37 @@ def search_overseerr(search_term: str, year: Optional[int] = None) -> List[Dict[
     except requests.RequestException as e:
         logging.error(f"Error searching Overseerr: {e}")
         return []
+    
+def overseerr_genre(ids: str) -> List[Dict[str, Any]]:
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    
+    if not overseerr_url or not overseerr_api_key:
+        logging.error("Overseerr URL or API key not set. Please configure in settings.")
+        return []
+
+    headers = {
+        'X-Api-Key': overseerr_api_key,
+        'Accept': 'application/json'
+    }
+
+    search_url = f"{overseerr_url}/api/v1/genres/tv"
+
+
+    try:
+        genresnames = []
+        response = requests.get(search_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        for genres in data:
+            for idx in ids:
+                if genres['id'] == idx:
+                   genresnames.append(genres['name'])
+        return genresnames
+    except requests.RequestException as e:
+        logging.error(f"Error searching Overseerr: {e}")
+        return []
+
 
 def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[int] = None, season: Optional[int] = None) -> List[Dict[str, Any]]:
     overseerr_url = get_setting('Overseerr', 'url')
@@ -133,8 +164,11 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 "title": result.get('title') or result.get('name', ''),
                 "year": result.get('releaseDate', '')[:4] if result.get('mediaType') == 'movie' else result.get('firstAirDate', '')[:4],
                 "media_type": result.get('mediaType', ''),
-                "overview": result.get('overview', ''),
+                "show_overview": result.get('overview', ''),
                 "poster_path": result.get('posterPath', ''),
+                "genre_ids": overseerr_genre(result.get('genreIds', '')),
+                "vote_average": result.get('voteAverage', ''),
+                "backdrop_path": result.get('backdropPath', ''),
                 "season": season,
                 "episode": episode,
                 "multi": multi
