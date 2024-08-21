@@ -230,12 +230,157 @@ main {
     text-overflow: ellipsis;
 }
 
-#column-selector, #filter-sort {
+#column-selector-wrapper {
+    background-color: #444;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    overflow: hidden;
+}
+
+.toggle-button {
+    width: 100%;
+    padding: 10px;
+    background-color: #555;
+    color: #f4f4f4;
+    border: none;
+    text-align: left;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.toggle-button:hover {
+    background-color: #666;
+}
+
+.toggle-button::before {
+    content: '+';
+    margin-right: 10px;
+    font-weight: bold;
+}
+
+.toggle-button.active::before {
+    content: '-';
+}
+
+#column-selector {
+    padding: 15px;
+    display: none;
+}
+
+#column-selector.show {
+    display: block;
+}
+
+.column-selector-container {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 15px;
+}
+
+.column-list {
+    width: 45%;
+}
+
+.column-list h4 {
+    margin-top: 0;
+    color: #f4f4f4;
+}
+
+.column-list select {
+    width: 100%;
+    height: 200px;
+    background-color: #555;
+    color: #f4f4f4;
+    border: 1px solid #666;
+    border-radius: 3px;
+}
+
+.column-buttons {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.column-buttons button {
+    margin: 5px;
+    padding: 5px 10px;
+    background-color: #0056b3;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.column-buttons button:hover {
+    background-color: #003d82;
+}
+
+#update-columns {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+}
+
+#update-columns:hover {
+    background-color: #45a049;
+}
+
+#filter-sort {
+    background-color: #444;
+    padding: 15px;
+    border-radius: 5px;
     margin-bottom: 20px;
 }
 
-#column-selector label, #filter-sort label {
+#filter-sort h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #f4f4f4;
+}
+
+#filter-sort label {
+    display: inline-block;
     margin-right: 10px;
+    color: #f4f4f4;
+}
+
+#filter-sort select,
+#filter-sort input[type="text"] {
+    background-color: #555;
+    color: #f4f4f4;
+    border: 1px solid #666;
+    padding: 5px;
+    border-radius: 3px;
+    margin-right: 10px;
+}
+
+#filter-sort button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+}
+
+#filter-sort button:hover {
+    background-color: #45a049;
 }
 
 .pagination {
@@ -244,6 +389,7 @@ main {
     display: flex;
     justify-content: center;
     flex-wrap: wrap;
+    gap: 10px; /* This adds horizontal and vertical spacing between items */
     position: relative;
     z-index: 10;
 }
@@ -257,6 +403,7 @@ main {
     color: #f4f4f4;
     background-color: #444;
     border-radius: 4px;
+    min-width: 40px; /* Ensures consistent width for single and double character buttons */
 }
 
 .pagination a.active {
@@ -568,4 +715,30 @@ h2.searchresult-item {
   /* Handle on hover */
   ::-webkit-scrollbar-thumb:hover {
     background: rgb(69 67 67 / 85%); 
+}
+
+.content-type-filter {
+    margin: 20px 0;
+    text-align: center;
+}
+
+.content-type-filter a {
+    display: inline-block;
+    padding: 8px 16px;
+    margin: 0 5px;
+    border: 1px solid #555;
+    text-decoration: none;
+    color: #f4f4f4;
+    background-color: #444;
+    border-radius: 4px;
+}
+
+.content-type-filter a.active {
+    background-color: #4CAF50;
+    color: white;
+    border-color: #4CAF50;
+}
+
+.content-type-filter a:hover:not(.active) {
+    background-color: #555;
 }
