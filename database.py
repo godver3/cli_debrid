@@ -948,3 +948,43 @@ def add_filled_by_file_column():
             logging.error(f"Error adding filled_by_file column: {str(e)}")
     finally:
         conn.close()
+
+def get_collected_counts():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Count unique collected movies
+        cursor.execute('''
+            SELECT COUNT(DISTINCT imdb_id) 
+            FROM media_items 
+            WHERE type = 'movie' AND state = 'Collected'
+        ''')
+        total_movies = cursor.fetchone()[0]
+
+        # Count unique collected TV shows
+        cursor.execute('''
+            SELECT COUNT(DISTINCT imdb_id) 
+            FROM media_items 
+            WHERE type = 'episode' AND state = 'Collected'
+        ''')
+        total_shows = cursor.fetchone()[0]
+
+        # Count total collected episodes
+        cursor.execute('''
+            SELECT COUNT(*) 
+            FROM media_items 
+            WHERE type = 'episode' AND state = 'Collected'
+        ''')
+        total_episodes = cursor.fetchone()[0]
+
+        return {
+            'total_movies': total_movies,
+            'total_shows': total_shows,
+            'total_episodes': total_episodes
+        }
+    except Exception as e:
+        logging.error(f"Error getting collected counts: {str(e)}")
+        return {'total_movies': 0, 'total_shows': 0, 'total_episodes': 0}
+    finally:
+        conn.close()

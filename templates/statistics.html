@@ -5,18 +5,18 @@
 {% block content %}
 <div class="stats">
     <div class="stat-item">
-        <h3>Total Processed</h3>
-        <p id="total-processed">{{ stats.total_processed }}</p>
+        <h3>Total Movies Collected</h3>
+        <p id="total-movies">{{ stats.total_movies }}</p>
     </div>
     <div class="stat-item">
-        <h3>Successful Additions</h3>
-        <p id="successful-additions">{{ stats.successful_additions }}</p>
+        <h3>Total TV Shows Collected</h3>
+        <p id="total-shows">{{ stats.total_shows }}</p>
     </div>
     <div class="stat-item">
-        <h3>Failed Additions</h3>
-        <p id="failed-additions">{{ stats.failed_additions }}</p>
+        <h3>Total Episodes Collected</h3>
+        <p id="total-episodes">{{ stats.total_episodes }}</p>
     </div>
-    <div class="stat-item">
+    <div class="stat-item uptime">
         <h3>Uptime</h3>
         <p id="uptime">{{ '%d days, %d hours, %d minutes' % (stats.uptime // 86400, (stats.uptime % 86400) // 3600, (stats.uptime % 3600) // 60) }}</p>
     </div>
