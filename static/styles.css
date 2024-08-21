@@ -55,20 +55,130 @@ nav {
     justify-content: center;
 }
 
+form#search-form {
+    text-align: center;
+}
+
+button#searchformButton {
+	background-color: #555;
+    border: none;
+    color: white;
+    padding: 10px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin-right: 10px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+#searchformButton:hover {
+    background-color: #777;
+}
+
+input[type="text"] {
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+select#version-select {
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+@media (max-width: 500px) {
+    input[type="text"] {
+        width: 35%;
+    }
+    
+    select#version-select {
+        width: 26%;
+    }
+}
+
+
+
+.hamburger-menu {
+    display: none;
+    flex-direction: column;
+    justify-content: space-between;
+    width: 30px;
+    height: 21px;
+    cursor: pointer;
+}
+
+.hamburger-menu .bar {
+width: 100%;
+height: 3px;
+background-color: rgb(191 191 190);
+border-radius: 3px;
+transition: all 0.3s ease-in-out;
+}
+
+.hamburger-menu.active .bar:nth-child(1) {
+transform: translateY(9px) rotate(45deg);
+}
+
+.hamburger-menu.active .bar:nth-child(2) {
+opacity: 0;
+}
+
+.hamburger-menu.active .bar:nth-child(3) {
+transform: translateY(-9px) rotate(-45deg);
+}
+
 nav ul {
-    list-style-type: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
+list-style-type: none;
+padding: 0;
+margin: 0;
 }
-
 nav ul li {
-    margin: 0 1rem;
+    display: inline;
+    margin-right: 1rem;
 }
-
 nav ul li a {
     color: white;
     text-decoration: none;
+}
+
+#navMenu {
+display: flex;
+list-style-type: none;
+margin: 0;
+padding: 0;
+}
+
+#navMenu li {
+margin-right: 20px;
+}
+
+#navMenu.active {
+display: flex;
+flex-direction: column;
+position: absolute;
+top: 60px;
+left: 0;
+width: 100%;
+background-color: #1f1f1f;
+box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+padding: 10px 0;
+z-index: 2;
+}
+
+#navMenu.active li {
+margin-right: 0;
+padding: 10px 20px;
 }
 
 .program-controls {
@@ -459,6 +569,7 @@ main {
 }
 
 .episode {
+    width: 300px;
     transition: transform 0.3s ease;
 }
 
@@ -494,7 +605,6 @@ main {
 }
 
 .episode img {
-    width: 300px;
     height: auto;
     margin-right: 20px;
     border-radius: 16px;
@@ -529,6 +639,7 @@ p.episode-sub img {
     text-align: center;
     border-radius: 11px;
     background: linear-gradient(to right, rgba(24, 170, 135, 1) 0%, rgba(1, 144, 182, 1) 100%);
+    z-index: 1;
 }
 
 h2.episode-title {
@@ -539,8 +650,10 @@ h2.episode-title {
 }
 
 #episodeResults > div {
-    width: 1600px; /* (300px * 5) + (20px * 4) for gaps */
-    margin: 0 auto; /* Centers the container if it's narrower than its parent */
+    position: relative;
+    width: 1600px;
+    margin: 0 auto;
+    top: 70px;
 }
 
 /* Make it responsive */
@@ -576,25 +689,35 @@ h2.episode-title {
 }
 
 .torresult {
-    transition: transform 0.3s ease;
+    width: 300px;
+    border: 1px solid #ededed63;
+    margin-bottom: 5px;
+    border-radius: 12px;
+    background-color: #161515a8;
 }
 
-.torresult:hover {
-    transform: scale(1.05);
-}
 
 .torresult button {
-    background-color: #100a0a17;
-    border-radius: 20px;
+    background-color: #f9080800;
     border: solid;
     border-color: #2220;
-    padding: 0px;
+    padding: 10px;
 }
 
 p.torresult-item {
     font-size: 0.999rem;
     line-height: 1.3rem;
     color: rgb(191 191 190);
+    text-align: center;
+}
+
+p.torresult-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    line-height: 1.3rem;
+    color: rgb(191 191 190);
+    text-align: left;
 }
 
 /* Custom scrollbar styles */
@@ -644,12 +767,175 @@ p.torresult-item {
     cursor: pointer;
 }
 
+select#seasonDropdown {
+    position: absolute;
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+    z-index: 1;
+}
+
+button#seasonPackButton {
+    position: absolute;
+    margin-left: 111px;
+    z-index: 1;
+    transition: background-color 0.3s;
+    background-color: #4CAF50;
+    border: none;
+    color: white;
+    padding: 9px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin-right: 10px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+#seasonPackButton:hover{
+    opacity: 0.9;
+}
+
 #seasonDropdown, #seasonPackButton {
     margin-bottom: 20px;
 }
 
+.show-rating {
+    position: absolute;
+    right: 0;
+    margin: 5px;
+    width: 50px;
+    height: 50px;
+    color: rgb(255 255 255 / 80%);
+    font-size: 21px;
+    font-weight: bold;
+    line-height: 49px;
+    text-align: center;
+    border-radius: 82px;
+    background: linear-gradient(to right, rgba(24, 170, 135, 1) 0%, rgba(1, 144, 182, 1) 100%);
+    z-index: 1;
+}
+
+.season-info-container {
+    display: flex;
+    align-items: flex-start;
+    position: relative;
+    z-index: 1;
+    padding-top: 20px;
+    padding-bottom: 20px;
+    border-radius: 10px;
+}
+
+.season-poster {
+    height: 200px;
+    object-fit: cover;
+    margin-right: 20px;
+    flex-shrink: 0;
+}
+
+.season-details {
+    flex: 1;
+}
+
+.season-overview {
+    height: 3em; /* Approximately 2 lines of text */
+    overflow: hidden;
+    position: relative;
+}
+
+.season-overview p {
+    margin: 0;
+    position: absolute;
+    width: 100%;
+}
+
+.season-bg-image {
+    position: absolute;
+    top: 128px;
+    left: 0;
+    width: 100%;
+    height: 29%;
+    background-size: cover;
+    background-position: center;
+    z-index: 0;
+}
+
+.season-bg-image::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgb(36 34 34 / 88%);
+    z-index: 1;
+}
+
+@media (max-width: 768px) {
+    .season-info-container {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .season-poster {
+        width: 100%;
+        height: auto;
+        margin-right: 0;
+        margin-bottom: 20px;
+        display: none;
+    }
+
+    .season-details {
+        width: 100%;
+    }
+    .season-bg-image {
+        display: none;
+    }
+}
+
+@media (min-width: 820px) {
+    .season-bg-image {
+        top: 126px;
+        height: 23%;
+    }
+}
+
+@media (min-width: 1024px){
+    .season-bg-image {
+        height: 20%;
+    }
+}
+
+@media (min-width: 1024px) and (orientation: landscape) {
+    .season-bg-image {
+        height: 36%;
+    }
+}
+@media (min-width: 1080px) {
+    .season-bg-image {
+        height: 30%;
+    }
+}
+
+@media screen and (max-width: 1280px) {
+    .season-bg-image {
+        height: 34%;
+    }
+}
+
+@media screen and (min-width: 2160px) {
+    .season-bg-image {
+        height: 28%;
+    }
+}
 .sresult {
     transition: transform 0.3s ease;
+    width: 200px;
 }
 
 .sresult:hover {
@@ -725,6 +1011,7 @@ h2.searchresult-item {
     text-align: center;
     border-radius: 11px;
     background-color: rgb(0 0 0 / 72%);
+    z-index: 1;
 }
 
 .mediatype-mv {
@@ -739,6 +1026,7 @@ h2.searchresult-item {
     text-align: center;
     border-radius: 11px;
     background-color: rgb(0 0 0 / 72%);
+    z-index: 1;
 }
 
 ::-webkit-scrollbar {
