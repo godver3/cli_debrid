@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
-from database import get_all_media_items
+from database import get_all_media_items, get_db_connection
 from settings import get_setting
 
 class WantedQueue:
@@ -43,14 +43,30 @@ class WantedQueue:
                 # Determine airtime offset based on content type
                 if item['type'] == 'movie':
                     airtime_offset = int(get_setting("Queue", "movie_airtime_offset", "19"))
+                    airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(hours=airtime_offset)).time()
                 elif item['type'] == 'episode':
-                    airtime_offset = int(get_setting("Queue", "episode_airtime_offset", "19"))
+                    airtime_offset = int(get_setting("Queue", "episode_airtime_offset", "0"))
+                    
+                    # Get the airtime from the database
+                    conn = get_db_connection()
+                    cursor = conn.execute('SELECT airtime FROM media_items WHERE id = ?', (item['id'],))
+                    result = cursor.fetchone()
+                    conn.close()
+
+                    if result and result['airtime']:
+                        airtime_str = result['airtime']
+                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                    else:
+                        # Default to 19:00 if no airtime is set
+                        airtime = datetime.strptime("19:00", '%H:%M').time()
+
+                    # Apply the offset to the airtime
+                    airtime_cutoff = (datetime.combine(current_date, airtime) + timedelta(minutes=airtime_offset)).time()
                 else:
                     airtime_offset = 0
+                    airtime_cutoff = current_time  # No delay for unknown types
 
-                logging.debug(f"Processing item: {item_identifier}, Type: {item['type']}, Airtime offset: {airtime_offset}")
-
-                airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(minutes=airtime_offset)).time()
+                logging.debug(f"Processing item: {item_identifier}, Type: {item['type']}, Airtime offset: {airtime_offset}, Airtime cutoff: {airtime_cutoff}")
 
                 # Check if release_date is None, empty string, or "Unknown"
                 if not item['release_date'] or item['release_date'].lower() == "unknown":
@@ -72,9 +88,9 @@ class WantedQueue:
                     logging.info(f"Item {item_identifier} is not released yet. Moving to Unreleased state.")
                     items_to_unreleased.append(item)
                 else:
-                    # Check airtime offset
+                    # Check airtime cutoff
                     if current_time < airtime_cutoff:
-                        logging.debug(f"Current time {current_time} is before the airtime offset {airtime_cutoff}. Deferring scraping for {item_identifier}.")
+                        logging.debug(f"Current time {current_time} is before the airtime cutoff {airtime_cutoff}. Deferring scraping for {item_identifier}.")
                         continue
                     
                     # Check if we've reached the scraping cap

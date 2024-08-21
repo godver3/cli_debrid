@@ -13,7 +13,7 @@ def scrape_torrentio(imdb_id: str, title: str, year: int, content_type: str, sea
     config = load_config()
     torrentio_instances = config.get('Scrapers', {})
     
-    logging.debug(f"Torrentio settings: {torrentio_instances}")
+    #logging.debug(f"Torrentio settings: {torrentio_instances}")
 
     for instance, settings in torrentio_instances.items():
         if instance.startswith('Torrentio'):
@@ -36,7 +36,7 @@ def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: 
     
     try:
         url = construct_url(imdb_id, content_type, season, episode, opts)
-        logging.debug(f"Fetching Torrentio data for {instance} from URL: {url}")
+        #logging.debug(f"Fetching Torrentio data for {instance} from URL: {url}")
         response = fetch_data(url)
         if not response or 'streams' not in response:
             logging.warning(f"No streams found for IMDb ID: {imdb_id} in instance {instance}")

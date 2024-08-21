@@ -10,7 +10,7 @@ def scrape_zilean(imdb_id: str, title: str, year: int, content_type: str, season
     config = load_config()
     zilean_instances = config.get('Scrapers', {})
     
-    logging.debug(f"Zilean settings: {zilean_instances}")
+    #logging.debug(f"Zilean settings: {zilean_instances}")
 
     for instance, settings in zilean_instances.items():
         if instance.startswith('Zilean'):
@@ -18,7 +18,7 @@ def scrape_zilean(imdb_id: str, title: str, year: int, content_type: str, season
                 logging.debug(f"Zilean instance '{instance}' is disabled, skipping")
                 continue
 
-            logging.info(f"Scraping Zilean instance: {instance}")
+            #logging.info(f"Scraping Zilean instance: {instance}")
             
             try:
                 instance_results = scrape_zilean_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi)
@@ -51,11 +51,11 @@ def scrape_zilean_instance(instance: str, settings: Dict[str, Any], imdb_id: str
     encoded_params = urlencode(params)
     full_url = f"{search_endpoint}?{encoded_params}"
     
-    logging.debug(f"Attempting to access Zilean API for {instance} with URL: {full_url}")
+    #logging.debug(f"Attempting to access Zilean API for {instance} with URL: {full_url}")
     
     try:
         response = requests.get(full_url, headers={'accept': 'application/json'})
-        logging.debug(f"Zilean API status code for {instance}: {response.status_code}")
+        #logging.debug(f"Zilean API status code for {instance}: {response.status_code}")
         
         if response.status_code == 200:
             try:
