@@ -218,7 +218,31 @@ function searchMedia(event) {
     });
 }
 
-function selectSeason(mediaId, title, year, mediaType, season, episode, multi) {
+function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path, genre_ids, vote_average, backdrop_path, show_overview) {
+    const seasonInfo = document.getElementById('season-info');
+    seasonInfo.innerHTML = `
+        <div class="season-info-container">
+            <span class="show-rating">${(vote_average).toFixed(1)}</span>
+            <img src="https://image.tmdb.org/t/p/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
+            <div class="season-details">
+                <h2>${title} - Season ${season_num}</h2>
+                <p>${genre_ids}</p>
+                <div class="season-overview">
+                    <p>${season_overview ? season_overview : show_overview}</p>
+                </div>
+            </div>
+        </div>
+        <div class="season-bg-image" style="background-image: url('https://image.tmdb.org/t/p/w1920_and_h800_multi_faces${backdrop_path}');"></div>
+    `;
+
+}
+
+
+
+function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview) {
+    const resultsDiv = document.getElementById('seasonResults');
+    const dropdown = document.getElementById('seasonDropdown');
+    const seasonPackButton = document.getElementById('seasonPackButton');
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
     formData.append('media_id', mediaId);
@@ -239,12 +263,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi) {
         if (data.error) {
             displayError(data.error);
         } else {
-            //displaySeasonResults(data.results, title, year, version);
             const seasonResults = data.results;
-            const resultsDiv = document.getElementById('seasonResults');
-            const dropdown = document.getElementById('seasonDropdown');
-            const seasonPackButton = document.getElementById('seasonPackButton');
-            
 
             dropdown.innerHTML = '';
             seasonResults.forEach(item => {
@@ -256,6 +275,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi) {
 
             dropdown.addEventListener('change', function() {
                 const selectedItem = JSON.parse(this.value);
+                displaySeasonInfo(selectedItem.title, selectedItem.season_num, selectedItem.air_date, selectedItem.season_overview, selectedItem.poster_path, genre_ids, vote_average, backdrop_path, show_overview);
                 selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
             });
 
@@ -265,6 +285,12 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi) {
             };
 
             resultsDiv.style.display = 'block';
+
+            // Trigger initial selection
+            if (dropdown.options.length > 0) {
+                dropdown.selectedIndex = 0;
+                dropdown.dispatchEvent(new Event('change'));
+            }
         }
     })
     .catch(error => {
@@ -327,11 +353,6 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     });
 }
 
-// Close the overlay when the close button is clicked
-document.querySelector('.close-btn').onclick = function() {
-    document.getElementById('overlay').style.display = 'none';
-};
-
 function addToRealDebrid(magnetLink) {
     showLoadingState();
     fetch('/add_to_real_debrid', {
@@ -390,6 +411,12 @@ function showLoadingState() {
         button.disabled = true;
         button.style.opacity = '0.5';
     }
+    
+    const selecter = document.getElementsByTagName('select');
+    for (let select of selecter) {
+        select.disabled = true;
+        select.style.opacity = '0.5';
+    }
 
     const episodeDiv = document.getElementsByClassName('episode');
     for (let episode of episodeDiv) {
@@ -411,6 +438,12 @@ function hideLoadingState() {
     for (let button of buttons) {
         button.disabled = false;
         button.style.opacity = '1';
+    }
+    
+    const selecter = document.getElementsByTagName('select');
+    for (let select of selecter) {
+        select.disabled = false;
+        select.style.opacity = '1';
     }
 
     const episodeDiv = document.getElementsByClassName('episode');
@@ -445,8 +478,6 @@ function displayEpisodeResults(episodeResults, title, year) {
     episodeResults.forEach(item => {
         const episodeDiv = document.createElement('div');
         episodeDiv.className = 'episode';
-        episodeDiv.style.width = '300px';
-        episodeDiv.style.marginBottom = '5px';
         var options = {year: 'numeric', month: 'long', day: 'numeric' };
         var date  = new Date(item.air_date);
         episodeDiv.innerHTML = `        
@@ -513,8 +544,6 @@ function displaySearchResults(searchResult) {
         if (item.year) {
             const searchResDiv = document.createElement('div');
             searchResDiv.className = 'sresult';
-            searchResDiv.style.width = '200px';
-            searchResDiv.style.marginBottom = '5px';
             searchResDiv.innerHTML = `
                 <button>${item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
                 <img src="https://image.tmdb.org/t/p/w600_and_h900_bestv2${item.poster_path}" alt="${item.episode_title}" style="width: 100%; height: auto;">
@@ -527,7 +556,7 @@ function displaySearchResults(searchResult) {
                 if (item.media_type === 'movie') {
                     selectMedia(item.id, item.title, item.year, item.media_type, item.season || 'null', item.episode || 'null', item.multi);
                 } else {
-                    selectSeason(item.id, item.title, item.year, item.media_type, item.season || 'null', item.episode || 'null', item.multi);
+                    selectSeason(item.id, item.title, item.year, item.media_type, item.season || 'null', item.episode || 'null', item.multi, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview);
                 }
             };
             gridContainer.appendChild(searchResDiv);
@@ -555,17 +584,17 @@ function displayTorrentResults(data, title, year) {
             data.forEach(torrent => {
                 const torResDiv = document.createElement('div');
                 torResDiv.className = 'torresult';
-                torResDiv.style.width = '300px';
-                torResDiv.style.marginBottom = '5px';
+                torResDiv.style.border = '1px solid white';
                 torResDiv.innerHTML = `
                     <button>
                     <div class="torresult-info">
-                        <p class="torresult-item">${torrent.title} (${(torrent.size).toFixed(1)})</p>
+                        <p class="torresult-title">${torrent.title}</p>
+                        <p class="torresult-item">${(torrent.size).toFixed(1)} GB |${torrent.cached ? ` ${torrent.cached} |` : ''} ${torrent.score_breakdown.total_score}</p>
+                        <p class="torresult-item">${torrent.source}</p>
                     </div>
                     </button>                
                 `;        
                 torResDiv.onclick = function() {
-                    //selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi);
                     addToRealDebrid(torrent.magnet)
                 };
                 gridContainer.appendChild(torResDiv);
@@ -584,12 +613,12 @@ function displayTorrentResults(data, title, year) {
             const thead = document.createElement('thead');
             thead.innerHTML = `
                 <tr>
-                    <th style="border: 1px solid #ddd; padding: 8px;">Name</th>
-                    <th style="border: 1px solid #ddd; padding: 8px;">Size</th>
-                    <th style="border: 1px solid #ddd; padding: 8px;">Source</th>
-                    <th style="border: 1px solid #ddd; padding: 8px;">Cached</th>
-                    <th style="border: 1px solid #ddd; padding: 8px;">Score</th>
-                    <th style="border: 1px solid #ddd; padding: 8px;">Action</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Name</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Size</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Source</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Cached</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Score</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Action</th>
                 </tr>
             `;
             table.appendChild(thead);
@@ -599,12 +628,12 @@ function displayTorrentResults(data, title, year) {
             data.forEach(torrent => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
-                    <td style="border: 1px solid #ddd; padding: 8px;">${torrent.title}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">${(torrent.size).toFixed(1)} GB</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">${torrent.source}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">${torrent.cached}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">${torrent.score_breakdown.total_score}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;"><button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button></td>
+                    <td style="border: 1px solid #ddd; padding: 8px; font-weight: 600; text-transform: uppercase; color: rgb(191 191 190);">${torrent.title}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">${(torrent.size).toFixed(1)} GB</td>
+                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">${torrent.source}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">${torrent.cached}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">${torrent.score_breakdown.total_score}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);"><button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button></td>
                 `;
                 tbody.appendChild(row);
             });
@@ -640,80 +669,42 @@ function openTab(event, tabName) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    const resultsDiv = document.getElementById('seasonResults');
-    const dropdown = document.getElementById('seasonDropdown');
-    const seasonPackButton = document.getElementById('seasonPackButton');
-    const seasonInfo = document.getElementById('season-info');
+    // Make selectSeason function globally accessible    
+    const hamburgerMenu = document.querySelector('.hamburger-menu');
+    const navMenu = document.getElementById('navMenu');
 
-    function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path) {
-        seasonInfo.innerHTML = `   
-            <img src="https://image.tmdb.org/t/p/w300${poster_path}" alt="${title} Season ${season_num}">
-            <h2>${title} - Season ${season_num}</h2>
-            <p>Air Date: ${air_date}</p>
-            <p>${season_overview}</p>
-            </div>
-        `;
+    hamburgerMenu.addEventListener('click', () => {
+        hamburgerMenu.classList.toggle('active');
+        navMenu.classList.toggle('active');
+        if (navMenu.classList == 'active') {
+            navMenu.style.display = 'flex';
+        }
+        else{
+            navMenu.style.display = 'none';
+        }
+    });
+
+    // Responsive layout
+    function responsiveLayout() {
+        if (window.innerWidth <= 768) {
+        navMenu.classList.remove('active');
+        hamburgerMenu.classList.remove('active');
+        navMenu.style.display = 'none';
+        hamburgerMenu.style.display = 'flex';
+        } else {
+        navMenu.style.display = 'flex';
+        hamburgerMenu.style.display = 'none';
+        }
     }
 
-    function selectSeason(mediaId, title, year, mediaType, season, episode, multi) {
-        const version = document.getElementById('version-select').value;
-        let formData = new FormData();
-        formData.append('media_id', mediaId);
-        formData.append('title', title);
-        formData.append('year', year);
-        formData.append('media_type', mediaType);
-        if (season !== null) formData.append('season', season);
-        if (episode !== null) formData.append('episode', episode);
-        formData.append('multi', multi);
-        formData.append('version', version);
+    window.addEventListener('resize', responsiveLayout);
+    responsiveLayout();
 
-        fetch('/select_season', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                displayError(data.error);
-            } else {
-                const seasonResults = data.results;
+    // Close the overlay when the close button is clicked
+    document.querySelector('.close-btn').onclick = function() {
+        document.getElementById('overlay').style.display = 'none';
+    };
 
-                dropdown.innerHTML = '';
-                seasonResults.forEach(item => {
-                    const option = document.createElement('option');
-                    option.value = JSON.stringify(item);
-                    option.textContent = `Season: ${item.season_num}`;
-                    dropdown.appendChild(option);
-                });
-
-                dropdown.addEventListener('change', function() {
-                    const selectedItem = JSON.parse(this.value);
-                    //displaySeasonInfo(selectedItem.title, selectedItem.season_num, selectedItem.air_date, selectedItem.season_overview, selectedItem.poster_path);
-                    selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
-                });
-
-                seasonPackButton.onclick = function() {
-                    const selectedItem = JSON.parse(dropdown.value);
-                    selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
-                };
-
-                resultsDiv.style.display = 'block';
-
-                // Trigger initial selection
-                if (dropdown.options.length > 0) {
-                    dropdown.selectedIndex = 0;
-                    dropdown.dispatchEvent(new Event('change'));
-                }
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            displayError('An error occurred while selecting media.');
-        });
-    }
-
-    // Make selectSeason function globally accessible
-    window.selectSeason = selectSeason;
     loadDarkModePreference();
     
     // Add event listener for search form
