@@ -32,14 +32,15 @@ class SleepingQueue:
     def add_item(self, item: Dict[str, Any]):
         self.items.append(item)
         self.sleeping_queue_times[item['id']] = datetime.now()
-        self.wake_counts[item['id']] = 0
+        # Only initialize wake count if it doesn't exist
+        if item['id'] not in self.wake_counts:
+            self.wake_counts[item['id']] = 0
 
     def remove_item(self, item: Dict[str, Any]):
         self.items = [i for i in self.items if i['id'] != item['id']]
         if item['id'] in self.sleeping_queue_times:
             del self.sleeping_queue_times[item['id']]
-        if item['id'] in self.wake_counts:
-            del self.wake_counts[item['id']]
+        # Don't remove the wake count when removing the item
 
     def process(self, queue_manager):
         logging.debug("Processing sleeping queue")
@@ -118,13 +119,19 @@ class SleepingQueue:
         logging.debug(f"Blacklisted {len(items)} items")
 
     def clean_up_sleeping_data(self):
-        # Remove sleeping times and wake counts for items no longer in the queue
+        # Remove sleeping times for items no longer in the queue
         for item_id in list(self.sleeping_queue_times.keys()):
             if item_id not in [item['id'] for item in self.items]:
                 del self.sleeping_queue_times[item_id]
-                if item_id in self.wake_counts:
-                    del self.wake_counts[item_id]
-                logging.debug(f"Cleaned up sleeping data for item ID: {item_id}")
+        
+        # Only remove wake counts for items that haven't been in the queue for a long time
+        # (e.g., 30 days)
+        thirty_days_ago = datetime.now() - timedelta(days=30)
+        for item_id in list(self.wake_counts.keys()):
+            if item_id not in [item['id'] for item in self.items] and \
+               (item_id not in self.sleeping_queue_times or self.sleeping_queue_times[item_id] < thirty_days_ago):
+                del self.wake_counts[item_id]
+                logging.debug(f"Cleaned up wake count for item ID: {item_id}")
 
     def is_item_old(self, item):
         if 'release_date' not in item or item['release_date'] == 'Unknown':
