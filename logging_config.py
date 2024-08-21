@@ -20,6 +20,10 @@ def setup_logging():
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     
+    # Set logging level for selector module
+    logging.getLogger('selector').setLevel(logging.WARNING)
+    logging.getLogger('asyncio').setLevel(logging.WARNING)
+
     # Remove any existing handlers
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
