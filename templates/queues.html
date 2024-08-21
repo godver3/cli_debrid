@@ -4,8 +4,10 @@
 <div class="container">
     <h2>Queues</h2>
     <div id="queue-contents" class="queue-container">
+    {% set has_content = false %}
     {% for queue_name in ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted'] %}
-        {% if queue_name in queue_contents %}
+        {% if queue_name in queue_contents and queue_contents[queue_name]|length > 0 %}
+        {% set has_content = true %}
         <div class="queue">
             <div class="queue-title" onclick="toggleQueue(this)">
                 <span>{{ queue_name }}</span>
@@ -46,6 +48,9 @@
         </div>
         {% endif %}
     {% endfor %}
+    {% if not has_content %}
+        <p>Waiting for initialization...</p>
+    {% endif %}
     </div>
 </div>
 {% endblock %}

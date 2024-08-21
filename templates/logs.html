@@ -3,9 +3,216 @@
 {% block title %}Logs{% endblock %}
 
 {% block content %}
-<div id="log-entries">
-{% for log in logs %}
-<div class="log-entry">{{ log }}</div>
-{% endfor %}
+<style>
+    /* Logs page styles */
+    .log-container {
+        width: 95vw; /* 95% of the viewport width */
+        max-width: 1200px; /* Maximum width */
+        height: calc(100vh - 200px); /* Adjust based on your header height */
+        margin: 20px auto;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        background-color: #222;
+        border: 1px solid #555;
+        border-radius: 5px;
+    }
+
+    .log-controls {
+        padding: 10px;
+        background-color: #333;
+        border-bottom: 1px solid #555;
+    }
+
+    #log-level-filter {
+        margin-right: 10px;
+        padding: 5px;
+        background-color: #444;
+        color: #f4f4f4;
+        border: 1px solid #666;
+        border-radius: 3px;
+    }
+
+    #log-search {
+        padding: 5px;
+        background-color: #444;
+        color: #f4f4f4;
+        border: 1px solid #666;
+        border-radius: 3px;
+    }
+
+    #log-entries {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 10px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .log-entry {
+        font-family: monospace;
+        white-space: pre-wrap;
+        padding: 5px 10px;
+        border-left: 3px solid transparent;
+    }
+
+    .log-entry:not(:last-child) {
+        border-bottom: 1px solid #333;
+    }
+
+    .log-entry[data-level="debug"] {
+        border-left-color: #3498db;
+        color: #3498db;
+    }
+
+    .log-entry[data-level="info"] {
+        border-left-color: #2ecc71;
+        color: #2ecc71;
+    }
+
+    .log-entry[data-level="warning"] {
+        border-left-color: #f39c12;
+        color: #f39c12;
+    }
+
+    .log-entry[data-level="error"] {
+        border-left-color: #e74c3c;
+        color: #e74c3c;
+    }
+
+    .log-entry[data-level="critical"] {
+        border-left-color: #9b59b6;
+        color: #9b59b6;
+    }
+
+    /* Prevent scrolling on the main body when viewing logs */
+    body.logs-page {
+        overflow: hidden;
+    }
+
+    /* Adjust the main content area for the logs page */
+    body.logs-page main {
+        height: calc(100vh - 60px); /* Subtract the header height */
+        overflow: hidden;
+    }
+
+    /* Custom scrollbar styles for log entries */
+    #log-entries::-webkit-scrollbar {
+        width: 12px;
+    }
+
+    #log-entries::-webkit-scrollbar-track {
+        background: #333;
+        border-radius: 10px;
+    }
+
+    #log-entries::-webkit-scrollbar-thumb {
+        background: #666;
+        border-radius: 10px;
+    }
+
+    #log-entries::-webkit-scrollbar-thumb:hover {
+        background: #888;
+    }
+
+    /* For Firefox */
+    #log-entries {
+        scrollbar-width: thin;
+        scrollbar-color: #666 #333;
+    }
+
+</style>
+
+<div class="log-container">
+    <div class="log-controls">
+        <select id="log-level-filter">
+            <option value="all">All Levels</option>
+            <option value="debug">Debug</option>
+            <option value="info">Info</option>
+            <option value="warning">Warning</option>
+            <option value="error">Error</option>
+            <option value="critical">Critical</option>
+        </select>
+        <input type="text" id="log-search" placeholder="Search logs...">
+    </div>
+    <div id="log-entries">
+    {% for log in logs %}
+    <div class="log-entry" data-level="{{ log.level }}">{{ log.message }}</div>
+    {% endfor %}
+    </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Add 'logs-page' class to the body
+document.body.classList.add('logs-page');
+
+function updateLogs() {
+    const logEntries = document.getElementById('log-entries');
+
+    return fetch('/api/logs')
+        .then(response => response.json())
+        .then(data => {
+            logEntries.innerHTML = data.map(log => `<div class="log-entry" data-level="${log.level}">${log.message}</div>`).join('');
+            filterLogs();
+        });
+}
+
+function isScrolledToBottom(element) {
+    return element.scrollHeight - element.clientHeight <= element.scrollTop + 1;
+}
+
+function scrollToBottom(element) {
+    element.scrollTop = element.scrollHeight;
+}
+
+function filterLogs() {
+    const levelFilter = document.getElementById('log-level-filter').value;
+    const searchTerm = document.getElementById('log-search').value.toLowerCase();
+    const logEntries = document.querySelectorAll('.log-entry');
+    const logLevels = ['critical', 'error', 'warning', 'info', 'debug'];
+
+    logEntries.forEach(entry => {
+        const level = entry.dataset.level;
+        const text = entry.textContent.toLowerCase();
+        const levelIndex = logLevels.indexOf(level);
+        const filterIndex = logLevels.indexOf(levelFilter);
+        const levelMatch = levelFilter === 'all' || (levelIndex !== -1 && levelIndex <= filterIndex);
+        const searchMatch = text.includes(searchTerm);
+        entry.style.display = levelMatch && searchMatch ? 'block' : 'none';
+    });
+
+    // Save the selected log level
+    localStorage.setItem('selectedLogLevel', levelFilter);
+}
+
+function loadSavedLogLevel() {
+    const savedLevel = localStorage.getItem('selectedLogLevel');
+    if (savedLevel) {
+        document.getElementById('log-level-filter').value = savedLevel;
+        filterLogs();
+    }
+}
+
+document.getElementById('log-level-filter').addEventListener('change', filterLogs);
+document.getElementById('log-search').addEventListener('input', filterLogs);
+
+function initialLoad() {
+    updateLogs().then(() => {
+        const logEntries = document.getElementById('log-entries');
+        scrollToBottom(logEntries);
+    });
+    loadSavedLogLevel();
+}
+
+// Modify the window load event listener
+window.addEventListener('load', () => {
+    initialLoad();
+});
+
+// Set up periodic updates
+setInterval(updateLogs, 5000); // Update every 5 seconds
+
+</script>
 {% endblock %}

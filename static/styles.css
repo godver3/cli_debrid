@@ -4,7 +4,7 @@ body {
     color: #f4f4f4; 
     background-color: #333;
     margin: 0;
-    padding: 0;
+    padding-top: 60px; /* Add this line to create space for the fixed header */
     display: flex;
     flex-direction: column;
     min-height: 100vh;
@@ -26,6 +26,11 @@ header {
     justify-content: space-between;
     align-items: center;
     font-size: 0.8em;
+    position: fixed; /* Add this line */
+    top: 0; /* Add this line */
+    left: 0; /* Add this line */
+    right: 0; /* Add this line */
+    z-index: 1000; /* Add this line to ensure header stays on top */
 }
 
 header h1 {
@@ -100,11 +105,17 @@ nav ul li a {
 }
 
 .stat-item { 
-    flex: 1 1 200px; 
+    flex: 1 1 calc(33.333% - 20px); 
     margin: 10px; 
     padding: 10px; 
     background: #555; 
     border-radius: 5px;
+    text-align: center;
+}
+
+.stat-item.uptime {
+    flex-basis: 100%;
+    margin-top: 20px;
 }
 
 .queue-container { 
@@ -142,9 +153,40 @@ nav ul li a {
     padding: 5px 0; 
 }
 
-.log-entry { 
-    font-family: monospace; 
-    white-space: pre-wrap; 
+.log-entry {
+    font-family: monospace;
+    white-space: pre-wrap;
+    padding: 5px 10px;
+    border-left: 3px solid transparent;
+}
+
+.log-entry:not(:last-child) {
+    border-bottom: 1px solid #333;
+}
+
+.log-entry[data-level="debug"] {
+    border-left-color: #3498db;
+    color: #3498db;
+}
+
+.log-entry[data-level="info"] {
+    border-left-color: #2ecc71;
+    color: #2ecc71;
+}
+
+.log-entry[data-level="warning"] {
+    border-left-color: #f39c12;
+    color: #f39c12;
+}
+
+.log-entry[data-level="error"] {
+    border-left-color: #e74c3c;
+    color: #e74c3c;
+}
+
+.log-entry[data-level="critical"] {
+    border-left-color: #9b59b6;
+    color: #9b59b6;
 }
 
 #log-entries { 
@@ -742,3 +784,129 @@ h2.searchresult-item {
 .content-type-filter a:hover:not(.active) {
     background-color: #555;
 }
+/* Filter and Sort Styles */
+#filter-sort {
+    background-color: #444;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
+
+#filter-sort h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #f4f4f4;
+}
+
+#filter-sort label {
+    display: inline-block;
+    margin-right: 10px;
+    color: #f4f4f4;
+}
+
+#filter-sort select,
+#filter-sort input[type="text"] {
+    background-color: #555;
+    color: #f4f4f4;
+    border: 1px solid #666;
+    padding: 5px;
+    border-radius: 3px;
+    margin-right: 10px;
+}
+
+#filter-sort button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+}
+
+#filter-sort button:hover {
+    background-color: #45a049;
+}
+
+/* Column Selector Styles */
+#column-selector {
+    background-color: #444;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
+
+#column-selector h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #f4f4f4;
+}
+
+.column-selector-container {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 15px;
+}
+
+.column-list {
+    width: 45%;
+}
+
+.column-list h4 {
+    margin-top: 0;
+    color: #f4f4f4;
+}
+
+.column-list select {
+    width: 100%;
+    height: 200px;
+    background-color: #555;
+    color: #f4f4f4;
+    border: 1px solid #666;
+    border-radius: 3px;
+}
+
+.column-buttons {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.column-buttons button {
+    margin: 5px;
+    padding: 5px 10px;
+    background-color: #0056b3;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.column-buttons button:hover {
+    background-color: #003d82;
+}
+
+#update-columns {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+}
+
+#update-columns:hover {
+    background-color: #45a049;
+}
+
