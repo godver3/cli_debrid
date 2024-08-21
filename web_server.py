@@ -12,7 +12,7 @@ from debrid.real_debrid import add_to_real_debrid
 import re
 from datetime import datetime
 import sqlite3
-from database import get_db_connection
+from database import get_db_connection, get_collected_counts
 import string
 from settings_web import get_settings_page, update_settings, get_settings
 from template_utils import render_settings, render_content_sources
@@ -352,12 +352,13 @@ def add_torrent_to_real_debrid():
 
 @app.route('/statistics')
 def statistics():
-    uptime = time.time() - start_time
+    uptime = int(time.time() - start_time)
+    collected_counts = get_collected_counts()
     stats = {
-        'total_processed': total_processed,
-        'successful_additions': successful_additions,
-        'failed_additions': failed_additions,
-        'uptime': uptime
+        'uptime': uptime,
+        'total_movies': collected_counts['total_movies'],
+        'total_shows': collected_counts['total_shows'],
+        'total_episodes': collected_counts['total_episodes']
     }
     return render_template('statistics.html', stats=stats)
 
@@ -469,8 +470,36 @@ def add_torrent():
 
 @app.route('/logs')
 def logs():
-    logs = get_recent_logs(100)  # Get the last 100 log entries
+    logs = get_recent_logs(500)  # Get the 500 most recent log entries
     return render_template('logs.html', logs=logs)
+
+@app.route('/api/logs')
+def api_logs():
+    logs = get_recent_logs(500)
+    return jsonify(logs)
+
+def get_recent_logs(n):
+    log_path = 'logs/debug.log'
+    if not os.path.exists(log_path):
+        return []
+    with open(log_path, 'r') as f:
+        logs = f.readlines()
+    recent_logs = logs[-n:]  # Get the last n logs
+    return [{'level': get_log_level(log), 'message': log.strip()} for log in recent_logs]
+
+def get_log_level(log_entry):
+    if ' - DEBUG - ' in log_entry:
+        return 'debug'
+    elif ' - INFO - ' in log_entry:
+        return 'info'
+    elif ' - WARNING - ' in log_entry:
+        return 'warning'
+    elif ' - ERROR - ' in log_entry:
+        return 'error'
+    elif ' - CRITICAL - ' in log_entry:
+        return 'critical'
+    else:
+        return 'info'  # Default to info if level can't be determined
 
 @app.route('/settings', methods=['GET'])
 def settings():
@@ -607,19 +636,6 @@ def api_queue_contents():
         for item in contents['Sleeping']:
             item['wake_count'] = queue_manager.get_wake_count(item['id'])
     return jsonify(contents)
-
-@app.route('/api/logs')
-def api_logs():
-    logs = get_recent_logs(100)
-    return jsonify(logs)
-
-def get_recent_logs(n):
-    log_path = 'logs/info.log'
-    if not os.path.exists(log_path):
-        return []
-    with open(log_path, 'r') as f:
-        logs = f.readlines()
-    return logs[-n:]
 
 def run_server():
     app.run(debug=True, use_reloader=False, host='0.0.0.0')
