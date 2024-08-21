@@ -41,6 +41,7 @@ class QueueManager:
         contents = OrderedDict()
         for state, queue in self.queues.items():
             contents[state] = queue.get_contents()
+        #logging.info(f"Getting queue contents: {contents}")  # Add this line
         return contents
 
     @staticmethod
