@@ -33,18 +33,22 @@
         <div class="header-content">
             <img src="{{ url_for('static', filename='icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
             <h1>cli_debrid</h1>
-        </div>
-        <nav>
-            <ul>
-                <li><a href="{{ url_for('statistics') }}">Statistics</a></li>
-                <li><a href="{{ url_for('queues') }}">Queues</a></li>
-                <li><a href="{{ url_for('logs') }}">Logs</a></li>
-                <li><a href="{{ url_for('settings') }}">Settings</a></li>
-                <li><a href="{{ url_for('scraper') }}">Scraper</a></li>
-                <li><a href="{{ url_for('database') }}">Database</a></li>
-                <li><a href="{{ url_for('scraper_tester') }}">Scraper Tester</a></li>
+          </div>
+          <nav id="mainNav">
+            <ul id="navMenu">
+              <li><a href="{{ url_for('statistics') }}">Statistics</a></li>
+              <li><a href="{{ url_for('queues') }}">Queues</a></li>
+              <li><a href="{{ url_for('logs') }}">Logs</a></li>
+              <li><a href="{{ url_for('settings') }}">Settings</a></li>
+              <li><a href="{{ url_for('scraper') }}">Scraper</a></li>
+              <li><a href="{{ url_for('database') }}">Database</a></li>
             </ul>
-        </nav>
+            <div class="hamburger-menu">
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+            </div>
+          </nav>
         <div class="program-controls">
             <button id="programControlButton">Start Program</button>
         </div>
