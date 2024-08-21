@@ -296,6 +296,7 @@ body.dark-mode .settings-description {
     border-radius: 4px;
     cursor: pointer;
     margin-left: auto;
+    margin-right: 5px; /* Add right margin for spacing */
 }
 
 .delete-version-btn:hover {
@@ -309,7 +310,7 @@ body.dark-mode .settings-description {
     border: none;
     border-radius: 4px;
     cursor: pointer;
-    margin-left: auto;
+    /* Remove margin-left: auto; to allow buttons to be next to each other */
 }
 
 .duplicate-version-btn:hover {
