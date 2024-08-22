@@ -288,6 +288,39 @@ document.addEventListener('DOMContentLoaded', function() {
 
     attachPaginationListeners();
 
+    // Add this script at the end of the file, just before the closing tag
+    function checkProgramStatus() {
+        fetch('/api/program_status')
+            .then(response => response.json())
+            .then(data => {
+                const isRunning = data.running;
+                const deleteButtons = document.querySelectorAll('.delete-item');
+                deleteButtons.forEach(button => {
+                    button.disabled = isRunning;
+                    button.style.opacity = isRunning ? '0.5' : '1';
+                    button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
+                });
+
+                if (isRunning) {
+                    const message = document.createElement('div');
+                    message.id = 'programRunningMessage';
+                    message.textContent = 'Program is running. Delete functionality is disabled.';
+                    message.style.color = 'red';
+                    message.style.marginBottom = '10px';
+                    document.querySelector('.container').prepend(message);
+                } else {
+                    const existingMessage = document.getElementById('programRunningMessage');
+                    if (existingMessage) {
+                        existingMessage.remove();
+                    }
+                }
+            })
+            .catch(error => console.error('Error checking program status:', error));
+    }
+
+    // Check program status initially and every 5 seconds
+    checkProgramStatus();
+    setInterval(checkProgramStatus, 5000);
 });
 </script>
 {% endblock %}
