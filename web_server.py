@@ -12,7 +12,7 @@ from debrid.real_debrid import add_to_real_debrid
 import re
 from datetime import datetime, timedelta
 import sqlite3
-from database import get_db_connection, get_collected_counts
+from database import get_db_connection, get_collected_counts, remove_from_media_items
 import string
 from settings_web import get_settings_page, update_settings, get_settings
 from template_utils import render_settings, render_content_sources
@@ -33,6 +33,8 @@ from settings import get_all_settings
 import string
 from itertools import groupby
 from operator import itemgetter
+from flask import current_app
+import requests
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -127,6 +129,21 @@ def update_trakt_config(key, value):
 @app.context_processor
 def utility_processor():
     return dict(render_settings=render_settings, render_content_sources=render_content_sources)
+
+@app.route('/delete_item', methods=['POST'])
+def delete_item():
+    data = request.json
+    item_id = data.get('item_id')
+    
+    if not item_id:
+        return jsonify({'success': False, 'error': 'No item ID provided'}), 400
+
+    try:
+        remove_from_media_items(item_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error deleting item: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/content_sources/content')
 def content_sources_content():
@@ -728,6 +745,7 @@ def start_program():
         program_runner = ProgramRunner()
         # Start the program runner in a separate thread to avoid blocking the Flask server
         threading.Thread(target=program_runner.start).start()
+        current_app.config['PROGRAM_RUNNING'] = True
         return jsonify({"status": "success", "message": "Program started"})
     else:
         return jsonify({"status": "error", "message": "Program is already running"})
@@ -738,13 +756,8 @@ def reset_program():
     if program_runner is not None:
         program_runner.stop()
     program_runner = None
+    current_app.config['PROGRAM_RUNNING'] = False
     return jsonify({"status": "success", "message": "Program reset"})
-    
-@app.route('/api/program_status', methods=['GET'])
-def program_status():
-    global program_runner
-    status = "Running" if program_runner is not None and program_runner.is_running() else "Initialized"
-    return jsonify({"status": status})
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -1090,6 +1103,20 @@ def run_scrape():
     except Exception as e:
         logging.error(f"Error in run_scrape: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/update_program_state', methods=['POST'])
+def update_program_state():
+    state = request.json.get('state')
+    if state in ['Running', 'Initialized']:
+        current_app.config['PROGRAM_RUNNING'] = (state == 'Running')
+        return jsonify({"status": "success", "message": f"Program state updated to {state}"})
+    else:
+        return jsonify({"status": "error", "message": "Invalid state"}), 400
+
+@app.route('/api/program_status', methods=['GET'])
+def program_status():
+    status = "Running" if current_app.config.get('PROGRAM_RUNNING', False) else "Initialized"
+    return jsonify({"status": status})
 
 if __name__ == '__main__':
     start_server()

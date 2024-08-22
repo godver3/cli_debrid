@@ -14,6 +14,10 @@ from web_server import start_server
 import signal
 from run_program import run_program, ProgramRunner
 import sys
+import time
+from flask import Flask, current_app
+
+app = Flask(__name__)
 
 program_runner = None
 
@@ -213,6 +217,12 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
+def update_web_ui_state(state):
+    try:
+        requests.post('http://localhost:5000/api/update_program_state', json={'state': state})
+    except requests.RequestException:
+        logging.error("Failed to update web UI state")
+
 def main():
     global program_runner
     # Ensure db_content directory exists
@@ -228,12 +238,16 @@ def main():
 
     if skip_menu:
         logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
-        program_runner = run_program()
+        program_runner = ProgramRunner()
+        program_runner.start()
+        update_web_ui_state('Running')
         print("Program is running. Press Ctrl+C to stop and return to the main menu.")
         try:
-            program_runner.start()
+            while program_runner.is_running():
+                time.sleep(1)
         except KeyboardInterrupt:
-            pass  # The signal handler will take care of this
+            program_runner.stop()
+            update_web_ui_state('Initialized')
     else:
         print("Press Enter to continue to Main Menu...")
         input()
