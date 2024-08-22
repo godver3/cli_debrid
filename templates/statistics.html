@@ -4,21 +4,48 @@
 
 {% block content %}
 <div class="stats-container">
+    <div class="stats-box recently-aired">
+        <h3>Recently Aired</h3>
+        {% if stats.recently_aired %}
+            <ul>
+            {% for item in stats.recently_aired %}
+                <li style="color: #FFA500;">
+                    {{ item.title }} S{{ item.season }}E{{ item.episode }} - 
+                    <span class="air-date" style="color: #f4f4f4;">
+                        {% if item.air_datetime.date() == stats.today %}
+                            Today
+                        {% elif item.air_datetime.date() == stats.yesterday %}
+                            Yesterday
+                        {% else %}
+                            {{ item.air_datetime.strftime('%Y-%m-%d') }}
+                        {% endif %}
+                    </span>
+                    <span class="air-time" style="color: #f4f4f4;">at {{ item.air_datetime.strftime('%H:%M') }}</span>
+                </li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p>No shows aired recently.</p>
+        {% endif %}
+    </div>
+
     <div class="stats-box airing-soon">
         <h3>Airing Soon</h3>
         {% if stats.airing_soon %}
             <ul>
             {% for item in stats.airing_soon %}
                 <li style="color: #FFA500;">
-                    {{ item.title }} - 
+                    {{ item.title }} S{{ item.season }}E{{ item.episode }} - 
                     <span class="air-date" style="color: #f4f4f4;">
-                        {% if item.air_date == datetime.now().date().isoformat() %}
+                        {% if item.air_datetime.date() == stats.today %}
                             Today
-                        {% else %}
+                        {% elif item.air_datetime.date() == stats.tomorrow %}
                             Tomorrow
+                        {% else %}
+                            {{ item.air_datetime.strftime('%Y-%m-%d') }}
                         {% endif %}
                     </span>
-                    <span class="air-time" style="color: #f4f4f4;">at {{ item.air_time }}</span>
+                    <span class="air-time" style="color: #f4f4f4;">at {{ item.air_datetime.strftime('%H:%M') }}</span>
                 </li>
             {% endfor %}
             </ul>
