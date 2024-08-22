@@ -1,3 +1,8 @@
+console.log('Script started');
+
+let deleteInProgress = false;
+let isEventListenerAttached = false;
+
 function toggleDarkMode() {
     document.body.classList.toggle('dark-mode');
     localStorage.setItem('darkMode', document.body.classList.contains('dark-mode'));
@@ -656,10 +661,23 @@ function openTab(event, tabName) {
     event.currentTarget.classList.add('active');
 }
 
+
 document.addEventListener('DOMContentLoaded', function() {
+
+    console.log('DOMContentLoaded event fired');
+    attachDeleteEventListener();
+
     // Make selectSeason function globally accessible    
     const hamburgerMenu = document.querySelector('.hamburger-menu');
     const navMenu = document.getElementById('navMenu');
+
+    // Remove any existing event listener for delete buttons
+    const databaseTable = document.getElementById('database-table');
+    if (databaseTable) {
+        databaseTable.removeEventListener('click', handleDeleteClick);
+        // Add the event listener only once
+        databaseTable.addEventListener('click', handleDeleteClick);
+    }
 
     hamburgerMenu.addEventListener('click', () => {
         hamburgerMenu.classList.toggle('active');
@@ -753,3 +771,66 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial refresh
     refreshCurrentPage();
 });
+
+function handleDeleteClick(e) {
+    console.log('Delete click handler called');
+    if (e.target && e.target.classList.contains('delete-item')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const itemId = e.target.getAttribute('data-item-id');
+        if (!deleteInProgress && confirm('Are you sure you want to delete this item?')) {
+            deleteItem(itemId);
+        }
+    }
+}
+
+function attachDeleteEventListener() {
+    console.log('Attaching delete event listener');
+    if (!isEventListenerAttached) {
+        const databaseTable = document.getElementById('database-table');
+        if (databaseTable) {
+            databaseTable.removeEventListener('click', handleDeleteClick);
+            databaseTable.addEventListener('click', handleDeleteClick);
+            isEventListenerAttached = true;
+            console.log('Delete event listener attached');
+        }
+    }
+}
+
+// Move deleteItem function outside of DOMContentLoaded event
+function deleteItem(itemId) {
+    if (deleteInProgress) return;
+    deleteInProgress = true;
+
+    fetch('/delete_item', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ item_id: itemId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const row = document.querySelector(`button[data-item-id="${itemId}"]`);
+            if (row) {
+                const tableRow = row.closest('tr');
+                if (tableRow) {
+                    tableRow.remove();
+                }
+            }
+            console.log('Item deleted successfully');
+        } else {
+            alert('Failed to delete item: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while deleting the item.');
+    })
+    .finally(() => {
+        deleteInProgress = false;
+    });
+}
+
+console.log('Script ended');

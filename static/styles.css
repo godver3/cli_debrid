@@ -1373,4 +1373,51 @@ h2.searchresult-item {
     }
 }
 
+/* Database table styles */
+#database-table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+}
+
+#database-table th, #database-table td {
+    border: 1px solid #555;
+    padding: 8px;
+    text-align: left;
+}
+
+#database-table th {
+    background-color: #606060;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+/* Delete button styles */
+.delete-item {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 12px;
+    margin: 2px 2px;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background-color 0.3s;
+}
+
+.delete-item:hover {
+    background-color: #d32f2f;
+}
+
+/* Adjust the first column width for the delete button */
+#database-table td:first-child,
+#database-table th:first-child {
+    width: 70px;
+    text-align: center;
+}
+
 
