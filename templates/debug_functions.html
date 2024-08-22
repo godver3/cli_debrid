@@ -146,6 +146,48 @@
                 popup.style.display = 'none';
             }, 3000);
         }
+
+        function checkProgramStatus() {
+            fetch('/api/program_status')
+                .then(response => response.json())
+                .then(data => {
+                    const isRunning = data.running;
+                    const deleteButton = document.querySelector('button[type="submit"]');
+                    if (deleteButton) {
+                        deleteButton.disabled = isRunning;
+                        deleteButton.style.opacity = isRunning ? '0.5' : '1';
+                        deleteButton.style.cursor = isRunning ? 'not-allowed' : 'pointer';
+                    }
+
+                    const form = document.getElementById('bulk-delete-form');
+                    if (form) {
+                        const inputs = form.querySelectorAll('input');
+                        inputs.forEach(input => {
+                            input.disabled = isRunning;
+                            input.style.opacity = isRunning ? '0.5' : '1';
+                        });
+                    }
+
+                    if (isRunning) {
+                        const message = document.createElement('div');
+                        message.id = 'programRunningMessage';
+                        message.textContent = 'Program is running. Debug functions are disabled.';
+                        message.style.color = 'red';
+                        message.style.marginBottom = '10px';
+                        document.querySelector('.debug-container').prepend(message);
+                    } else {
+                        const existingMessage = document.getElementById('programRunningMessage');
+                        if (existingMessage) {
+                            existingMessage.remove();
+                        }
+                    }
+                })
+                .catch(error => console.error('Error checking program status:', error));
+        }
+
+        // Check program status initially and every 5 seconds
+        checkProgramStatus();
+        setInterval(checkProgramStatus, 5000);
     });
 </script>
 {% endblock %}

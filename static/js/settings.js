@@ -13,6 +13,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const lastActiveTab = localStorage.getItem('currentTab') || 'required';
     openTab(lastActiveTab);
 
+    checkProgramStatus();
+    setInterval(checkProgramStatus, 5000); // Check every 5 seconds
+
     debugDOMStructure();
 });
 
@@ -49,6 +52,49 @@ function initializeAllFunctionalities() {
     initializeScrapingFunctionality();
     initializeTraktAuthorization();
 }
+
+function checkProgramStatus() {
+    fetch('/api/program_status')
+        .then(response => response.json())
+        .then(data => {
+            const isRunning = data.running;
+            const buttons = document.querySelectorAll('#saveSettingsButton, .add-scraper-link, .add-version-link, .add-source-link, .delete-scraper-btn, .delete-version-btn, .duplicate-version-btn, .delete-source-btn');
+            buttons.forEach(button => {
+                button.disabled = isRunning;
+                button.style.opacity = isRunning ? '0.5' : '1';
+                button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
+            });
+
+            const runningMessage = document.getElementById('programRunningMessage');
+            if (isRunning) {
+                if (!runningMessage) {
+                    const message = document.createElement('div');
+                    message.id = 'programRunningMessage';
+                    message.textContent = 'Program is running. Settings management is disabled.';
+                    message.style.color = 'red';
+                    message.style.marginBottom = '10px';
+                    document.querySelector('.settings-container').prepend(message);
+                }
+            } else if (runningMessage) {
+                runningMessage.remove();
+            }
+
+            // Update Start/Stop Program button
+            const startStopButton = document.getElementById('startStopProgramButton');
+            if (startStopButton) {
+                if (isRunning) {
+                    startStopButton.textContent = 'Stop Program';
+                    startStopButton.classList.remove('start-program');
+                    startStopButton.classList.add('stop-program');
+                } else {
+                    startStopButton.textContent = 'Start Program';
+                    startStopButton.classList.remove('stop-program');
+                    startStopButton.classList.add('start-program');
+                }
+            }
+        });
+}
+
 
 function initializeTabSwitching() {
     const tabButtons = document.querySelectorAll('.settings-tab-button');
