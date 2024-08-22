@@ -252,7 +252,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function displayVersionSettings(version, settings) {
         console.log("Displaying version settings:", version, settings);
-
+    
         const originalSettingsContainer = document.getElementById('originalSettings');
         const modifiedSettingsContainer = document.getElementById('modifiedSettings');
         
@@ -267,7 +267,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 let labelText = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 
                 console.log(`Setting ${key} to:`, value);
-
+    
                 // Rename the fields
                 if (key === 'max_resolution') {
                     labelText = 'Resolution Wanted';
@@ -281,7 +281,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 label.textContent = `${labelText}:`;
     
                 // Create input elements for both original and modified settings
-                const [originalInput, modifiedInput] = createInputElements(key, value);
+                let [originalInput, modifiedInput] = createInputElements(key, value);
     
                 // Set up original input
                 originalInput.id = `original-scraping-${version}-${key}`;
@@ -339,6 +339,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 originalInput.appendChild(optionElement);
                 modifiedInput.appendChild(optionElement.cloneNode(true));
             });
+            // Ensure the correct option is selected for both inputs
+            originalInput.value = value;
+            modifiedInput.value = value;
         } else if (key === 'resolution_wanted') {
             originalInput = document.createElement('select');
             modifiedInput = originalInput.cloneNode(true);
