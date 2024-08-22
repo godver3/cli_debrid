@@ -13,6 +13,7 @@ from datetime import datetime
 from web_server import start_server
 import signal
 from run_program import run_program, ProgramRunner
+import sys
 
 program_runner = None
 
@@ -180,11 +181,9 @@ def main_menu():
                 program_runner = run_program()
                 print("Program is running. Press Ctrl+C to stop and return to the menu.")
                 try:
-                    # This will block until the program is stopped
                     program_runner.start()
                 except KeyboardInterrupt:
-                    # This will be caught by our signal handler
-                    pass
+                    pass  # The signal handler will take care of this
                 finally:
                     program_runner = None
                 print("Returned to main menu.")
@@ -205,25 +204,17 @@ def signal_handler(signum, frame):
     global program_runner
     if program_runner:
         os.system('clear')
-        
         print("\nStopping the program...")
         program_runner.stop()
-        print("Program stopped. Returning to the main menu.")
+        print("Program stopped. Returning to main menu...")
+        program_runner = None
+        main_menu()  # Load the main menu directly
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-def wait_for_valid_key():
-    while True:
-        key_press = input()
-        if key_press == '':
-            break
-        else:
-            os.system('clear')
-            print("Press Enter to continue to Main Menu...")
-
 def main():
-
+    global program_runner
     # Ensure db_content directory exists
     if not os.path.exists('db_content'):
         os.makedirs('db_content')
@@ -231,21 +222,18 @@ def main():
 
     verify_database()
     os.system('clear')
-    # Display all settings
-    # display_settings()
     
-    # Check if required settings are in place
-    #errors = check_required_settings()
-    #if errors:
-        #print("Starting initial setup...")
-        #prompt_for_required_settings()
-
     # Check for the debug flag
     skip_menu = get_setting('Debug', 'skip_menu', False)
 
     if skip_menu:
         logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
-        run_program()
+        program_runner = run_program()
+        print("Program is running. Press Ctrl+C to stop and return to the main menu.")
+        try:
+            program_runner.start()
+        except KeyboardInterrupt:
+            pass  # The signal handler will take care of this
     else:
         print("Press Enter to continue to Main Menu...")
         input()
