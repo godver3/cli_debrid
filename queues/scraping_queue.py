@@ -1,11 +1,12 @@
 import logging
 from typing import Dict, Any, List
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from database import get_all_media_items, get_media_item_by_id
 from settings import get_setting
 from scraper.scraper import scrape
 from not_wanted_magnets import is_magnet_not_wanted
+from wake_count_manager import wake_count_manager
 
 class ScrapingQueue:
     def __init__(self):
@@ -150,7 +151,10 @@ class ScrapingQueue:
                 queue_manager.move_to_blacklisted(item, "Scraping")
         else:
             logging.warning(f"No results found for {item_identifier}. Moving to Sleeping queue.")
+            wake_count = wake_count_manager.get_wake_count(item['id'])
+            logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
             queue_manager.move_to_sleeping(item, "Scraping")
+            logging.debug(f"Updated wake count in Sleeping queue: {wake_count}")
             
     def is_item_old(self, item: Dict[str, Any]) -> bool:
         if 'release_date' not in item or item['release_date'] == 'Unknown':
@@ -178,8 +182,8 @@ class ScrapingQueue:
     @staticmethod
     def generate_identifier(item: Dict[str, Any]) -> str:
         if item['type'] == 'movie':
-            return f"movie_{item['title']}_{item['imdb_id']}_{item['version']}"
+            return f"movie_{item['title']}_{item['imdb_id']}_{'_'.join(item['version'].split())}"
         elif item['type'] == 'episode':
-            return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
+            return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{'_'.join(item['version'].split())}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")

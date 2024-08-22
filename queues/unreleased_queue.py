@@ -1,8 +1,8 @@
 import logging
 from typing import Dict, Any
-from datetime import datetime, date
+from datetime import datetime, timedelta
 
-from database import get_all_media_items, get_media_item_by_id
+from database import get_all_media_items, get_db_connection
 from settings import get_setting
 
 class UnreleasedQueue:
@@ -23,7 +23,7 @@ class UnreleasedQueue:
 
     def process(self, queue_manager):
         logging.debug(f"Processing unreleased queue. Items: {len(self.items)}")
-        current_date = date.today()
+        current_datetime = datetime.now()
         items_to_move = []
 
         for item in self.items:
@@ -36,13 +36,40 @@ class UnreleasedQueue:
 
             try:
                 release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                days_until_release = (release_date - current_date).days
+                
+                # Determine airtime offset based on content type
+                if item['type'] == 'movie':
+                    airtime_offset = int(get_setting("Queue", "movie_airtime_offset", "19"))
+                    airtime_cutoff = (datetime.combine(release_date, datetime.min.time()) + timedelta(hours=airtime_offset)).time()
+                elif item['type'] == 'episode':
+                    airtime_offset = int(get_setting("Queue", "episode_airtime_offset", "0"))
+                    
+                    # Get the airtime from the database
+                    conn = get_db_connection()
+                    cursor = conn.execute('SELECT airtime FROM media_items WHERE id = ?', (item['id'],))
+                    result = cursor.fetchone()
+                    conn.close()
 
-                if days_until_release <= 0:
+                    if result and result['airtime']:
+                        airtime_str = result['airtime']
+                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                    else:
+                        # Default to 19:00 if no airtime is set
+                        airtime = datetime.strptime("19:00", '%H:%M').time()
+
+                    # Apply the offset to the airtime
+                    airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(minutes=airtime_offset)).time()
+                else:
+                    airtime_cutoff = datetime.min.time()  # No delay for unknown types
+
+                release_datetime = datetime.combine(release_date, airtime_cutoff)
+
+                if current_datetime >= release_datetime:
                     logging.info(f"Item {item_identifier} is now released. Moving to Wanted queue.")
                     items_to_move.append(item)
                 else:
-                    logging.debug(f"Item {item_identifier} will be released in {days_until_release} days.")
+                    time_until_release = release_datetime - current_datetime
+                    logging.debug(f"Item {item_identifier} will be released in {time_until_release}.")
             except ValueError:
                 logging.error(f"Invalid release date format for item {item_identifier}: {release_date_str}")
 
@@ -53,22 +80,3 @@ class UnreleasedQueue:
 
         logging.debug(f"Unreleased queue processing complete. Items moved to Wanted queue: {len(items_to_move)}")
         logging.debug(f"Remaining items in Unreleased queue: {len(self.items)}")
-
-    def check_release_dates(self):
-        """
-        Check release dates of items in the Unreleased queue and return a list of items ready to be released.
-        """
-        current_date = date.today()
-        items_ready = []
-
-        for item in self.items:
-            release_date_str = item.get('release_date')
-            if release_date_str and release_date_str.lower() != 'unknown':
-                try:
-                    release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                    if release_date <= current_date:
-                        items_ready.append(item)
-                except ValueError:
-                    logging.error(f"Invalid release date format for item {item['id']}: {release_date_str}")
-
-        return items_ready
