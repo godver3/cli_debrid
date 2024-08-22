@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Debug Functions{% endblock %}
+
+{% block content %}
+<style>
+    .debug-container {
+        width: 100%;
+        max-width: none;
+        padding: 20px;
+        background-color: #444;
+        border-radius: 5px;
+    }
+
+    h2, h3 {
+        color: #f4f4f4;
+        margin-bottom: 20px;
+    }
+
+    form {
+        display: flex;
+        flex-direction: column;
+        max-width: 600px;
+        margin: 0;
+    }
+
+    label {
+        color: #f4f4f4;
+        margin-bottom: 5px;
+    }
+
+    input[type="text"] {
+        padding: 8px;
+        margin-bottom: 15px;
+        background-color: #555;
+        border: 1px solid #666;
+        color: #f4f4f4;
+        border-radius: 3px;
+    }
+
+    button {
+        background-color: #f44336;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background-color 0.3s;
+    }
+
+    button:hover {
+        background-color: #d32f2f;
+    }
+
+    .popup {
+        display: none;
+        position: fixed;
+        left: 50%;
+        top: 20px;
+        transform: translateX(-50%);
+        background-color: #4CAF50;
+        color: white;
+        padding: 15px;
+        border-radius: 5px;
+        z-index: 1000;
+    }
+
+    /* New styles for left alignment */
+    .form-group {
+        display: flex;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+
+    .form-group label {
+        width: 80px;
+        margin-bottom: 0;
+        margin-right: 10px;
+    }
+
+    .form-group input[type="text"] {
+        flex-grow: 1;
+        margin-bottom: 0;
+    }
+
+    .form-actions {
+        margin-left: 90px; /* Aligns with the input field */
+    }
+</style>
+
+<div class="debug-container">
+    <h2>Debug Functions</h2>
+
+    <h3>Bulk Delete from Database</h3>
+    <form action="{{ url_for('bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
+        <div class="form-group">
+            <label for="imdb_id">IMDB ID:</label>
+            <input type="text" id="imdb_id" name="imdb_id" required>
+        </div>
+        <div class="form-actions">
+            <button type="submit">Delete</button>
+        </div>
+    </form>
+</div>
+
+<div id="success-popup" class="popup"></div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.getElementById('bulk-delete-form');
+        const popup = document.getElementById('success-popup');
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(form);
+
+            fetch('{{ url_for('bulk_delete_by_imdb') }}', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showPopup(data.message);
+                    form.reset();
+                } else {
+                    showPopup(data.error, true);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showPopup('An error occurred', true);
+            });
+        });
+
+        function showPopup(message, isError = false) {
+            popup.textContent = message;
+            popup.style.backgroundColor = isError ? '#f44336' : '#4CAF50';
+            popup.style.display = 'block';
+            setTimeout(() => {
+                popup.style.display = 'none';
+            }, 3000);
+        }
+    });
+</script>
+{% endblock %}

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory
+from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash
 from flask_session import Session
 import threading
 import time
@@ -12,7 +12,7 @@ from debrid.real_debrid import add_to_real_debrid
 import re
 from datetime import datetime, timedelta
 import sqlite3
-from database import get_db_connection, get_collected_counts, remove_from_media_items
+from database import get_db_connection, get_collected_counts, remove_from_media_items, bulk_delete_by_imdb_id
 import string
 from settings_web import get_settings_page, update_settings, get_settings
 from template_utils import render_settings, render_content_sources
@@ -1183,6 +1183,22 @@ def update_program_state():
 def program_status():
     status = "Running" if current_app.config.get('PROGRAM_RUNNING', False) else "Initialized"
     return jsonify({"status": status})
+
+@app.route('/debug_functions')
+def debug_functions():
+    return render_template('debug_functions.html')
+
+@app.route('/bulk_delete_by_imdb', methods=['POST'])
+def bulk_delete_by_imdb():
+    imdb_id = request.form.get('imdb_id')
+    if not imdb_id:
+        return jsonify({'success': False, 'error': 'IMDB ID is required'})
+
+    deleted_count = bulk_delete_by_imdb_id(imdb_id)
+    if deleted_count > 0:
+        return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with IMDB ID: {imdb_id}'})
+    else:
+        return jsonify({'success': False, 'error': f'No items found with IMDB ID: {imdb_id}'})
 
 if __name__ == '__main__':
     start_server()
