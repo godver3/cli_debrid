@@ -159,6 +159,19 @@
     background-color: #45a049;
 }
 
+.settings-submit-button:disabled,
+.add-scraper-link:disabled,
+.add-version-link:disabled,
+.add-source-link:disabled,
+.delete-scraper-btn:disabled,
+.delete-version-btn:disabled,
+.duplicate-version-btn:disabled,
+.delete-source-btn:disabled {
+    background-color: #cccccc;
+    color: #666666;
+    cursor: not-allowed;
+}
+
 /* Dark mode styles */
 body.dark-mode .settings-section {
     background-color: #222;
@@ -472,4 +485,22 @@ body.dark-mode .settings-description {
 
 .add-filter:hover {
     background-color: #45a049;
+}
+
+.start-program {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.stop-program {
+    background-color: #f44336;
+    color: white;
+}
+
+.start-program:hover {
+    background-color: #45a049;
+}
+
+.stop-program:hover {
+    background-color: #d32f2f;
 }

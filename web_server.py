@@ -1181,8 +1181,9 @@ def update_program_state():
 
 @app.route('/api/program_status', methods=['GET'])
 def program_status():
-    status = "Running" if current_app.config.get('PROGRAM_RUNNING', False) else "Initialized"
-    return jsonify({"status": status})
+    global program_runner
+    is_running = program_runner.is_running() if program_runner else False
+    return jsonify({"running": is_running})
 
 @app.route('/debug_functions')
 def debug_functions():
