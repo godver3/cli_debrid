@@ -757,12 +757,12 @@ def queues():
         elif queue_name == 'Checking':
             for item in items:
                 item['time_added'] = item.get('time_added', datetime.now())
+                item['filled_by_file'] = item.get('filled_by_file', 'Unknown')  # Add this line
         elif queue_name == 'Sleeping':
             for item in items:
-                item['wake_count'] = queue_manager.get_wake_count(item['id'])  # Use the new get_wake_count method
+                item['wake_count'] = queue_manager.get_wake_count(item['id'])
 
     upgrading_queue = queue_contents.get('Upgrading', [])
-    #logging.info(f"Rendering queues page. UpgradingQueue size: {len(upgrading_queue)}")
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
 
 @app.route('/api/queue_contents')
