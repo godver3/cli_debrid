@@ -48,9 +48,11 @@ class QueueManager:
     @staticmethod
     def generate_identifier(item: Dict[str, Any]) -> str:
         if item['type'] == 'movie':
-            return f"movie_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
+            return f"movie_{item.get('title', 'Unknown')}_{item.get('imdb_id', 'Unknown')}_{item.get('version', 'Unknown')}"
         elif item['type'] == 'episode':
-            return f"episode_{item['title']}_{item['imdb_id']}_{item['version']}"
+            season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else "S00"
+            episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else "E00"
+            return f"episode_{item.get('title', 'Unknown')}_{item.get('imdb_id', 'Unknown')}_{season}{episode}_{item.get('version', 'Unknown')}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
 

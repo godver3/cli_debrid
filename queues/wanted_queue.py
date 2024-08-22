@@ -38,6 +38,7 @@ class WantedQueue:
         
         # Process each item in the Wanted queue
         for item in list(self.items):
+            logging.debug(f"Processing item in Wanted queue: {item}")
             item_identifier = queue_manager.generate_identifier(item)
             try:
                 # Determine airtime offset based on content type

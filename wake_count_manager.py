@@ -24,7 +24,7 @@ class WakeCountManager:
 
     def get_wake_count(self, item_id):
         count = self.wake_counts.get(item_id, 0)
-        logging.debug(f"Retrieved wake count for item {item_id}: {count}")
+        #logging.debug(f"Retrieved wake count for item {item_id}: {count}")
         return count
 
     def increment_wake_count(self, item_id):
@@ -32,12 +32,12 @@ class WakeCountManager:
         new_count = old_count + 1
         self.wake_counts[item_id] = new_count
         self.save_wake_counts()
-        logging.debug(f"Incremented wake count for item {item_id}. Old count: {old_count}, New count: {new_count}")
+        #logging.debug(f"Incremented wake count for item {item_id}. Old count: {old_count}, New count: {new_count}")
         return new_count
 
     def set_wake_count(self, item_id, count):
         self.wake_counts[item_id] = count
         self.save_wake_counts()
-        logging.debug(f"Set wake count for item {item_id} to {count}")
+        #logging.debug(f"Set wake count for item {item_id} to {count}")
 
 wake_count_manager = WakeCountManager()
