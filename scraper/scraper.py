@@ -407,32 +407,40 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Existing logic for year, season, and episode matching
     year_match = 5 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
-    season_match = 5 if query_season == torrent_season else 0
-    episode_match = 5 if query_episode == torrent_episode else 0
-
-    # Multi-pack handling
-    season_pack = result.get('season_pack', 'Unknown')
-    is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
     
-    if is_multi_pack:
-        if season_pack == 'Complete':
-            num_items = 100  # Assign a high value for complete series
-        else:
-            num_items = len(season_pack.split(','))
-        
-        is_queried_season_pack = str(query_season) in season_pack.split(',')
+    # Only apply season and episode matching for TV shows
+    if content_type.lower() == 'episode':
+        season_match = 5 if query_season == torrent_season else 0
+        episode_match = 5 if query_episode == torrent_episode else 0
     else:
-        num_items = 1
-        is_queried_season_pack = False
+        season_match = 0
+        episode_match = 0
 
-    # Apply a bonus for multi-packs when requested, scaled by the number of items
-    MULTI_PACK_BONUS = 20  # Base bonus
-    multi_pack_score = (50 + (MULTI_PACK_BONUS * num_items)) if multi and is_queried_season_pack else 0
+    # Multi-pack handling (only for TV shows)
+    multi_pack_score = 0
+    single_episode_score = 0
+    if content_type.lower() == 'episode':
+        season_pack = result.get('season_pack', 'Unknown')
+        is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
+        
+        if is_multi_pack:
+            if season_pack == 'Complete':
+                num_items = 100  # Assign a high value for complete series
+            else:
+                num_items = len(season_pack.split(','))
+            
+            is_queried_season_pack = str(query_season) in season_pack.split(',')
+        else:
+            num_items = 1
+            is_queried_season_pack = False
 
-    # Penalize multi-packs when looking for single episodes
-    SINGLE_EPISODE_PENALTY = -25
-    single_episode_score = SINGLE_EPISODE_PENALTY if not multi and is_multi_pack and query_episode is not None else 0
+        # Apply a bonus for multi-packs when requested, scaled by the number of items
+        MULTI_PACK_BONUS = 20  # Base bonus
+        multi_pack_score = (50 + (MULTI_PACK_BONUS * num_items)) if multi and is_queried_season_pack else 0
 
+        # Penalize multi-packs when looking for single episodes
+        SINGLE_EPISODE_PENALTY = -25
+        single_episode_score = SINGLE_EPISODE_PENALTY if not multi and is_multi_pack and query_episode is not None else 0
 
     # Implement preferred filtering logic
     preferred_filter_score = 0
@@ -512,8 +520,8 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'total_score': round(total_score, 2)
     }
     # Add multi-pack information to the score breakdown
-    score_breakdown['is_multi_pack'] = is_multi_pack
-    score_breakdown['num_items'] = num_items
+    score_breakdown['is_multi_pack'] = is_multi_pack if content_type.lower() == 'episode' else False
+    score_breakdown['num_items'] = num_items if content_type.lower() == 'episode' else 1
     score_breakdown['multi_pack_score'] = multi_pack_score
     score_breakdown['single_episode_score'] = single_episode_score
 
