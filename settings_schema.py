@@ -77,12 +77,12 @@ SETTINGS_SCHEMA = {
         "movie_airtime_offset": {
             "type": "string",
             "description": "Hours after midnight to start scraping for new movies",
-            "default": "19"
+            "default": "0"
         },
         "episode_airtime_offset": {
             "type": "string",
-            "description": "Offset from the show's airtime to start scraping for new episodes. Positive values are to delay scraping, negative values are to scrape early.",
-            "default": "19"
+            "description": "Offset from the show's airtime to start scraping for new episodes. Positive values are to delay scraping, negative values are to scrape early. Requires Trakt login for accurate airtime, otherwise default of 19:00 will be used.",
+            "default": "0"
         }
     },
     "Scraping": {
