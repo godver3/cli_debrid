@@ -96,8 +96,8 @@ def get_collected_from_plex(request='all'):
         movie_libraries = [lib.strip() for lib in get_setting('Plex', 'movie_libraries', '').split(',') if lib.strip()]
         show_libraries = [lib.strip() for lib in get_setting('Plex', 'shows_libraries', '').split(',') if lib.strip()]
         
-        logging.debug(f"Plex URL: {plex_url}")
-        logging.debug(f"Plex token: {plex_token}")
+        #logging.debug(f"Plex URL: {plex_url}")
+        #logging.debug(f"Plex token: {plex_token}")
         logging.debug(f"Movie libraries: {movie_libraries}")
         logging.debug(f"TV Show libraries: {show_libraries}")
         
