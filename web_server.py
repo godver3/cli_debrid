@@ -124,6 +124,46 @@ def get_upcoming_releases():
     
     return formatted_results
 
+def get_recently_aired_and_airing_soon():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now()
+    two_days_ago = now - timedelta(days=2)
+    
+    query = """
+    SELECT DISTINCT title, season_number, episode_number, release_date, airtime
+    FROM media_items
+    WHERE type = 'episode' AND release_date >= ? AND release_date <= ?
+    ORDER BY release_date, airtime
+    """
+    
+    cursor.execute(query, (two_days_ago.date().isoformat(), (now + timedelta(days=1)).date().isoformat()))
+    results = cursor.fetchall()
+    
+    conn.close()
+    
+    recently_aired = []
+    airing_soon = []
+    
+    for result in results:
+        title, season, episode, release_date, airtime = result
+        air_datetime = datetime.combine(datetime.fromisoformat(release_date), datetime.strptime(airtime, '%H:%M').time())
+        
+        item = {
+            'title': title,
+            'season': season,
+            'episode': episode,
+            'air_datetime': air_datetime
+        }
+        
+        if air_datetime <= now:
+            recently_aired.append(item)
+        else:
+            airing_soon.append(item)
+    
+    return recently_aired, airing_soon
+
 def get_trakt_config():
     if os.path.exists(TRAKT_CONFIG_PATH):
         with open(TRAKT_CONFIG_PATH, 'r') as f:
@@ -438,21 +478,22 @@ def add_torrent_to_real_debrid():
 def statistics():
     uptime = int(time.time() - start_time)
     collected_counts = get_collected_counts()
-    airing_soon = get_airing_soon()
+    recently_aired, airing_soon = get_recently_aired_and_airing_soon()
     upcoming_releases = get_upcoming_releases()
-    today = datetime.now().date()
-    tomorrow = today + timedelta(days=1)
+    now = datetime.now()
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],
         'total_shows': collected_counts['total_shows'],
         'total_episodes': collected_counts['total_episodes'],
+        'recently_aired': recently_aired,
         'airing_soon': airing_soon,
         'upcoming_releases': upcoming_releases,
-        'today': today.isoformat(),
-        'tomorrow': tomorrow.isoformat()
+        'today': now.date(),
+        'yesterday': (now - timedelta(days=1)).date(),
+        'tomorrow': (now + timedelta(days=1)).date()
     }
-    return render_template('statistics.html', stats=stats, datetime=datetime)
+    return render_template('statistics.html', stats=stats)
 
 @app.route('/scraper', methods=['GET', 'POST'])
 def scraper():
