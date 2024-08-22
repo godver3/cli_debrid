@@ -240,27 +240,23 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
                     # Try to get runtime from TMDB API first
                     tmdb_api_key = get_setting('TMDB', 'api_key')
                     if tmdb_api_key:
-                        first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
-                        if first_season:
-                            season_info = get_tmdb_season_info(item['tmdb_id'], first_season['seasonNumber'], tmdb_api_key)
-                            if season_info and season_info.get('episodes'):
-                                item['runtime'] = season_info['episodes'][0].get('runtime', 30)
-                            else:
-                                item['runtime'] = 30
-                        else:
-                            item['runtime'] = 30
-                    else:
-                        # Fallback to Overseerr data if TMDB API key is not available
-                        if seasons:
+                        try:
                             first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
                             if first_season:
-                                season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], first_season['seasonNumber'], cookies)
-                                first_episode = season_details.get('episodes', [{}])[0]
-                                item['runtime'] = first_episode.get('runtime', 30)
+                                season_info = get_tmdb_season_info(item['tmdb_id'], first_season['seasonNumber'], tmdb_api_key)
+                                if season_info and season_info.get('episodes'):
+                                    item['runtime'] = season_info['episodes'][0].get('runtime', 30)
+                                else:
+                                    raise Exception("Failed to get episode runtime from TMDB")
                             else:
-                                item['runtime'] = 30
-                        else:
-                            item['runtime'] = 30
+                                raise Exception("No valid season found")
+                        except Exception as e:
+                            logging.warning(f"Error fetching TMDB data: {str(e)}. Falling back to Overseerr data.")
+                            # Fall back to Overseerr data
+                            item['runtime'] = get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+                    else:
+                        # Use Overseerr data if TMDB API key is not available
+                        item['runtime'] = get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
                 else:
                     logging.warning(f"Could not fetch details for TV show: {item['title']}")
                     item['episode_count'] = 1
@@ -277,6 +273,15 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
             processed_items.append(item)
 
     return processed_items
+
+def get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, tmdb_id, cookies):
+    if seasons:
+        first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
+        if first_season:
+            season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, first_season['seasonNumber'], cookies)
+            first_episode = season_details.get('episodes', [{}])[0]
+            return first_episode.get('runtime', 30)
+    return 30  # Default runtime if no data is available
 
 def parse_size(size):
     if isinstance(size, (int, float)):
