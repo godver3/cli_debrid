@@ -43,7 +43,7 @@ class ProgramRunner:
             'wanted': 5,
             'scraping': 5,
             'adding': 5,
-            'checking': 300,
+            'checking': 300, #300
             'sleeping': 900,
             'unreleased': 3600,
             'blacklisted': 3600,

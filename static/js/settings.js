@@ -13,8 +13,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const lastActiveTab = localStorage.getItem('currentTab') || 'required';
     openTab(lastActiveTab);
 
-    checkProgramStatus();
-    setInterval(checkProgramStatus, 5000); // Check every 5 seconds
+    // Only initialize program status check on the settings page
+    if (document.querySelector('.settings-container')) {
+        checkProgramStatus();
+        setInterval(checkProgramStatus, 5000); // Check every 5 seconds
+    }
 
     debugDOMStructure();
 });
@@ -80,18 +83,7 @@ function checkProgramStatus() {
             }
 
             // Update Start/Stop Program button
-            const startStopButton = document.getElementById('startStopProgramButton');
-            if (startStopButton) {
-                if (isRunning) {
-                    startStopButton.textContent = 'Stop Program';
-                    startStopButton.classList.remove('start-program');
-                    startStopButton.classList.add('stop-program');
-                } else {
-                    startStopButton.textContent = 'Start Program';
-                    startStopButton.classList.remove('stop-program');
-                    startStopButton.classList.add('start-program');
-                }
-            }
+            updateProgramControlButton(isRunning);
         });
 }
 
