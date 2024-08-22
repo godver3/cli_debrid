@@ -19,21 +19,6 @@ function loadDarkModePreference() {
     document.body.classList.add('dark-mode');
 }
 
-function updateStats() {
-    fetch('/api/stats')
-        .then(response => response.json())
-        .then(data => {
-            document.getElementById('total-processed').textContent = data.total_processed;
-            document.getElementById('successful-additions').textContent = data.successful_additions;
-            document.getElementById('failed-additions').textContent = data.failed_additions;
-            let uptime = Math.floor(data.uptime);
-            let days = Math.floor(uptime / 86400);
-            let hours = Math.floor((uptime % 86400) / 3600);
-            let minutes = Math.floor((uptime % 3600) / 60);
-            document.getElementById('uptime').textContent = `${days} days, ${hours} hours, ${minutes} minutes`;
-        });
-}
-
 function updateLogs() {
     fetch('/api/logs')
         .then(response => response.json())
@@ -184,9 +169,7 @@ function generateBlacklistedItems(items) {
 }
 
 function refreshCurrentPage() {
-    if (window.location.pathname === '/statistics' || window.location.pathname === '/') {
-        updateStats();
-    } else if (window.location.pathname === '/queues') {
+    if (window.location.pathname === '/queues') {
         updateQueueContents();
     } else if (window.location.pathname === '/logs') {
         updateLogs();
@@ -701,9 +684,12 @@ document.addEventListener('DOMContentLoaded', function() {
     responsiveLayout();
 
     // Close the overlay when the close button is clicked
-    document.querySelector('.close-btn').onclick = function() {
-        document.getElementById('overlay').style.display = 'none';
-    };
+    const closeButton = document.querySelector('.close-btn');
+    if (closeButton) {
+        closeButton.onclick = function() {
+            document.getElementById('overlay').style.display = 'none';
+        };
+    }
 
     loadDarkModePreference();
     

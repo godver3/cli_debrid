@@ -69,6 +69,7 @@ scraper_framework.py
 upgrading_simulation.py
 sampling.sh
 bk*
+*bk
 dev-update.sh
 helper*
 sampling.sh
