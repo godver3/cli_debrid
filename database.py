@@ -1022,3 +1022,17 @@ def get_collected_counts():
         return {'total_movies': 0, 'total_shows': 0, 'total_episodes': 0}
     finally:
         conn.close()
+
+def bulk_delete_by_imdb_id(imdb_id):
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM media_items WHERE imdb_id = ?', (imdb_id,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
+    except Exception as e:
+        logging.error(f"Error bulk deleting items with IMDB ID {imdb_id}: {str(e)}")
+        return 0
+    finally:
+        conn.close()
