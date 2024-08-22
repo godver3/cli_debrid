@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function updateButtonState(status) {
         if (status === 'Running') {
-            controlButton.textContent = 'Reset Program';
+            controlButton.textContent = 'Stop Program';
             controlButton.setAttribute('data-status', 'Running');
         } else {
             controlButton.textContent = 'Start Program';
