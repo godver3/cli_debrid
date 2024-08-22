@@ -10,7 +10,7 @@ from collections import OrderedDict
 from web_scraper import web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection, get_available_versions
 from debrid.real_debrid import add_to_real_debrid
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import sqlite3
 from database import get_db_connection, get_collected_counts
 import string
@@ -31,6 +31,8 @@ from scraper.scraper import scrape
 from utilities.manual_scrape import search_overseerr, get_details
 from settings import get_all_settings
 import string
+from itertools import groupby
+from operator import itemgetter
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -54,6 +56,58 @@ failed_additions = 0
 
 CONFIG_FILE = './config/config.json'
 TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+
+def get_airing_soon():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    today = datetime.now().date()
+    tomorrow = today + timedelta(days=1)
+    
+    query = """
+    SELECT title, release_date, airtime
+    FROM media_items
+    WHERE type = 'episode' AND release_date BETWEEN ? AND ?
+    ORDER BY release_date, airtime
+    """
+    
+    cursor.execute(query, (today.isoformat(), tomorrow.isoformat()))
+    results = cursor.fetchall()
+    
+    conn.close()
+    
+    # Group by title and take the earliest air date/time for each show
+    grouped_results = []
+    for key, group in groupby(results, key=itemgetter(0)):
+        group_list = list(group)
+        grouped_results.append({
+            'title': key,
+            'air_date': group_list[0][1],
+            'air_time': group_list[0][2]
+        })
+    
+    return grouped_results
+
+def get_upcoming_releases():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    today = datetime.now().date()
+    next_week = today + timedelta(days=7)
+    
+    query = """
+    SELECT title, release_date
+    FROM media_items
+    WHERE type = 'movie' AND release_date BETWEEN ? AND ?
+    ORDER BY release_date
+    """
+    
+    cursor.execute(query, (today.isoformat(), next_week.isoformat()))
+    results = cursor.fetchall()
+    
+    conn.close()
+    
+    return [{'title': r[0], 'release_date': r[1]} for r in results]
 
 def get_trakt_config():
     if os.path.exists(TRAKT_CONFIG_PATH):
@@ -354,13 +408,17 @@ def add_torrent_to_real_debrid():
 def statistics():
     uptime = int(time.time() - start_time)
     collected_counts = get_collected_counts()
+    airing_soon = get_airing_soon()
+    upcoming_releases = get_upcoming_releases()
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],
         'total_shows': collected_counts['total_shows'],
-        'total_episodes': collected_counts['total_episodes']
+        'total_episodes': collected_counts['total_episodes'],
+        'airing_soon': airing_soon,
+        'upcoming_releases': upcoming_releases
     }
-    return render_template('statistics.html', stats=stats)
+    return render_template('statistics.html', stats=stats, datetime=datetime)
 
 @app.route('/scraper', methods=['GET', 'POST'])
 def scraper():
