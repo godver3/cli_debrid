@@ -479,17 +479,19 @@ def get_all_season_episode_counts(overseerr_url: str, overseerr_api_key: str, tm
     logging.debug(f"Episode counts for TMDB ID {tmdb_id}: {episode_counts}")
     return episode_counts
 
-def get_show_airtime_by_imdb_id(imdb_id: str) -> Optional[str]:
+def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
     """
     Get the airtime of a show using its IMDb ID.
     
     :param imdb_id: IMDb ID of the show
-    :return: Airtime as a string (e.g., "22:00") or None if not available
+    :return: Airtime as a string (e.g., "22:00"), or "19:00" if not available or user isn't logged into Trakt
     """
+    DEFAULT_AIRTIME = "19:00"
+
     headers = get_trakt_headers()
     if not headers:
-        logging.error("Failed to obtain Trakt headers")
-        return None
+        logging.warning("Failed to obtain Trakt headers. Using default airtime.")
+        return DEFAULT_AIRTIME
 
     # First, search for the show using the IMDb ID
     search_url = f"{TRAKT_API_URL}/search/imdb/{imdb_id}?type=show"
@@ -499,8 +501,8 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> Optional[str]:
         search_results = response.json()
         
         if not search_results:
-            logging.warning(f"No show found for IMDb ID: {imdb_id}")
-            return None
+            logging.warning(f"No show found for IMDb ID: {imdb_id}. Using default airtime.")
+            return DEFAULT_AIRTIME
         
         # Get the Trakt ID of the show
         trakt_id = search_results[0]['show']['ids']['trakt']
@@ -515,9 +517,9 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> Optional[str]:
         if 'airs' in show_data and 'time' in show_data['airs']:
             return show_data['airs']['time']
         else:
-            logging.warning(f"No airtime found for show with IMDb ID: {imdb_id}")
-            return None
+            logging.warning(f"No airtime found for show with IMDb ID: {imdb_id}. Using default airtime.")
+            return DEFAULT_AIRTIME
     
     except requests.RequestException as e:
-        logging.error(f"Error fetching show data from Trakt: {e}")
-        return None
+        logging.error(f"Error fetching show data from Trakt: {e}. Using default airtime.")
+        return DEFAULT_AIRTIME
