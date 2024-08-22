@@ -76,4 +76,4 @@ sampling.sh
 test.py
 utilities/nohup.out
 flask_session
-
+*.lock
