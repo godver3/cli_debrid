@@ -11,6 +11,7 @@ from queues.checking_queue import CheckingQueue
 from queues.sleeping_queue import SleepingQueue
 from queues.unreleased_queue import UnreleasedQueue
 from queues.blacklisted_queue import BlacklistedQueue
+from wake_count_manager import wake_count_manager
 
 class QueueManager:
     _instance = None
@@ -47,9 +48,9 @@ class QueueManager:
     @staticmethod
     def generate_identifier(item: Dict[str, Any]) -> str:
         if item['type'] == 'movie':
-            return f"movie_{item['title']}_{item['imdb_id']}_{item['version']}"
+            return f"movie_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
         elif item['type'] == 'episode':
-            return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
+            return f"episode_{item['title']}_{item['imdb_id']}_{item['version']}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
 
@@ -78,12 +79,6 @@ class QueueManager:
     def process_sleeping(self):
         self.queues["Sleeping"].process(self)
         
-    def get_wake_count(self, item_id):
-        return self.queues["Sleeping"].get_wake_count(item_id)
-
-    def increment_wake_count(self, item_id):
-        self.queues["Sleeping"].increment_wake_count(item_id)
-        
     def process_blacklisted(self):
         self.queues["Blacklisted"].process(self)
 
@@ -95,27 +90,22 @@ class QueueManager:
         self.queues["Blacklisted"].blacklist_old_season_items(item, self)
         self.queues[from_queue].remove_item(item)
 
-    def move_to_wanted(self, item: Dict[str, Any], from_queue: str, hybrid_flag: str = None):
+    def move_to_wanted(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Wanted queue")
         
-        # If hybrid_flag is provided, include it in the database update
-        if hybrid_flag:
-            update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None, hybrid_flag=hybrid_flag)
-        else:
-            update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None)
+        wake_count = wake_count_manager.get_wake_count(item['id'])
+        logging.debug(f"Wake count before moving to Wanted: {wake_count}")
+        
+        update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None)
         
         wanted_item = get_media_item_by_id(item['id'])
         if wanted_item:
             wanted_item_identifier = self.generate_identifier(wanted_item)
             
-            # If hybrid_flag is provided, add it to the item before adding to the queue
-            if hybrid_flag:
-                wanted_item['hybrid_flag'] = hybrid_flag
-            
             self.queues["Wanted"].add_item(wanted_item)
             self.queues[from_queue].remove_item(item)
-            logging.debug(f"Successfully moved item {wanted_item_identifier} to Wanted queue")
+            logging.debug(f"Successfully moved item {wanted_item_identifier} to Wanted queue (Wake count: {wake_count})")
         else:
             logging.error(f"Failed to retrieve wanted item for ID: {item['id']}")
 
@@ -176,12 +166,16 @@ class QueueManager:
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Sleeping queue")
+        
+        wake_count = wake_count_manager.get_wake_count(item['id'])
+        logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
+        
         update_media_item_state(item['id'], 'Sleeping')
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
             self.queues["Sleeping"].add_item(updated_item)
             self.queues[from_queue].remove_item(item)
-            logging.debug(f"Successfully moved item {item_identifier} to Sleeping queue")
+            logging.debug(f"Successfully moved item {item_identifier} to Sleeping queue (Wake count: {wake_count})")
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
@@ -208,5 +202,8 @@ class QueueManager:
             logging.debug(f"Successfully moved item {item_identifier} to Blacklisted queue")
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+
+    def get_wake_count(self, item_id):
+        return wake_count_manager.get_wake_count(item_id)
 
     # Add other methods as needed

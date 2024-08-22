@@ -84,36 +84,33 @@ class WantedQueue:
 
                 logging.debug(f"Item: {item_identifier}, Release date: {release_date}, Current date: {current_date}")
 
-                if release_date > current_date:
+                # Calculate the release datetime with airtime offset
+                release_datetime = datetime.combine(release_date, airtime_cutoff)
+                current_datetime = datetime.now()
+
+                if current_datetime < release_datetime:
                     logging.info(f"Item {item_identifier} is not released yet. Moving to Unreleased state.")
                     items_to_unreleased.append(item)
-                else:
-                    # Calculate the release datetime with airtime offset
-                    release_datetime = datetime.combine(release_date, airtime_cutoff)
-                    current_datetime = datetime.combine(current_date, current_time)
-
-                    if current_datetime < release_datetime:
-                        logging.debug(f"Current datetime {current_datetime} is before the release datetime {release_datetime}. Deferring scraping for {item_identifier}.")
+                    continue
+                
+                # Check if we've reached the scraping cap
+                scraping_cap = int(get_setting("Queue", "scraping_cap", 5))
+                current_scraping_count = len(queue_manager.queues["Scraping"].get_contents()) + len(items_to_move)
+                logging.debug(f"Current scraping count: {current_scraping_count}, Scraping cap: {scraping_cap}")
+                if current_scraping_count >= scraping_cap:
+                    logging.debug(f"Scraping cap reached. Keeping {item_identifier} in Wanted queue.")
+                    break  # Exit the loop as we've reached the cap
+                
+                # Check if we're already processing an item from this season
+                if item['type'] == 'episode':
+                    season_key = (item['imdb_id'], item['season_number'], item['version'])
+                    if season_key in seasons_in_queues:
+                        logging.debug(f"Already processing an item from {item_identifier}. Keeping in Wanted queue.")
                         continue
-                    
-                    # Check if we've reached the scraping cap
-                    scraping_cap = int(get_setting("Queue", "scraping_cap", 5))
-                    current_scraping_count = len(queue_manager.queues["Scraping"].get_contents()) + len(items_to_move)
-                    logging.debug(f"Current scraping count: {current_scraping_count}, Scraping cap: {scraping_cap}")
-                    if current_scraping_count >= scraping_cap:
-                        logging.debug(f"Scraping cap reached. Keeping {item_identifier} in Wanted queue.")
-                        break  # Exit the loop as we've reached the cap
-                    
-                    # Check if we're already processing an item from this season
-                    if item['type'] == 'episode':
-                        season_key = (item['imdb_id'], item['season_number'], item['version'])
-                        if season_key in seasons_in_queues:
-                            logging.debug(f"Already processing an item from {item_identifier}. Keeping in Wanted queue.")
-                            continue
-                    logging.info(f"Item {item_identifier} has been released and meets airtime offset. Marking for move to Scraping.")
-                    items_to_move.append(item)
-                    if item['type'] == 'episode':
-                        seasons_in_queues.add(season_key)
+                logging.info(f"Item {item_identifier} has been released and meets airtime offset. Marking for move to Scraping.")
+                items_to_move.append(item)
+                if item['type'] == 'episode':
+                    seasons_in_queues.add(season_key)
             except Exception as e:
                 logging.error(f"Unexpected error processing item {item_identifier}: {str(e)}", exc_info=True)
                 logging.error(f"Item details: {item}")
