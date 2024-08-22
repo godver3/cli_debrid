@@ -33,8 +33,16 @@
             <ul>
             {% for item in stats.upcoming_releases %}
                 <li style="color: #FFA500;">
-                    {{ item.title }} - 
-                    <span class="release-date" style="color: #f4f4f4;">{{ item.release_date }}</span>
+                    {{ item.titles|join(', ') }} - 
+                    <span class="release-date" style="color: #f4f4f4;">
+                        {% if item.release_date == stats.today %}
+                            Today
+                        {% elif item.release_date == stats.tomorrow %}
+                            Tomorrow
+                        {% else %}
+                            {{ item.release_date }}
+                        {% endif %}
+                    </span>
                 </li>
             {% endfor %}
             </ul>

@@ -98,10 +98,10 @@ def get_upcoming_releases():
     next_week = today + timedelta(days=7)
     
     query = """
-    SELECT title, release_date
+    SELECT DISTINCT title, release_date
     FROM media_items
     WHERE type = 'movie' AND release_date BETWEEN ? AND ?
-    ORDER BY release_date
+    ORDER BY release_date, title
     """
     
     cursor.execute(query, (today.isoformat(), next_week.isoformat()))
@@ -109,7 +109,20 @@ def get_upcoming_releases():
     
     conn.close()
     
-    return [{'title': r[0], 'release_date': r[1]} for r in results]
+    # Group by release date
+    grouped_results = {}
+    for title, release_date in results:
+        if release_date not in grouped_results:
+            grouped_results[release_date] = set()
+        grouped_results[release_date].add(title)
+    
+    # Format the results
+    formatted_results = [
+        {'titles': list(titles), 'release_date': date}
+        for date, titles in grouped_results.items()
+    ]
+    
+    return formatted_results
 
 def get_trakt_config():
     if os.path.exists(TRAKT_CONFIG_PATH):
@@ -427,13 +440,17 @@ def statistics():
     collected_counts = get_collected_counts()
     airing_soon = get_airing_soon()
     upcoming_releases = get_upcoming_releases()
+    today = datetime.now().date()
+    tomorrow = today + timedelta(days=1)
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],
         'total_shows': collected_counts['total_shows'],
         'total_episodes': collected_counts['total_episodes'],
         'airing_soon': airing_soon,
-        'upcoming_releases': upcoming_releases
+        'upcoming_releases': upcoming_releases,
+        'today': today.isoformat(),
+        'tomorrow': tomorrow.isoformat()
     }
     return render_template('statistics.html', stats=stats, datetime=datetime)
 
