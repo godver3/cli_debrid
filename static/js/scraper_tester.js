@@ -583,7 +583,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function displayScoreBreakdown(result) {
         const scoreBreakdown = document.getElementById('score-breakdown');
         scoreBreakdown.innerHTML = '<h3 class="score-breakdown-title">Score Breakdown</h3>';
-    
+        scoreBreakdown.className = 'settings-section score-breakdown-container';
+
         if (result.score_breakdown) {
             const breakdownList = document.createElement('ul');
             breakdownList.className = 'score-breakdown-list';
@@ -600,6 +601,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         const subList = document.createElement('ul');
                         for (const [subKey, subValue] of Object.entries(value)) {
                             const subItem = document.createElement('li');
+                            subItem.className = 'score-breakdown-subitem';
                             subItem.innerHTML = `<strong>${subKey}:</strong> ${formatValue(subValue)}`;
                             subList.appendChild(subItem);
                         }
@@ -616,6 +618,11 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             scoreBreakdown.innerHTML += '<p>No score breakdown available.</p>';
         }
+
+        // Remove any existing click event listeners from result items
+        document.querySelectorAll('.result-item').forEach(item => {
+            item.removeEventListener('click', item.scoreBreakdownClickHandler);
+        });
     }
     
     function formatValue(value) {
