@@ -1043,6 +1043,10 @@ def get_version_settings_route():
         if not version_settings:
             return jsonify({'error': f'No settings found for version: {version}'}), 404
         
+        # Ensure max_resolution is included in the settings
+        if 'max_resolution' not in version_settings:
+            version_settings['max_resolution'] = '1080p'  # or whatever the default should be
+        
         return jsonify({version: version_settings})
     except Exception as e:
         app.logger.error(f"Error in get_version_settings: {str(e)}", exc_info=True)
