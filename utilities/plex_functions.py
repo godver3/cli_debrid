@@ -1,6 +1,7 @@
 from plexapi.server import PlexServer
 import sys, os
 import logging
+from typing import Optional
 from datetime import datetime, timedelta
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from settings import get_setting
@@ -13,6 +14,27 @@ def get_guid(media, guid_type='imdb'):
                 return guid.id.split('://')[1]
             except IndexError:
                 logging.error(f"Error parsing GUID: {guid.id}")
+    return None
+
+def parse_date(date_str: Optional[str]) -> Optional[datetime]:
+    if date_str is None:
+        return None
+
+    date_formats = [
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",  # Add this new format
+    ]
+
+    for date_format in date_formats:
+        try:
+            return datetime.strptime(date_str, date_format)
+        except (ValueError, TypeError):
+            continue
+
+    logging.warning(f"Unable to parse date: {date_str}")
     return None
 
 def process_movie(movie, collected_content, missing_guid_items):
@@ -31,13 +53,16 @@ def process_movie(movie, collected_content, missing_guid_items):
 
         logging.debug(f"Collected movie: {movie.title}, IMDb: {imdb_id}, TMDb: {tmdb_id}")
         
-        # Create a base movie entry
+        release_date = parse_date(str(movie.originallyAvailableAt))
+        formatted_release_date = release_date.strftime("%Y-%m-%d") if release_date else None
+        
         base_movie_entry = {
             'imdb_id': imdb_id,
             'tmdb_id': tmdb_id,
             'title': movie.title,
             'year': movie.year,
             'addedAt': movie.addedAt,
+            'release_date': formatted_release_date
         }
         
         # Add an entry for each location
@@ -65,6 +90,10 @@ def process_episode(show, episode, collected_content, missing_guid_items):
             logging.warning(f"Skipping episode without valid show IMDb or TMDb ID: {episode.title} from show {show.title}")
             return
 
+
+        release_date = parse_date(str(episode.originallyAvailableAt))
+        formatted_release_date = release_date.strftime("%Y-%m-%d") if release_date else None
+        
         base_episode_info = {
             'imdb_id': show_imdb_id,
             'tmdb_id': show_tmdb_id,
@@ -74,6 +103,7 @@ def process_episode(show, episode, collected_content, missing_guid_items):
             'season_number': episode.seasonNumber,
             'episode_number': episode.index,
             'addedAt': episode.addedAt,
+            'release_date': formatted_release_date
         }
 
         # Add an entry for each location

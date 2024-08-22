@@ -11,10 +11,15 @@
         <div class="queue">
             <div class="queue-title" onclick="toggleQueue(this)">
                 <span>{{ queue_name }}</span>
+                {% if queue_name == 'Checking' %}
+                    <span class="filename-toggle" onclick="toggleFilenames(event)">
+                        <i class="fas fa-file"></i>
+                    </span>
+                {% endif %}
                 <span class="queue-count">{{ queue_contents[queue_name]|length }} items</span>
             </div>
             <div class="queue-items">
-            {% if queue_name in ['Blacklisted', 'Unreleased'] %}
+                {% if queue_name in ['Blacklisted', 'Unreleased'] %}
                 {% for item in queue_contents[queue_name]|groupby('title') %}
                 <div class="item">
                     {{ item.grouper }} ({{ item.list[0].year }}) - Version(s): {{ item.list|map(attribute='version')|join(', ') }}
@@ -26,12 +31,12 @@
                     {% endif %}
                 </div>
                 {% endfor %}
-            {% else %}
+                {% else %}
                 {% for item in queue_contents[queue_name] %}
                 <div class="item">
-                    {{ item.title }} ({{ item.year }}) - Version: {{ item.version }}
-                    {% if item.type == 'episode' %}
-                        S{{ item.season_number }}E{{ item.episode_number }}
+                    {{ item.title }} ({{ item.year }}){{ item.season_episode }} - Version: {{ item.version }}
+                    {% if queue_name == 'Checking' %}
+                        <span class="filename-content" style="display: none">- Checking: {{ item.filled_by_file }}</span>
                     {% endif %}
                     {% if queue_name == 'Upgrading' %}
                         - Current Quality: {{ item.current_quality }}
@@ -43,11 +48,187 @@
                     {% endif %}
                 </div>
                 {% endfor %}
-            {% endif %}
+                {% endif %}
             </div>
         </div>
         {% endif %}
     {% endfor %}
     </div>
 </div>
+
+<style>
+    .toggle-container {
+        margin-left: 20px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+    }
+    .toggle-container label {
+        margin-right: 10px;
+    }
+    .filename {
+        display: none;
+    }
+    .filename-toggle {
+        cursor: pointer;
+        margin-left: 5px;
+        margin-right: 5px;
+        font-size: 1em;
+        transition: transform 0.3s ease;
+    }
+    .filename-toggle.active i {
+        transform: rotate(45deg);
+    }
+    .queue-title {
+        display: flex;
+        align-items: center;
+    }
+    .queue-count {
+        margin-left: auto;
+    }
+</style>
+
+<script>
+    let filenameToggleState = localStorage.getItem('filenameToggleState') === 'true' || false;
+
+    function toggleQueue(element) {
+        const queueItems = element.nextElementSibling;
+        const isExpanded = queueItems.style.display !== 'none';
+        queueItems.style.display = isExpanded ? 'none' : 'block';
+        const queueName = element.querySelector('span').textContent;
+        localStorage.setItem('queue_' + queueName, isExpanded ? 'collapsed' : 'expanded');
+    }
+
+    function toggleFilenames(event) {
+        event.stopPropagation();
+        filenameToggleState = !filenameToggleState;
+        localStorage.setItem('filenameToggleState', filenameToggleState);
+        const toggle = event.currentTarget;
+        toggle.classList.toggle('active', filenameToggleState);
+        updateFilenameVisibility();
+    }
+
+    function updateFilenameVisibility() {
+        const filenames = document.querySelectorAll('.filename-content');
+        filenames.forEach(filename => {
+            filename.style.display = filenameToggleState ? 'inline' : 'none';
+        });
+    }
+
+    function generateConsolidatedItems(items, queueName) {
+        let consolidatedItems = {};
+        items.forEach(item => {
+            let key = `${item.title}_${item.year}`;
+            if (!consolidatedItems[key]) {
+                consolidatedItems[key] = {
+                    title: item.title,
+                    year: item.year,
+                    versions: new Set(),
+                    seasons: new Set(),
+                    release_date: item.release_date
+                };
+            }
+            consolidatedItems[key].versions.add(item.version);
+            if (item.type === 'episode') {
+                consolidatedItems[key].seasons.add(item.season_number);
+            }
+        });
+
+        return Object.values(consolidatedItems).map(item => `
+            <div class="item">
+                ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
+                ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
+                ${queueName === 'Unreleased' ? ` - Release Date: ${item.release_date}` : ''}
+            </div>
+        `).join('');
+    }
+
+    function generateRegularItems(queueName, items) {
+        return items.map(item => {
+            let seasonEpisode = '';
+            if (item.type === 'episode' && item.season_number && item.episode_number) {
+                let season = item.season_number.toString().padStart(2, '0');
+                let episode = item.episode_number.toString().padStart(2, '0');
+                seasonEpisode = ` S${season}E${episode}`;
+            }
+
+            let itemContent = `
+                <div class="item">
+                    ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}
+            `;
+
+            if (queueName === 'Checking' && item.filled_by_file) {
+                itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
+            }
+
+            if (queueName === 'Upgrading') {
+                itemContent += `
+                    - Current Quality: ${item.current_quality || 'N/A'}
+                    - Target Quality: ${item.target_quality || 'N/A'}
+                    - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
+                    - Upgrades Found: ${item.upgrades_found || 0}
+                `;
+            }
+
+            if (queueName === 'Sleeping') {
+                itemContent += `
+                    - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}
+                `;
+            }
+
+            itemContent += `</div>`;
+            return itemContent;
+        }).join('');
+    }
+
+    function updateQueueContents() {
+        fetch('/api/queue_contents')
+            .then(response => response.json())
+            .then(data => {
+                let queueContents = document.getElementById('queue-contents');
+                if (queueContents) {
+                    queueContents.innerHTML = '';
+                    const queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted'];
+                    
+                    let hasContent = false;
+                    queueOrder.forEach(queueName => {
+                        if (data[queueName] && data[queueName].length > 0) {
+                            hasContent = true;
+                            let queueDiv = document.createElement('div');
+                            queueDiv.className = 'queue';
+                            let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
+                            
+                            queueDiv.innerHTML = `
+                                <div class="queue-title" onclick="toggleQueue(this)">
+                                    <span>${queueName}</span>
+                                    ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
+                                    <span class="queue-count">${data[queueName].length} items</span>
+                                </div>
+                                <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
+                                    ${queueName === 'Blacklisted' ? generateConsolidatedItems(data[queueName], 'Blacklisted') :
+                                      queueName === 'Unreleased' ? generateConsolidatedItems(data[queueName], 'Unreleased') :
+                                      generateRegularItems(queueName, data[queueName])}
+                                </div>
+                            `;
+                            queueContents.appendChild(queueDiv);
+                        }
+                    });
+
+                    if (!hasContent) {
+                        queueContents.innerHTML = '<p>All queues are currently empty.</p>';
+                    }
+
+                    // Update filename visibility after refreshing
+                    updateFilenameVisibility();
+                }
+            })
+            .catch(error => console.error('Error fetching queue contents:', error));
+    }
+
+    // Initial update and set interval for refreshing
+    updateQueueContents();
+    setInterval(updateQueueContents, 5000);  // Refresh every 5 seconds
+
+    console.log('Queue script loaded and running');
+</script>
 {% endblock %}
