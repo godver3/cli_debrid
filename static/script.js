@@ -644,6 +644,11 @@ function displayTorrentResults(data, title, year) {
     }
     mediaQuery.addListener(handleScreenChange);
     handleScreenChange(mediaQuery);
+
+    // Close the overlay when the close button is clicked
+    document.querySelector('.close-btn').onclick = function() {
+        document.getElementById('overlay').style.display = 'none';
+    };
     
     overlay.style.display = 'block';
 }
@@ -699,11 +704,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     window.addEventListener('resize', responsiveLayout);
     responsiveLayout();
-
-    // Close the overlay when the close button is clicked
-    document.querySelector('.close-btn').onclick = function() {
-        document.getElementById('overlay').style.display = 'none';
-    };
 
     loadDarkModePreference();
     
