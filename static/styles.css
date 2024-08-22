@@ -208,101 +208,7 @@ padding: 10px 20px;
     background-color: #f44336; /* Red when running */
 }
 
-.stats-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 20px;
-    margin-bottom: 20px;
-}
 
-.stats-box {
-    background-color: #444;
-    border-radius: 5px;
-    padding: 15px;
-}
-
-.stats-box.airing-soon,
-.stats-box.upcoming-releases {
-    flex: 1;
-    min-width: 0; /* Allow boxes to shrink if needed */
-    width: calc(50% - 10px); /* Ensure they take up half the width minus gap */
-}
-
-.stats-box.collection-stats {
-    flex-basis: 100%;
-    margin-top: 20px;
-}
-
-/* Box titles */
-.stats-box h3 {
-    margin-top: 0;
-    margin-bottom: 15px;
-}
-
-/* Content formatting for airing-soon and upcoming-releases */
-.stats-box.airing-soon ul,
-.stats-box.upcoming-releases ul {
-    list-style-type: none;
-    padding: 0;
-    margin: 0;
-}
-
-.stats-box.airing-soon li,
-.stats-box.upcoming-releases li {
-    margin-bottom: 10px;
-}
-
-/* Highlight content titles */
-.stats-box.airing-soon li,
-.stats-box.upcoming-releases li {
-    color: #FFA500; /* Orange color for content titles */
-}
-
-.stats-box .air-date,
-.stats-box .air-time,
-.stats-box .release-date {
-    display: inline-block;
-    margin-left: 5px;
-    font-style: italic;
-    color: #f4f4f4; /* Reset color for dates and times */
-}
-
-/* Collection stats formatting */
-.collection-stats .stat-items {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-}
-
-.collection-stats .stat-item {
-    flex: 1 1 calc(25% - 10px);
-    min-width: 200px;
-    padding: 10px;
-    background-color: #555;
-    border-radius: 3px;
-}
-
-.collection-stats .stat-item p {
-    margin: 0;
-    color: #f4f4f4;
-}
-
-.collection-stats .stat-item span {
-    font-weight: bold;
-    color: #4CAF50;
-}
-
-/* Ensure side-by-side layout on all screen sizes */
-@media (max-width: 600px) {
-    .stats-container {
-        flex-direction: column;
-    }
-    
-    .stats-box.airing-soon,
-    .stats-box.upcoming-releases {
-        width: 100%; /* Full width on very small screens */
-    }
-}
 
 .queue-container { 
     display: flex; 
@@ -1279,8 +1185,16 @@ h2.searchresult-item {
 /* Add or update these styles in your existing CSS file */
 
 .stats-container {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.top-stats {
     display: flex;
-    flex-wrap: wrap;
+    width: 100%;
+    overflow-x: auto;
     gap: 20px;
     margin-bottom: 20px;
 }
@@ -1291,16 +1205,21 @@ h2.searchresult-item {
     padding: 15px;
 }
 
+.stats-box.recently-aired,
 .stats-box.airing-soon,
 .stats-box.upcoming-releases {
-    flex: 1;
-    min-width: 0; /* Allow boxes to shrink if needed */
-    width: calc(50% - 10px); /* Ensure they take up half the width minus gap */
+    min-width: 0; /* Allow boxes to shrink below their content size */
 }
 
 .stats-box.collection-stats {
-    flex-basis: 100%;
+    grid-column: 1 / -1; /* Span all columns */
     margin-top: 20px;
+}
+
+.stats-box ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
 }
 
 /* Box titles */
@@ -1359,17 +1278,20 @@ h2.searchresult-item {
 
 .collection-stats .stat-item span {
     font-weight: bold;
+    color: #4CAF50;
 }
 
-/* Ensure side-by-side layout on all screen sizes */
-@media (max-width: 600px) {
+@media (max-width: 768px) {
     .stats-container {
-        flex-direction: column;
+        grid-template-columns: 1fr;
+        overflow-x: hidden;
     }
     
+    .stats-box.recently-aired,
     .stats-box.airing-soon,
-    .stats-box.upcoming-releases {
-        width: 100%; /* Full width on very small screens */
+    .stats-box.upcoming-releases,
+    .stats-box.collection-stats {
+        width: 100%;
     }
 }
 
