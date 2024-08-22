@@ -411,6 +411,17 @@ function updateSettings() {
 
     settingsData['Scraping'] = { versions: versions };
     
+    // Ensure TMDB section exists
+    if (!settingsData['TMDB']) {
+        settingsData['TMDB'] = {};
+    }
+    
+    // Add TMDB API key
+    const tmdbApiKeyInput = document.getElementById('tmdb-api-key');
+    if (tmdbApiKeyInput) {
+        settingsData['TMDB']['api_key'] = tmdbApiKeyInput.value;
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/api/settings', {
