@@ -1,24 +1,64 @@
 {% extends "base.html" %}
 
-{% block title %}Statistics{% endblock %}
+{% block title %}Home{% endblock %}
 
 {% block content %}
-<div class="stats">
-    <div class="stat-item">
-        <h3>Total Movies Collected</h3>
-        <p id="total-movies">{{ stats.total_movies }}</p>
+<div class="stats-container">
+    <div class="stats-box airing-soon">
+        <h3>Airing Soon</h3>
+        {% if stats.airing_soon %}
+            <ul>
+            {% for item in stats.airing_soon %}
+                <li style="color: #FFA500;">
+                    {{ item.title }} - 
+                    <span class="air-date" style="color: #f4f4f4;">
+                        {% if item.air_date == datetime.now().date().isoformat() %}
+                            Today
+                        {% else %}
+                            Tomorrow
+                        {% endif %}
+                    </span>
+                    <span class="air-time" style="color: #f4f4f4;">at {{ item.air_time }}</span>
+                </li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p>No shows airing soon.</p>
+        {% endif %}
     </div>
-    <div class="stat-item">
-        <h3>Total TV Shows Collected</h3>
-        <p id="total-shows">{{ stats.total_shows }}</p>
+
+    <div class="stats-box upcoming-releases">
+        <h3>Upcoming Releases</h3>
+        {% if stats.upcoming_releases %}
+            <ul>
+            {% for item in stats.upcoming_releases %}
+                <li style="color: #FFA500;">
+                    {{ item.title }} - 
+                    <span class="release-date" style="color: #f4f4f4;">{{ item.release_date }}</span>
+                </li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p>No upcoming releases in the next week.</p>
+        {% endif %}
     </div>
-    <div class="stat-item">
-        <h3>Total Episodes Collected</h3>
-        <p id="total-episodes">{{ stats.total_episodes }}</p>
-    </div>
-    <div class="stat-item uptime">
-        <h3>Uptime</h3>
-        <p id="uptime">{{ '%d days, %d hours, %d minutes' % (stats.uptime // 86400, (stats.uptime % 86400) // 3600, (stats.uptime % 3600) // 60) }}</p>
+
+    <div class="stats-box collection-stats">
+        <h3>Collection Statistics</h3>
+        <div class="stat-items">
+            <div class="stat-item">
+                <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
+            </div>
+            <div class="stat-item">
+                <p>Total TV Shows: <span id="total-shows">{{ stats.total_shows }}</span></p>
+            </div>
+            <div class="stat-item">
+                <p>Total Episodes: <span id="total-episodes">{{ stats.total_episodes }}</span></p>
+            </div>
+            <div class="stat-item uptime">
+                <p>Uptime: <span id="uptime">{{ '%d days, %d hours, %d minutes' % (stats.uptime // 86400, (stats.uptime % 86400) // 3600, (stats.uptime % 3600) // 60) }}</span></p>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
