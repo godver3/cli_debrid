@@ -9,7 +9,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="settings-container scraper-tester">
+<div class="scraper-tester-container">
     <h1>Scraper Tester</h1>
     <div id="search-section">
         <div class="search-container">
@@ -19,11 +19,11 @@
         <div id="search-results" class="search-results"></div>
     </div>
     <div id="scrape-section" style="display: none;">
-        <div id="scrape-details" class="settings-section">
-            <div class="settings-section-header">
+        <div id="scrape-details" class="scraper-tester-section">
+            <div class="scraper-tester-section-header">
                 <h4>Scrape Details</h4>
             </div>
-            <div class="settings-section-content active">
+            <div class="scraper-tester-section-content active">
                 <input type="hidden" id="imdbId">
                 <div id="selected-item"></div>
                 <div class="form-group">
@@ -57,11 +57,11 @@
                 </div>
             </div>
         </div>
-        <div id="score-breakdown" class="settings-section">
+        <div id="score-breakdown" class="scraper-tester-section">
             <div class="score-breakdown-header">
                 <h4>Score Breakdown</h4>
             </div>
-            <div class="settings-section-content"></div>
+            <div class="scraper-tester-section-content"></div>
         </div>
         <button id="save-settings-button" class="settings-submit-button" style="display: none;">Save Modified Settings</button>
         <button id="new-search-button" class="settings-submit-button">New Search</button>

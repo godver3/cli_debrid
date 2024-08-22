@@ -50,7 +50,7 @@ class CheckingQueue:
             logging.debug(f"{item_identifier} has been in checking queue for {time_in_queue:.2f} seconds")
 
             # Check if the item has been in the queue for more than 1 hour
-            if time_in_queue > 3600:  # 1 hour
+            if time_in_queue > 3600:  # 1 hour / 3600
                 magnet = item.get('filled_by_magnet')
                 if magnet:
                     add_to_not_wanted(magnet)

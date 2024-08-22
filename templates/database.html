@@ -301,18 +301,18 @@ document.addEventListener('DOMContentLoaded', function() {
                     button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
                 });
 
+                let existingMessage = document.getElementById('programRunningMessage');
                 if (isRunning) {
-                    const message = document.createElement('div');
-                    message.id = 'programRunningMessage';
-                    message.textContent = 'Program is running. Delete functionality is disabled.';
-                    message.style.color = 'red';
-                    message.style.marginBottom = '10px';
-                    document.querySelector('.container').prepend(message);
-                } else {
-                    const existingMessage = document.getElementById('programRunningMessage');
-                    if (existingMessage) {
-                        existingMessage.remove();
+                    if (!existingMessage) {
+                        existingMessage = document.createElement('div');
+                        existingMessage.id = 'programRunningMessage';
+                        existingMessage.textContent = 'Program is running. Delete functionality is disabled.';
+                        existingMessage.style.color = 'red';
+                        existingMessage.style.marginBottom = '10px';
+                        document.querySelector('.container').prepend(existingMessage);
                     }
+                } else if (existingMessage) {
+                    existingMessage.remove();
                 }
             })
             .catch(error => console.error('Error checking program status:', error));
