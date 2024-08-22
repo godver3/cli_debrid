@@ -25,16 +25,18 @@ document.addEventListener('DOMContentLoaded', function() {
             button.style.opacity = isRunning ? '0.5' : '1';
             button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
         });
-
+    
         const runningMessage = document.getElementById('programRunningMessage');
+        const settingsContainer = document.querySelector('.settings-container');
+    
         if (isRunning) {
-            if (!runningMessage) {
+            if (!runningMessage && settingsContainer) {
                 const message = document.createElement('div');
                 message.id = 'programRunningMessage';
                 message.textContent = 'Program is running. Settings management is disabled.';
                 message.style.color = 'red';
                 message.style.marginBottom = '10px';
-                document.querySelector('.settings-container').prepend(message);
+                settingsContainer.prepend(message);
             }
         } else if (runningMessage) {
             runningMessage.remove();
