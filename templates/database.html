@@ -78,6 +78,7 @@
         <table id="database-table">
             <thead>
                 <tr>
+                    <th>Delete</th>
                     {% for column in selected_columns %}
                     <th>{{ column }}</th>
                     {% endfor %}
@@ -86,6 +87,9 @@
             <tbody>
                 {% for item in items %}
                 <tr>
+                    <td>
+                        <button class="delete-item" data-item-id="{{ item[0] }}">Delete</button>
+                    </td>
                     {% for column in selected_columns %}
                     <td>
                         <div class="cell-content">
@@ -283,6 +287,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     attachPaginationListeners();
+
 });
 </script>
 {% endblock %}
