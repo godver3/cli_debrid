@@ -90,15 +90,18 @@ class ScrapingQueue:
 
                 if filtered_results:
                     best_result = filtered_results[0]
-                    logging.info(f"Best result for {item_identifier}: {best_result['title']}, {best_result['magnet']}")
-                    queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
+                    if not is_magnet_not_wanted(best_result['magnet']):
+                        logging.info(f"Best result for {item_identifier}: {best_result['title']}, {best_result['magnet']}")
+                        queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
+                    else:
+                        logging.warning(f"Best result for {item_identifier} was previously marked as unwanted. Moving to Sleeping.")
+                        queue_manager.move_to_sleeping(item, "Scraping")
                 else:
                     logging.warning(f"No valid results for {item_identifier}, moving to Sleeping")
                     queue_manager.move_to_sleeping(item, "Scraping")
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
                 queue_manager.move_to_sleeping(item, "Scraping")
-
 
     def scrape_with_fallback(self, item, is_multi_pack, queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
@@ -115,6 +118,9 @@ class ScrapingQueue:
             item.get('episode_number'),
             is_multi_pack
         )
+
+        # Filter out unwanted magnets
+        results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
 
         if results or item['type'] != 'episode':
             return results, filtered_out
@@ -133,6 +139,9 @@ class ScrapingQueue:
             False  # Set is_multi_pack to False for individual scraping
         )
 
+        # Filter out unwanted magnets for individual results
+        individual_results = [r for r in individual_results if not is_magnet_not_wanted(r['magnet'])]
+
         if individual_results:
             logging.info(f"Found results for individual episode scraping of {item_identifier}.")
         else:
@@ -148,6 +157,9 @@ class ScrapingQueue:
                 queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
             elif item['type'] == 'movie':
                 logging.info(f"No results found for old movie {item_identifier}. Blacklisting item.")
+                queue_manager.move_to_blacklisted(item, "Scraping")
+            else:
+                logging.warning(f"Unknown item type {item['type']} for {item_identifier}. Blacklisting item.")
                 queue_manager.move_to_blacklisted(item, "Scraping")
         else:
             logging.warning(f"No results found for {item_identifier}. Moving to Sleeping queue.")
