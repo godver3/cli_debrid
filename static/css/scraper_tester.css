@@ -1,10 +1,18 @@
-.scraper-tester {
-    max-width: 95%;
+.scraper-tester-container {
+    width: 80%;
+    max-width: 1200px; /* You can adjust this value as needed */
     margin: 0 auto;
     padding: 20px;
     color: #f4f4f4;
     background-color: #444;
     border-radius: 5px;
+}
+
+/* Add a media query for smaller screens */
+@media screen and (max-width: 768px) {
+    .scraper-tester-container {
+        width: 95%;
+    }
 }
 
 .search-container {
@@ -126,15 +134,15 @@ label {
     color: #f4f4f4;
 }
 
-.scraper-tester .search-container {
+.scraper-tester-container .search-container {
     margin-bottom: 20px;
 }
 
-.scraper-tester .search-results {
+.scraper-tester-container .search-results {
     margin-bottom: 20px;
 }
 
-.scraper-tester .result-item {
+.scraper-tester-container .result-item {
     cursor: pointer;
     padding: 5px;
     margin-bottom: 5px;
@@ -142,32 +150,32 @@ label {
     border-radius: 3px;
 }
 
-.scraper-tester .result-item:hover {
+.scraper-tester-container .result-item:hover {
     background-color: #555;
 }
 
-.scraper-tester .results-columns {
+.scraper-tester-container .results-columns {
     display: flex;
     justify-content: space-between;
 }
 
-.scraper-tester .results-column {
+.scraper-tester-container .results-column {
     width: 48%;
 }
 
-.scraper-tester .settings-table {
+.scraper-tester-container .settings-table {
     width: 100%;
     border-collapse: collapse;
 }
 
-.scraper-tester .settings-table th,
-.scraper-tester .settings-table td {
+.scraper-tester-container .settings-table th,
+.scraper-tester-container .settings-table td {
     padding: 8px;
     text-align: left;
     border-bottom: 1px solid #555;
 }
 
-.scraper-tester .settings-table tr:hover {
+.scraper-tester-container .settings-table tr:hover {
     background-color: #444;
     cursor: pointer;
 }
@@ -523,4 +531,27 @@ input[type="checkbox"].settings-input {
 #score-breakdown .settings-section-content,
 #score-breakdown .settings-section-content:hover {
     background-color: #333 !important;
+}
+
+.scraper-tester-section {
+    margin-top: 20px;
+    padding: 20px;
+    background-color: #555;
+    border: 1px solid #666;
+    border-radius: 4px;
+}
+
+.scraper-tester-section-header {
+    margin-bottom: 15px;
+}
+
+.scraper-tester-section-header h4 {
+    margin: 0;
+    color: #fff;
+}
+
+.scraper-tester-section-content {
+    background-color: #444;
+    padding: 15px;
+    border-radius: 4px;
 }
