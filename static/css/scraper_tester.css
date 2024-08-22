@@ -433,6 +433,11 @@ input[type="checkbox"].settings-input {
     font-size: 0.9em;
     line-height: 1.4;
     color: #f4f4f4;
+    cursor: default;
+}
+
+.score-breakdown-item:hover {
+    background-color: transparent;
 }
 
 .score-breakdown-item > ul {
@@ -446,12 +451,17 @@ input[type="checkbox"].settings-input {
 }
 
 #score-breakdown {
-    background-color: #333;
+    background-color: #333 !important;
     border: 1px solid #555;
     border-radius: 4px;
     padding: 15px;
     margin-top: 20px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+#score-breakdown table tr:hover {
+    background-color: transparent !important;
+    cursor: default !important;
 }
 
 .score-breakdown-item strong {
@@ -478,4 +488,39 @@ input[type="checkbox"].settings-input {
     background-color: #555;
     color: #999;
     cursor: not-allowed;
+}
+
+/* New class for Score Breakdown header */
+.score-breakdown-header {
+    background-color: #333 !important;
+    color: #f4f4f4;
+    padding: 10px;
+    border-bottom: 1px solid #555;
+    font-weight: bold;
+}
+
+/* Remove hover effects for score breakdown items */
+#score-breakdown,
+#score-breakdown *,
+#score-breakdown *:hover,
+#score-breakdown .score-breakdown-header:hover,
+#score-breakdown .settings-section-content:hover,
+.score-breakdown-item,
+.score-breakdown-item:hover {
+    cursor: default !important;
+    background-color: #333 !important;
+}
+
+/* If there's a table in the score breakdown, remove hover effects from its rows */
+#score-breakdown table,
+#score-breakdown table tr,
+#score-breakdown table tr:hover {
+    background-color: transparent !important;
+    cursor: default !important;
+}
+
+/* Ensure content within score breakdown doesn't change on hover */
+#score-breakdown .settings-section-content,
+#score-breakdown .settings-section-content:hover {
+    background-color: #333 !important;
 }
