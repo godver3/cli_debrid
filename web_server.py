@@ -696,10 +696,14 @@ def update_settings():
             if section == 'Content Sources':
                 # Update the Content Sources in the config dictionary
                 config['Content Sources'] = settings
-                #logging.debug(f"Updated Content Sources in config: {json.dumps(config['Content Sources'], indent=2)}")
+            elif section == 'Scraping':
+                # Ensure 'Scraping' section exists
+                if 'Scraping' not in config:
+                    config['Scraping'] = {}
+                # Update Scraping settings, including uncached_content_handling
+                config['Scraping'].update(settings)
             else:
                 config[section].update(settings)
-                #logging.debug(f"Updated {section} in config: {json.dumps(config[section], indent=2)}")
         
         #logging.debug(f"Config just before saving: {json.dumps(config, indent=2)}")
         

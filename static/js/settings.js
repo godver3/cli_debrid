@@ -219,7 +219,7 @@ function updateSettings() {
         
         current[nameParts[nameParts.length - 1]] = value;
     });
-
+  
     // Ensure 'Content Sources' section exists
     if (!settingsData['Content Sources']) {
         settingsData['Content Sources'] = {};
@@ -420,6 +420,27 @@ function updateSettings() {
     const tmdbApiKeyInput = document.getElementById('tmdb-api-key');
     if (tmdbApiKeyInput) {
         settingsData['TMDB']['api_key'] = tmdbApiKeyInput.value;
+    }
+
+    // Add this block to handle the Uncached Handling Method
+    const uncachedHandlingSelect = document.getElementById('scraping-uncached-handling');
+    console.log("Uncached Handling Select element:", uncachedHandlingSelect);
+    
+    if (uncachedHandlingSelect) {
+        console.log("Uncached Handling Method found. Value:", uncachedHandlingSelect.value);
+        console.log("Current settingsData:", JSON.stringify(settingsData, null, 2));
+        
+        if (!settingsData['Scraping']) {
+            console.log("Initializing Scraping section in settingsData");
+            settingsData['Scraping'] = {};
+        }
+        
+        console.log("Setting uncached_content_handling value");
+        settingsData['Scraping']['uncached_content_handling'] = uncachedHandlingSelect.value;
+        
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Uncached Handling Method select element not found!");
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
