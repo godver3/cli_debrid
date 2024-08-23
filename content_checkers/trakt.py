@@ -8,9 +8,13 @@ from settings import get_all_settings
 import trakt.core
 import time
 from database import get_media_item_presence
+import pickle
+import os
 
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
+
+CACHE_FILE = 'db_content/trakt_last_activity.pkl'
 
 def load_trakt_credentials() -> Dict[str, str]:
     try:
@@ -157,7 +161,43 @@ def ensure_trakt_auth():
         logging.error("Failed to refresh Trakt token: %s", str(e), exc_info=True)
         return None
 
+def load_last_activity_cache() -> Dict[str, Any]:
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, 'rb') as f:
+            return pickle.load(f)
+    return {'lists': {}, 'watchlist': None}
+
+def save_last_activity_cache(data: Dict[str, Any]):
+    with open(CACHE_FILE, 'wb') as f:
+        pickle.dump(data, f)
+
+def get_last_activity() -> Dict[str, Any]:
+    endpoint = "/sync/last_activities"
+    return fetch_items_from_trakt(endpoint)
+
+def check_for_updates(list_url: str = None) -> bool:
+    cached_activity = load_last_activity_cache()
+    current_activity = get_last_activity()
+
+    if list_url:
+        list_id = list_url.split('/')[-1].split('?')[0]
+        if current_activity['lists']['updated_at'] != cached_activity['lists'].get(list_id):
+            cached_activity['lists'][list_id] = current_activity['lists']['updated_at']
+            save_last_activity_cache(cached_activity)
+            return True
+    else:  # Checking watchlist
+        if current_activity['watchlist']['updated_at'] != cached_activity['watchlist']:
+            cached_activity['watchlist'] = current_activity['watchlist']['updated_at']
+            save_last_activity_cache(cached_activity)
+            return True
+
+    return False
+
 def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    if not check_for_updates():
+        logging.info("Watchlist is up to date, skipping fetch")
+        return []
+
     logging.info("Preparing to make Trakt API call for watchlist")
     access_token = ensure_trakt_auth()
     if access_token is None:
@@ -183,9 +223,8 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
     return all_wanted_items
 
 def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
-    # Check if the URL exclusively contains 'asc'
-    if trakt_list_url.strip().lower() == 'asc':
-        logging.info("Ignoring 'asc' URL")
+    if not check_for_updates(trakt_list_url):
+        logging.info(f"List {trakt_list_url} is up to date, skipping fetch")
         return []
 
     logging.info("Preparing to make Trakt API call for lists")
