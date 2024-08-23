@@ -25,22 +25,25 @@ def display_results(results: List[Dict], filtered_out_results: List[Dict]):
             stdscr.addstr(1, 0, "-" * (width - 1))
 
             # Display results
-            display_results = results if not show_filtered_out else filtered_out_results
-            for i in range(start_pos, min(start_pos + table_height, len(display_results))):
-                result = display_results[i]
-                if i == current_pos:
-                    stdscr.attron(curses.A_REVERSE)
-                if show_filtered_out:
-                    stdscr.attron(curses.color_pair(1))
-                stdscr.addstr(i - start_pos + 2, 0,
-                              truncate_string(result.get('title', 'N/A'), name_width) +
-                              f"{result.get('size', 0):.2f} GB".ljust(15) +
-                              truncate_string(result.get('source', 'N/A'), 25) +
-                              f"{result.get('bitrate', 0):.2f} mbps".ljust(15))
-                if show_filtered_out:
-                    stdscr.attroff(curses.color_pair(1))
-                if i == current_pos:
-                    stdscr.attroff(curses.A_REVERSE)
+            display_results = filtered_out_results if show_filtered_out else results
+            if display_results:  # Check if display_results is not None and not empty
+                for i in range(start_pos, min(start_pos + table_height, len(display_results))):
+                    result = display_results[i]
+                    if i == current_pos:
+                        stdscr.attron(curses.A_REVERSE)
+                    if show_filtered_out:
+                        stdscr.attron(curses.color_pair(1))
+                    stdscr.addstr(i - start_pos + 2, 0,
+                                  truncate_string(result.get('title', 'N/A'), name_width) +
+                                  f"{result.get('size', 0):.2f} GB".ljust(15) +
+                                  truncate_string(result.get('source', 'N/A'), 25) +
+                                  f"{result.get('bitrate', 0):.2f} mbps".ljust(15))
+                    if show_filtered_out:
+                        stdscr.attroff(curses.color_pair(1))
+                    if i == current_pos:
+                        stdscr.attroff(curses.A_REVERSE)
+            else:
+                stdscr.addstr(2, 0, "No results to display.")
 
             # Display footer
             footer = "Use arrow keys to navigate, Enter to select, q to quit, f to toggle filtered results"
@@ -54,6 +57,12 @@ def display_results(results: List[Dict], filtered_out_results: List[Dict]):
                 show_filtered_out = not show_filtered_out
                 current_pos = 0
                 start_pos = 0
+                # Reset display_results
+                display_results = filtered_out_results if show_filtered_out else results
+                if not display_results:
+                    stdscr.addstr(height - 2, 0, "No results to display in this category.")
+                    stdscr.refresh()
+                    #stdscr.getch()  # Wait for user input before continuing
             elif key == curses.KEY_UP and current_pos > 0:
                 current_pos -= 1
                 if current_pos < start_pos:
