@@ -5,7 +5,7 @@ from settings import get_setting
 import time
 from typing import Dict, List, Any
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_REQUESTS = 400
@@ -174,12 +174,6 @@ async def get_collected_from_plex(request='all'):
         logger.info(f"Collection complete. Total time: {total_time:.2f} seconds")
         logger.info(f"Collected: {len(all_episodes)} episodes and {len(all_movies_processed)} movies")
         
-        # Log a sample of processed data for verification
-        if all_episodes:
-            logger.debug(f"Sample episode: {all_episodes[0]}")
-        if all_movies_processed:
-            logger.debug(f"Sample movie: {all_movies_processed[0]}")
-
         return {'movies': all_movies_processed, 'episodes': all_episodes}
     except Exception as e:
         logger.error(f"Error collecting content from Plex: {str(e)}", exc_info=True)
@@ -259,7 +253,8 @@ async def process_recent_movie(movie: Dict[str, Any]) -> Dict[str, Any]:
         'release_date': movie.get('originallyAvailableAt'),
         'imdb_id': None,
         'tmdb_id': None,
-        'type': 'movie'
+        'type': 'movie',
+        'filled_by_file': None  # Initialize filled_by_file
     }
     
     if 'Guid' in movie:
@@ -268,6 +263,20 @@ async def process_recent_movie(movie: Dict[str, Any]) -> Dict[str, Any]:
                 movie_data['imdb_id'] = guid['id'].split('://')[1]
             elif guid['id'].startswith('tmdb://'):
                 movie_data['tmdb_id'] = guid['id'].split('://')[1]
+    
+    # Add debug logging for movie filename and set filled_by_file
+    if 'Media' in movie and movie['Media']:
+        for media in movie['Media']:
+            if 'Part' in media and media['Part']:
+                for part in media['Part']:
+                    if 'file' in part:
+                        movie_data['filled_by_file'] = part['file']
+                        break
+                if movie_data['filled_by_file']:
+                    break
+    
+    if not movie_data['filled_by_file']:
+        logger.error(f"No filename found for movie: {movie['title']}")
     
     return movie_data
 
@@ -310,7 +319,8 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
         'tmdb_id': show_tmdb_id,
         'episode_imdb_id': None,
         'episode_tmdb_id': None,
-        'type': 'episode'
+        'type': 'episode',
+        'filled_by_file': None  # Initialize filled_by_file
     }
     
     if 'Guid' in episode:
@@ -321,6 +331,20 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
                 episode_data['episode_tmdb_id'] = guid['id'].split('://')[1]
     else:
         logger.error(f"No 'Guid' key found for episode: '{show_title}' S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - '{episode['title']}'")
+    
+    # Add debug logging for episode filename and set filled_by_file
+    if 'Media' in episode and episode['Media']:
+        for media in episode['Media']:
+            if 'Part' in media and media['Part']:
+                for part in media['Part']:
+                    if 'file' in part:
+                        episode_data['filled_by_file'] = part['file']
+                        break
+                if episode_data['filled_by_file']:
+                    break
+    
+    if not episode_data['filled_by_file']:
+        logger.error(f"No filename found for episode: {show_title} - S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - {episode['title']}")
     
     return episode_data
 
