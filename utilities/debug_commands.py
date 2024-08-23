@@ -2,7 +2,8 @@ import os
 import sys
 import questionary
 from questionary import Choice
-from utilities.plex_functions import get_collected_from_plex
+from utilities.plex_functions import run_get_collected_from_plex
+from utilities.plex_db_functions import get_collected_from_plex as get_collected_from_plex_db
 import curses
 from database import (
     get_all_media_items, search_movies, search_tv_shows, update_media_item_state,
@@ -24,6 +25,8 @@ from typing import List, Tuple, Dict
 from metadata.metadata import process_metadata, refresh_release_dates
 #from initialization import reset_queued_item_status
 from settings import get_setting, get_all_settings, set_setting
+import time
+import asyncio
 
 def search_db():
     search_term = input("Enter search term (use % for wildcards): ")
@@ -341,6 +344,7 @@ def debug_commands():
                 Choice("Reset working queue items", "reset_queue"),
                 Choice("Check and refresh Trakt auth token", "refresh_trakt"),
                 Choice("Manage Content Sources", "manage_sources"),
+                Choice("Compare Plex Collection Methods", "compare_plex_methods"),
                 Choice("Back to Main Menu", "back")
             ]
         ).ask()
@@ -352,13 +356,9 @@ def debug_commands():
         elif action == 'delete_db':
             delete_database_items()
         elif action == 'get_all_collected':
-            collected_content = get_collected_from_plex('all')
-            if collected_content:
-                add_collected_items(collected_content['movies'] + collected_content['episodes'])
+            get_and_add_all_collected_from_plex()
         elif action == 'get_recent_collected':
-            collected_content = get_collected_from_plex('recent')
-            if collected_content:
-                add_collected_items(collected_content['movies'] + collected_content['episodes'], recent=True)
+            get_and_add_recent_collected_from_plex()
         elif action == 'view_db':
             view_database_content()
         elif action == 'search_db':
@@ -377,6 +377,8 @@ def debug_commands():
             refresh_release_dates()
         elif action == 'manage_sources':
             manage_content_sources()
+        elif action == 'compare_plex_methods':
+            compare_plex_collection_methods()
         elif action == 'back':
             os.system('clear')
             break
@@ -609,6 +611,55 @@ def reset_queued_item_status():
         for item in items:
             update_media_item_state(item['id'], 'Wanted')
             #logging.info(f"Reset item {format_item_log(item)} (ID: {item['id']}) from {state} to Wanted")
+
+def compare_plex_collection_methods():
+    logging.info("Comparing Plex collection methods...")
+
+    # Time get_collected_from_plex
+    start_time = time.time()
+    plex_result = asyncio.run(run_get_collected_from_plex('all'))
+    plex_time = time.time() - start_time
+    plex_count = len(plex_result['movies']) + len(plex_result['episodes']) if plex_result else 0
+
+    # Time get_collected_from_plex_db
+    start_time = time.time()
+    plex_db_result = get_collected_from_plex_db('all')
+    plex_db_time = time.time() - start_time
+    plex_db_count = len(plex_db_result['movies']) + len(plex_db_result['episodes']) if plex_db_result else 0
+
+    # Log results
+    logging.info(f"get_collected_from_plex:")
+    logging.info(f"  Time: {plex_time:.2f} seconds")
+    logging.info(f"  Items retrieved: {plex_count}")
+
+    logging.info(f"get_collected_from_plex_db:")
+    logging.info(f"  Time: {plex_db_time:.2f} seconds")
+    logging.info(f"  Items retrieved: {plex_db_count}")
+
+    if plex_count == plex_db_count:
+        logging.info("Both methods retrieved the same number of items.")
+    else:
+        logging.warning(f"Item count mismatch: Plex API: {plex_count}, Plex DB: {plex_db_count}")
+
+def get_and_add_all_collected_from_plex():
+    logging.info("Getting all collected content from Plex")
+    collected_content = asyncio.run(run_get_collected_from_plex('all'))
+    
+    if collected_content:
+        logging.info(f"Retrieved {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes from Plex")
+        add_collected_items(collected_content['movies'] + collected_content['episodes'])
+    else:
+        logging.error("Failed to retrieve content from Plex")
+
+def get_and_add_recent_collected_from_plex():
+    logging.info("Getting recently added content from Plex")
+    collected_content = asyncio.run(run_get_collected_from_plex('recent'))
+    
+    if collected_content:
+        logging.info(f"Retrieved {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes from Plex")
+        add_collected_items(collected_content['movies'] + collected_content['episodes'])
+    else:
+        logging.error("Failed to retrieve content from Plex")
 
 if __name__ == "__main__":
     debug_commands()

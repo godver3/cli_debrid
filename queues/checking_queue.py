@@ -6,6 +6,7 @@ from datetime import datetime
 from database import get_all_media_items, get_media_item_by_id
 from settings import get_setting
 from utilities.plex_functions import get_collected_from_plex
+from utilities.debug_commands import get_and_add_recent_collected_from_plex
 from database import add_collected_items
 from not_wanted_magnets import add_to_not_wanted
 
@@ -38,9 +39,7 @@ class CheckingQueue:
         current_time = time.time()
 
         # Process collected content from Plex
-        collected_content = get_collected_from_plex('recent')
-        if collected_content:
-            add_collected_items(collected_content['movies'] + collected_content['episodes'], recent=True)
+        get_and_add_recent_collected_from_plex()
 
         # Process items in the Checking queue
         items_to_remove = []
