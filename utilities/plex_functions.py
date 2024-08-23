@@ -33,8 +33,8 @@ async def get_season_episodes(session: aiohttp.ClientSession, plex_url: str, sea
     data = await fetch_data(session, url, headers, semaphore)
     return data['MediaContainer']['Metadata'] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else []
 
-async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str) -> Dict[str, Any]:
-    episode_data = {
+async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str) -> List[Dict[str, Any]]:
+    base_episode_data = {
         'title': show_title,
         'episode_title': episode['title'],
         'season_number': season_number,
@@ -54,11 +54,24 @@ async def process_episode(episode: Dict[str, Any], show_title: str, season_numbe
     if 'Guid' in episode:
         for guid in episode['Guid']:
             if guid['id'].startswith('imdb://'):
-                episode_data['episode_imdb_id'] = guid['id'].split('://')[1]
+                base_episode_data['episode_imdb_id'] = guid['id'].split('://')[1]
             elif guid['id'].startswith('tmdb://'):
-                episode_data['episode_tmdb_id'] = guid['id'].split('://')[1]
+                base_episode_data['episode_tmdb_id'] = guid['id'].split('://')[1]
     
-    return episode_data
+    episode_entries = []
+    if 'Media' in episode and episode['Media']:
+        for media in episode['Media']:
+            if 'Part' in media and media['Part']:
+                for part in media['Part']:
+                    if 'file' in part:
+                        episode_entry = base_episode_data.copy()
+                        episode_entry['location'] = part['file']
+                        episode_entries.append(episode_entry)
+    
+    if not episode_entries:
+        logger.error(f"No file path found for episode: {show_title} - S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - {episode['title']}")
+    
+    return episode_entries
 
 async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, show: Dict[str, Any]) -> List[Dict[str, Any]]:
     show_title = show['title']
@@ -83,17 +96,19 @@ async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: D
         
         episodes = await get_season_episodes(session, plex_url, season_key, headers, semaphore)
         
-        season_episodes = [await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id) for episode in episodes]
-        all_episodes.extend(season_episodes)
+        for episode in episodes:
+            episode_entries = await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id)
+            all_episodes.extend(episode_entries)
     
     return all_episodes
 
 async def process_shows_chunk(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, shows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     tasks = [process_show(session, plex_url, headers, semaphore, show) for show in shows]
     results = await asyncio.gather(*tasks)
-    return [episode for show_episodes in results for episode in show_episodes]
+    flattened_results = [episode for show_episodes in results for episode in show_episodes]
+    return flattened_results
 
-async def process_movie(movie: Dict[str, Any]) -> Dict[str, Any]:
+async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
@@ -113,10 +128,28 @@ async def process_movie(movie: Dict[str, Any]) -> Dict[str, Any]:
             elif guid['id'].startswith('tmdb://'):
                 movie_data['tmdb_id'] = guid['id'].split('://')[1]
     
-    return movie_data
+    movie_entries = []
+    if 'Media' in movie and movie['Media']:
+        for media in movie['Media']:
+            if 'Part' in media and media['Part']:
+                for part in media['Part']:
+                    if 'file' in part:
+                        movie_entry = movie_data.copy()
+                        movie_entry['location'] = part['file']
+                        movie_entries.append(movie_entry)
+    
+    if not movie_entries:
+        logger.error(f"No file path found for movie: {movie['title']}")
+    
+    logger.debug(f"Processed {len(movie_entries)} entries for movie: {movie['title']}")
+    return movie_entries
 
 async def process_movies_chunk(movies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [await process_movie(movie) for movie in movies]
+    results = []
+    for movie in movies:
+        movie_entries = await process_movie(movie)
+        results.extend(movie_entries)
+    return results
 
 async def get_collected_from_plex(request='all'):
     try:
@@ -145,12 +178,12 @@ async def get_collected_from_plex(request='all'):
             all_shows = []
             for library_key in show_libraries:
                 shows = await get_library_contents(session, plex_url, library_key, headers, semaphore)
-                all_shows.extend(shows)
-
+                all_shows.extend(shows)  # Limit to 25 shows for testing
+            
             all_movies = []
             for library_key in movie_libraries:
                 movies = await get_library_contents(session, plex_url, library_key, headers, semaphore)
-                all_movies.extend(movies)
+                all_movies.extend(movies)  # Limit to 25 movies for testing
 
             logger.info(f"Total shows found: {len(all_shows)}")
             logger.info(f"Total movies found: {len(all_movies)}")
@@ -158,23 +191,34 @@ async def get_collected_from_plex(request='all'):
             all_episodes = []
             for i in range(0, len(all_shows), CHUNK_SIZE):
                 chunk = all_shows[i:i+CHUNK_SIZE]
+                logger.debug(f"Processing chunk of {len(chunk)} shows")
                 chunk_episodes = await process_shows_chunk(session, plex_url, headers, semaphore, chunk)
                 all_episodes.extend(chunk_episodes)
                 logger.info(f"Processed {i+len(chunk)}/{len(all_shows)} shows")
+                logger.debug(f"Total episodes: {len(all_episodes)}")
 
             all_movies_processed = []
             for i in range(0, len(all_movies), CHUNK_SIZE):
                 chunk = all_movies[i:i+CHUNK_SIZE]
+                logger.debug(f"Processing chunk of {len(chunk)} movies")
                 chunk_movies = await process_movies_chunk(chunk)
                 all_movies_processed.extend(chunk_movies)
                 logger.info(f"Processed {i+len(chunk)}/{len(all_movies)} movies")
+                logger.debug(f"Total movies: {len(all_movies_processed)}")
 
         end_time = time.time()
         total_time = end_time - start_time
         logger.info(f"Collection complete. Total time: {total_time:.2f} seconds")
         logger.info(f"Collected: {len(all_episodes)} episodes and {len(all_movies_processed)} movies")
         
-        return {'movies': all_movies_processed, 'episodes': all_episodes}
+        logger.debug(f"Final episodes list length: {len(all_episodes)}")
+        logger.debug(f"Final movies list length: {len(all_movies_processed)}")
+
+        
+        return {
+            'movies': all_movies_processed,
+            'episodes': all_episodes
+        }
     except Exception as e:
         logger.error(f"Error collecting content from Plex: {str(e)}", exc_info=True)
         return None
@@ -220,8 +264,8 @@ async def get_recent_from_plex():
                         
                         if 'MediaContainer' in metadata and 'Metadata' in metadata['MediaContainer']:
                             full_metadata = metadata['MediaContainer']['Metadata'][0]
-                            processed_item = await process_recent_movie(full_metadata)
-                            processed_movies.append(processed_item)
+                            processed_items = await process_recent_movie(full_metadata)
+                            processed_movies.extend(processed_items)
                     elif item['type'] == 'season':
                         show_metadata_url = f"{plex_url}/library/metadata/{item['parentRatingKey']}?includeGuids=1"
                         show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
@@ -229,7 +273,7 @@ async def get_recent_from_plex():
                         if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
                             show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
                             season_episodes = await process_recent_season(item, show_full_metadata, session, plex_url, headers, semaphore)
-                            processed_episodes.extend(season_episodes)
+                            processed_episodes.extend([episode for sublist in season_episodes for episode in sublist])  # Flatten the list
                     else:
                         logger.info(f"Skipping item: {item['title']} (Type: {item['type']})")
 
@@ -238,12 +282,16 @@ async def get_recent_from_plex():
         logger.info(f"Recent items collection complete. Total time: {total_time:.2f} seconds")
         logger.info(f"Processed {len(processed_movies)} recent movies and {len(processed_episodes)} recent episodes")
 
-        return {'movies': processed_movies, 'episodes': processed_episodes}
+        # Return a single dictionary with 'movies' and 'episodes' keys
+        return {
+            'movies': processed_movies,
+            'episodes': processed_episodes
+        }
     except Exception as e:
         logger.error(f"Error collecting recent content from Plex: {str(e)}", exc_info=True)
         return None
 
-async def process_recent_movie(movie: Dict[str, Any]) -> Dict[str, Any]:
+async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
@@ -254,7 +302,6 @@ async def process_recent_movie(movie: Dict[str, Any]) -> Dict[str, Any]:
         'imdb_id': None,
         'tmdb_id': None,
         'type': 'movie',
-        'filled_by_file': None  # Initialize filled_by_file
     }
     
     if 'Guid' in movie:
@@ -263,22 +310,17 @@ async def process_recent_movie(movie: Dict[str, Any]) -> Dict[str, Any]:
                 movie_data['imdb_id'] = guid['id'].split('://')[1]
             elif guid['id'].startswith('tmdb://'):
                 movie_data['tmdb_id'] = guid['id'].split('://')[1]
-    
-    # Add debug logging for movie filename and set filled_by_file
-    if 'Media' in movie and movie['Media']:
-        for media in movie['Media']:
-            if 'Part' in media and media['Part']:
-                for part in media['Part']:
-                    if 'file' in part:
-                        movie_data['filled_by_file'] = part['file']
-                        break
-                if movie_data['filled_by_file']:
-                    break
-    
-    if not movie_data['filled_by_file']:
+
+    movie_entries = []
+    file_path = movie.get('Media', [{}])[0].get('Part', [{}])[0].get('file')
+    if file_path:
+        movie_entry = movie_data.copy()
+        movie_entry['location'] = file_path
+        movie_entries.append(movie_entry)
+    else:
         logger.error(f"No filename found for movie: {movie['title']}")
     
-    return movie_data
+    return movie_entries
 
 async def process_recent_season(season: Dict[str, Any], show: Dict[str, Any], session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
 
@@ -303,7 +345,7 @@ async def process_recent_season(season: Dict[str, Any], show: Dict[str, Any], se
 
     return processed_episodes
 
-async def process_recent_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str) -> Dict[str, Any]:
+async def process_recent_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str) -> List[Dict[str, Any]]:
 
     episode_data = {
         'title': show_title,
@@ -320,7 +362,6 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
         'episode_imdb_id': None,
         'episode_tmdb_id': None,
         'type': 'episode',
-        'filled_by_file': None  # Initialize filled_by_file
     }
     
     if 'Guid' in episode:
@@ -332,21 +373,17 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
     else:
         logger.error(f"No 'Guid' key found for episode: '{show_title}' S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - '{episode['title']}'")
     
-    # Add debug logging for episode filename and set filled_by_file
-    if 'Media' in episode and episode['Media']:
-        for media in episode['Media']:
-            if 'Part' in media and media['Part']:
-                for part in media['Part']:
-                    if 'file' in part:
-                        episode_data['filled_by_file'] = part['file']
-                        break
-                if episode_data['filled_by_file']:
-                    break
-    
-    if not episode_data['filled_by_file']:
+    episode_entries = []
+    # Get the file path directly, not as a list
+    file_path = episode.get('Media', [{}])[0].get('Part', [{}])[0].get('file')
+    if file_path:
+        episode_entry = episode_data.copy()
+        episode_entry['location'] = file_path
+        episode_entries.append(episode_entry)
+    else:
         logger.error(f"No filename found for episode: {show_title} - S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - {episode['title']}")
     
-    return episode_data
+    return episode_entries
 
 async def run_get_recent_from_plex():
     logger.info("Starting run_get_recent_from_plex")

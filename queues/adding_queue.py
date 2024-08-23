@@ -151,15 +151,19 @@ class AddingQueue:
     def process_hybrid_mode(self, queue_manager, item, scrape_results):
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Processing hybrid mode for item: {item_identifier}")
+        
 
         # First pass: look for cached results
         for result in scrape_results:
             title = result.get('title', '')
             link = result.get('magnet', '')
 
+            logging.debug(f"Processing link in adding queue: {link}")
+            
             if link.startswith('magnet:'):
                 current_hash = extract_hash_from_magnet(link)
             else:
+                logging.debug(f"Attempting to download and extract hash from URL: {link}")
                 current_hash = self.download_and_extract_hash(link)
 
             if not current_hash:
@@ -312,12 +316,13 @@ class AddingQueue:
         else:
             logging.warning(f"No file information available for torrent: {item_identifier}")
             return False
-
+        
     def download_and_extract_hash(self, url: str) -> str:
         try:
-            response = api.get(url, timeout=30)
-            response.raise_for_status()
+            logging.debug(f"Attempting to download torrent file from URL: {url}")
+            response = api.get(url, timeout=30, stream=True)
             torrent_content = response.content
+            logging.debug(f"Successfully downloaded torrent file. Content length: {len(torrent_content)} bytes")
             
             # Decode the torrent file
             torrent_data = bencodepy.decode(torrent_content)
@@ -329,10 +334,18 @@ class AddingQueue:
             encoded_info = bencodepy.encode(info)
             
             # Calculate the SHA1 hash
-            return hashlib.sha1(encoded_info).hexdigest()
+            hash_result = hashlib.sha1(encoded_info).hexdigest()
+            logging.debug(f"Successfully extracted hash: {hash_result}")
+            return hash_result
+        except api.exceptions.RequestException as e:
+            logging.error(f"Network error while downloading torrent file from {url}: {str(e)}")
+        except bencodepy.exceptions.BencodeDecodeError as e:
+            logging.error(f"Error decoding torrent file from {url}: {str(e)}")
+        except KeyError as e:
+            logging.error(f"Error extracting info from torrent file from {url}: {str(e)}")
         except Exception as e:
-            logging.error(f"Error downloading or processing torrent file: {str(e)}")
-            return None
+            logging.error(f"Unexpected error processing torrent file from {url}: {str(e)}")
+        return None
 
 
     def add_to_real_debrid_helper(self, link: str, item_identifier: str, hash_value: str, add_if_uncached: bool = True) -> Dict[str, Any]:
