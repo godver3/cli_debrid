@@ -2,7 +2,7 @@ import os
 import sys
 import questionary
 from questionary import Choice
-from utilities.plex_functions import run_get_collected_from_plex
+from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
 from utilities.plex_db_functions import get_collected_from_plex as get_collected_from_plex_db
 import curses
 from database import (
@@ -643,7 +643,7 @@ def compare_plex_collection_methods():
 
 def get_and_add_all_collected_from_plex():
     logging.info("Getting all collected content from Plex")
-    collected_content = asyncio.run(run_get_collected_from_plex('all'))
+    collected_content = asyncio.run(run_get_collected_from_plex())
     
     if collected_content:
         logging.info(f"Retrieved {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes from Plex")
@@ -653,11 +653,11 @@ def get_and_add_all_collected_from_plex():
 
 def get_and_add_recent_collected_from_plex():
     logging.info("Getting recently added content from Plex")
-    collected_content = asyncio.run(run_get_collected_from_plex('recent'))
+    collected_content = asyncio.run(run_get_recent_from_plex())
     
     if collected_content:
         logging.info(f"Retrieved {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes from Plex")
-        add_collected_items(collected_content['movies'] + collected_content['episodes'])
+        add_collected_items(collected_content['movies'] + collected_content['episodes'], recent=True)
     else:
         logging.error("Failed to retrieve content from Plex")
 
