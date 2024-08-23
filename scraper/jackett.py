@@ -38,7 +38,12 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str,
     seeders_only = get_setting('Debug', 'jackett_seeders_only', False)
     #logging.debug(f"Seeders only status: {seeders_only}")
 
-    if content_type.lower() == 'movie':
+    if "UFC" in title.upper():
+        # TODO: Interim solution for UFC titles. Consider a more robust approach in the future.
+        ufc_number = title.upper().split("UFC")[-1].strip()
+        params = f"UFC {ufc_number}"
+        logging.info(f"UFC event detected. Using search term: {params}")
+    elif content_type.lower() == 'movie':
         params = f"{title} {year}"
     else:
         params = f"{title}"
