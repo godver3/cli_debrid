@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Any, List, Tuple, Optional
 from settings import get_setting
-import requests
+from api_tracker import api
 from scraper.scraper import scrape
 from debrid.real_debrid import extract_hash_from_magnet, add_to_real_debrid, is_cached_on_rd
 from queues.adding_queue import AddingQueue
@@ -21,10 +21,10 @@ def search_overseerr(search_term: str, year: Optional[int] = None) -> List[Dict[
         'Accept': 'application/json'
     }
 
-    search_url = f"{overseerr_url}/api/v1/search?query={requests.utils.quote(search_term)}"
+    search_url = f"{overseerr_url}/api/v1/search?query={api.utils.quote(search_term)}"
 
     try:
-        response = requests.get(search_url, headers=headers)
+        response = api.get(search_url, headers=headers)
         response.raise_for_status()
         data = response.json()
 
@@ -48,7 +48,7 @@ def search_overseerr(search_term: str, year: Optional[int] = None) -> List[Dict[
         else:
             logging.warning(f"No results found for search term: {search_term}")
             return []
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error searching Overseerr: {e}")
         return []
     
@@ -70,7 +70,7 @@ def overseerr_genre(ids: str) -> List[Dict[str, Any]]:
 
     try:
         genresnames = []
-        response = requests.get(search_url, headers=headers)
+        response = api.get(search_url, headers=headers)
         response.raise_for_status()
         data = response.json()
         for genres in data:
@@ -78,7 +78,7 @@ def overseerr_genre(ids: str) -> List[Dict[str, Any]]:
                 if genres['id'] == idx:
                    genresnames.append(genres['name'])
         return genresnames
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error searching Overseerr: {e}")
         return []
 
@@ -103,7 +103,7 @@ def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[
 
 
     try:
-        response = requests.get(search_url, headers=headers)
+        response = api.get(search_url, headers=headers)
         response.raise_for_status()
         data = response.json()
 
@@ -122,7 +122,7 @@ def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[
         else:
             logging.warning(f"No results found for show: {title}")
             return []
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error searching Overseerr: {e}")
         return []
     
@@ -292,10 +292,10 @@ def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
     details_url = f"{overseerr_url}/api/v1/{media_type}/{media_id}"
 
     try:
-        response = requests.get(details_url, headers=headers)
+        response = api.get(details_url, headers=headers)
         response.raise_for_status()
         return response.json()
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error fetching media details: {e}")
         return {}
 

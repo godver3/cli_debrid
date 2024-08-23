@@ -1,5 +1,5 @@
 import logging
-import requests
+from api_tracker import api
 import re
 from typing import List, Dict, Any
 from urllib.parse import quote_plus
@@ -60,10 +60,10 @@ def construct_url(imdb_id: str, content_type: str, season: int = None, episode: 
 
 def fetch_data(url: str) -> Dict:
     try:
-        response = requests.get(url)
+        response = api.get(url)
         if response.status_code == 200:
             return response.json()
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error fetching data: {str(e)}")
     return {}
 

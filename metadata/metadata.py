@@ -1,5 +1,5 @@
 import logging
-import requests
+from api_tracker import api
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from settings import get_setting
@@ -64,7 +64,7 @@ def get_tmdb_id_and_media_type(overseerr_url: str, overseerr_api_key: str, imdb_
     search_url = f"{overseerr_url}/api/v1/search?query=imdb%3A{imdb_id}"
 
     try:
-        response = requests.get(search_url, headers=headers)
+        response = api.get(search_url, headers=headers)
         response.raise_for_status()
         data = response.json()
 
@@ -74,7 +74,7 @@ def get_tmdb_id_and_media_type(overseerr_url: str, overseerr_api_key: str, imdb_
         else:
             logging.warning(f"No results found for IMDb ID: {imdb_id}")
             return None, None
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error converting IMDb ID to TMDB ID: {e}")
         return None, None
 
@@ -147,33 +147,33 @@ def get_release_date(media_details: Dict[str, Any], media_type: str) -> str:
         return 'Unknown'
 
 
-def get_overseerr_cookies(overseerr_url: str) -> requests.cookies.RequestsCookieJar:
-    session = requests.Session()
+def get_overseerr_cookies(overseerr_url: str) -> api.cookies.RequestsCookieJar:
+    session = api.Session()
     session.get(overseerr_url)
     return session.cookies
 
-def get_overseerr_show_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: requests.cookies.RequestsCookieJar) -> Dict[str, Any]:
+def get_overseerr_show_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Dict[str, Any]:
     url = get_url(overseerr_url, f"/api/v1/tv/{tmdb_id}?language=en")
     headers = get_overseerr_headers(overseerr_api_key)
-    response = requests.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
+    response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
     return response.json()
 
-def get_overseerr_show_episodes(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, season_number: int, cookies: requests.cookies.RequestsCookieJar) -> Dict[str, Any]:
+def get_overseerr_show_episodes(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, season_number: int, cookies: api.cookies.RequestsCookieJar) -> Dict[str, Any]:
     url = get_url(overseerr_url, f"/api/v1/tv/{tmdb_id}/season/{season_number}?language=en")
     headers = get_overseerr_headers(overseerr_api_key)
-    response = requests.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
+    response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
     return response.json()
 
-def get_overseerr_movie_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: requests.cookies.RequestsCookieJar) -> Optional[Dict[str, Any]]:
+def get_overseerr_movie_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Optional[Dict[str, Any]]:
     url = get_url(overseerr_url, f"/api/v1/movie/{tmdb_id}?language=en")
     headers = get_overseerr_headers(overseerr_api_key)
     try:
-        response = requests.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
+        response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.json()
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error fetching movie details for TMDB ID {tmdb_id}: {str(e)}")
         return None
 
@@ -207,7 +207,7 @@ def imdb_to_tmdb(overseerr_url: str, overseerr_api_key: str, imdb_id: str, media
     search_url = f"{overseerr_url}/api/v1/search?query=imdb%3A{imdb_id}"
     
     try:
-        response = requests.get(search_url, headers=headers)
+        response = api.get(search_url, headers=headers)
         response.raise_for_status()
         data = response.json()
         
@@ -223,11 +223,11 @@ def imdb_to_tmdb(overseerr_url: str, overseerr_api_key: str, imdb_id: str, media
         else:
             logging.warning(f"No results found for IMDB ID: {imdb_id}")
             return None
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error converting IMDB ID to TMDB ID: {e}")
         return None
 
-def get_imdb_id_if_missing(item: Dict[str, Any], overseerr_url: str, overseerr_api_key: str, cookies: requests.cookies.RequestsCookieJar) -> Optional[str]:
+def get_imdb_id_if_missing(item: Dict[str, Any], overseerr_url: str, overseerr_api_key: str, cookies: api.cookies.RequestsCookieJar) -> Optional[str]:
     if 'imdb_id' in item:
         return item['imdb_id']
     
@@ -444,7 +444,7 @@ def refresh_release_dates():
 
     logging.info("Finished refresh_release_dates function")
 
-def get_episode_count_for_seasons(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, seasons: List[int], cookies: requests.cookies.RequestsCookieJar) -> int:
+def get_episode_count_for_seasons(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, seasons: List[int], cookies: api.cookies.RequestsCookieJar) -> int:
     total_episodes = 0
     
     for season_number in seasons:
@@ -457,7 +457,7 @@ def get_episode_count_for_seasons(overseerr_url: str, overseerr_api_key: str, tm
     logging.debug(f"Total episodes for TMDB ID {tmdb_id}, seasons {seasons}: {total_episodes}")
     return total_episodes
 
-def get_all_season_episode_counts(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: requests.cookies.RequestsCookieJar) -> Dict[int, int]:
+def get_all_season_episode_counts(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Dict[int, int]:
     episode_counts = {}
     show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
     
@@ -496,7 +496,7 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
     # First, search for the show using the IMDb ID
     search_url = f"{TRAKT_API_URL}/search/imdb/{imdb_id}?type=show"
     try:
-        response = requests.get(search_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        response = api.get(search_url, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         search_results = response.json()
         
@@ -509,7 +509,7 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
         
         # Now fetch the full show data
         show_url = f"{TRAKT_API_URL}/shows/{trakt_id}?extended=full"
-        show_response = requests.get(show_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        show_response = api.get(show_url, headers=headers, timeout=REQUEST_TIMEOUT)
         show_response.raise_for_status()
         show_data = show_response.json()
         
@@ -520,6 +520,6 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
             logging.warning(f"No airtime found for show with IMDb ID: {imdb_id}. Using default airtime.")
             return DEFAULT_AIRTIME
     
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error fetching show data from Trakt: {e}. Using default airtime.")
         return DEFAULT_AIRTIME

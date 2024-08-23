@@ -1,7 +1,7 @@
 import PTN
 import logging
 import re
-import requests
+from api_tracker import api
 from typing import List, Dict, Any, Tuple, Optional
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -193,10 +193,10 @@ def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Opti
         "accept": "application/json"
     }
     try:
-        response = requests.get(url, headers=headers)
+        response = api.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error fetching TMDB season info: {e}")
         return None
 

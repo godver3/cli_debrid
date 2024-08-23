@@ -2,7 +2,7 @@ import logging
 import json
 import time
 from typing import Dict, Any, List
-import requests
+from api_tracker import api
 import hashlib
 import bencodepy
 import re
@@ -315,7 +315,7 @@ class AddingQueue:
 
     def download_and_extract_hash(self, url: str) -> str:
         try:
-            response = requests.get(url, timeout=30)
+            response = api.get(url, timeout=30)
             response.raise_for_status()
             torrent_content = response.content
             
@@ -404,12 +404,12 @@ class AddingQueue:
 
         for _ in range(10):  # Try for about 100 seconds
             time.sleep(10)
-            torrents = requests.get(f"{API_BASE_URL}/torrents", headers=headers).json()
+            torrents = api.get(f"{API_BASE_URL}/torrents", headers=headers).json()
             for torrent in torrents:
                 if torrent['hash'].lower() == hash_value.lower():
                     torrent_id = torrent['id']
                     info_url = f"{API_BASE_URL}/torrents/info/{torrent_id}"
-                    return requests.get(info_url, headers=headers).json()
+                    return api.get(info_url, headers=headers).json()
 
         logging.warning(f"Could not find torrent info for hash: {hash_value}")
         return None
@@ -594,10 +594,10 @@ class AddingQueue:
     def remove_unwanted_torrent(self, torrent_id):
         try:
             headers = {'Authorization': f'Bearer {self.api_key}'}
-            response = requests.delete(f"{API_BASE_URL}/torrents/delete/{torrent_id}", headers=headers)
+            response = api.delete(f"{API_BASE_URL}/torrents/delete/{torrent_id}", headers=headers)
             response.raise_for_status()
             logging.info(f"Successfully removed unwanted torrent with ID: {torrent_id}")
-        except requests.exceptions.RequestException as e:
+        except api.exceptions.RequestException as e:
             logging.error(f"Error removing unwanted torrent with ID {torrent_id}: {str(e)}")
 
     def move_to_blacklist_if_older_than_7_days(self, queue_manager, item, from_queue: str):
