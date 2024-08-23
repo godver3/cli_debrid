@@ -506,6 +506,10 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     # Add content_type_score to the total score
     total_score += content_type_score
 
+    # Add year penalty to the total score
+    year_penalty = result.get('year_penalty', 0)
+    total_score += year_penalty
+
     # Create a score breakdown
     score_breakdown = {
         'similarity_score': round(weighted_similarity, 2),
@@ -522,6 +526,8 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'preferred_filter_in_breakdown': preferred_filter_in_breakdown,
         'preferred_filter_out_breakdown': preferred_filter_out_breakdown,
         'content_type_score': content_type_score,
+        'year_penalty': year_penalty,
+        'year_penalty_reason': result.get('year_penalty_reason', 'No penalty'),
         'total_score': round(total_score, 2)
     }
     # Add multi-pack information to the score breakdown
@@ -669,11 +675,11 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         if content_type.lower() == 'movie':
             parsed_year = parsed_info.get('year')
             if not parsed_year:
-                result['filter_reason'] = "Missing year"
-                continue
-            if abs(int(parsed_year) - year) > 1:
-                result['filter_reason'] = f"Year mismatch: {parsed_year} vs {year}"
-                continue
+                result['year_penalty'] = -500
+                result['year_penalty_reason'] = "Missing year"
+            elif abs(int(parsed_year) - year) > 1:
+                result['year_penalty'] = -500
+                result['year_penalty_reason'] = f"Year mismatch: {parsed_year} vs {year}"
         elif content_type.lower() == 'episode':
             if multi:
                 if re.search(r'S\d{2}E\d{2}', original_title, re.IGNORECASE):

@@ -10,7 +10,7 @@
             <ul>
             {% for item in stats.recently_aired %}
                 <li style="color: #FFA500;">
-                    {{ item.title }} S{{ item.season }}E{{ item.episode }} - 
+                    {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
                     <span class="air-date" style="color: #f4f4f4;">
                         {% if item.air_datetime.date() == stats.today %}
                             Today
@@ -35,7 +35,7 @@
             <ul>
             {% for item in stats.airing_soon %}
                 <li style="color: #FFA500;">
-                    {{ item.title }} S{{ item.season }}E{{ item.episode }} - 
+                    {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
                     <span class="air-date" style="color: #f4f4f4;">
                         {% if item.air_datetime.date() == stats.today %}
                             Today
