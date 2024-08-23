@@ -1,4 +1,4 @@
-import requests
+from api_tracker import api
 import logging
 import re
 from typing import List, Dict, Any, Tuple
@@ -39,7 +39,7 @@ def construct_url(imdb_id: str, content_type: str, season: int = None, episode: 
 
 def fetch_data(url: str) -> Dict:
     try:
-        response = requests.get(url)
+        response = api.get(url)
         if response.status_code == 200:
             return response.json()
     except Exception as e:

@@ -1,4 +1,4 @@
-import requests
+from api_tracker import api
 import logging
 import re
 from typing import List, Dict, Any
@@ -58,12 +58,12 @@ def construct_url(base_url: str, imdb_id: str, content_type: str, season: int = 
 
 def fetch_data(url: str) -> Dict:
     try:
-        response = requests.get(url)
+        response = api.get(url)
         if response.status_code == 200:
             return response.json()
         else:
             logging.error(f"Failed to fetch data from URL: {url} with status {response.status_code}")
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Request failed: {str(e)}")
     return {}
 

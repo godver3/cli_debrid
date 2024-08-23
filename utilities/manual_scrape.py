@@ -1,5 +1,5 @@
 import logging
-import requests
+from api_tracker import api
 import re
 from typing import Tuple
 from typing import Dict, Any, Optional, Tuple, List
@@ -33,10 +33,10 @@ def search_overseerr(search_term: str) -> List[Dict[str, Any]]:
     # Remove year, season, and episode info from search term for better search results
     search_term_clean = re.sub(r'\b(19\d{2}|20\d{2})\b|\b[Ss]\d+(?:[Ee]\d+)?\b', '', search_term).strip()
 
-    search_url = f"{overseerr_url}/api/v1/search?query={requests.utils.quote(search_term_clean)}"
+    search_url = f"{overseerr_url}/api/v1/search?query={api.utils.quote(search_term_clean)}"
 
     try:
-        response = requests.get(search_url, headers=headers)
+        response = api.get(search_url, headers=headers)
         response.raise_for_status()
         data = response.json()
 
@@ -54,7 +54,7 @@ def search_overseerr(search_term: str) -> List[Dict[str, Any]]:
         else:
             logging.warning(f"No results found for search term: {search_term}")
             return []
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error searching Overseerr: {e}")
         return []
 
@@ -155,10 +155,10 @@ def get_details(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-        response = requests.get(details_url, headers=headers)
+        response = api.get(details_url, headers=headers)
         response.raise_for_status()
         return response.json()
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error fetching details from Overseerr: {e}")
         return None
 
@@ -183,20 +183,20 @@ def imdb_id_to_title_and_year(imdb_id: str, movie_or_episode: str) -> Tuple[str,
     if movie_or_episode == "movie":
         movie_url = f"{overseerr_url}/api/v1/movie/{tmdb_id}"
         try:
-            response = requests.get(movie_url, headers=headers)
+            response = api.get(movie_url, headers=headers)
             if response.status_code == 200:
                 data = response.json()
                 return data['title'], int(data['releaseDate'][:4])
-        except requests.RequestException as e:
+        except api.exceptions.RequestException as e:
             logging.error(f"Error fetching movie data: {e}")
     else:
         tv_url = f"{overseerr_url}/api/v1/tv/{tmdb_id}"
         try:
-            response = requests.get(tv_url, headers=headers)
+            response = api.get(tv_url, headers=headers)
             if response.status_code == 200:
                 data = response.json()
                 return data['name'], int(data['firstAirDate'][:4])
-        except requests.RequestException as e:
+        except api.exceptions.RequestException as e:
             logging.error(f"Error fetching TV show data: {e}")
     os.system('clear')
 
