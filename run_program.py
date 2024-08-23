@@ -3,7 +3,7 @@ import time
 from queue_manager import QueueManager
 from initialization import initialize
 from settings import get_setting, get_all_settings
-from utilities.plex_functions import get_collected_from_plex
+from utilities.debug_commands import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
@@ -168,9 +168,7 @@ class ProgramRunner:
         return None
 
     def task_plex_full_scan(self):
-        collected_content = get_collected_from_plex('all')
-        if collected_content:
-            add_collected_items(collected_content['movies'] + collected_content['episodes'])
+        get_and_add_all_collected_from_plex()
 
     def process_content_source(self, source, data):
         source_type = source.split('_')[0]

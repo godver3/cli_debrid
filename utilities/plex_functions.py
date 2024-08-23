@@ -1,239 +1,197 @@
-from plexapi.server import PlexServer
-import sys, os
+import asyncio
+import aiohttp
 import logging
-from typing import Optional
-from datetime import datetime, timedelta
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from settings import get_setting
+import time
+from typing import Dict, List, Any
 
-def get_guid(media, guid_type='imdb'):
-    for guid in media.guids:
-        #logging.debug(f"Processing GUID: {guid.id}")
-        if guid_type.lower() in guid.id.lower():
-            try:
-                return guid.id.split('://')[1]
-            except IndexError:
-                logging.error(f"Error parsing GUID: {guid.id}")
-    return None
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def parse_date(date_str: Optional[str]) -> Optional[datetime]:
-    if date_str is None:
-        return None
+MAX_CONCURRENT_REQUESTS = 400
+CHUNK_SIZE = 10  # Adjust this value to find the optimal balance
 
-    date_formats = [
-        "%Y-%m-%d",
-        "%Y-%m-%dT%H:%M:%S.%fZ",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",  # Add this new format
-    ]
+async def fetch_data(session: aiohttp.ClientSession, url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
+    async with semaphore:
+        async with session.get(url, headers=headers) as response:
+            return await response.json()
 
-    for date_format in date_formats:
-        try:
-            return datetime.strptime(date_str, date_format)
-        except (ValueError, TypeError):
-            continue
+async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, library_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
+    url = f"{plex_url}/library/sections/{library_key}/all?includeGuids=1"
+    data = await fetch_data(session, url, headers, semaphore)
+    metadata = data['MediaContainer']['Metadata'] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else []
+    logger.info(f"Retrieved {len(metadata)} items from library {library_key}")
+    return metadata
 
-    logging.warning(f"Unable to parse date: {date_str}")
-    return None
+async def get_show_seasons(session: aiohttp.ClientSession, plex_url: str, show_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
+    url = f"{plex_url}/library/metadata/{show_key}/children?includeGuids=1"
+    data = await fetch_data(session, url, headers, semaphore)
+    return data['MediaContainer']['Metadata'] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else []
 
-def process_movie(movie, collected_content, missing_guid_items):
+async def get_season_episodes(session: aiohttp.ClientSession, plex_url: str, season_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
+    url = f"{plex_url}/library/metadata/{season_key}/children?includeGuids=1"
+    data = await fetch_data(session, url, headers, semaphore)
+    return data['MediaContainer']['Metadata'] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else []
+
+async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str) -> Dict[str, Any]:
+    episode_data = {
+        'title': show_title,
+        'episode_title': episode['title'],
+        'season_number': season_number,
+        'episode_number': episode.get('index'),
+        'year': episode.get('year'),
+        'addedAt': episode['addedAt'],
+        'guid': episode.get('guid'),
+        'ratingKey': episode['ratingKey'],
+        'release_date': episode.get('originallyAvailableAt'),
+        'imdb_id': show_imdb_id,
+        'tmdb_id': show_tmdb_id,
+        'episode_imdb_id': None,
+        'episode_tmdb_id': None,
+        'type': 'episode'
+    }
+    
+    if 'Guid' in episode:
+        for guid in episode['Guid']:
+            if guid['id'].startswith('imdb://'):
+                episode_data['episode_imdb_id'] = guid['id'].split('://')[1]
+            elif guid['id'].startswith('tmdb://'):
+                episode_data['episode_tmdb_id'] = guid['id'].split('://')[1]
+    
+    return episode_data
+
+async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, show: Dict[str, Any]) -> List[Dict[str, Any]]:
+    show_title = show['title']
+    show_key = show['ratingKey']
+    
+    # Extract show IMDB ID
+    show_imdb_id = None
+    show_tmdb_id = None
+    if 'Guid' in show:
+        for guid in show['Guid']:
+            if guid['id'].startswith('imdb://'):
+                show_imdb_id = guid['id'].split('://')[1]
+            elif guid['id'].startswith('tmdb://'):
+                show_tmdb_id = guid['id'].split('://')[1]
+    
+    seasons = await get_show_seasons(session, plex_url, show_key, headers, semaphore)
+    
+    all_episodes = []
+    for season in seasons:
+        season_number = season.get('index')
+        season_key = season['ratingKey']
+        
+        episodes = await get_season_episodes(session, plex_url, season_key, headers, semaphore)
+        
+        season_episodes = [await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id) for episode in episodes]
+        all_episodes.extend(season_episodes)
+    
+    return all_episodes
+
+async def process_shows_chunk(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, shows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    tasks = [process_show(session, plex_url, headers, semaphore, show) for show in shows]
+    results = await asyncio.gather(*tasks)
+    return [episode for show_episodes in results for episode in show_episodes]
+
+async def process_movie(movie: Dict[str, Any]) -> Dict[str, Any]:
+    movie_data = {
+        'title': movie['title'],
+        'year': movie.get('year'),
+        'addedAt': movie['addedAt'],
+        'guid': movie.get('guid'),
+        'ratingKey': movie['ratingKey'],
+        'release_date': movie.get('originallyAvailableAt'),
+        'imdb_id': None,
+        'tmdb_id': None,
+        'type': 'movie'
+    }
+    
+    if 'Guid' in movie:
+        for guid in movie['Guid']:
+            if guid['id'].startswith('imdb://'):
+                movie_data['imdb_id'] = guid['id'].split('://')[1]
+            elif guid['id'].startswith('tmdb://'):
+                movie_data['tmdb_id'] = guid['id'].split('://')[1]
+    
+    return movie_data
+
+async def process_movies_chunk(movies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [await process_movie(movie) for movie in movies]
+
+async def get_collected_from_plex(request='all'):
     try:
-        if not movie.title or not movie.year:
-            logging.warning(f"Skipping movie without title or year: {movie}")
-            movie.refresh()
-            return
+        start_time = time.time()
+        logger.info(f"Starting Plex content collection. Request type: {request}")
 
-        imdb_id = get_guid(movie, 'imdb')
-        tmdb_id = get_guid(movie, 'tmdb')
-        if not imdb_id and not tmdb_id:
-            missing_guid_items['movies'].append(movie.title)
-            logging.warning(f"Skipping movie without valid IMDb or TMDb ID: {movie.title}")
-            return
-
-        logging.debug(f"Collected movie: {movie.title}, IMDb: {imdb_id}, TMDb: {tmdb_id}")
-        
-        release_date = parse_date(str(movie.originallyAvailableAt))
-        formatted_release_date = release_date.strftime("%Y-%m-%d") if release_date else None
-        
-        base_movie_entry = {
-            'imdb_id': imdb_id,
-            'tmdb_id': tmdb_id,
-            'title': movie.title,
-            'year': movie.year,
-            'addedAt': movie.addedAt,
-            'release_date': formatted_release_date
-        }
-        
-        # Add an entry for each location
-        for location in movie.locations:
-            movie_entry = base_movie_entry.copy()
-            movie_entry['location'] = location
-            collected_content['movies'].append(movie_entry)
-            
-        #logging.debug(f"Added {len(movie.locations)} location(s) for movie: {movie.title}")
-    except Exception as e:
-        logging.error(f"Error processing movie {movie.title}: {str(e)}")
-        logging.debug(f"Movie not processed: {movie.title}, addedAt: {movie.addedAt}")
-
-def process_episode(show, episode, collected_content, missing_guid_items):
-    try:
-        if not show.title or not show.year:
-            logging.warning(f"Skipping episode without title or year: {episode} from {show}")
-            episode.refresh()
-            return
-
-        show_imdb_id = get_guid(show, 'imdb')
-        show_tmdb_id = get_guid(show, 'tmdb')
-        if not show_imdb_id and not show_tmdb_id:
-            missing_guid_items['episodes'].append(f"{episode.title} from {show.title}")
-            logging.warning(f"Skipping episode without valid show IMDb or TMDb ID: {episode.title} from show {show.title}")
-            return
-
-
-        release_date = parse_date(str(episode.originallyAvailableAt))
-        formatted_release_date = release_date.strftime("%Y-%m-%d") if release_date else None
-        
-        base_episode_info = {
-            'imdb_id': show_imdb_id,
-            'tmdb_id': show_tmdb_id,
-            'title': show.title,
-            'episode_title': episode.title,
-            'year': show.year,
-            'season_number': episode.seasonNumber,
-            'episode_number': episode.index,
-            'addedAt': episode.addedAt,
-            'release_date': formatted_release_date
-        }
-
-        # Add an entry for each location
-        for location in episode.locations:
-            episode_info = base_episode_info.copy()
-            episode_info['location'] = location
-            collected_content['episodes'].append(episode_info)
-
-        logging.debug(f"Collected episode: {episode.title} from show: {show.title}, IMDb: {show_imdb_id}, TMDb: {show_tmdb_id}")
-        #logging.debug(f"Added {len(episode.locations)} location(s) for episode: {episode.title}")
-    except Exception as e:
-        logging.error(f"Error processing episode {episode.title} of {show.title}: {str(e)}")
-        logging.debug(f"Episode not processed: {episode.title} of {show.title}, addedAt: {episode.addedAt}")
-
-def get_collected_from_plex(request='all'):
-    try:
-        plex_url = get_setting('Plex', 'url')
+        plex_url = get_setting('Plex', 'url').rstrip('/')
         plex_token = get_setting('Plex', 'token')
+        headers = {
+            'X-Plex-Token': plex_token,
+            'Accept': 'application/json'
+        }
+
+        logger.info(f"Connecting to Plex server at {plex_url}")
+
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+        async with aiohttp.ClientSession() as session:
+            libraries_url = f"{plex_url}/library/sections"
+            libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
+            
+            show_libraries = [library['key'] for library in libraries_data['MediaContainer']['Directory'] if library['type'] == 'show']
+            movie_libraries = [library['key'] for library in libraries_data['MediaContainer']['Directory'] if library['type'] == 'movie']
+            
+            logger.info(f"TV Show libraries to process: {show_libraries}")
+            logger.info(f"Movie libraries to process: {movie_libraries}")
+
+            all_shows = []
+            for library_key in show_libraries:
+                shows = await get_library_contents(session, plex_url, library_key, headers, semaphore)
+                all_shows.extend(shows)
+
+            all_movies = []
+            for library_key in movie_libraries:
+                movies = await get_library_contents(session, plex_url, library_key, headers, semaphore)
+                all_movies.extend(movies)
+
+            logger.info(f"Total shows found: {len(all_shows)}")
+            logger.info(f"Total movies found: {len(all_movies)}")
+
+            all_episodes = []
+            for i in range(0, len(all_shows), CHUNK_SIZE):
+                chunk = all_shows[i:i+CHUNK_SIZE]
+                chunk_episodes = await process_shows_chunk(session, plex_url, headers, semaphore, chunk)
+                all_episodes.extend(chunk_episodes)
+                logger.info(f"Processed {i+len(chunk)}/{len(all_shows)} shows")
+
+            all_movies_processed = []
+            for i in range(0, len(all_movies), CHUNK_SIZE):
+                chunk = all_movies[i:i+CHUNK_SIZE]
+                chunk_movies = await process_movies_chunk(chunk)
+                all_movies_processed.extend(chunk_movies)
+                logger.info(f"Processed {i+len(chunk)}/{len(all_movies)} movies")
+
+        end_time = time.time()
+        total_time = end_time - start_time
+        logger.info(f"Collection complete. Total time: {total_time:.2f} seconds")
+        logger.info(f"Collected: {len(all_episodes)} episodes and {len(all_movies_processed)} movies")
         
-        movie_libraries = [lib.strip() for lib in get_setting('Plex', 'movie_libraries', '').split(',') if lib.strip()]
-        show_libraries = [lib.strip() for lib in get_setting('Plex', 'shows_libraries', '').split(',') if lib.strip()]
-        
-        #logging.debug(f"Plex URL: {plex_url}")
-        #logging.debug(f"Plex token: {plex_token}")
-        logging.debug(f"Movie libraries: {movie_libraries}")
-        logging.debug(f"TV Show libraries: {show_libraries}")
-        
-        plex = PlexServer(plex_url, plex_token, timeout=60)
-        collected_content = {'movies': [], 'episodes': []}
-        missing_guid_items = {'movies': [], 'episodes': []}
-        current_time = datetime.now()
-        time_limit = current_time - timedelta(minutes=240)
-        logging.debug(f"Current time: {current_time}")
-        logging.debug(f"Time limit: {time_limit}")
-        logging.debug(f"Time window: {current_time - time_limit}")
+        # Log a sample of processed data for verification
+        if all_episodes:
+            logger.debug(f"Sample episode: {all_episodes[0]}")
+        if all_movies_processed:
+            logger.debug(f"Sample movie: {all_movies_processed[0]}")
 
-        def log_progress(current, total, item_type):
-            progress = (current / total) * 100
-            if progress % 10 < (current - 1) / total * 100 % 10:
-                logging.debug(f"{item_type} progress: {current}/{total} ({progress:.1f}%)")
-
-        def get_library_section(plex, library_identifier):
-            if library_identifier.isdigit():
-                section = next((section for section in plex.library.sections() if str(section.key) == library_identifier), None)
-                if section:
-                    return section
-                else:
-                    logging.error(f"No library found with section ID: {library_identifier}")
-                    return None
-            else:
-                try:
-                    return plex.library.section(library_identifier)
-                except:
-                    logging.error(f"No library found with name: {library_identifier}")
-                    return None
-
-        if request == 'recent':
-            logging.info("Gathering recently added from Plex")
-
-            for library_identifier in movie_libraries:
-                try:
-                    movies_section = get_library_section(plex, library_identifier)
-                    if movies_section:
-                        recent_movies = movies_section.recentlyAdded()
-                        logging.debug(f"Number of recent movies found in '{movies_section.title}': {len(recent_movies)}")
-                        for i, movie in enumerate(recent_movies, start=1):
-                            logging.debug(f"Processing movie: {movie.title}, Added at: {movie.addedAt}, Current time: {current_time}")
-                            if movie.addedAt >= time_limit:
-                                process_movie(movie, collected_content, missing_guid_items)
-                                log_progress(i, len(recent_movies), f"Recent movies in '{movies_section.title}'")
-                            else:
-                                logging.debug(f"Skipping movie {movie.title} due to time limit. Added at: {movie.addedAt}, Time limit: {time_limit}")
-                except Exception as e:
-                    logging.error(f"Error processing movie library '{library_identifier}': {str(e)}")
-
-            for library_identifier in show_libraries:
-                try:
-                    shows_section = get_library_section(plex, library_identifier)
-                    if shows_section:
-                        recent_shows = shows_section.recentlyAdded()
-                        logging.debug(f"Number of recent shows found in '{shows_section.title}': {len(recent_shows)}")
-                        for i, show in enumerate(recent_shows, start=1):
-                            recent_episodes = [ep for ep in show.episodes() if ep.addedAt >= time_limit]
-                            logging.debug(f"Processing show: {show.title}, Recent episodes: {len(recent_episodes)}")
-                            for episode in recent_episodes:
-                                logging.debug(f"Processing episode: {episode.title}, Added at: {episode.addedAt}, Current time: {current_time}")
-                                process_episode(show, episode, collected_content, missing_guid_items)
-                            log_progress(i, len(recent_shows), f"Recent shows in '{shows_section.title}'")
-                except Exception as e:
-                    logging.error(f"Error processing TV show library '{library_identifier}': {str(e)}")
-
-        else:
-            logging.info("Gathering all collected from Plex")
-            for library_identifier in movie_libraries:
-                try:
-                    movies_section = get_library_section(plex, library_identifier)
-                    if movies_section:
-                        movies = movies_section.all()
-                        logging.debug(f"Number of movies found in '{movies_section.title}': {len(movies)}")
-                        for i, movie in enumerate(movies, start=1):
-                            logging.debug(f"Processing movie: {movie.title}, Added at: {movie.addedAt}, Current time: {current_time}")
-                            process_movie(movie, collected_content, missing_guid_items)
-                            log_progress(i, len(movies), f"Movies in '{movies_section.title}'")
-                except Exception as e:
-                    logging.error(f"Error processing movie library '{library_identifier}': {str(e)}")
-
-            for library_identifier in show_libraries:
-                try:
-                    shows_section = get_library_section(plex, library_identifier)
-                    if shows_section:
-                        shows = shows_section.all()
-                        logging.debug(f"Number of shows found in '{shows_section.title}': {len(shows)}")
-                        for i, show in enumerate(shows, start=1):
-                            all_episodes = show.episodes()
-                            for episode in all_episodes:
-                                logging.debug(f"Processing episode: {episode.title}, Added at: {episode.addedAt}, Current time: {current_time}")
-                                process_episode(show, episode, collected_content, missing_guid_items)
-                            log_progress(i, len(shows), f"Shows in '{shows_section.title}'")
-                except Exception as e:
-                    logging.error(f"Error processing TV show library '{library_identifier}': {str(e)}")
-
-        logging.debug(f"Collection complete: {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes collected.")
-        logging.debug(f"Content collected: {collected_content}")
-
-        if missing_guid_items['movies']:
-            logging.debug(f"Movies without valid IMDb or TMDb IDs: {missing_guid_items['movies']}")
-        if missing_guid_items['episodes']:
-            logging.debug(f"Episodes without valid show IMDb or TMDb IDs: {missing_guid_items['episodes']}")
-
-        return collected_content
+        return {'movies': all_movies_processed, 'episodes': all_episodes}
     except Exception as e:
-        logging.error(f"Error collecting content from Plex: {str(e)}", exc_info=True)
+        logger.error(f"Error collecting content from Plex: {str(e)}", exc_info=True)
         return None
+
+async def run_get_collected_from_plex(request='all'):
+    logger.info("Starting run_get_collected_from_plex")
+    result = await get_collected_from_plex(request)
+    logger.info("Completed run_get_collected_from_plex")
+    return result
+
+def sync_run_get_collected_from_plex(request='all'):
+    return asyncio.run(run_get_collected_from_plex(request))
