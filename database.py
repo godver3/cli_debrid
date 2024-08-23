@@ -478,11 +478,14 @@ def update_content_source_for_item(item_id, source_type):
         conn.close()
 
 def add_collected_items(media_items_batch, recent=False):
+    from metadata.metadata import get_show_airtime_by_imdb_id
+
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
         
         processed_items = set()
+        airtime_cache = {}  # Cache to store airtimes for each show
 
         existing_items = conn.execute('SELECT id, imdb_id, type, season_number, episode_number, state, version, filled_by_file FROM media_items').fetchall()
         existing_ids = {}
@@ -546,13 +549,28 @@ def add_collected_items(media_items_batch, recent=False):
                     processed_items.add(item_id)
 
             if not item_found:
-                # Check if the item already exists with 'unknown' version
                 if item_type == 'movie':
                     cursor = conn.execute('''
                         SELECT id FROM media_items
                         WHERE imdb_id = ? AND type = 'movie' AND version = 'unknown'
                     ''', (item['imdb_id'],))
                 else:
+                    # For episodes, get the airtime
+                    if item['imdb_id'] not in airtime_cache:
+                        airtime_cache[item['imdb_id']] = get_existing_airtime(conn, item['imdb_id'])
+                        if airtime_cache[item['imdb_id']] is None:
+                            logging.debug(f"No existing airtime found for show {item['imdb_id']}, fetching from metadata")
+                            airtime_cache[item['imdb_id']] = get_show_airtime_by_imdb_id(item['imdb_id'])
+                        
+                        # Ensure we always have a default airtime
+                        if not airtime_cache[item['imdb_id']]:
+                            airtime_cache[item['imdb_id']] = '19:00'
+                            logging.debug(f"No airtime found, defaulting to 19:00 for show {item['imdb_id']}")
+                        
+                        logging.debug(f"Airtime for show {item['imdb_id']} set to {airtime_cache[item['imdb_id']]}")
+                    
+                    airtime = airtime_cache[item['imdb_id']]
+
                     cursor = conn.execute('''
                         SELECT id FROM media_items
                         WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND version = 'unknown'
@@ -563,11 +581,18 @@ def add_collected_items(media_items_batch, recent=False):
                 if existing_item:
                     # Update existing item
                     item_id = existing_item[0]
-                    conn.execute('''
-                        UPDATE media_items
-                        SET state = ?, last_updated = ?
-                        WHERE id = ?
-                    ''', ('Collected', datetime.now(), item_id))
+                    if item_type == 'movie':
+                        conn.execute('''
+                            UPDATE media_items
+                            SET state = ?, last_updated = ?
+                            WHERE id = ?
+                        ''', ('Collected', datetime.now(), item_id))
+                    else:
+                        conn.execute('''
+                            UPDATE media_items
+                            SET state = ?, last_updated = ?, airtime = ?
+                            WHERE id = ?
+                        ''', ('Collected', datetime.now(), airtime, item_id))
                     logging.debug(f"Updating existing item to Collected: {normalized_title}")
                 else:
                     # Insert new item
@@ -585,15 +610,15 @@ def add_collected_items(media_items_batch, recent=False):
                     else:
                         cursor = conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Collected', 'episode',
                             item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), datetime.now(), 'unknown'
+                            datetime.now(), datetime.now(), 'unknown', airtime
                         ))
-                        logging.info(f"Adding new episode to DB as Collected: {normalized_title} S{item['season_number']}E{item['episode_number']}")
+                        logging.info(f"Adding new episode to DB as Collected: {normalized_title} S{item['season_number']}E{item['episode_number']} (Airtime: {airtime})")
                 
                 new_item_id = cursor.lastrowid
                 processed_items.add(new_item_id)
@@ -828,6 +853,14 @@ def purge_database(content_type=None, state=None):
         conn.execute(query, params)
         conn.commit()
         logging.info(f"Database purged successfully for type '{content_type}' and state '{state}'.")
+
+        trakt_cache_file = 'db_content/trakt_last_activity.pkl'
+        if os.path.exists(trakt_cache_file):
+            os.remove(trakt_cache_file)
+            logging.info(f"Deleted Trakt cache file: {trakt_cache_file}")
+        else:
+            logging.info(f"Trakt cache file not found: {trakt_cache_file}")
+
     except Exception as e:
         logging.error(f"Error purging database: {e}")
     finally:
