@@ -26,14 +26,23 @@ def log_api_call(func):
 
 class APITracker:
     def __init__(self):
+        self.session = requests.Session()
         self.cookies = requests.cookies
         self.exceptions = requests.exceptions
         self.utils = requests.utils
         self.Session = requests.Session
 
     @log_api_call
-    def get(self, *args, **kwargs):
-        return requests.get(*args, **kwargs)
+    def get(self, url, **kwargs):
+        try:
+            logging.debug(f"Attempting GET request to: {url}")
+            response = self.session.get(url, **kwargs)
+            response.raise_for_status()
+            logging.debug(f"Successful GET request to: {url}. Status code: {response.status_code}")
+            return response
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error in GET request to {url}: {str(e)}")
+            raise  # Re-raise the exception after logging
 
     @log_api_call
     def post(self, *args, **kwargs):
