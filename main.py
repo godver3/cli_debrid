@@ -3,7 +3,6 @@ logging.getLogger('selector').setLevel(logging.WARNING)
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 import os
-import requests
 import configparser
 import inspect
 from settings import SettingsEditor, get_setting, load_config, save_config, CONFIG_FILE, ensure_settings_file, set_setting
@@ -16,6 +15,7 @@ from run_program import run_program, ProgramRunner
 import sys
 import time
 from flask import Flask, current_app
+from api_tracker import api
 
 app = Flask(__name__)
 
@@ -92,7 +92,7 @@ def check_required_settings():
 
     try:
         if plex_url and plex_token:
-            response = requests.get(plex_url, headers={'X-Plex-Token': plex_token})
+            response = api.get(plex_url, headers={'X-Plex-Token': plex_token})
             if response.status_code != 200:
                 errors.append("Plex URL or token is not reachable.")
     except Exception as e:
@@ -100,7 +100,7 @@ def check_required_settings():
 
     try:
         if overseerr_url and overseerr_api_key:
-            response = requests.get(f"{overseerr_url}/api/v1/status", headers={'X-Api-Key': overseerr_api_key})
+            response = api.get(f"{overseerr_url}/api/v1/status", headers={'X-Api-Key': overseerr_api_key})
             if response.status_code != 200:
                 errors.append("Overseerr URL or API key is not reachable.")
     except Exception as e:
@@ -219,8 +219,8 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 def update_web_ui_state(state):
     try:
-        requests.post('http://localhost:5000/api/update_program_state', json={'state': state})
-    except requests.RequestException:
+        api.post('http://localhost:5000/api/update_program_state', json={'state': state})
+    except api.exceptions.RequestException:
         logging.error("Failed to update web UI state")
 
 def main():

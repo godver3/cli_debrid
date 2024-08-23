@@ -6,7 +6,7 @@ from queue_manager import QueueManager
 import logging
 import os
 from settings import get_all_settings, set_setting, get_setting, load_config, save_config, to_bool, ensure_trakt_auth
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from web_scraper import web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection, get_available_versions
 from debrid.real_debrid import add_to_real_debrid
 import re
@@ -34,7 +34,8 @@ import string
 from itertools import groupby
 from operator import itemgetter
 from flask import current_app
-import requests
+from api_tracker import api
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -58,6 +59,28 @@ failed_additions = 0
 
 CONFIG_FILE = './config/config.json'
 TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+
+def summarize_api_calls(time_frame):
+    log_path = 'logs/api_calls.log'
+    summary = defaultdict(lambda: defaultdict(int))
+    
+    with open(log_path, 'r') as f:
+        for line in f:
+            match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
+            if match:
+                timestamp, method, url, domain = match.groups()
+                dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S,%f')
+                
+                if time_frame == 'hour':
+                    key = dt.strftime('%Y-%m-%d %H:00')
+                elif time_frame == 'day':
+                    key = dt.strftime('%Y-%m-%d')
+                elif time_frame == 'month':
+                    key = dt.strftime('%Y-%m')
+                
+                summary[key][domain] += 1
+    
+    return dict(summary)
 
 def get_airing_soon():
     conn = get_db_connection()
@@ -1200,6 +1223,22 @@ def bulk_delete_by_imdb():
         return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with IMDB ID: {imdb_id}'})
     else:
         return jsonify({'success': False, 'error': f'No items found with IMDB ID: {imdb_id}'})
+
+@app.route('/api_call_summary')
+def api_call_summary():
+    time_frame = request.args.get('time_frame', 'day')
+    if time_frame not in ['hour', 'day', 'month']:
+        time_frame = 'day'
+    
+    summary = summarize_api_calls(time_frame)
+    
+    # Get a sorted list of all domains
+    all_domains = sorted(set(domain for period in summary.values() for domain in period))
+    
+    return render_template('api_call_summary.html', 
+                           summary=summary, 
+                           time_frame=time_frame,
+                           all_domains=all_domains)
 
 if __name__ == '__main__':
     start_server()

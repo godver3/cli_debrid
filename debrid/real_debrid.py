@@ -1,5 +1,5 @@
-import requests
-from requests.exceptions import HTTPError
+from api_tracker import api, requests
+from api_tracker import api, requests
 import json
 import re
 import logging
@@ -41,19 +41,19 @@ def add_to_real_debrid(magnet_link):
         # Step 1: Add magnet or torrent file
         if 'magnet:?xt=urn:btih:' in magnet_link:
             magnet_data = {'magnet': magnet_link}
-            torrent_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
+            torrent_response = api.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
         else:
-            torrent = requests.get(magnet_link, allow_redirects=False, timeout=60)
+            torrent = api.get(magnet_link, allow_redirects=False, timeout=60)
             if torrent.status_code != 200:
                 sleep(1)
-                torrent = requests.get(magnet_link, allow_redirects=False, timeout=60)
+                torrent = api.get(magnet_link, allow_redirects=False, timeout=60)
                 if torrent.status_code != 200:
                     torrent.raise_for_status()
                     return False
-            torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
+            torrent_response = api.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
             if not torrent_response:
                 sleep(1)
-                torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
+                torrent_response = api.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
             sleep(0.1)
 
         torrent_response.raise_for_status()
@@ -61,7 +61,7 @@ def add_to_real_debrid(magnet_link):
 
         rate_limited()
         # Step 2: Get torrent info
-        info_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
+        info_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
         info_response.raise_for_status()
         torrent_info = info_response.json()
 
@@ -77,14 +77,14 @@ def add_to_real_debrid(magnet_link):
 
         rate_limited()
         select_data = {'files': ','.join(files_to_select)}
-        select_response = requests.post(f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}", headers=headers, data=select_data, timeout=60)
+        select_response = api.post(f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}", headers=headers, data=select_data, timeout=60)
         select_response.raise_for_status()
 
         # Step 4: Wait for the torrent to be processed
         max_attempts = 1
         for attempt in range(max_attempts):
             rate_limited()
-            links_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
+            links_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
             links_response.raise_for_status()
             links_info = links_response.json()
 
@@ -104,7 +104,7 @@ def add_to_real_debrid(magnet_link):
         logging.error("Torrent processing timed out")
         return None
 
-    except requests.exceptions.RequestException as e:
+    except api.exceptions.RequestException as e:
         if isinstance(e, HTTPError) and e.response.status_code == 503:
             logging.error("Real-Debrid service is unavailable (503 error)")
             raise RealDebridUnavailableError("Real-Debrid service is unavailable") from e
@@ -138,7 +138,7 @@ def get(url):
     }
     try:
         rate_limited()
-        response = requests.get(url, headers=headers)
+        response = api.get(url, headers=headers)
         logerror(response)
         response_data = response.json()
         return json.loads(json.dumps(response_data), object_hook=lambda d: SimpleNamespace(**d))

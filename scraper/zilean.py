@@ -1,4 +1,4 @@
-import requests
+from api_tracker import api, requests
 import logging
 from typing import List, Dict, Any
 from database import get_title_by_imdb_id
@@ -23,7 +23,7 @@ def scrape_zilean(imdb_id: str, title: str, year: int, content_type: str, season
             try:
                 instance_results = scrape_zilean_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi)
                 all_results.extend(instance_results)
-            except Exception as e:
+            except api.exceptions.RequestException as e:
                 logging.error(f"Error scraping Zilean instance '{instance}': {str(e)}", exc_info=True)
 
     return all_results
@@ -54,20 +54,20 @@ def scrape_zilean_instance(instance: str, settings: Dict[str, Any], imdb_id: str
     #logging.debug(f"Attempting to access Zilean API for {instance} with URL: {full_url}")
     
     try:
-        response = requests.get(full_url, headers={'accept': 'application/json'})
+        response = api.get(full_url, headers={'accept': 'application/json'})
         #logging.debug(f"Zilean API status code for {instance}: {response.status_code}")
         
         if response.status_code == 200:
             try:
                 data = response.json()
                 return parse_zilean_results(data, instance)
-            except requests.exceptions.JSONDecodeError as json_error:
+            except api.exceptions.JSONDecodeError as json_error:
                 logging.error(f"Failed to parse JSON response for {instance}: {str(json_error)}")
                 return []
         else:
             logging.error(f"Zilean API error for {instance}: Status code {response.status_code}")
             return []
-    except requests.exceptions.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error in scrape_zilean_instance for {instance}: {str(e)}", exc_info=True)
         return []
 

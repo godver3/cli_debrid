@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Call Summary</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>API Call Summary ({{ time_frame }})</h1>
+    <form action="{{ url_for('api_call_summary') }}" method="get">
+        <select name="time_frame">
+            <option value="hour" {% if time_frame == 'hour' %}selected{% endif %}>Hourly</option>
+            <option value="day" {% if time_frame == 'day' %}selected{% endif %}>Daily</option>
+            <option value="month" {% if time_frame == 'month' %}selected{% endif %}>Monthly</option>
+        </select>
+        <input type="submit" value="Update">
+    </form>
+    <table>
+        <tr>
+            <th>Time Period</th>
+            {% for domain in all_domains %}
+            <th>{{ domain }}</th>
+            {% endfor %}
+            <th>Total</th>
+        </tr>
+        {% for period, domains in summary.items() %}
+        <tr>
+            <td>{{ period }}</td>
+            {% for domain in all_domains %}
+            <td>{{ domains.get(domain, 0) }}</td>
+            {% endfor %}
+            <td>{{ domains.values() | sum }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>

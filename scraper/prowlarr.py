@@ -1,4 +1,4 @@
-import requests
+from api_tracker import api
 import logging
 from typing import List, Dict, Any
 from database import get_title_by_imdb_id
@@ -50,7 +50,7 @@ def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], title: str
     logging.debug(f"Attempting to access Prowlarr API for {instance} with URL: {full_url}")
     
     try:
-        response = requests.get(full_url, headers=headers, timeout=60)
+        response = api.get(full_url, headers=headers, timeout=60)
         
         logging.debug(f"Prowlarr API status code for {instance}: {response.status_code}")
         
@@ -58,7 +58,7 @@ def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], title: str
             try:
                 data = response.json()
                 return parse_prowlarr_results(data[:], instance)
-            except requests.exceptions.JSONDecodeError as json_error:
+            except api.exceptions.JSONDecodeError as json_error:
                 logging.error(f"Failed to parse JSON response for {instance}: {str(json_error)}")
                 return []
         else:

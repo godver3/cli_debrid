@@ -1,6 +1,6 @@
 import re
 import logging
-import requests
+from api_tracker import api
 import json
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
@@ -89,10 +89,10 @@ def fetch_items_from_trakt(endpoint: str) -> List[Dict[str, Any]]:
     logging.debug(f"Fetching items from Trakt URL: {full_url}")
 
     try:
-        response = requests.get(full_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        response = api.get(full_url, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.json()
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error fetching items from Trakt: {e}")
         if hasattr(e, 'response') and e.response is not None:
             logging.error(f"Response text: {e.response.text}")
