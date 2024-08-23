@@ -1,4 +1,4 @@
-import requests
+from api_tracker import api
 import logging
 from typing import List, Dict, Any
 from database import get_title_by_imdb_id
@@ -56,7 +56,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str,
     full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
     #logging.debug(f"Jackett instance '{instance}' URL: {full_url}")
 
-    response = requests.get(full_url, headers={'accept': 'application/json'})
+    response = api.get(full_url, headers={'accept': 'application/json'})
     #logging.debug(f"Jackett instance '{instance}' API status code: {response.status_code}")
 
     if response.status_code == 200:

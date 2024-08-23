@@ -105,7 +105,7 @@ def map_collected_media_to_wanted():
                                         'release_date': release_date
                                     })
 
-            except requests.exceptions.RequestException as e:
+            except api.exceptions.RequestException as e:
                 logging.error(f"Error processing show TMDB ID: {tmdb_id}: {str(e)}")
             except Exception as e:
                 logging.error(f"Unexpected error processing show TMDB ID: {tmdb_id}: {str(e)}")

@@ -1,5 +1,5 @@
 import logging
-import requests
+from api_tracker import api
 from typing import List, Dict, Any, Tuple
 from settings import get_all_settings
 from database import get_media_item_presence
@@ -28,10 +28,10 @@ def fetch_items_from_mdblist(url: str) -> List[Dict[str, Any]]:
     
     try:
         logging.info(f"Fetching items from MDBList URL: {url}")
-        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        response = api.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.json()
-    except requests.RequestException as e:
+    except api.exceptions.RequestException as e:
         logging.error(f"Error fetching items from MDBList: {e}")
         return []
 
