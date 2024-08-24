@@ -1,6 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
 {% block content %}
+<style>
+    .login-reminder {
+        font-size: 0.9em;
+        color: #666;
+        margin-top: 15px;
+        padding: 10px;
+        background-color: #f0f0f0;
+        border-radius: 5px;
+        text-align: center;
+    }
+    .login-reminder strong {
+        color: #333;
+    }
+</style>
 <div class="auth-form">
     <h2>Login</h2>
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -17,5 +31,6 @@
         <input type="password" name="password" placeholder="Password" required>
         <input type="submit" value="Login">
     </form>
+    <p class="login-reminder">Initial login: username <strong>admin</strong>, password <strong>admin</strong></p>
 </div>
 {% endblock %}
