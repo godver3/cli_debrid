@@ -3,7 +3,68 @@
 {% block title %}Home{% endblock %}
 
 {% block content %}
+<style>
+    .stats-box.recently-added {
+        grid-column: 1 / -1;
+        margin-bottom: 20px;
+    }
+
+    .stats-box.recently-added ul {
+        list-style-type: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .stats-box.recently-added li {
+        margin-bottom: 10px;
+        color: #FFA500;
+    }
+
+    .stats-box.recently-added .added-date {
+        display: inline-block;
+        margin-left: 5px;
+        font-style: italic;
+        color: #f4f4f4;
+    }
+
+    .card-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+    }
+
+    .card {
+        width: 200px;
+        border: 1px solid #555;
+        border-radius: 8px;
+        overflow: hidden;
+        background-color: #444;
+    }
+
+    .card-img {
+        width: 100%;
+        height: 300px;
+        object-fit: cover;
+    }
+
+    .card-content {
+        padding: 10px;
+    }
+
+    .card h5 {
+        margin: 0 0 5px 0;
+        font-size: 1em;
+        color: #f4f4f4;
+    }
+
+    .card .added-date {
+        font-size: 0.8em;
+        color: #bbb;
+    }
+</style>
+
 <div class="stats-container">
+
     <div class="stats-box recently-aired">
         <h3>Recently Aired</h3>
         {% if stats.recently_aired %}
@@ -76,6 +137,51 @@
         {% else %}
             <p>No upcoming releases in the next week.</p>
         {% endif %}
+    </div>
+
+    <div class="stats-box recently-added">
+        <h3>Recently Added</h3>
+        <div class="recently-added-section">
+            <h4>Movies</h4>
+            {% if stats.recently_added_movies %}
+                <div class="card-container">
+                {% for movie in stats.recently_added_movies %}
+                    <div class="card">
+                        {% if movie.poster_url %}
+                            <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="card-img">
+                        {% endif %}
+                        <div class="card-content">
+                            <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
+                            <p class="added-date">{{ movie.added_at }}</p>
+                        </div>
+                    </div>
+                {% endfor %}
+                </div>
+            {% else %}
+                <p>No movies added recently.</p>
+            {% endif %}
+        </div>
+        <div class="recently-added-section">
+            <h4>TV Shows</h4>
+            {% if stats.recently_added_shows %}
+                <div class="card-container">
+                {% for show in stats.recently_added_shows %}
+                    <div class="card">
+                        {% if show.poster_url %}
+                            <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="card-img">
+                        {% endif %}
+                        <div class="card-content">
+                            <h5>{{ show.title }}</h5>
+                            <p class="added-date">Added: {{ show.added_at }}</p>
+                            <p class="seasons">Seasons: {{ show.seasons|join(', ') }}</p>
+                        </div>
+                    </div>
+                {% endfor %}
+                </div>
+            {% else %}
+                <p>No TV shows added recently.</p>
+            {% endif %}
+        </div>
     </div>
 
     <div class="stats-box collection-stats">

@@ -506,10 +506,6 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     # Add content_type_score to the total score
     total_score += content_type_score
 
-    # Add year penalty to the total score
-    year_penalty = result.get('year_penalty', 0)
-    total_score += year_penalty
-
     # Create a score breakdown
     score_breakdown = {
         'similarity_score': round(weighted_similarity, 2),
@@ -526,8 +522,6 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'preferred_filter_in_breakdown': preferred_filter_in_breakdown,
         'preferred_filter_out_breakdown': preferred_filter_out_breakdown,
         'content_type_score': content_type_score,
-        'year_penalty': year_penalty,
-        'year_penalty_reason': result.get('year_penalty_reason', 'No penalty'),
         'total_score': round(total_score, 2)
     }
     # Add multi-pack information to the score breakdown
@@ -666,20 +660,24 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
         # Check title similarity
         title_sim = improved_title_similarity(title, original_title)
-        #logging.debug(f"Title similarity for '{original_title}': {title_sim:.2f}")
-        if title_sim < 0.65:  # Increased threshold from 0.8 to 0.7
+        if title_sim < 0.65:
             result['filter_reason'] = f"Low title similarity: {title_sim:.2f}"
             continue       
 
         # Content type specific filtering
         if content_type.lower() == 'movie':
             parsed_year = parsed_info.get('year')
-            if not parsed_year:
-                result['year_penalty'] = -500
-                result['year_penalty_reason'] = "Missing year"
-            elif abs(int(parsed_year) - year) > 1:
-                result['year_penalty'] = -500
-                result['year_penalty_reason'] = f"Year mismatch: {parsed_year} vs {year}"
+            # Check if the title contains "UFC"
+            if "UFC" not in original_title.upper():
+                if not parsed_year:
+                    result['filter_reason'] = "Missing year"
+                    continue
+                elif abs(int(parsed_year) - year) > 1:
+                    result['filter_reason'] = f"Year mismatch: {parsed_year} vs {year}"
+                    continue
+            else:
+                # For UFC titles, we don't filter based on year
+                logging.debug(f"Skipping year filter for UFC title: {original_title}")
         elif content_type.lower() == 'episode':
             if multi:
                 if re.search(r'S\d{2}E\d{2}', original_title, re.IGNORECASE):
@@ -713,13 +711,11 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 size_per_episode_gb = size_gb
 
             result['size'] = size_per_episode_gb
-            #result['size'] = f"{size_per_episode_gb:.2f} GB (per episode)"
             bitrate = calculate_bitrate(size_per_episode_gb, runtime)
 
         else:
             result['size'] = size_gb
-            #result['size'] = f"{size_gb:.2f} GB"
-            bitrate = calculate_bitrate(size_gb, runtime) #* episode_count)
+            bitrate = calculate_bitrate(size_gb, runtime)
 
         result['bitrate'] = bitrate          
 
