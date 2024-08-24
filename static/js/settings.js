@@ -516,13 +516,15 @@ function updateSettings() {
 
 function showConfirmationPopup(message, onConfirm) {
     const popup = document.createElement('div');
-    popup.className = 'error-popup';
+    popup.className = 'confirmation-popup';
     popup.innerHTML = `
-        <div class="error-popup-content">
+        <div class="confirmation-popup-content">
             <h3>Confirmation</h3>
             <p>${message}</p>
-            <button id="confirmYes">Yes</button>
-            <button id="confirmNo">No</button>
+            <div class="confirmation-buttons">
+                <button id="confirmYes">Yes</button>
+                <button id="confirmNo">No</button>
+            </div>
         </div>
     `;
     document.body.appendChild(popup);
@@ -539,12 +541,12 @@ function showConfirmationPopup(message, onConfirm) {
 
 function showNotification(message, type) {
     const popup = document.createElement('div');
-    popup.className = 'error-popup';
+    popup.className = 'notification-popup';
     popup.innerHTML = `
-        <div class="error-popup-content">
+        <div class="notification-popup-content ${type}">
             <h3>${type === 'success' ? 'Success' : 'Error'}</h3>
             <p>${message}</p>
-            <button onclick="this.closest('.error-popup').remove()">Close</button>
+            <button onclick="this.closest('.notification-popup').remove()">Close</button>
         </div>
     `;
     document.body.appendChild(popup);
