@@ -11,6 +11,10 @@
         // Add content source settings
         window.contentSourceSettings = {{ content_source_settings | tojson | safe }};
         console.log("window.contentSourceSettings:", window.contentSourceSettings);
+
+        // Add notification settings
+        window.notificationSettings = {{ notification_settings | default({}) | tojson | safe }};
+        console.log("window.notificationSettings:", window.notificationSettings);
     </script>
 {% endblock %}
 {% block content %}
@@ -23,6 +27,7 @@
         <button type="button" class="settings-tab-button" data-tab="content-sources">Content Sources</button>
         <button type="button" class="settings-tab-button" data-tab="additional">Additional Settings</button>
         <button type="button" class="settings-tab-button" data-tab="debug">Debug Settings</button>
+        <button type="button" class="settings-tab-button" data-tab="notifications">Notifications</button>
     </div>
     
     <div id="settingsForm">
@@ -40,6 +45,9 @@
         </div>
         <div id="debug" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/debug.html' %}
+        </div>
+        <div id="notifications" class="settings-tab-content" style="display: none;">
+            {% include 'settings_tabs/notifications.html' %}
         </div>
     </div>
 
