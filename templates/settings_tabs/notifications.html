@@ -1,0 +1,54 @@
+<h3>Notification Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+<button id="add-notification-btn" class="add-source-link">Add New Notification</button>
+<div id="add-notification-popup" class="popup">
+    <div class="popup-content">
+        <h4>Add New Notification</h4>
+        <form id="add-notification-form">
+            <div class="form-group">
+                <label for="notification-type">Notification Type:</label>
+                <select id="notification-type" name="type" required>
+                    <option value="Telegram">Telegram</option>
+                    <option value="Discord">Discord</option>
+                    <option value="Email">Email</option>
+                </select>
+            </div>
+            <button type="submit">Add Notification</button>
+            <button type="button" id="cancel-add-notification">Cancel</button>
+        </form>
+    </div>
+</div>
+{% if settings['Notifications'] is defined and settings['Notifications'] is mapping %}
+    {% for notification_id, config in settings['Notifications'].items() %}
+    <div class="settings-section" data-notification-id="{{ notification_id }}">
+        <div class="settings-section-header">
+            <span class="settings-toggle-icon">+</span>
+            <h4>{{ notification_id }}</h4>
+            <button type="button" class="delete-notification-btn" data-notification-id="{{ notification_id }}">Delete Notification</button>
+        </div>
+        <div class="settings-section-content" style="display: none;">
+            {% for key, value in config.items() %}
+            <div class="settings-form-group">
+                {% if key == 'enabled' %}
+                    <label class="settings-title">
+                        <input type="checkbox" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" {% if value %}checked{% endif %}>
+                        {{ key|replace('_', ' ')|title }}
+                    </label>
+                {% else %}
+                    <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    <input type="{% if 'password' in key %}password{% else %}text{% endif %}" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" value="{{ value }}" class="settings-input">
+                {% endif %}
+                {% if settings_schema['Notifications'] is defined and settings_schema['Notifications'].schema is defined and settings_schema['Notifications'].schema[notification_id] is defined and settings_schema['Notifications'].schema[notification_id][key] is defined and settings_schema['Notifications'].schema[notification_id][key].description is defined %}
+                <p class="settings-description">{{ settings_schema['Notifications'].schema[notification_id][key].description }}</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <p>No Notifications configured or invalid configuration.</p>
+{% endif %}

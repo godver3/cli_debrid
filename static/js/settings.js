@@ -54,6 +54,7 @@ function initializeAllFunctionalities() {
     initializeScrapersFunctionality();
     initializeScrapingFunctionality();
     initializeTraktAuthorization();
+    initializeNotificationsFunctionality();
 }
 
 function checkProgramStatus() {
@@ -1207,5 +1208,120 @@ function checkTraktAuthStatus() {
         .catch(error => {
             console.error('Error:', error);
             traktAuthStatus.textContent = 'Unable to check Trakt authorization status.';
+        });
+}
+
+function initializeNotificationsFunctionality() {
+    console.log('Initializing Notifications Functionality');
+
+    const addNotificationBtn = document.getElementById('add-notification-btn');
+    const addNotificationPopup = document.getElementById('add-notification-popup');
+    const cancelAddNotificationBtn = document.getElementById('cancel-add-notification');
+    const addNotificationForm = document.getElementById('add-notification-form');
+    const notificationTypeSelect = document.getElementById('notification-type');
+
+    if (addNotificationBtn && addNotificationPopup) {
+        addNotificationBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            addNotificationPopup.style.display = 'block';
+        });
+    }
+
+    if (cancelAddNotificationBtn && addNotificationPopup) {
+        cancelAddNotificationBtn.addEventListener('click', function() {
+            addNotificationPopup.style.display = 'none';
+        });
+    }
+
+    if (addNotificationForm) {
+        addNotificationForm.addEventListener('submit', handleAddNotificationSubmit);
+    }
+
+    document.querySelectorAll('.delete-notification-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const notificationId = this.getAttribute('data-notification-id');
+            deleteNotification(notificationId);
+        });
+    });
+
+    reinitializeAllExpandCollapse();
+    initializeExpandCollapse();
+}
+
+function handleAddNotificationSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    const notificationData = {
+        type: form.elements['notification-type'].value
+    };
+
+    fetch('/notifications/add', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(notificationData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('add-notification-popup').style.display = 'none';
+            form.reset();
+            return updateNotificationsTab();
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .then(() => {
+        showNotification('Notification added successfully', 'success');
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('Error adding notification: ' + error.message, 'error');
+        return updateNotificationsTab();
+    });
+}
+
+function deleteNotification(notificationId) {
+    showConfirmationPopup(`Are you sure you want to delete the notification "${notificationId}"?`, () => {
+        fetch('/notifications/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ notification_id: notificationId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateNotificationsTab().then(() => {
+                    showNotification('Notification deleted successfully', 'success');
+                });
+            } else {
+                showNotification('Error deleting notification: ' + (data.error || 'Unknown error'), 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('Error deleting notification', 'error');
+        });
+    });
+}
+
+function updateNotificationsTab() {
+    return fetch('/notifications/content')
+        .then(response => response.text())
+        .then(html => {
+            const notificationsTab = document.getElementById('notifications');
+            if (notificationsTab) {
+                notificationsTab.innerHTML = html;
+                initializeNotificationsFunctionality();
+                initializeExpandCollapse();
+            }
+        })
+        .catch(error => {
+            console.error('Error updating Notifications tab:', error);
+            showNotification('Error updating Notifications tab', 'error');
         });
 }
