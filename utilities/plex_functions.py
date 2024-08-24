@@ -290,7 +290,7 @@ async def get_recent_from_plex():
                                 full_metadata = metadata['MediaContainer']['Metadata'][0]
                                 processed_items = await process_recent_movie(full_metadata)
                                 processed_movies.extend(processed_items)
-                        elif item['type'] == 'season':
+                        elif item['type'] == 'episode':
                             show_metadata_url = f"{plex_url}/library/metadata/{item['parentRatingKey']}?includeGuids=1"
                             show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
                             
