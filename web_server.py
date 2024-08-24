@@ -41,11 +41,7 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from sqlalchemy import inspect
-
-# Create db_content directory if it doesn't exist
-db_directory = 'db_content'
-if not os.path.exists(db_directory):
-    os.makedirs(db_directory)
+from pathlib import Path
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -54,8 +50,19 @@ app.secret_key = '9683650475'
 queue_manager = QueueManager()
 scraper_manager = ScraperManager()
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(db_directory, "users.db")}'
+# Ensure the directory for the database exists
+db_directory = os.path.join(app.root_path, 'db_content')
+os.makedirs(db_directory, exist_ok=True)
+
+# Set the database URI
+db_path = os.path.join(db_directory, 'users.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Ensure the directory is writable
+if not os.access(db_directory, os.W_OK):
+    raise PermissionError(f"The directory {db_directory} is not writable. Please check permissions.")
+
 db = SQLAlchemy(app)
 
 login_manager = LoginManager()
