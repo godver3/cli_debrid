@@ -12,7 +12,7 @@ from debrid.real_debrid import add_to_real_debrid
 import re
 from datetime import datetime, timedelta
 import sqlite3
-from database import get_db_connection, get_collected_counts, remove_from_media_items, bulk_delete_by_imdb_id
+from database import get_db_connection, get_collected_counts, remove_from_media_items, bulk_delete_by_imdb_id, get_recently_added_items
 import string
 from settings_web import get_settings_page, update_settings, get_settings
 from template_utils import render_settings, render_content_sources
@@ -42,6 +42,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from sqlalchemy import inspect
 from pathlib import Path
+from utilities.plex_functions import sync_run_get_recent_from_plex
+import aiohttp
+import asyncio
+from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -104,6 +108,112 @@ class User(UserMixin, db.Model):
     password = db.Column(db.String(120), nullable=False)
     role = db.Column(db.String(10), nullable=False, default='user')
     is_default = db.Column(db.Boolean, default=False)
+
+async def get_poster_url(session, tmdb_id, media_type):
+    overseerr_url = get_setting('Overseerr', 'url', '').rstrip('/')
+    overseerr_api_key = get_setting('Overseerr', 'api_key', '')
+    
+    if not overseerr_url or not overseerr_api_key:
+        return None
+    
+    headers = get_overseerr_headers(overseerr_api_key)
+    
+    url = f"{overseerr_url}/api/v1/{media_type}/{tmdb_id}"
+    try:
+        async with session.get(url, headers=headers) as response:
+            if response.status == 200:
+                data = await response.json()
+                poster_path = data.get('posterPath')
+                if poster_path:
+                    return f"https://image.tmdb.org/t/p/w300{poster_path}"
+    except Exception as e:
+        print(f"Error fetching poster URL: {e}")
+    return None
+
+async def get_recent_from_plex(movie_limit=5, show_limit=5):
+    plex_url = get_setting('Plex', 'url', '').rstrip('/')
+    plex_token = get_setting('Plex', 'token', '')
+    
+    if not plex_url or not plex_token:
+        return {'movies': [], 'shows': []}
+    
+    headers = {
+        'X-Plex-Token': plex_token,
+        'Accept': 'application/json'
+    }
+
+    async def fetch_metadata(session, item_key):
+        metadata_url = f"{plex_url}{item_key}?includeGuids=1"
+        async with session.get(metadata_url, headers=headers) as response:
+            return await response.json()
+
+    async with aiohttp.ClientSession() as session:
+        # Get library sections
+        async with session.get(f"{plex_url}/library/sections", headers=headers) as response:
+            sections = await response.json()
+
+        recent_movies = []
+        recent_shows = {}
+
+        for section in sections['MediaContainer']['Directory']:
+            if section['type'] == 'movie':
+                async with session.get(f"{plex_url}/library/sections/{section['key']}/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size={movie_limit}", headers=headers) as response:
+                    data = await response.json()
+                    for item in data['MediaContainer'].get('Metadata', []):
+                        metadata = await fetch_metadata(session, item['key'])
+                        if 'MediaContainer' in metadata and 'Metadata' in metadata['MediaContainer']:
+                            full_metadata = metadata['MediaContainer']['Metadata'][0]
+                            tmdb_id = next((guid['id'] for guid in full_metadata.get('Guid', []) if guid['id'].startswith('tmdb://')), None)
+                            if tmdb_id:
+                                tmdb_id = tmdb_id.split('://')[1]
+                                poster_url = await get_poster_url(session, tmdb_id, 'movie')
+                                recent_movies.append({
+                                    'title': item['title'],
+                                    'year': item.get('year'),
+                                    'added_at': datetime.fromtimestamp(int(item['addedAt'])).strftime('%Y-%m-%d %H:%M:%S'),
+                                    'poster_url': poster_url
+                                })
+            elif section['type'] == 'show':
+                async with session.get(f"{plex_url}/library/sections/{section['key']}/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size=100", headers=headers) as response:
+                    data = await response.json()
+                    for item in data['MediaContainer'].get('Metadata', []):
+                        if item['type'] == 'episode' and len(recent_shows) < show_limit:
+                            show_title = item['grandparentTitle']
+                            if show_title not in recent_shows:
+                                show_metadata = await fetch_metadata(session, item['grandparentKey'])
+                                if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
+                                    full_show_metadata = show_metadata['MediaContainer']['Metadata'][0]
+                                    tmdb_id = next((guid['id'] for guid in full_show_metadata.get('Guid', []) if guid['id'].startswith('tmdb://')), None)
+                                    if tmdb_id:
+                                        tmdb_id = tmdb_id.split('://')[1]
+                                        poster_url = await get_poster_url(session, tmdb_id, 'tv')
+                                        recent_shows[show_title] = {
+                                            'title': show_title,
+                                            'added_at': datetime.fromtimestamp(int(item['addedAt'])).strftime('%Y-%m-%d %H:%M:%S'),
+                                            'poster_url': poster_url,
+                                            'seasons': set()
+                                        }
+                            if show_title in recent_shows:
+                                recent_shows[show_title]['seasons'].add(item['parentIndex'])
+                                recent_shows[show_title]['added_at'] = max(
+                                    recent_shows[show_title]['added_at'],
+                                    datetime.fromtimestamp(int(item['addedAt'])).strftime('%Y-%m-%d %H:%M:%S')
+                                )
+                            if len(recent_shows) == show_limit:
+                                break
+
+        recent_shows = list(recent_shows.values())
+        for show in recent_shows:
+            show['seasons'] = sorted(show['seasons'])
+        recent_shows.sort(key=lambda x: x['added_at'], reverse=True)
+
+    return {
+        'movies': recent_movies[:movie_limit],
+        'shows': recent_shows[:show_limit]
+    }
+
+def sync_run_get_recent_from_plex():
+    return asyncio.run(get_recent_from_plex())
 
 def admin_required(f):
     @wraps(f)
@@ -767,6 +877,9 @@ def statistics():
     uptime = int(time.time() - start_time)
     collected_counts = get_collected_counts()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+
+    recent_from_plex = sync_run_get_recent_from_plex()
+    
     upcoming_releases = get_upcoming_releases()
     now = datetime.now()
     stats = {
@@ -779,10 +892,11 @@ def statistics():
         'upcoming_releases': upcoming_releases,
         'today': now.date(),
         'yesterday': (now - timedelta(days=1)).date(),
-        'tomorrow': (now + timedelta(days=1)).date()
+        'tomorrow': (now + timedelta(days=1)).date(),
+        'recently_added_movies': recent_from_plex['movies'],
+        'recently_added_shows': recent_from_plex['shows']  # Changed from 'seasons' to 'shows'
     }
     return render_template('statistics.html', stats=stats)
-
 @app.route('/scraper', methods=['GET', 'POST'])
 @user_required
 def scraper():
