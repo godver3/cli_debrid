@@ -82,8 +82,7 @@ function checkProgramStatus() {
                 runningMessage.remove();
             }
 
-            // Update Start/Stop Program button
-            updateProgramControlButton(isRunning);
+
         });
 }
 
@@ -491,6 +490,7 @@ function updateSettings() {
         body: JSON.stringify(settingsData)
     })
     .then(response => response.json())
+    // In the updateSettings function
     .then(data => {
         console.log("Server response:", data);
         if (data.status === 'success') {
@@ -514,14 +514,45 @@ function updateSettings() {
     });
 }
 
+function showConfirmationPopup(message, onConfirm) {
+    const popup = document.createElement('div');
+    popup.className = 'error-popup';
+    popup.innerHTML = `
+        <div class="error-popup-content">
+            <h3>Confirmation</h3>
+            <p>${message}</p>
+            <button id="confirmYes">Yes</button>
+            <button id="confirmNo">No</button>
+        </div>
+    `;
+    document.body.appendChild(popup);
+
+    document.getElementById('confirmYes').addEventListener('click', () => {
+        onConfirm();
+        popup.remove();
+    });
+
+    document.getElementById('confirmNo').addEventListener('click', () => {
+        popup.remove();
+    });
+}
+
 function showNotification(message, type) {
-    const notification = document.createElement('div');
-    notification.textContent = message;
-    notification.className = `notification ${type}`;
-    document.body.appendChild(notification);
+    const popup = document.createElement('div');
+    popup.className = 'error-popup';
+    popup.innerHTML = `
+        <div class="error-popup-content">
+            <h3>${type === 'success' ? 'Success' : 'Error'}</h3>
+            <p>${message}</p>
+            <button onclick="this.closest('.error-popup').remove()">Close</button>
+        </div>
+    `;
+    document.body.appendChild(popup);
+
+    // Automatically remove the popup after 5 seconds
     setTimeout(() => {
-        notification.remove();
-    }, 3000);
+        popup.remove();
+    }, 5000);
 }
 
 function initializeContentSourcesFunctionality() {
@@ -558,9 +589,7 @@ function initializeContentSourcesFunctionality() {
     document.querySelectorAll('.delete-source-btn').forEach(button => {
         button.addEventListener('click', function() {
             const sourceId = this.getAttribute('data-source-id');
-            if (confirm(`Are you sure you want to delete the source "${sourceId}"?`)) {
-                deleteContentSource(sourceId);
-            }
+            deleteContentSource(sourceId);
         });
     });
 
@@ -600,9 +629,7 @@ function initializeScrapersFunctionality() {
     document.querySelectorAll('.delete-scraper-btn').forEach(button => {
         button.addEventListener('click', function() {
             const scraperId = this.getAttribute('data-scraper-id');
-            if (confirm(`Are you sure you want to delete the scraper "${scraperId}"?`)) {
-                deleteScraper(scraperId);
-            }
+            deleteScraper(scraperId);
         });
     });
 }
@@ -646,9 +673,7 @@ function initializeScrapingFunctionality() {
     document.querySelectorAll('.delete-version-btn').forEach(button => {
         button.addEventListener('click', function() {
             const versionId = this.getAttribute('data-version-id');
-            if (confirm(`Are you sure you want to delete the version "${versionId}"?`)) {
-                deleteVersion(versionId);
-            }
+            deleteVersion(versionId);
         });
     });
 
@@ -891,90 +916,80 @@ function handleAddVersionSubmit(e) {
 }
 
 function deleteContentSource(sourceId) {
-    fetch('/content_sources/delete', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ source_id: sourceId })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            console.log(`Content source ${sourceId} deleted successfully`);
-            showNotification('Content source deleted successfully', 'success');
-            
-            // Update the Content Sources tab content
-            return updateContentSourcesTab();
-        } else {
-            throw new Error(data.error || 'Unknown error');
-        }
-    })
-    .then(() => {
-        console.log('Content Sources tab updated successfully');
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showNotification('Error deleting content source: ' + error.message, 'error');
+    showConfirmationPopup(`Are you sure you want to delete the source "${sourceId}"?`, () => {
+        fetch('/content_sources/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ source_id: sourceId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateContentSourcesTab().then(() => {
+                    showNotification('Content source deleted successfully', 'success');
+                });
+            } else {
+                showNotification('Error deleting content source: ' + (data.error || 'Unknown error'), 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('Error deleting content source', 'error');
+        });
     });
 }
 
 function deleteScraper(scraperId) {
-    fetch('/scrapers/delete', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ scraper_id: scraperId }),
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Remove the scraper element from the UI
-            const scraperElement = document.querySelector(`.settings-section[data-scraper-id="${scraperId}"]`);
-            if (scraperElement) {
-                scraperElement.remove();
+    showConfirmationPopup(`Are you sure you want to delete the scraper "${scraperId}"?`, () => {
+        fetch('/scrapers/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ scraper_id: scraperId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateScrapersTab().then(() => {
+                    showNotification('Scraper deleted successfully', 'success');
+                });
+            } else {
+                showNotification('Error deleting scraper: ' + (data.error || 'Unknown error'), 'error');
             }
-            showNotification('Scraper deleted successfully', 'success');
-            
-            // Update the Scrapers tab content
-            return updateScrapersTab();
-        } else {
-            throw new Error(data.error || 'Unknown error');
-        }
-    })
-    .then(() => {
-        console.log('Scrapers tab updated successfully');
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showNotification('Error deleting scraper: ' + error.message, 'error');
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('Error deleting scraper', 'error');
+        });
     });
 }
 
 function deleteVersion(versionId) {
-    fetch('/versions/delete', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ version_id: versionId }),
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            const versionElement = document.querySelector(`.settings-section[data-version-id="${versionId}"]`);
-            if (versionElement) {
-                versionElement.remove();
+    showConfirmationPopup(`Are you sure you want to delete the version "${versionId}"?`, () => {
+        fetch('/versions/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ version_id: versionId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateScrapingTab().then(() => {
+                    showNotification('Version deleted successfully', 'success');
+                });
+            } else {
+                showNotification('Error deleting version: ' + (data.error || 'Unknown error'), 'error');
             }
-            showNotification('Version deleted successfully', 'success');
-        } else {
-            showNotification('Failed to delete version: ' + (data.error || 'Unknown error'), 'error');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showNotification('Error deleting version', 'error');
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('Error deleting version', 'error');
+        });
     });
 }
 
