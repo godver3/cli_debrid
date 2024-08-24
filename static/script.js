@@ -3,6 +3,107 @@ console.log('Script started');
 let deleteInProgress = false;
 let isEventListenerAttached = false;
 
+function initializeProgramControls() {
+    const controlButton = document.getElementById('programControlButton');
+    if (!controlButton) return;
+
+    let currentStatus = 'Initialized';
+
+    function updateButtonState(status) {
+        if (status === 'Running') {
+            controlButton.textContent = 'Stop Program';
+            controlButton.setAttribute('data-status', 'Running');
+            controlButton.classList.remove('start-program');
+            controlButton.classList.add('stop-program');
+        } else {
+            controlButton.textContent = 'Start Program';
+            controlButton.setAttribute('data-status', 'Initialized');
+            controlButton.classList.remove('stop-program');
+            controlButton.classList.add('start-program');
+        }
+        currentStatus = status;
+    }
+
+    function updateStatus() {
+        fetch('/api/program_status')
+            .then(response => response.json())
+            .then(data => {
+                updateButtonState(data.running ? 'Running' : 'Initialized');
+            })
+            .catch(error => {
+                console.error('Error fetching program status:', error);
+            });
+    }
+
+    function showErrorPopup(message) {
+        const popup = document.createElement('div');
+        popup.className = 'error-popup';
+        popup.innerHTML = `
+            <div class="error-popup-content">
+                <h3>Unable to Start Program</h3>
+                <p>${message}</p>
+                <button onclick="this.parentElement.parentElement.remove()">Close</button>
+            </div>
+        `;
+        document.body.appendChild(popup);
+    }
+
+    controlButton.addEventListener('click', function() {
+        if (currentStatus !== 'Running') {
+            // Check conditions before starting the program
+            fetch('/api/check_program_conditions')
+                .then(response => response.json())
+                .then(conditions => {
+                    if (!conditions.canRun) {
+                        let errorMessage = "The program cannot start due to the following reasons:<ul>";
+                        if (!conditions.scrapersEnabled) {
+                            errorMessage += "<li>No scrapers are enabled. Please enable at least one scraper.</li>";
+                        }
+                        if (!conditions.contentSourcesEnabled) {
+                            errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
+                        }
+                        if (!conditions.requiredSettingsComplete) {
+                            errorMessage += "<li>Some required settings are missing. Missing fields: " + conditions.missingFields.join(", ") + "</li>";
+                        }
+                        errorMessage += "</ul>";
+                        showErrorPopup(errorMessage);
+                        return;
+                    }
+                    // If conditions are met, start the program
+                    startOrStopProgram();
+                })
+                .catch(error => {
+                    console.error('Error checking program conditions:', error);
+                    showErrorPopup('An error occurred while checking program conditions. Please try again.');
+                });
+        } else {
+            // If the program is running, stop it without checking conditions
+            startOrStopProgram();
+        }
+    });
+
+    function startOrStopProgram() {
+        const action = currentStatus === 'Running' ? 'reset' : 'start';
+        fetch(`/api/${action}_program`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateStatus();
+                } else {
+                    showErrorPopup(data.message || 'An error occurred while controlling the program.');
+                }
+            })
+            .catch(error => {
+                console.error('Error controlling program:', error);
+                showErrorPopup('An error occurred while trying to control the program. Please check the console for more details.');
+            });
+    }
+
+    // Update status immediately and then every 5 seconds
+    updateStatus();
+    setInterval(updateStatus, 5000);
+}
+
 function toggleDarkMode() {
     document.body.classList.toggle('dark-mode');
     localStorage.setItem('darkMode', document.body.classList.contains('dark-mode'));
@@ -630,6 +731,11 @@ document.addEventListener('DOMContentLoaded', function() {
             openTab(event, this.getAttribute('data-tab'));
         });
     });
+
+    // Initialize program controls for admin users
+    if (typeof userRole !== 'undefined' && userRole === 'admin') {
+        initializeProgramControls();
+    }
 
     // Initial refresh
     refreshCurrentPage();
