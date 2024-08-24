@@ -36,6 +36,11 @@ from operator import itemgetter
 from flask import current_app
 from api_tracker import api
 from urllib.parse import urlparse
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+from sqlalchemy import inspect
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -43,6 +48,14 @@ Session(app)
 app.secret_key = '9683650475'
 queue_manager = QueueManager()
 scraper_manager = ScraperManager()
+
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
 
 # Disable Werkzeug request logging
 log = logging.getLogger('werkzeug')
@@ -59,6 +72,208 @@ failed_additions = 0
 
 CONFIG_FILE = './config/config.json'
 TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+
+def create_default_admin():
+    default_admin = User.query.filter_by(username='admin').first()
+    if not default_admin:
+        hashed_password = generate_password_hash('admin')
+        default_admin = User(username='admin', password=hashed_password, role='admin', is_default=True)
+        db.session.add(default_admin)
+        db.session.commit()
+
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password = db.Column(db.String(120), nullable=False)
+    role = db.Column(db.String(10), nullable=False, default='user')
+    is_default = db.Column(db.Boolean, default=False)
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or current_user.role != 'admin':
+            flash('You need to be an admin to access this page.', 'error')
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def user_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated:
+            flash('You need to be logged in to access this page.', 'error')
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+def initialize_app():
+    with app.app_context():
+        inspector = inspect(db.engine)
+        if not inspector.has_table("user"):
+            db.create_all()
+        else:
+            columns = [c['name'] for c in inspector.get_columns('user')]
+            if 'is_default' not in columns:
+                with db.engine.connect() as conn:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN is_default BOOLEAN'))
+                    conn.commit()
+        create_default_admin()
+
+initialize_app()
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('statistics'))
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        user = User.query.filter_by(username=username).first()
+        if user and check_password_hash(user.password, password):
+            login_user(user)
+            if user.is_default:
+                flash('Please set up your admin account.', 'warning')
+                return redirect(url_for('setup_admin'))
+            flash('Logged in successfully.', 'success')
+            return redirect(url_for('statistics'))
+        else:
+            flash('Invalid username or password.', 'error')
+    return render_template('login.html')
+
+@app.route('/setup_admin', methods=['GET', 'POST'])
+@login_required
+def setup_admin():
+    if not current_user.is_default:
+        return redirect(url_for('statistics'))
+    if request.method == 'POST':
+        new_username = request.form['new_username']
+        new_password = request.form['new_password']
+        confirm_password = request.form['confirm_password']
+        if new_password != confirm_password:
+            flash('Passwords do not match.', 'error')
+        else:
+            existing_user = User.query.filter_by(username=new_username).first()
+            if existing_user and existing_user.id != current_user.id:
+                flash('Username already exists.', 'error')
+            else:
+                try:
+                    # Delete all default admin accounts
+                    User.query.filter_by(is_default=True).delete()
+                    
+                    # Create the new admin account
+                    new_admin = User(username=new_username, 
+                                     password=generate_password_hash(new_password),
+                                     role='admin',
+                                     is_default=False)
+                    db.session.add(new_admin)
+                    db.session.commit()
+                    
+                    # Log out the current user (original admin) and log in the new admin
+                    logout_user()
+                    login_user(new_admin)
+                    
+                    flash('Admin account set up successfully.', 'success')
+                    return redirect(url_for('statistics'))
+                except Exception as e:
+                    db.session.rollback()
+                    flash(f'An error occurred: {str(e)}', 'error')
+                    app.logger.error(f"Error in setup_admin: {str(e)}", exc_info=True)
+    return render_template('setup_admin.html')
+
+@app.route('/change_password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        new_password = request.form['new_password']
+        confirm_password = request.form['confirm_password']
+        if new_password == confirm_password:
+            current_user.password = generate_password_hash(new_password)
+            current_user.is_default = False
+            db.session.commit()
+            flash('Password changed successfully.', 'success')
+            return redirect(url_for('statistics'))
+        else:
+            flash('Passwords do not match.', 'error')
+    return render_template('change_password.html')
+
+@app.route('/manage_users')
+@admin_required
+def manage_users():
+    users = User.query.all()
+    return render_template('manage_users.html', users=users)
+
+@app.route('/add_user', methods=['POST'])
+@admin_required
+def add_user():
+    username = request.form['username']
+    password = request.form['password']
+    role = request.form['role']
+    
+    existing_user = User.query.filter_by(username=username).first()
+    if existing_user:
+        flash('Username already exists.', 'error')
+    else:
+        hashed_password = generate_password_hash(password)
+        new_user = User(username=username, password=hashed_password, role=role)
+        db.session.add(new_user)
+        db.session.commit()
+        flash('User added successfully.', 'success')
+    
+    return redirect(url_for('manage_users'))
+
+@app.route('/delete_user/<int:user_id>', methods=['POST'])
+@admin_required
+def delete_user(user_id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    if user.username == 'admin':
+        return jsonify({'success': False, 'error': 'Cannot delete admin user'}), 400
+
+    try:
+        db.session.delete(user)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting user: {str(e)}")
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('statistics'))
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
+            flash('Username already exists.', 'error')
+            return redirect(url_for('register'))
+        hashed_password = generate_password_hash(password)
+        new_user = User(username=username, password=hashed_password)
+        if User.query.count() == 0:
+            new_user.role = 'admin'
+        db.session.add(new_user)
+        db.session.commit()
+        login_user(new_user)
+        flash('Registered successfully.', 'success')
+        return redirect(url_for('statistics'))
+    return render_template('register.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
 
 def summarize_api_calls(time_frame):
     log_path = 'logs/api_calls.log'
@@ -498,6 +713,7 @@ def add_torrent_to_real_debrid():
         return jsonify({'error': 'An error occurred while adding to Real-Debrid'}), 500
 
 @app.route('/statistics')
+@user_required
 def statistics():
     uptime = int(time.time() - start_time)
     collected_counts = get_collected_counts()
@@ -519,6 +735,7 @@ def statistics():
     return render_template('statistics.html', stats=stats)
 
 @app.route('/scraper', methods=['GET', 'POST'])
+@user_required
 def scraper():
     versions = get_available_versions()
     if request.method == 'POST':
@@ -625,6 +842,7 @@ def add_torrent():
 
 
 @app.route('/logs')
+@admin_required
 def logs():
     logs = get_recent_logs(500)  # Get the 500 most recent log entries
     return render_template('logs.html', logs=logs)
@@ -658,6 +876,7 @@ def get_log_level(log_entry):
         return 'info'  # Default to info if level can't be determined
 
 @app.route('/settings', methods=['GET'])
+@admin_required
 def settings():
     try:
         config = load_config()
@@ -770,6 +989,7 @@ def update_nested_settings(current, new):
             current[key] = value
 
 @app.route('/queues')
+@user_required
 def queues():
     queue_contents = queue_manager.get_queue_contents()
     for queue_name, items in queue_contents.items():
@@ -1009,6 +1229,7 @@ def check_trakt_auth_status():
     return jsonify({'status': 'unauthorized'})
 
 @app.route('/scraper_tester', methods=['GET', 'POST'])
+@admin_required
 def scraper_tester():
     if request.method == 'POST':
         if request.is_json:
@@ -1209,6 +1430,7 @@ def program_status():
     return jsonify({"running": is_running})
 
 @app.route('/debug_functions')
+@admin_required
 def debug_functions():
     return render_template('debug_functions.html')
 
@@ -1223,6 +1445,12 @@ def bulk_delete_by_imdb():
         return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with IMDB ID: {imdb_id}'})
     else:
         return jsonify({'success': False, 'error': f'No items found with IMDB ID: {imdb_id}'})
+
+# Add this route to handle unauthorized access
+@app.route('/unauthorized')
+def unauthorized():
+    flash('You are not authorized to access this page.', 'error')
+    return redirect(url_for('login'))
 
 @app.route('/api_call_summary')
 def api_call_summary():
