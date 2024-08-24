@@ -98,7 +98,6 @@ def create_default_admin():
     else:
         logging.info("Users already exist. Skipping default admin creation.")
 
-
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -142,6 +141,38 @@ def initialize_app():
         create_default_admin()
 
 initialize_app()
+
+@app.route('/api/check_program_conditions')
+@login_required
+@admin_required
+def check_program_conditions():
+    config = load_config()
+    scrapers_enabled = any(scraper.get('enabled', False) for scraper in config.get('Scrapers', {}).values())
+    content_sources_enabled = any(source.get('enabled', False) for source in config.get('Content Sources', {}).values())
+    
+    required_settings = [
+        ('Plex', 'url'),
+        ('Plex', 'token'),
+        ('Overseerr', 'url'),
+        ('Overseerr', 'api_key'),
+        ('RealDebrid', 'api_key')
+    ]
+    
+    missing_fields = []
+    for category, key in required_settings:
+        value = get_setting(category, key)
+        if not value:
+            missing_fields.append(f"{category}.{key}")
+    
+    required_settings_complete = len(missing_fields) == 0
+
+    return jsonify({
+        'canRun': scrapers_enabled and content_sources_enabled and required_settings_complete,
+        'scrapersEnabled': scrapers_enabled,
+        'contentSourcesEnabled': content_sources_enabled,
+        'requiredSettingsComplete': required_settings_complete,
+        'missingFields': missing_fields
+    })
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
