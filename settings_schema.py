@@ -230,5 +230,31 @@ SETTINGS_SCHEMA = {
                 "display_name": {"type": "string", "default": "Overseerr"}
             }
         }
+    },
+    "Notifications": {
+        "tab": "Notifications",
+        "type": "dict",
+        "description": "Notification configurations",
+        "default": {},
+        "schema": {
+            "Telegram": {
+                "enabled": {"type": "boolean", "default": False},
+                "bot_token": {"type": "string", "default": "", "sensitive": True},
+                "chat_id": {"type": "string", "default": ""}
+            },
+            "Discord": {
+                "enabled": {"type": "boolean", "default": False},
+                "webhook_url": {"type": "string", "default": "", "sensitive": True}
+            },
+            "Email": {
+                "enabled": {"type": "boolean", "default": False},
+                "smtp_server": {"type": "string", "default": ""},
+                "smtp_port": {"type": "integer", "default": 587},
+                "smtp_username": {"type": "string", "default": ""},
+                "smtp_password": {"type": "string", "default": "", "sensitive": True},
+                "from_address": {"type": "string", "default": ""},
+                "to_address": {"type": "string", "default": ""}
+            }
+        }
     }
 }

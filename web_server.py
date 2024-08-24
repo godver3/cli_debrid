@@ -904,9 +904,31 @@ def settings():
         for source, source_config in config['Content Sources'].items():
             if not isinstance(source_config, dict):
                 config['Content Sources'][source] = {}
-        
+                # Initialize notification_settings
+
+        # Initialize notification_settings
+        notification_settings = {}
+        if 'Notifications' in config:
+            notification_settings = config['Notifications']
+        else:
+            # If 'Notifications' is not in settings, initialize it with default values
+            notification_settings = {
+                'Telegram': {'enabled': False, 'bot_token': '', 'chat_id': ''},
+                'Discord': {'enabled': False, 'webhook_url': ''},
+                'Email': {
+                    'enabled': False,
+                    'smtp_server': '',
+                    'smtp_port': 587,
+                    'smtp_username': '',
+                    'smtp_password': '',
+                    'from_address': '',
+                    'to_address': ''
+                }
+            }
+
         return render_template('settings_base.html', 
                                settings=config, 
+                               notification_settings=notification_settings,
                                scraper_types=scraper_types, 
                                scraper_settings=scraper_manager.scraper_settings,
                                source_types=source_types,
