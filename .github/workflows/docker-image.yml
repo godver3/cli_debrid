@@ -41,4 +41,8 @@ jobs:
         file: ./Dockerfile
         platforms: linux/arm64
         push: true
+<<<<<<< HEAD
         tags: godver3/cli_debrid:dev-arm64
+=======
+        tags: godver3/cli_debrid:dev-arm64
+>>>>>>> 3f5eaf17711e22da78b0de0cd962b2806cc6d29a
