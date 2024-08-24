@@ -79,19 +79,22 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        // Check if all required settings are filled
-        const requiredSections = document.querySelectorAll('#required .settings-section');
-        requiredSections.forEach(section => {
-            const inputs = section.querySelectorAll('input[type="text"], input[type="checkbox"]');
-            inputs.forEach(input => {
-                if (input.type === 'text' && !input.value.trim()) {
-                    requiredSettingsComplete = false;
-                }
-                // For checkboxes, we assume they are required to be checked
-                if (input.type === 'checkbox' && !input.checked) {
-                    requiredSettingsComplete = false;
-                }
-            });
+        // Explicitly check each required field
+        const requiredFields = [
+            'plex-url',
+            'plex-token',
+            'movie-libraries',
+            'shows-libraries',
+            'overseerr-url',
+            'overseerr-api_key',
+            'realdebrid-api_key'
+        ];
+
+        requiredFields.forEach(fieldId => {
+            const field = document.getElementById(fieldId);
+            if (!field || !field.value.trim()) {
+                requiredSettingsComplete = false;
+            }
         });
 
         return {
@@ -127,7 +130,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
                 }
                 if (!conditions.requiredSettingsComplete) {
-                    errorMessage += "<li>Some required settings are missing. Please fill in all required fields.</li>";
+                    errorMessage += "<li>Some required settings are missing. Please fill in all fields in the Required Settings tab (Plex, Overseerr, and RealDebrid settings).</li>";
                 }
                 errorMessage += "</ul>";
                 showErrorPopup(errorMessage);

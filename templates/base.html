@@ -29,39 +29,67 @@
     <meta name="theme-color" content="#007bff">
     
     {% block head %}{% endblock %}
+    
+    {% if current_user.is_authenticated %}
+    <script>
+        const userRole = "{{ current_user.role }}";
+    </script>
+    {% endif %}
 </head>
 <body>
     <header>
         <div class="header-content">
             <img src="{{ url_for('static', filename='icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
             <h1>cli_debrid</h1>
-          </div>
-          <nav id="mainNav">
+        </div>
+        <nav id="mainNav">
             <ul id="navMenu">
+                {% if current_user.role in ['user', 'admin'] %}
                 <li><a href="{{ url_for('statistics') }}">Home</a></li>
                 <li><a href="{{ url_for('queues') }}">Queues</a></li>
+                <li><a href="{{ url_for('scraper') }}">Scraper</a></li>
+                {% endif %}
+                {% if current_user.role == 'admin' %}
                 <li><a href="{{ url_for('logs') }}">Logs</a></li>
                 <li><a href="{{ url_for('settings') }}">Settings</a></li>
-                <li><a href="{{ url_for('scraper') }}">Scraper</a></li>
+                <li><a href="{{ url_for('manage_users') }}">Manage Users</a></li>
                 <li><a href="{{ url_for('database') }}">Database</a></li>
                 <li><a href="{{ url_for('scraper_tester') }}">Scraper Tester</a></li>
                 <li><a href="{{ url_for('debug_functions') }}">Debug Functions</a></li>
+                {% endif %}
             </ul>
             <div class="hamburger-menu">
-              <div class="bar"></div>
-              <div class="bar"></div>
-              <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
             </div>
-          </nav>
-        <div class="program-controls">
-            <button id="programControlButton">Start Program</button>
+        </nav>
+        <div class="header-controls">
+            {% if current_user.is_authenticated %}
+            <div class="user-controls">
+                <span>Welcome, {{ current_user.username }}</span>
+                <a href="{{ url_for('logout') }}">Logout</a>
+            </div>
+            {% if current_user.role == 'admin' %}
+            <div class="program-controls">
+                <button id="programControlButton">Start Program</button>
+            </div>
+            {% endif %}
+            {% else %}
+            <div class="auth-controls">
+                <a href="{{ url_for('login') }}">Login</a>
+                <a href="{{ url_for('register') }}">Register</a>
+            </div>
+            {% endif %}
         </div>
     </header>
     <main>
         {% block content %}{% endblock %}
     </main>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
+    {% if current_user.is_authenticated and current_user.role == 'admin' %}
     <script src="{{ url_for('static', filename='js/program_controls.js') }}"></script>
+    {% endif %}
     {% block scripts %}{% endblock %}
 </body>
 </html>

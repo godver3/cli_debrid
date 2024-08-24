@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Manage Users{% endblock %}
+{% block content %}
+<div class="manage-users">
+    <h2>Manage Users</h2>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <ul class="flash-messages">
+            {% for category, message in messages %}
+                <li class="flash-message {{ category }}">{{ message }}</li>
+            {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+    <table class="user-list">
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in users %}
+            <tr data-user-id="{{ user.id }}">
+                <td>{{ user.username }}</td>
+                <td>{{ user.role }}</td>
+                <td>
+                    {% if user.username != 'admin' %}
+                    <button onclick="deleteUser({{ user.id }})" class="delete-button">Delete</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div class="add-user-form">
+        <h3>Add New User</h3>
+        <form action="{{ url_for('add_user') }}" method="POST">
+            <input type="text" name="username" placeholder="Username" required>
+            <input type="password" name="password" placeholder="Password" required>
+            <select name="role" required>
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+            </select>
+            <input type="submit" value="Add User">
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script>
+function deleteUser(userId) {
+    showConfirmationPopup("Are you sure you want to delete this user?", function() {
+        fetch(`/delete_user/${userId}`, {
+            method: 'POST',
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Remove the user row from the table
+                document.querySelector(`tr[data-user-id="${userId}"]`).remove();
+                showNotification('User deleted successfully', 'success');
+            } else {
+                showNotification('Error deleting user: ' + (data.error || 'Unknown error'), 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('Error deleting user', 'error');
+        });
+    });
+}
+</script>
+{% endblock %}
