@@ -20,8 +20,8 @@ COPY . .
 RUN mkdir -p logs db_content config && \
     touch logs/debug.log logs/info.log logs/queue.log
 
-# Make the entrypoint script executable
-RUN chmod +x /entrypoint.sh
+# Make the entrypoint script executable (if it exists)
+RUN if [ -f entrypoint.sh ]; then chmod +x entrypoint.sh; fi
 
 # Set the TERM environment variable for proper terminal attachment
 ENV TERM=xterm
@@ -33,5 +33,5 @@ RUN sed -i 's/^export LC_ALL=C.UTF-8/# export LC_ALL=C.UTF-8/' /etc/profile && \
 # Make port 5000 available to the world outside this container
 EXPOSE 5000
 
-# Set the entrypoint
-ENTRYPOINT ["/entrypoint.sh"]
+# Set the entrypoint (if the script exists)
+CMD ["/bin/sh", "-c", "if [ -f /app/entrypoint.sh ]; then /app/entrypoint.sh; else python main.py; fi"]
