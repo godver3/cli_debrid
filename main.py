@@ -210,9 +210,10 @@ def signal_handler(signum, frame):
         os.system('clear')
         print("\nStopping the program...")
         program_runner.stop()
-        print("Program stopped. Returning to main menu...")
-        program_runner = None
-        main_menu()  # Load the main menu directly
+        print("Program stopped.")
+    else:
+        print("\nProgram stopped.")
+    sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
@@ -233,25 +234,31 @@ def main():
     verify_database()
     os.system('clear')
     
-    # Check for the debug flag
-    skip_menu = get_setting('Debug', 'skip_menu', False)
+    version = get_version()
+    
+    # Display logo and web UI message
+    import socket
+    ip_address = socket.gethostbyname(socket.gethostname())
+    print(f"""
+      (            (             )           (     
+      )\ (         )\ )   (   ( /(  (   (    )\ )  
+  (  ((_))\       (()/(  ))\  )\()) )(  )\  (()/(  
+  )\  _ ((_)       ((_))/((_)((_)\ (()\((_)  ((_)) 
+ ((_)| | (_)       _| |(_))  | |(_) ((_)(_)  _| |  
+/ _| | | | |     / _` |/ -_) | '_ \| '_|| |/ _` |  
+\__| |_| |_|_____\__,_|\___| |_.__/|_|  |_|\__,_|  
+           |_____|                                 
 
-    if skip_menu:
-        logging.debug("Debug flag 'skip_menu' is set. Skipping menu and running program directly.")
-        program_runner = ProgramRunner()
-        program_runner.start()
-        update_web_ui_state('Running')
-        print("Program is running. Press Ctrl+C to stop and return to the main menu.")
-        try:
-            while program_runner.is_running():
-                time.sleep(1)
-        except KeyboardInterrupt:
-            program_runner.stop()
-            update_web_ui_state('Initialized')
-    else:
-        print("Press Enter to continue to Main Menu...")
-        input()
-        main_menu()
+           Version: {version}                      
+    """)
+    print(f"cli_debrid is initialized.")
+    print(f"The web UI is available at http://{ip_address}:5000")
+    print("Use the web UI to control the program.")
+    print("Press Ctrl+C to stop the program.")
+
+    # Keep the script running
+    while True:
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
