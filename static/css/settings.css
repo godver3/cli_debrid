@@ -560,36 +560,3 @@ body.dark-mode .settings-description {
 .error-popup-content button:hover {
     background-color: #d32f2f;
 }
-
-#programControlButton {
-    padding: 10px 20px;
-    font-size: 16px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background-color 0.3s;
-}
-
-#programControlButton.start-program {
-    background-color: #4CAF50;
-    color: white;
-}
-
-#programControlButton.stop-program {
-    background-color: #f44336;
-    color: white;
-}
-
-#programControlButton.start-program:hover {
-    background-color: #45a049;
-}
-
-#programControlButton.stop-program:hover {
-    background-color: #d32f2f;
-}
-
-#programControlButton:disabled {
-    background-color: #555;
-    color: #888;
-    cursor: not-allowed;
-}

@@ -1,3 +1,12 @@
+/* CSS Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* ... (rest of your CSS) ... */
+
 body { 
     font-family: Arial, sans-serif; 
     line-height: 1.6; 
@@ -18,10 +27,11 @@ body {
     flex-grow: 1;
 }
 
+/* Header layout */
 header {
     background-color: #1a1a1a;
     color: white;
-    padding: 0.5rem;
+    padding: 10px 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -39,8 +49,20 @@ header h1 {
 }
 
 .header-content {
+    flex: 1;
     display: flex;
     align-items: center;
+}
+
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 5px; /* This adds space between control groups */
+}
+
+header h1 {
+    font-size: 1.5em;
+    margin: 0;
 }
 
 .header-icon {
@@ -186,23 +208,6 @@ padding: 10px 20px;
     align-items: center;
 }
 
-#programControlButton {
-    border: none;
-    color: white;
-    padding: 10px 20px;
-    text-align: center;
-    display: inline-block;
-    font-size: 16px;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: background-color 0.3s;
-    background-color: #4CAF50; /* Default to green */
-}
-
-#programControlButton:hover {
-    opacity: 0.9;
-}
 
 #programControlButton[data-status="Running"] {
     background-color: #f44336; /* Red when running */
@@ -1342,4 +1347,264 @@ h2.searchresult-item {
     text-align: center;
 }
 
+/* Login and Register form styles */
+/* Login form styles */
+.auth-form {
+    max-width: 300px;
+    margin: 50px auto;
+    padding: 20px;
+    background-color: #2a2a2a;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
 
+.auth-form h2 {
+    text-align: center;
+    color: #f4f4f4;
+    margin-bottom: 20px;
+}
+
+/* Update the input styles to include password fields */
+.auth-form input[type="text"],
+.auth-form input[type="password"] {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background-color: #333;
+    color: #f4f4f4;
+    font-size: 16px;
+    box-sizing: border-box; /* This ensures padding is included in the width */
+}
+
+.auth-form input[type="submit"] {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: 3px;
+    background-color: #4CAF50;
+    color: white;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s;
+}
+
+.auth-form input[type="submit"]:hover {
+    background-color: #45a049;
+}
+
+/* Flash messages */
+.flash-messages {
+    list-style-type: none;
+    padding: 0;
+    margin-bottom: 20px;
+}
+
+.flash-message {
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 3px;
+    color: #fff;
+}
+
+.flash-message.success {
+    background-color: #4CAF50;
+}
+
+.flash-message.error {
+    background-color: #f44336;
+}
+
+/* Manage Users styles */
+.manage-users {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.user-list {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+.user-list th, .user-list td {
+    padding: 10px;
+    border: 1px solid #555;
+    text-align: left;
+}
+
+.user-list th {
+    background-color: #2a2a2a;
+    color: #f4f4f4;
+}
+
+.user-list tr:nth-child(even) {
+    background-color: #333;
+}
+
+.add-user-form {
+    margin-top: 30px;
+    background-color: #2a2a2a;
+    padding: 20px;
+    border-radius: 5px;
+}
+
+.add-user-form h3 {
+    margin-top: 0;
+    color: #f4f4f4;
+}
+
+.add-user-form input[type="text"],
+.add-user-form input[type="password"],
+.add-user-form select {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background-color: #333;
+    color: #f4f4f4;
+    font-size: 16px;
+    box-sizing: border-box;
+}
+
+.add-user-form input[type="submit"] {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: 3px;
+    background-color: #4CAF50;
+    color: white;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s;
+}
+
+.add-user-form input[type="submit"]:hover {
+    background-color: #45a049;
+}
+
+/* Header button styles */
+.auth-controls a,
+.user-controls a,
+#programControlButton {
+    display: inline-block;
+    padding: 8px 15px;
+    background-color: #4CAF50;
+    color: white;
+    text-decoration: none;
+    border-radius: 3px;
+    transition: background-color 0.3s;
+    border: none;
+    font-size: 14px;
+    cursor: pointer;
+    line-height: 1.5;
+    height: 36px;
+    box-sizing: border-box;
+    vertical-align: middle;
+}
+
+.auth-controls a:hover,
+.user-controls a:hover,
+#programControlButton:hover {
+    background-color: #45a049;
+}
+
+/* Spacing between buttons */
+.auth-controls a + a,
+.user-controls a + a {
+    margin-left: 10px;
+}
+
+.delete-button {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 2px 2px;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background-color 0.3s;
+}
+
+.delete-button:hover {
+    background-color: #d32f2f;
+}
+
+.confirmation-popup,
+.notification-popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.confirmation-popup-content,
+.notification-popup-content {
+    background-color: #2a2a2a;
+    padding: 20px;
+    border-radius: 5px;
+    text-align: center;
+    max-width: 400px;
+    width: 90%;
+}
+
+.confirmation-popup h3,
+.notification-popup h3 {
+    margin-top: 0;
+    color: #f4f4f4;
+}
+
+.confirmation-popup p,
+.notification-popup p {
+    margin-bottom: 20px;
+    color: #f4f4f4;
+}
+
+.confirmation-buttons,
+.notification-popup-content button {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
+.confirmation-buttons button,
+.notification-popup-content button {
+    padding: 5px 15px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+#confirmYes,
+.notification-popup-content.success button {
+    background-color: #4CAF50;
+    color: white;
+}
+
+#confirmNo,
+.notification-popup-content.error button {
+    background-color: #f44336;
+    color: white;
+}
+
+.notification-popup-content.success {
+    border-left: 5px solid #4CAF50;
+}
+
+.notification-popup-content.error {
+    border-left: 5px solid #f44336;
+}
