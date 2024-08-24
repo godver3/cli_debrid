@@ -1069,3 +1069,48 @@ def bulk_delete_by_imdb_id(imdb_id):
         return 0
     finally:
         conn.close()
+
+def get_recently_added_items(limit=30, days=7):
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        threshold_date = datetime.now() - timedelta(days=days)
+        
+        query = """
+        SELECT title, year, type, season_number, episode_number, last_updated as added_at
+        FROM media_items
+        WHERE state = 'Collected' AND last_updated > ?
+        ORDER BY last_updated DESC
+        LIMIT ?
+        """
+        
+        cursor.execute(query, (threshold_date, limit))
+        results = cursor.fetchall()
+        
+        logging.debug(f"Retrieved {len(results)} items from the database")
+        for result in results:
+            logging.debug(f"Raw item: {dict(result)}")
+        
+        recently_added = []
+        for row in results:
+            item = dict(row)
+            if item['type'] == 'episode':
+                existing_item = next((x for x in recently_added if x['title'] == item['title'] and x['season_number'] == item['season_number']), None)
+                if existing_item:
+                    if item['added_at'] > existing_item['added_at']:
+                        existing_item['added_at'] = item['added_at']
+                        existing_item['episode_number'] = item['episode_number']
+                else:
+                    recently_added.append(item)
+            else:
+                recently_added.append(item)
+        
+        recently_added.sort(key=lambda x: x['added_at'], reverse=True)
+        logging.debug(f"Processed items: {recently_added}")
+        return recently_added[:limit]
+    except Exception as e:
+        logging.error(f"Error in get_recently_added_items: {str(e)}")
+        return []
+    finally:
+        conn.close()
