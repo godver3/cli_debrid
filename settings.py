@@ -226,9 +226,6 @@ def ensure_settings_file():
         'RealDebrid': {
             'api_key': ''
         },
-        'Torrentio': {
-            'enabled': False,
-        },
         'Debug': {
             'skip_menu': False,
             'logging_level': 'INFO'

@@ -3,57 +3,42 @@
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>Queue Settings</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label for="queue-wake-limit" class="settings-title">Wake Limit:</label>
-            <input type="number" id="queue-wake-limit" name="Queue.wake_limit" value="{{ settings.Queue.wake_limit }}" class="settings-input">
-            {% if settings_schema.Queue.wake_limit.description %}
-            <p class="settings-description">{{ settings_schema.Queue.wake_limit.description }}</p>
-            {% endif %}
+
+{% for section, section_data in settings_schema.items() %}
+    {% if section_data.tab == "Additional Settings" %}
+    <div class="settings-section">
+        <div class="settings-section-header">
+            <h4>{{ section }}</h4>
+            <span class="settings-toggle-icon">+</span>
         </div>
-        <div class="settings-form-group">
-            <label for="queue-movie-airtime-offset" class="settings-title">Movie Airtime Offset:</label>
-            <input type="number" id="queue-movie-airtime-offset" name="Queue.movie_airtime_offset" value="{{ settings.Queue.movie_airtime_offset }}" class="settings-input">
-            {% if settings_schema.Queue.movie_airtime_offset.description %}
-            <p class="settings-description">{{ settings_schema.Queue.movie_airtime_offset.description }}</p>
-            {% endif %}
-        </div>
-        <div class="settings-form-group">
-            <label for="queue-episode-airtime-offset" class="settings-title">Episode Airtime Offset:</label>
-            <input type="number" id="queue-episode-airtime-offset" name="Queue.episode_airtime_offset" value="{{ settings.Queue.episode_airtime_offset }}" class="settings-input">
-            {% if settings_schema.Queue.episode_airtime_offset.description %}
-            <p class="settings-description">{{ settings_schema.Queue.episode_airtime_offset.description }}</p>
-            {% endif %}
-        </div>
-    </div>
-</div>
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>Trakt Settings</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label for="trakt-client-id" class="settings-title">Client ID:</label>
-            <input type="text" id="trakt-client-id" name="Trakt.client_id" value="{{ settings.Trakt.client_id }}" class="settings-input">
-            {% if settings_schema.Trakt.client_id.description %}
-            <p class="settings-description">{{ settings_schema.Trakt.client_id.description }}</p>
-            {% endif %}
-        </div>
-        <div class="settings-form-group">
-            <label for="trakt-client-secret" class="settings-title">Client Secret:</label>
-            <input type="text" id="trakt-client-secret" name="Trakt.client_secret" value="{{ settings.Trakt.client_secret }}" class="settings-input">
-            {% if settings_schema.Trakt.client_secret.description %}
-            <p class="settings-description">{{ settings_schema.Trakt.client_secret.description }}</p>
-            {% endif %}
+        <div class="settings-section-content">
+            {% for key, value in section_data.items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    {% if value.type == 'boolean' %}
+                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if settings[section][key] %}checked{% endif %}>
+                    {% elif value.type == 'string' and value.get('choices') %}
+                        <select id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" class="settings-input">
+                            {% for option in value.choices %}
+                                <option value="{{ option }}" {% if settings[section][key] == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        <input type="{{ value.type }}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ settings[section][key] }}" class="settings-input">
+                    {% endif %}
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
         </div>
     </div>
-</div>
+    {% endif %}
+{% endfor %}
+
+<!-- Trakt Authorization Section -->
 <div class="settings-section">
     <div class="settings-section-header">
         <h4>Trakt Authorization</h4>
@@ -62,27 +47,12 @@
     <div class="settings-section-content">
         <p class="settings-description">Click the button below to authorize Trakt. You must first enter your Client ID and Client Secret. These can be retrieved by creating an app at 
             <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a>
-            </p>
+        </p>
         <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
         <div id="trakt-auth-status" class="trakt-status"></div>
         <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
             <p>Your authorization code is: <strong id="trakt-code"></strong></p>
             <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
-        </div>
-    </div>
-</div>
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>TMDB Settings</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label for="tmdb-api-key" class="settings-title">API Key:</label>
-            <input type="text" id="tmdb-api-key" name="TMDB.api_key" value="{{ settings.TMDB.api_key }}" class="settings-input">
-            {% if settings_schema.TMDB.api_key.description %}
-            <p class="settings-description">{{ settings_schema.TMDB.api_key.description }}</p>
-            {% endif %}
         </div>
     </div>
 </div>
