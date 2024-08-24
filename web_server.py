@@ -86,12 +86,18 @@ CONFIG_FILE = './config/config.json'
 TRAKT_CONFIG_PATH = './config/.pytrakt.json'
 
 def create_default_admin():
-    default_admin = User.query.filter_by(username='admin').first()
-    if not default_admin:
-        hashed_password = generate_password_hash('admin')
-        default_admin = User(username='admin', password=hashed_password, role='admin', is_default=True)
-        db.session.add(default_admin)
-        db.session.commit()
+    # Check if there are any existing users
+    if User.query.count() == 0:
+        default_admin = User.query.filter_by(username='admin').first()
+        if not default_admin:
+            hashed_password = generate_password_hash('admin')
+            default_admin = User(username='admin', password=hashed_password, role='admin', is_default=True)
+            db.session.add(default_admin)
+            db.session.commit()
+            logging.info("Default admin account created.")
+    else:
+        logging.info("Users already exist. Skipping default admin creation.")
+
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)

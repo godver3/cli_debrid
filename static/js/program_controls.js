@@ -83,8 +83,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const requiredFields = [
             'plex-url',
             'plex-token',
-            'movie-libraries',
-            'shows-libraries',
             'overseerr-url',
             'overseerr-api_key',
             'realdebrid-api_key'
