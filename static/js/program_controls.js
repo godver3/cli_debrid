@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentStatus = 'Initialized';
 
     function updateButtonState(status) {
+        const canRun = checkRequiredConditions();
         if (status === 'Running') {
             controlButton.textContent = 'Stop Program';
             controlButton.setAttribute('data-status', 'Running');
@@ -14,6 +15,7 @@ document.addEventListener('DOMContentLoaded', function() {
             controlButton.classList.remove('stop-program');
             controlButton.classList.add('start-program');
         }
+        controlButton.disabled = !canRun && status !== 'Running';
         currentStatus = status;
         updateSettingsManagement(status === 'Running');
     }
@@ -54,7 +56,85 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
+    function checkRequiredConditions() {
+        let scrapersEnabled = false;
+        let contentSourcesEnabled = false;
+        let requiredSettingsComplete = true;
+
+        // Check if at least one scraper is enabled
+        const scrapers = document.querySelectorAll('#scrapers .settings-section');
+        scrapers.forEach(scraper => {
+            const enabledCheckbox = scraper.querySelector('input[name$=".enabled"]');
+            if (enabledCheckbox && enabledCheckbox.checked) {
+                scrapersEnabled = true;
+            }
+        });
+
+        // Check if at least one content source is enabled
+        const contentSources = document.querySelectorAll('#content-sources .settings-section');
+        contentSources.forEach(source => {
+            const enabledCheckbox = source.querySelector('input[name$=".enabled"]');
+            if (enabledCheckbox && enabledCheckbox.checked) {
+                contentSourcesEnabled = true;
+            }
+        });
+
+        // Check if all required settings are filled
+        const requiredSections = document.querySelectorAll('#required .settings-section');
+        requiredSections.forEach(section => {
+            const inputs = section.querySelectorAll('input[type="text"], input[type="checkbox"]');
+            inputs.forEach(input => {
+                if (input.type === 'text' && !input.value.trim()) {
+                    requiredSettingsComplete = false;
+                }
+                // For checkboxes, we assume they are required to be checked
+                if (input.type === 'checkbox' && !input.checked) {
+                    requiredSettingsComplete = false;
+                }
+            });
+        });
+
+        return {
+            canRun: scrapersEnabled && contentSourcesEnabled && requiredSettingsComplete,
+            scrapersEnabled,
+            contentSourcesEnabled,
+            requiredSettingsComplete
+        };
+    }
+
+    function showErrorPopup(message) {
+        const popup = document.createElement('div');
+        popup.className = 'error-popup';
+        popup.innerHTML = `
+            <div class="error-popup-content">
+                <h3>Unable to Start Program</h3>
+                <p>${message}</p>
+                <button onclick="this.parentElement.parentElement.remove()">Close</button>
+            </div>
+        `;
+        document.body.appendChild(popup);
+    }
+
     controlButton.addEventListener('click', function() {
+        if (currentStatus !== 'Running') {
+            const conditions = checkRequiredConditions();
+            if (!conditions.canRun) {
+                let errorMessage = "The program cannot start due to the following reasons:<ul>";
+                if (!conditions.scrapersEnabled) {
+                    errorMessage += "<li>No scrapers are enabled. Please enable at least one scraper.</li>";
+                }
+                if (!conditions.contentSourcesEnabled) {
+                    errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
+                }
+                if (!conditions.requiredSettingsComplete) {
+                    errorMessage += "<li>Some required settings are missing. Please fill in all required fields.</li>";
+                }
+                errorMessage += "</ul>";
+                showErrorPopup(errorMessage);
+                return;
+            }
+        }
+
         const action = currentStatus === 'Running' ? 'reset' : 'start';
         fetch(`/api/${action}_program`, { method: 'POST' })
             .then(response => response.json())
@@ -62,11 +142,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.status === 'success') {
                     updateStatus();
                 } else {
-                    alert(data.message);
+                    showErrorPopup(data.message);
                 }
             })
             .catch(error => {
                 console.error('Error controlling program:', error);
+                showErrorPopup('An error occurred while trying to control the program. Please check the console for more details.');
             });
     });
 
@@ -76,4 +157,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update status immediately and then every 5 seconds
     updateStatus();
     setInterval(updateStatus, 5000);
+
+    // Add event listeners to update button state when settings change
+    document.addEventListener('change', function(event) {
+        if (event.target.matches('#scrapers input[type="checkbox"], #content-sources input[type="checkbox"], #required input')) {
+            updateButtonState(currentStatus);
+        }
+    });
 });

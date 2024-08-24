@@ -3,28 +3,29 @@
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
-{% for section in ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio'] %}
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>{{ section }}</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        {% for key, value in settings[section].items() %}
-        <div class="settings-form-group">
-            <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-            {% if value is boolean %}
-            <label class="settings-title">
-                <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if value %}checked{% endif %}>
-            </label>
-            {% else %}
-            <input type="text" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ value }}" class="settings-input">
-            {% endif %}
-            {% if settings_schema[section][key].description %}
-            <p class="settings-description">{{ settings_schema[section][key].description }}</p>
-            {% endif %}
+
+{% for section in ['Plex', 'Overseerr', 'RealDebrid'] %}
+    <div class="settings-section">
+        <div class="settings-section-header">
+            <h4>{{ section }}</h4>
+            <span class="settings-toggle-icon">+</span>
         </div>
-        {% endfor %}
+        <div class="settings-section-content">
+            {% for key, value in settings_schema[section].items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    {% if value.type == 'boolean' %}
+                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if settings[section][key] %}checked{% endif %}>
+                    {% else %}
+                        <input type="{{ value.type }}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ settings[section][key] }}" class="settings-input" {% if value.sensitive %}type="password"{% endif %}>
+                    {% endif %}
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
     </div>
-</div>
 {% endfor %}

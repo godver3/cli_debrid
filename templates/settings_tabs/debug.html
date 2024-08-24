@@ -3,70 +3,33 @@
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
+
 <div class="settings-section">
     <div class="settings-section-header">
-        <h4>Debug Options</h4>
+        <h4>Debug</h4>
         <span class="settings-toggle-icon">+</span>
     </div>
     <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label class="settings-title">
-                Skip Menu
-            </label>
-            <label class="settings-title">
-                <input type="checkbox" id="debug-skip-menu" name="Debug.skip_menu" {% if settings.Debug.skip_menu %}checked{% endif %}>
-            </label>
-
-            {% if settings_schema.Debug.skip_menu.description %}
-            <p class="settings-description">{{ settings_schema.Debug.skip_menu.description }}</p>
+        {% for key, value in settings_schema.Debug.items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}" {% if settings.Debug[key] %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if settings.Debug[key] == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type }}" id="debug-{{ key }}" name="Debug.{{ key }}" value="{{ settings.Debug[key] }}" class="settings-input">
+                {% endif %}
+                {% if value.description %}
+                    <p class="settings-description">{{ value.description }}</p>
+                {% endif %}
+            </div>
             {% endif %}
-        </div>
-        
-        <div class="settings-form-group">
-            <label for="debug-logging-level" class="settings-title">Logging Level:</label>
-            <select id="debug-logging-level" name="Debug.logging_level" class="settings-input">
-                <option value="DEBUG" {% if settings.Debug.logging_level == "DEBUG" %}selected{% endif %}>DEBUG</option>
-                <option value="INFO" {% if settings.Debug.logging_level == "INFO" %}selected{% endif %}>INFO</option>
-                <option value="WARNING" {% if settings.Debug.logging_level == "WARNING" %}selected{% endif %}>WARNING</option>
-                <option value="ERROR" {% if settings.Debug.logging_level == "ERROR" %}selected{% endif %}>ERROR</option>
-                <option value="CRITICAL" {% if settings.Debug.logging_level == "CRITICAL" %}selected{% endif %}>CRITICAL</option>
-            </select>
-            {% if settings_schema.Debug.logging_level.description %}
-            <p class="settings-description">{{ settings_schema.Debug.logging_level.description }}</p>
-            {% endif %}
-        </div>
-        
-        <div class="settings-form-group">
-            <label class="settings-title">
-                Skip Initial Plex Update
-            </label>
-            <input type="checkbox" id="debug-skip-initial-plex-update" name="Debug.skip_initial_plex_update" {% if settings.Debug.skip_initial_plex_update %}checked{% endif %}>
-
-            {% if settings_schema.Debug.skip_initial_plex_update.description %}
-            <p class="settings-description">{{ settings_schema.Debug.skip_initial_plex_update.description }}</p>
-            {% endif %}
-        </div>
-        
-        <div class="settings-form-group">
-            <label class="settings-title">
-                Disable Initialization
-            </label>
-            <input type="checkbox" id="debug-disable-initialization" name="Debug.disable_initialization" {% if settings.Debug.disable_initialization %}checked{% endif %}>
-
-            {% if settings_schema.Debug.disable_initialization.description %}
-            <p class="settings-description">{{ settings_schema.Debug.disable_initialization.description }}</p>
-            {% endif %}
-        </div>
-                
-        <div class="settings-form-group">
-            <label class="settings-title">
-                Jackett Seeders Only
-            </label>
-            <input type="checkbox" id="debug-jackett-seeders-only" name="Debug.jackett_seeders_only" {% if settings.Debug.jackett_seeders_only %}checked{% endif %}>
-
-            {% if settings_schema.Debug.jackett_seeders_only.description %}
-            <p class="settings-description">{{ settings_schema.Debug.jackett_seeders_only.description }}</p>
-            {% endif %}
-        </div>
+        {% endfor %}
     </div>
 </div>
