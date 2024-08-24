@@ -42,6 +42,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from sqlalchemy import inspect
 
+# Create db_content directory if it doesn't exist
+db_directory = 'db_content'
+if not os.path.exists(db_directory):
+    os.makedirs(db_directory)
+
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
@@ -49,7 +54,7 @@ app.secret_key = '9683650475'
 queue_manager = QueueManager()
 scraper_manager = ScraperManager()
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(db_directory, "users.db")}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
