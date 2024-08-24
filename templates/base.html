@@ -86,9 +86,6 @@
         {% block content %}{% endblock %}
     </main>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
-    {% if current_user.is_authenticated and current_user.role == 'admin' %}
-    <script src="{{ url_for('static', filename='js/program_controls.js') }}"></script>
-    {% endif %}
     {% block scripts %}{% endblock %}
 </body>
 </html>
