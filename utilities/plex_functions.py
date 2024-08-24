@@ -169,8 +169,13 @@ async def get_collected_from_plex(request='all'):
             libraries_url = f"{plex_url}/library/sections"
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
             
-            show_libraries = [library['key'] for library in libraries_data['MediaContainer']['Directory'] if library['type'] == 'show']
-            movie_libraries = [library['key'] for library in libraries_data['MediaContainer']['Directory'] if library['type'] == 'movie']
+            all_libraries = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
+            
+            movie_library_names = get_setting('Plex', 'movie_libraries', '').split(',')
+            show_library_names = get_setting('Plex', 'shows_libraries', '').split(',')
+            
+            movie_libraries = [all_libraries[name.strip()] for name in movie_library_names if name.strip() in all_libraries]
+            show_libraries = [all_libraries[name.strip()] for name in show_library_names if name.strip() in all_libraries]
             
             logger.info(f"TV Show libraries to process: {show_libraries}")
             logger.info(f"Movie libraries to process: {movie_libraries}")
@@ -178,12 +183,12 @@ async def get_collected_from_plex(request='all'):
             all_shows = []
             for library_key in show_libraries:
                 shows = await get_library_contents(session, plex_url, library_key, headers, semaphore)
-                all_shows.extend(shows)  # Limit to 25 shows for testing
+                all_shows.extend(shows)
             
             all_movies = []
             for library_key in movie_libraries:
                 movies = await get_library_contents(session, plex_url, library_key, headers, semaphore)
-                all_movies.extend(movies)  # Limit to 25 movies for testing
+                all_movies.extend(movies)
 
             logger.info(f"Total shows found: {len(all_shows)}")
             logger.info(f"Total movies found: {len(all_movies)}")
@@ -247,35 +252,54 @@ async def get_recent_from_plex():
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
         async with aiohttp.ClientSession() as session:
-            recent_url = f"{plex_url}/library/recentlyAdded"
-            recent_data = await fetch_data(session, recent_url, headers, semaphore)
+            # Get all libraries
+            libraries_url = f"{plex_url}/library/sections"
+            libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
             
+            all_libraries = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
+            
+            # Get specified libraries from settings
+            movie_library_names = get_setting('Plex', 'movie_libraries', '').split(',')
+            show_library_names = get_setting('Plex', 'shows_libraries', '').split(',')
+            
+            # Convert library names to library keys
+            movie_libraries = [all_libraries[name.strip()] for name in movie_library_names if name.strip() in all_libraries]
+            show_libraries = [all_libraries[name.strip()] for name in show_library_names if name.strip() in all_libraries]
+            
+            logger.info(f"TV Show libraries to process: {show_libraries}")
+            logger.info(f"Movie libraries to process: {movie_libraries}")
+
             processed_movies = []
             processed_episodes = []
             
-            if 'MediaContainer' in recent_data and 'Metadata' in recent_data['MediaContainer']:
-                recent_items = recent_data['MediaContainer']['Metadata']
-                logger.info(f"Retrieved {len(recent_items)} recent items")
+            # Process each specified library
+            for library_key in movie_libraries + show_libraries:
+                recent_url = f"{plex_url}/library/sections/{library_key}/recentlyAdded"
+                recent_data = await fetch_data(session, recent_url, headers, semaphore)
                 
-                for item in recent_items:
-                    if item['type'] == 'movie':
-                        metadata_url = f"{plex_url}{item['key']}?includeGuids=1"
-                        metadata = await fetch_data(session, metadata_url, headers, semaphore)
-                        
-                        if 'MediaContainer' in metadata and 'Metadata' in metadata['MediaContainer']:
-                            full_metadata = metadata['MediaContainer']['Metadata'][0]
-                            processed_items = await process_recent_movie(full_metadata)
-                            processed_movies.extend(processed_items)
-                    elif item['type'] == 'season':
-                        show_metadata_url = f"{plex_url}/library/metadata/{item['parentRatingKey']}?includeGuids=1"
-                        show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
-                        
-                        if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
-                            show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
-                            season_episodes = await process_recent_season(item, show_full_metadata, session, plex_url, headers, semaphore)
-                            processed_episodes.extend([episode for sublist in season_episodes for episode in sublist])  # Flatten the list
-                    else:
-                        logger.info(f"Skipping item: {item['title']} (Type: {item['type']})")
+                if 'MediaContainer' in recent_data and 'Metadata' in recent_data['MediaContainer']:
+                    recent_items = recent_data['MediaContainer']['Metadata']
+                    logger.info(f"Retrieved {len(recent_items)} recent items from library {library_key}")
+                    
+                    for item in recent_items:
+                        if item['type'] == 'movie':
+                            metadata_url = f"{plex_url}{item['key']}?includeGuids=1"
+                            metadata = await fetch_data(session, metadata_url, headers, semaphore)
+                            
+                            if 'MediaContainer' in metadata and 'Metadata' in metadata['MediaContainer']:
+                                full_metadata = metadata['MediaContainer']['Metadata'][0]
+                                processed_items = await process_recent_movie(full_metadata)
+                                processed_movies.extend(processed_items)
+                        elif item['type'] == 'season':
+                            show_metadata_url = f"{plex_url}/library/metadata/{item['parentRatingKey']}?includeGuids=1"
+                            show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
+                            
+                            if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
+                                show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
+                                season_episodes = await process_recent_season(item, show_full_metadata, session, plex_url, headers, semaphore)
+                                processed_episodes.extend([episode for sublist in season_episodes for episode in sublist])  # Flatten the list
+                        else:
+                            logger.info(f"Skipping item: {item['title']} (Type: {item['type']})")
 
         end_time = time.time()
         total_time = end_time - start_time
@@ -312,12 +336,18 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                 movie_data['tmdb_id'] = guid['id'].split('://')[1]
 
     movie_entries = []
-    file_path = movie.get('Media', [{}])[0].get('Part', [{}])[0].get('file')
-    if file_path:
-        movie_entry = movie_data.copy()
-        movie_entry['location'] = file_path
-        movie_entries.append(movie_entry)
-    else:
+    if 'Media' in movie:
+        for media in movie['Media']:
+            if 'Part' in media:
+                for part in media['Part']:
+                    file_path = part.get('file')
+                    if file_path:
+                        movie_entry = movie_data.copy()
+                        movie_entry['location'] = file_path
+                        movie_entries.append(movie_entry)
+                        logger.info(f"Movie location: {file_path}")
+    
+    if not movie_entries:
         logger.error(f"No filename found for movie: {movie['title']}")
     
     return movie_entries
@@ -374,13 +404,18 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
         logger.error(f"No 'Guid' key found for episode: '{show_title}' S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - '{episode['title']}'")
     
     episode_entries = []
-    # Get the file path directly, not as a list
-    file_path = episode.get('Media', [{}])[0].get('Part', [{}])[0].get('file')
-    if file_path:
-        episode_entry = episode_data.copy()
-        episode_entry['location'] = file_path
-        episode_entries.append(episode_entry)
-    else:
+    if 'Media' in episode:
+        for media in episode['Media']:
+            if 'Part' in media:
+                for part in media['Part']:
+                    file_path = part.get('file')
+                    if file_path:
+                        episode_entry = episode_data.copy()
+                        episode_entry['location'] = file_path
+                        episode_entries.append(episode_entry)
+                        logger.info(f"Episode location: {file_path}")
+    
+    if not episode_entries:
         logger.error(f"No filename found for episode: {show_title} - S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - {episode['title']}")
     
     return episode_entries
