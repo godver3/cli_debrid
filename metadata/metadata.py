@@ -1,7 +1,7 @@
 import logging
 from api_tracker import api
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from settings import get_setting
 from database import get_all_media_items, update_release_date_and_state
 from content_checkers.trakt import load_trakt_credentials, ensure_trakt_auth, get_trakt_headers
@@ -514,8 +514,12 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
         show_data = show_response.json()
         
         # Extract and return the airtime
-        if 'airs' in show_data and 'time' in show_data['airs']:
-            return show_data['airs']['time']
+        if 'first_aired' in show_data:
+            local_now = datetime.now()
+            utc = datetime.strptime(show_data['first_aired'], "%Y-%m-%dT%H:%M:%S.000Z")
+            utc = utc.replace(tzinfo=timezone.utc)
+            local_time = (utc.astimezone(local_now.tzname())).strftime('%H:%M')
+            return local_time
         else:
             logging.warning(f"No airtime found for show with IMDb ID: {imdb_id}. Using default airtime.")
             return DEFAULT_AIRTIME
