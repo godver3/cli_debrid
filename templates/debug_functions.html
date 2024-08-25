@@ -91,21 +91,41 @@
     .form-actions {
         margin-left: 90px; /* Aligns with the input field */
     }
+
+    /* Add this new style for spacing between sections */
+    .debug-section {
+        margin-bottom: 30px;
+    }
 </style>
 
 <div class="debug-container">
     <h2>Debug Functions</h2>
 
-    <h3>Bulk Delete from Database</h3>
-    <form action="{{ url_for('bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
-        <div class="form-group">
-            <label for="imdb_id">IMDB ID:</label>
-            <input type="text" id="imdb_id" name="imdb_id" required>
-        </div>
-        <div class="form-actions">
-            <button type="submit">Delete</button>
-        </div>
-    </form>
+    <div class="debug-section">
+        <h3>Bulk Delete from Database</h3>
+        <form action="{{ url_for('bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
+            <div class="form-group">
+                <label for="imdb_id">IMDB ID:</label>
+                <input type="text" id="imdb_id" name="imdb_id" required>
+            </div>
+            <div class="form-actions">
+                <button type="submit">Delete</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="debug-section">
+        <h3>Download Debug Logs</h3>
+        <form action="{{ url_for('api_logs') }}" method="GET" id="download-logs-form">
+            <div class="form-group">
+                <label for="log_lines">Number of log lines:</label>
+                <input type="number" id="log_lines" name="lines" value="500" min="1" max="10000" required>
+            </div>
+            <div class="form-actions">
+                <button type="submit">Download Logs</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <div id="success-popup" class="popup"></div>
@@ -152,21 +172,22 @@
                 .then(response => response.json())
                 .then(data => {
                     const isRunning = data.running;
-                    const deleteButton = document.querySelector('button[type="submit"]');
-                    if (deleteButton) {
-                        deleteButton.disabled = isRunning;
-                        deleteButton.style.opacity = isRunning ? '0.5' : '1';
-                        deleteButton.style.cursor = isRunning ? 'not-allowed' : 'pointer';
-                    }
-
-                    const form = document.getElementById('bulk-delete-form');
-                    if (form) {
+                    const forms = document.querySelectorAll('form');
+                    forms.forEach(form => {
                         const inputs = form.querySelectorAll('input');
+                        const buttons = form.querySelectorAll('button');
+                        
                         inputs.forEach(input => {
                             input.disabled = isRunning;
                             input.style.opacity = isRunning ? '0.5' : '1';
                         });
-                    }
+                        
+                        buttons.forEach(button => {
+                            button.disabled = isRunning;
+                            button.style.opacity = isRunning ? '0.5' : '1';
+                            button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
+                        });
+                    });
 
                     if (isRunning) {
                         const message = document.createElement('div');
@@ -188,6 +209,13 @@
         // Check program status initially and every 5 seconds
         checkProgramStatus();
         setInterval(checkProgramStatus, 5000);
+
+        const downloadForm = document.getElementById('download-logs-form');
+        downloadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const lines = document.getElementById('log_lines').value;
+            window.location.href = `{{ url_for('api_logs') }}?lines=${lines}&download=true`;
+        });
     });
 </script>
 {% endblock %}

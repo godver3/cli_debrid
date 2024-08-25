@@ -202,4 +202,148 @@
         </div>
     </div>
 </div>
+
+<script>
+function updateStatistics() {
+    fetch('/statistics', {
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('Received statistics data:', data);
+        // Update the statistics on the page
+        document.getElementById('total-movies').textContent = data.total_movies;
+        document.getElementById('total-shows').textContent = data.total_shows;
+        document.getElementById('total-episodes').textContent = data.total_episodes;
+        document.getElementById('uptime').textContent = formatUptime(data.uptime);
+        
+        // Update other sections
+        updateRecentlyAired(data.recently_aired);
+        updateAiringSoon(data.airing_soon);
+        updateUpcomingReleases(data.upcoming_releases);
+        updateRecentlyAdded(data.recently_added_movies, data.recently_added_shows);
+    })
+    .catch(error => console.error('Error updating statistics:', error));
+}
+
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return `${days} days, ${hours} hours, ${minutes} minutes`;
+}
+
+function updateRecentlyAired(recentlyAired) {
+    const container = document.querySelector('.stats-box.recently-aired');
+    if (container) {
+        const ul = container.querySelector('ul') || document.createElement('ul');
+        ul.innerHTML = recentlyAired.map(item => `
+            <li style="color: #FFA500;">
+                ${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} - 
+                <span class="air-date" style="color: #f4f4f4;">${formatDate(item.air_datetime)}</span>
+                <span class="air-time" style="color: #f4f4f4;">at ${formatTime(item.air_datetime)}</span>
+            </li>
+        `).join('');
+        if (!container.contains(ul)) container.appendChild(ul);
+    }
+}
+
+function updateAiringSoon(airingSoon) {
+    const container = document.querySelector('.stats-box.airing-soon');
+    if (container) {
+        const ul = container.querySelector('ul') || document.createElement('ul');
+        ul.innerHTML = airingSoon.map(item => `
+            <li style="color: #FFA500;">
+                ${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} - 
+                <span class="air-date" style="color: #f4f4f4;">${formatDate(item.air_datetime)}</span>
+                <span class="air-time" style="color: #f4f4f4;">at ${formatTime(item.air_datetime)}</span>
+            </li>
+        `).join('');
+        if (!container.contains(ul)) container.appendChild(ul);
+    }
+}
+
+function updateUpcomingReleases(upcomingReleases) {
+    const container = document.querySelector('.stats-box.upcoming-releases');
+    if (container) {
+        const ul = container.querySelector('ul') || document.createElement('ul');
+        ul.innerHTML = upcomingReleases.map(item => `
+            <li style="color: #FFA500;">
+                ${item.titles.join(', ')} - 
+                <span class="release-date" style="color: #f4f4f4;">${formatDate(item.release_date)}</span>
+            </li>
+        `).join('');
+        if (!container.contains(ul)) container.appendChild(ul);
+    }
+}
+
+function updateRecentlyAdded(movies, shows) {
+    console.log('Recently added movies:', movies);
+    console.log('Recently added shows:', shows);
+    updateRecentlyAddedSection('Movies', movies);
+    updateRecentlyAddedSection('TV Shows', shows);
+}
+
+function updateRecentlyAddedSection(type, items) {
+    console.log(`Updating ${type} section with:`, items);
+    const section = document.querySelector(`.recently-added-section h4:contains('${type}')`);
+    if (!section) {
+        console.error(`Section for ${type} not found`);
+        return;
+    }
+    const container = section.closest('.recently-added-section').querySelector('.card-container') || document.createElement('div');
+    container.className = 'card-container';
+    if (Array.isArray(items) && items.length > 0) {
+        container.innerHTML = items.map(item => `
+            <div class="card">
+                ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
+                <div class="card-content">
+                    <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                    <p class="added-date">Added: ${item.added_at}</p>
+                    ${type === 'TV Shows' && item.seasons ? `<p class="seasons">Seasons: ${item.seasons.join(', ')}</p>` : ''}
+                </div>
+            </div>
+        `).join('');
+    } else {
+        console.log(`No items to display for ${type}`);
+        container.innerHTML = `<p>No recent additions</p>`;
+    }
+    const parentSection = section.closest('.recently-added-section');
+    if (!parentSection.contains(container)) {
+        parentSection.appendChild(container);
+    }
+}
+
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (date.toDateString() === today.toDateString()) {
+        return 'Today';
+    } else if (date.toDateString() === yesterday.toDateString()) {
+        return 'Yesterday';
+    } else if (date.toDateString() === tomorrow.toDateString()) {
+        return 'Tomorrow';
+    } else {
+        return date.toISOString().split('T')[0]; // YYYY-MM-DD format
+    }
+}
+
+function formatTime(dateString) {
+    const date = new Date(dateString);
+    return date.toTimeString().split(' ')[0].substr(0, 5); // HH:MM format
+}
+
+// Update statistics every minute
+setInterval(updateStatistics, 60000);
+
+// Initial update
+updateStatistics();
+</script>
 {% endblock %}
