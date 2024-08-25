@@ -1,7 +1,7 @@
 import requests
 import logging
 from functools import wraps
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 # Setup logging for API calls
 api_logger = logging.getLogger('api_calls')
@@ -24,6 +24,25 @@ def log_api_call(func):
         return func(self, *args, **kwargs)
     return wrapper
 
+class Args:
+    def __init__(self, query_params):
+        self._params = query_params
+
+    def get(self, key, default=None, type=None):
+        value = self._params.get(key, [default])
+        if value == [default]:
+            return default
+        
+        value = value[0]
+        
+        if type is not None:
+            try:
+                return type(value)
+            except ValueError:
+                return default
+        
+        return value
+
 class APITracker:
     def __init__(self):
         self.session = requests.Session()
@@ -31,11 +50,21 @@ class APITracker:
         self.exceptions = requests.exceptions
         self.utils = requests.utils
         self.Session = requests.Session
+        self.current_url = None
+        self._args = None
+
+    @property
+    def args(self):
+        if self._args is None:
+            self._args = Args(self.get_query_params())
+        return self._args
 
     @log_api_call
     def get(self, url, **kwargs):
         try:
             logging.debug(f"Attempting GET request to: {url}")
+            self.current_url = url  # Store the current URL
+            self._args = None  # Reset args
             response = self.session.get(url, **kwargs)
             response.raise_for_status()
             logging.debug(f"Successful GET request to: {url}. Status code: {response.status_code}")
@@ -57,5 +86,11 @@ class APITracker:
         return requests.delete(*args, **kwargs)
 
     # Add other HTTP methods as needed
+
+    def get_query_params(self):
+        if self.current_url:
+            parsed_url = urlparse(self.current_url)
+            return parse_qs(parsed_url.query)
+        return {}
 
 api = APITracker()
