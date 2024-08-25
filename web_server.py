@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash
+from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash, Response
 from flask_session import Session
 import threading
 import time
@@ -877,11 +877,10 @@ def statistics():
     uptime = int(time.time() - start_time)
     collected_counts = get_collected_counts()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
-
     recent_from_plex = sync_run_get_recent_from_plex()
-    
     upcoming_releases = get_upcoming_releases()
     now = datetime.now()
+    
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],
@@ -894,9 +893,16 @@ def statistics():
         'yesterday': (now - timedelta(days=1)).date(),
         'tomorrow': (now + timedelta(days=1)).date(),
         'recently_added_movies': recent_from_plex['movies'],
-        'recently_added_shows': recent_from_plex['shows']  # Changed from 'seasons' to 'shows'
+        'recently_added_shows': recent_from_plex['shows']
     }
-    return render_template('statistics.html', stats=stats)
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        # If it's an AJAX request, return JSON
+        return jsonify(stats)
+    else:
+        # If it's a regular request, render the template
+        return render_template('statistics.html', stats=stats)
+    
 @app.route('/scraper', methods=['GET', 'POST'])
 @user_required
 def scraper():
@@ -1011,9 +1017,25 @@ def logs():
     return render_template('logs.html', logs=logs)
 
 @app.route('/api/logs')
+@admin_required
 def api_logs():
-    logs = get_recent_logs(500)
-    return jsonify(logs)
+    lines = request.args.get('lines', default=500, type=int)
+    download = request.args.get('download', default='false').lower() == 'true'
+    
+    logs = get_recent_logs(lines)
+    
+    if download:
+        log_content = ''
+        for log in logs:
+            log_content += f"{log['timestamp']} - {log['level']} - {log['message']}\n"
+        
+        return Response(
+            log_content,
+            mimetype="text/plain",
+            headers={"Content-disposition": "attachment; filename=debug.log"}
+        )
+    else:
+        return jsonify(logs)
 
 def get_recent_logs(n):
     log_path = 'logs/debug.log'
@@ -1022,8 +1044,15 @@ def get_recent_logs(n):
     with open(log_path, 'r') as f:
         logs = f.readlines()
     recent_logs = logs[-n:]  # Get the last n logs
-    return [{'level': get_log_level(log), 'message': log.strip()} for log in recent_logs]
+    return [parse_log_line(log.strip()) for log in recent_logs]
 
+def parse_log_line(line):
+    parts = line.split(' - ', 2)
+    if len(parts) == 3:
+        timestamp, level, message = parts
+        return {'timestamp': timestamp, 'level': level, 'message': message}
+    else:
+        return {'timestamp': '', 'level': 'INFO', 'message': line}
 def get_log_level(log_entry):
     if ' - DEBUG - ' in log_entry:
         return 'debug'
