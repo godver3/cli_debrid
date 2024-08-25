@@ -127,16 +127,6 @@ SETTINGS_SCHEMA = {
             "description": "Trakt client secret",
             "default": "",
             "sensitive": True
-        },
-        "user_watchlist_enabled": {
-            "type": "boolean",
-            "description": "Enable user watchlist",
-            "default": True
-        },
-        "trakt_lists": {
-            "type": "string",
-            "description": "Comma-separated list of Trakt list URLs",
-            "default": ""
         }
     },
     "Debug": {
