@@ -36,6 +36,28 @@
     </script>
     {% endif %}
 </head>
+<style>
+    .user-controls {
+        display: flex;
+        align-items: center;
+    }
+
+    .user-info {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        margin-right: 10px;
+    }
+
+    .username {
+        font-weight: bold;
+    }
+
+    .version-info {
+        font-size: 0.9em;
+        color: #888;
+    }
+</style>
 <body>
     <header>
         <div class="header-content">
@@ -67,7 +89,10 @@
         <div class="header-controls">
             {% if current_user.is_authenticated %}
             <div class="user-controls">
-                <span>Welcome, {{ current_user.username }}</span>
+                <div class="user-info">
+                    <span class="username">Welcome, {{ current_user.username }}</span>
+                    <span class="version-info">v{{ version }}</span>
+                </div>
                 <a href="{{ url_for('logout') }}">Logout</a>
             </div>
             {% if current_user.role == 'admin' %}

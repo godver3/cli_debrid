@@ -35,31 +35,74 @@
 
     .card {
         width: 200px;
-        border: 1px solid #555;
-        border-radius: 8px;
+        height: 300px;
+        position: relative;
         overflow: hidden;
-        background-color: #444;
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease;
+    }
+
+    .card:hover {
+        transform: scale(1.05);
     }
 
     .card-img {
         width: 100%;
-        height: 300px;
+        height: 100%;
         object-fit: cover;
     }
 
     .card-content {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
         padding: 10px;
+        transition: opacity 0.3s ease;
+    }
+
+    .card-hover-content {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 20px;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        overflow-y: auto;
+    }
+
+    .card:hover .card-content {
+        opacity: 0;
+    }
+
+    .card:hover .card-hover-content {
+        opacity: 1;
     }
 
     .card h5 {
-        margin: 0 0 5px 0;
+        margin: 0 0 10px 0;
         font-size: 1em;
-        color: #f4f4f4;
+        font-weight: bold;
     }
 
-    .card .added-date {
+    .truncate {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .card .added-date,
+    .card .info-line {
         font-size: 0.8em;
-        color: #bbb;
+        margin: 5px 0;
+        color: #ddd;
     }
 
     .timezone-icon {
@@ -67,124 +110,307 @@
         cursor: help;
         margin-left: 5px;
     }
+
+    .toggle-container {
+        display: flex;
+        align-items: center;
+        margin-bottom: 20px;
+        font-size: 0.9em;
+    }
+    .toggle-item {
+        display: flex;
+        align-items: center;
+        margin-right: 15px;
+    }
+    .toggle-label {
+        margin-right: 5px;
+    }
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 40px;
+        height: 20px;
+    }
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: .4s;
+        border-radius: 20px;
+    }
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 2px;
+        bottom: 2px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+    }
+    input:checked + .toggle-slider {
+        background-color: #2196F3;
+    }
+    input:checked + .toggle-slider:before {
+        transform: translateX(20px);
+    }
+
+
+    .toggle-container {
+        order: -1;  /* This ensures it appears before other elements */
+        margin-bottom: 20px;  /* Add some space between the toggle and stats */
+    }
+
+
+
+    .statistics-wrapper {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .toggle-container {
+        width: 100%;
+        margin-bottom: 20px;
+    }
+
+    .stats-container {
+        width: 100%;
+    }
 </style>
 
-<div class="stats-container">
-
-    <div class="stats-box recently-aired">
-        <h3>Recently Aired <span class="timezone-icon" title="Loading timezone...">🌐</span></h3>
-        {% if stats.recently_aired %}
-            <ul>
-            {% for item in stats.recently_aired %}
-                <li style="color: #FFA500;">
-                    {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
-                    <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
-                </li>
-            {% endfor %}
-            </ul>
-        {% else %}
-            <p>No shows aired recently.</p>
-        {% endif %}
+<div class="statistics-wrapper">
+    <div class="toggle-container">
+        <div class="toggle-item">
+            <span class="toggle-label"><i class="fas fa-globe"></i> <span id="current-timezone">Loading...</span></span>
+        </div>
+        <div class="toggle-item">
+            <span class="toggle-label">24h</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="time-format-toggle" checked>
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
     </div>
 
-    <div class="stats-box airing-soon">
-        <h3>Airing Soon</h3>
-        {% if stats.airing_soon %}
-            <ul>
-            {% for item in stats.airing_soon %}
-                <li style="color: #FFA500;">
-                    {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
-                    <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
-                </li>
-            {% endfor %}
-            </ul>
-        {% else %}
-            <p>No shows airing soon.</p>
-        {% endif %}
-    </div>
+    <div class="stats-container">
 
-    <div class="stats-box upcoming-releases">
-        <h3>Upcoming Releases</h3>
-        {% if stats.upcoming_releases %}
-            <ul>
-            {% for item in stats.upcoming_releases %}
-                <li style="color: #FFA500;">
-                    {{ item.titles|join(', ') }} - 
-                    <span class="release-date" style="color: #f4f4f4;">{{ item.release_date }}</span>
-                </li>
-            {% endfor %}
-            </ul>
-        {% else %}
-            <p>No upcoming releases in the next week.</p>
-        {% endif %}
-    </div>
-
-    <div class="stats-box recently-added">
-        <h3>Recently Added</h3>
-        <div class="recently-added-section">
-            <h4>Movies</h4>
-            {% if stats.recently_added_movies %}
-                <div class="card-container">
-                {% for movie in stats.recently_added_movies %}
-                    <div class="card">
-                        {% if movie.poster_url %}
-                            <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="card-img">
-                        {% endif %}
-                        <div class="card-content">
-                            <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
-                            <p class="added-date">{{ movie.added_at }}</p>
-                        </div>
-                    </div>
-                {% endfor %}
+        <div class="stats-box collection-stats">
+            <div class="stat-items">
+                <div class="stat-item">
+                    <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
                 </div>
+                <div class="stat-item">
+                    <p>Total TV Shows: <span id="total-shows">{{ stats.total_shows }}</span></p>
+                </div>
+                <div class="stat-item">
+                    <p>Total Episodes: <span id="total-episodes">{{ stats.total_episodes }}</span></p>
+                </div>
+                <div class="stat-item uptime">
+                    <p>Uptime: <span id="uptime">{{ '%d days, %d hours, %d minutes' % (stats.uptime // 86400, (stats.uptime % 86400) // 3600, (stats.uptime % 3600) // 60) }}</span></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-box recently-aired">
+            <h3>Recently Aired</h3>
+            {% if stats.recently_aired %}
+                <ul>
+                {% for item in stats.recently_aired %}
+                    <li style="color: #FFA500;">
+                        {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
+                        <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
+                    </li>
+                {% endfor %}
+                </ul>
             {% else %}
-                <p>No movies added recently.</p>
+                <p>No shows aired recently.</p>
             {% endif %}
         </div>
-        <div class="recently-added-section">
-            <h4>TV Shows</h4>
-            {% if stats.recently_added_shows %}
-                <div class="card-container">
-                {% for show in stats.recently_added_shows %}
-                    <div class="card">
-                        {% if show.poster_url %}
-                            <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="card-img">
-                        {% endif %}
-                        <div class="card-content">
-                            <h5>{{ show.title }}</h5>
-                            <p class="added-date">Added: {{ show.added_at }}</p>
-                            <p class="seasons">Seasons: {{ show.seasons|join(', ') }}</p>
-                        </div>
-                    </div>
+
+        <div class="stats-box airing-soon">
+            <h3>Airing Soon</h3>
+            {% if stats.airing_soon %}
+                <ul>
+                {% for item in stats.airing_soon %}
+                    <li style="color: #FFA500;">
+                        {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
+                        <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
+                    </li>
                 {% endfor %}
-                </div>
+                </ul>
             {% else %}
-                <p>No TV shows added recently.</p>
+                <p>No shows airing soon.</p>
             {% endif %}
         </div>
-    </div>
 
-    <div class="stats-box collection-stats">
-        <h3>Collection Statistics</h3>
-        <div class="stat-items">
-            <div class="stat-item">
-                <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
+        <div class="stats-box upcoming-releases">
+            <h3>Upcoming Releases</h3>
+            {% if stats.upcoming_releases %}
+                <ul>
+                {% for item in stats.upcoming_releases %}
+                    <li style="color: #FFA500;">
+                        {{ item.titles|join(', ') }} - 
+                        <span class="release-date" style="color: #f4f4f4;">{{ item.release_date }}</span>
+                    </li>
+                {% endfor %}
+                </ul>
+            {% else %}
+                <p>No upcoming releases in the next week.</p>
+            {% endif %}
+        </div>
+
+        <div class="stats-box recently-added">
+            <h3>Recently Added</h3>
+            <div class="recently-added-section">
+                <h4>Movies</h4>
+                {% if stats.recently_added_movies %}
+                    <div class="card-container">
+                    {% for movie in stats.recently_added_movies %}
+                        <div class="card">
+                            {% if movie.poster_url %}
+                                <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="card-img">
+                            {% endif %}
+                            <div class="card-content">
+                                <h5 class="truncate">{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
+                            </div>
+                            <div class="card-hover-content">
+                                <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
+                                <p class="info-line">Added: {{ formatDate(movie.collected_at) }} {{ formatTime(movie.collected_at) }}</p>
+                                <p class="info-line">Versions: {{ movie.version }}</p>
+                            </div>
+                        </div>
+                    {% endfor %}
+                    </div>
+                {% else %}
+                    <p>No movies added recently.</p>
+                {% endif %}
             </div>
-            <div class="stat-item">
-                <p>Total TV Shows: <span id="total-shows">{{ stats.total_shows }}</span></p>
-            </div>
-            <div class="stat-item">
-                <p>Total Episodes: <span id="total-episodes">{{ stats.total_episodes }}</span></p>
-            </div>
-            <div class="stat-item uptime">
-                <p>Uptime: <span id="uptime">{{ '%d days, %d hours, %d minutes' % (stats.uptime // 86400, (stats.uptime % 86400) // 3600, (stats.uptime % 3600) // 60) }}</span></p>
+            <div class="recently-added-section">
+                <h4>TV Shows</h4>
+                {% if stats.recently_added_shows %}
+                    <div class="card-container">
+                    {% for show in stats.recently_added_shows %}
+                        <div class="card">
+                            {% if show.poster_url %}
+                                <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="card-img">
+                            {% endif %}
+                            <div class="card-content">
+                                <h5 class="truncate">{{ show.title }}</h5>
+                            </div>
+                            <div class="card-hover-content">
+                                <h5>{{ show.title }}</h5>
+                                <p class="info-line">Added: {{ formatDate(show.collected_at) }} {{ formatTime(show.collected_at) }}</p>
+                                <p class="info-line">Versions: {{ show.versions|join(', ') }}</p>
+                                <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
+                                <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
+                            </div>
+                        </div>
+                    {% endfor %}
+                    </div>
+                {% else %}
+                    <p>No TV shows added recently.</p>
+                {% endif %}
             </div>
         </div>
+
+
     </div>
 </div>
 
 <script>
 let initialLoadComplete = false;
+let use24HourFormat = localStorage.getItem('use24HourFormat') !== 'false'; // Default to true if not set
+
+function updateAllTimes() {
+    console.log('Updating all times. use24HourFormat:', use24HourFormat);
+    document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
+        const originalDateTime = elem.getAttribute('data-original-datetime');
+        console.log('Element:', elem, 'Original date-time:', originalDateTime);
+        if (originalDateTime) {
+            const date = new Date(originalDateTime);
+            if (!isNaN(date.getTime())) {
+                if (elem.classList.contains('info-line')) {
+                    // For info-line elements, only update the time part
+                    const originalText = elem.textContent;
+                    const timePart = originalText.split(':').slice(-2).join(':');
+                    const newTimePart = formatTime(date);
+                    console.log('Updating info-line:', originalText, '->', newTimePart);
+                    elem.textContent = originalText.replace(timePart, newTimePart);
+                } else {
+                    // For air-date and release-date elements, update both date and time
+                    const formattedDate = formatDate(date);
+                    const formattedTime = formatTime(date);
+                    console.log('Updating date/time:', elem.textContent, '->', `${formattedDate} ${formattedTime}`);
+                    elem.textContent = `${formattedDate} ${formattedTime}`;
+                }
+            } else {
+                console.log('Invalid date-time:', originalDateTime);
+            }
+        } else {
+            console.log('No original date-time found for element:', elem);
+        }
+    });
+}
+
+function formatDate(date) {
+    return date.toISOString().split('T')[0];
+}
+
+function formatTime(date) {
+    console.log('Formatting time:', date, 'use24HourFormat:', use24HourFormat);
+    
+    if (use24HourFormat) {
+        return date.toTimeString().split(' ')[0].slice(0, 5);
+    } else {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+}
+
+// Initial update
+document.addEventListener('DOMContentLoaded', () => {
+    initialLoadComplete = false;
+    updateStatistics();
+    
+    const timeFormatToggle = document.getElementById('time-format-toggle');
+    
+    // Set the initial state of the toggle based on the saved preference
+    timeFormatToggle.checked = use24HourFormat;
+    
+    timeFormatToggle.addEventListener('change', function() {
+        use24HourFormat = this.checked;
+        console.log('Toggle changed. use24HourFormat:', use24HourFormat);
+        // Save the preference to localStorage
+        localStorage.setItem('use24HourFormat', use24HourFormat);
+        updateAllTimes();
+    });
+    
+    // Store original date-time strings
+    document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
+        const originalText = elem.textContent.trim();
+        console.log('Processing element:', elem, 'Original text:', originalText);
+        let dateTimeMatch = originalText.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+        if (dateTimeMatch) {
+            console.log('Setting data-original-datetime:', dateTimeMatch[1]);
+            elem.setAttribute('data-original-datetime', dateTimeMatch[1]);
+        } else {
+            console.log('Skipping element, no valid date-time format found:', originalText);
+        }
+    });
+    
+    // Initial time format update
+    updateAllTimes();
+});
 
 function updateStatistics() {
     fetch('/statistics', {
@@ -211,14 +437,32 @@ function updateStatistics() {
         updateTimezone(data.timezone);
         
         initialLoadComplete = true;
+
+        // Store original date-time strings for dynamically added elements
+        document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
+            if (!elem.hasAttribute('data-original-datetime')) {
+                const originalText = elem.textContent.trim();
+                console.log('Processing dynamically added element:', elem, 'Original text:', originalText);
+                let dateTimeMatch = originalText.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+                if (dateTimeMatch) {
+                    console.log('Setting data-original-datetime:', dateTimeMatch[1]);
+                    elem.setAttribute('data-original-datetime', dateTimeMatch[1]);
+                } else {
+                    console.log('Skipping element, no valid date-time format found:', originalText);
+                }
+            }
+        });
+
+        // Update times for dynamically added elements
+        updateAllTimes();
     })
     .catch(error => console.error('Error updating statistics:', error));
 }
 
 function updateTimezone(timezone) {
-    const timezoneIcon = document.querySelector('.timezone-icon');
-    if (timezoneIcon) {
-        timezoneIcon.title = `Timezone: ${timezone}`;
+    const timezoneSpan = document.getElementById('current-timezone');
+    if (timezoneSpan) {
+        timezoneSpan.textContent = timezone;
     }
 }
 
@@ -299,9 +543,15 @@ function updateRecentlyAddedSection(type, items) {
             <div class="card">
                 ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
                 <div class="card-content">
+                    <h5 class="truncate">${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                </div>
+                <div class="card-hover-content">
                     <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                    <p class="added-date">Added: ${formatDate(item.added_at)}</p>
-                    ${type === 'TV Shows' && item.seasons ? `<p class="seasons">Seasons: ${item.seasons.join(', ')}</p>` : ''}
+                    <p class="info-line">Added: ${formatDate(item.collected_at)} ${formatTime(item.collected_at)}</p>
+                    <p class="info-line">Versions: ${item.versions ? item.versions.join(', ') : item.version}</p>
+                    ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
+                        `<p class="info-line">Seasons: ${item.seasons.join(', ')}</p>
+                         <p class="info-line">Latest: S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
                 </div>
             </div>
         `).join('');
@@ -315,66 +565,22 @@ function updateRecentlyAddedSection(type, items) {
 }
 
 function formatDate(dateString) {
-    console.log('formatDate input:', dateString);
-    if (!dateString) {
-        console.error('Invalid date string:', dateString);
-        return 'Invalid Date';
-    }
-    
-    let date;
-    // Check if the dateString is already in the "Day, DD Mon YYYY HH:MM:SS GMT" format
-    if (/^[A-Za-z]{3},\s\d{1,2}\s[A-Za-z]{3}\s\d{4}\s\d{2}:\d{2}:\d{2}\sGMT$/.test(dateString)) {
-        date = new Date(dateString);
-    } else {
-        date = new Date(dateString + 'Z');  // Append 'Z' to treat as UTC
-    }
-    
-    console.log('Parsed date:', date);
-    if (isNaN(date.getTime())) {
-        console.error('Invalid date object:', date);
-        return 'Invalid Date';
-    }
-    
-    const now = new Date();
-    const yesterday = new Date(now);
-    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-    const tomorrow = new Date(now);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-
-    if (isSameDay(date, now)) {
-        return 'Today';
-    } else if (isSameDay(date, yesterday)) {
-        return 'Yesterday';
-    } else if (isSameDay(date, tomorrow)) {
-        return 'Tomorrow';
-    } else {
-        return date.toUTCString().split(' ').slice(0, 4).join(' ');
-    }
+    if (!dateString) return 'Invalid Date';
+    let date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Invalid Date';
+    return date.toISOString().split('T')[0];
 }
 
 function formatTime(dateString) {
-    console.log('formatTime input:', dateString);
-    if (!dateString) {
-        console.error('Invalid date string:', dateString);
-        return 'Invalid Time';
-    }
+    if (!dateString) return 'Invalid Time';
+    let date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Invalid Time';
     
-    let date;
-    // Check if the dateString is already in the "Day, DD Mon YYYY HH:MM:SS GMT" format
-    if (/^[A-Za-z]{3},\s\d{1,2}\s[A-Za-z]{3}\s\d{4}\s\d{2}:\d{2}:\d{2}\sGMT$/.test(dateString)) {
-        date = new Date(dateString);
+    if (use24HourFormat) {
+        return date.toTimeString().split(' ')[0].slice(0, 5);
     } else {
-        date = new Date(dateString + 'Z');  // Append 'Z' to treat as UTC
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
-    
-    console.log('Parsed date:', date);
-    if (isNaN(date.getTime())) {
-        console.error('Invalid date object:', date);
-        return 'Invalid Time';
-    }
-    
-    return date.getUTCHours().toString().padStart(2, '0') + ':' + 
-           date.getUTCMinutes().toString().padStart(2, '0');
 }
 
 function isSameDay(date1, date2) {
@@ -391,13 +597,29 @@ document.addEventListener('DOMContentLoaded', () => {
     initialLoadComplete = false;
     updateStatistics();
     
-    // Format dates that are already in the HTML
-    document.querySelectorAll('.air-date, .release-date').forEach(elem => {
-        const originalDate = elem.textContent.trim();
-        const formattedDate = formatDate(originalDate);
-        const formattedTime = formatTime(originalDate);
-        elem.textContent = `${formattedDate} ${formattedTime}`;
+    const timeFormatToggle = document.getElementById('time-format-toggle');
+    
+    timeFormatToggle.addEventListener('change', function() {
+        use24HourFormat = this.checked;
+        console.log('Toggle changed. use24HourFormat:', use24HourFormat);
+        updateAllTimes();
     });
+    
+    // Store original date-time strings
+    document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
+        const originalText = elem.textContent.trim();
+        console.log('Processing element:', elem, 'Original text:', originalText);
+        let dateTimeMatch = originalText.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+        if (dateTimeMatch) {
+            console.log('Setting data-original-datetime:', dateTimeMatch[1]);
+            elem.setAttribute('data-original-datetime', dateTimeMatch[1]);
+        } else {
+            console.log('Skipping element, no valid date-time format found:', originalText);
+        }
+    });
+    
+    // Initial time format update
+    updateAllTimes();
 });
 </script>
 {% endblock %}

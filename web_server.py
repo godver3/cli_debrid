@@ -13,7 +13,7 @@ from debrid.real_debrid import add_to_real_debrid
 import re
 from datetime import datetime, timedelta
 import sqlite3
-from database import get_db_connection, get_collected_counts, remove_from_media_items, bulk_delete_by_imdb_id, get_recently_added_items
+from database import get_db_connection, get_collected_counts, remove_from_media_items, bulk_delete_by_imdb_id, get_recently_added_items, get_recently_added_items, create_tables, verify_database
 import string
 from settings_web import get_settings_page, update_settings, get_settings
 from template_utils import render_settings, render_content_sources
@@ -47,6 +47,7 @@ from utilities.plex_functions import sync_run_get_recent_from_plex
 import aiohttp
 import asyncio
 from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
+import shutil
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -90,6 +91,16 @@ failed_additions = 0
 CONFIG_FILE = './config/config.json'
 TRAKT_CONFIG_PATH = './config/.pytrakt.json'
 
+# Add this after app initialization
+@app.context_processor
+def inject_version():
+    try:
+        with open('version.txt', 'r') as f:
+            version = f.read().strip()
+    except FileNotFoundError:
+        version = "Unknown"
+    return dict(version=version)
+
 def create_default_admin():
     # Check if there are any existing users
     if User.query.count() == 0:
@@ -109,27 +120,6 @@ class User(UserMixin, db.Model):
     password = db.Column(db.String(120), nullable=False)
     role = db.Column(db.String(10), nullable=False, default='user')
     is_default = db.Column(db.Boolean, default=False)
-
-async def get_poster_url(session, tmdb_id, media_type):
-    overseerr_url = get_setting('Overseerr', 'url', '').rstrip('/')
-    overseerr_api_key = get_setting('Overseerr', 'api_key', '')
-    
-    if not overseerr_url or not overseerr_api_key:
-        return None
-    
-    headers = get_overseerr_headers(overseerr_api_key)
-    
-    url = f"{overseerr_url}/api/v1/{media_type}/{tmdb_id}"
-    try:
-        async with session.get(url, headers=headers) as response:
-            if response.status == 200:
-                data = await response.json()
-                poster_path = data.get('posterPath')
-                if poster_path:
-                    return f"https://image.tmdb.org/t/p/w300{poster_path}"
-    except Exception as e:
-        print(f"Error fetching poster URL: {e}")
-    return None
 
 async def get_recent_from_plex(movie_limit=5, show_limit=5):
     plex_url = get_setting('Plex', 'url', '').rstrip('/')
@@ -812,17 +802,8 @@ def database():
 
     conn.close()
 
-    return render_template('database.html', 
-                           items=items, 
-                           all_columns=all_columns,
-                           selected_columns=selected_columns,
-                           filter_column=filter_column,
-                           filter_value=filter_value,
-                           sort_column=sort_column,
-                           sort_order=sort_order,
-                           alphabet=alphabet,
-                           current_letter=current_letter,
-                           content_type=content_type)
+    # Convert items to a list of dictionaries
+    items = [dict(zip(selected_columns, item)) for item in items]
 
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return jsonify({
@@ -872,15 +853,41 @@ def add_torrent_to_real_debrid():
         logging.error(f"Error adding torrent to Real-Debrid: {str(e)}")
         return jsonify({'error': 'An error occurred while adding to Real-Debrid'}), 500
 
+def format_date(date_string):
+    if not date_string:
+        return ''
+    try:
+        date = datetime.fromisoformat(date_string)
+        return date.strftime('%Y-%m-%d')
+    except ValueError:
+        return date_string
+
+def format_time(date_string):
+    if not date_string:
+        return ''
+    try:
+        date = datetime.fromisoformat(date_string)
+        return date.strftime('%H:%M:%S')
+    except ValueError:
+        return ''
+
 @app.route('/statistics')
 @user_required
 def statistics():
+    os.makedirs('db_content', exist_ok=True)
+
+    start_time = time.time()
+
     uptime = int(time.time() - start_time)
     collected_counts = get_collected_counts()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
-    recent_from_plex = sync_run_get_recent_from_plex()
     upcoming_releases = get_upcoming_releases()
     now = datetime.now()
+    
+    # Fetch recently added items from the database
+    recently_added_start = time.time()
+    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5, days=7))
+    recently_added_end = time.time()
     
     stats = {
         'uptime': uptime,
@@ -893,17 +900,18 @@ def statistics():
         'today': now.date(),
         'yesterday': (now - timedelta(days=1)).date(),
         'tomorrow': (now + timedelta(days=1)).date(),
-        'recently_added_movies': recent_from_plex['movies'],
-        'recently_added_shows': recent_from_plex['shows'],
-        'timezone': time.tzname[0]  # Add this line to include the timezone
+        'recently_added_movies': [item for item in recently_added if item['type'] == 'movie'],
+        'recently_added_shows': [item for item in recently_added if item['type'] == 'show'],
+        'timezone': time.tzname[0]
     }
 
+    end_time = time.time()
+    total_time = end_time - start_time
+
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        # If it's an AJAX request, return JSON
         return jsonify(stats)
     else:
-        # If it's a regular request, render the template
-        return render_template('statistics.html', stats=stats)
+        return render_template('statistics.html', stats=stats, formatDate=format_date, formatTime=format_time)
     
 @app.route('/movies_trending', methods=['GET', 'POST'])
 def movies_trending():
@@ -1040,43 +1048,72 @@ def logs():
     logs = get_recent_logs(500)  # Get the 500 most recent log entries
     return render_template('logs.html', logs=logs)
 
+from datetime import datetime
+
 @app.route('/api/logs')
 @admin_required
 def api_logs():
-    lines = request.args.get('lines', default=500, type=int)
+    lines = request.args.get('lines', default=250, type=int)  # Default to 250 logs
     download = request.args.get('download', default='false').lower() == 'true'
-    
-    logs = get_recent_logs(lines)
-    
-    if download:
-        log_content = ''
-        for log in logs:
-            log_content += f"{log['timestamp']} - {log['level']} - {log['message']}\n"
+    since = request.args.get('since')
+      
+    try:
+        logs = get_recent_logs(lines, since)
         
-        return Response(
-            log_content,
-            mimetype="text/plain",
-            headers={"Content-disposition": "attachment; filename=debug.log"}
-        )
-    else:
-        return jsonify(logs)
+        if download:
+            log_content = ''
+            for log in logs:
+                log_content += f"{log['timestamp']} - {log['level']} - {log['message']}\n"
+            
+            return Response(
+                log_content,
+                mimetype="text/plain",
+                headers={"Content-disposition": "attachment; filename=debug.log"}
+            )
+        else:
+            return jsonify(logs)
+    except Exception as e:
+        app.logger.error(f"Error in api_logs: {str(e)}", exc_info=True)
+        return jsonify({'error': 'An error occurred while fetching logs'}), 500
 
-def get_recent_logs(n):
+def get_recent_logs(n, since=None):
     log_path = 'logs/debug.log'
     if not os.path.exists(log_path):
         return []
     with open(log_path, 'r') as f:
         logs = f.readlines()
-    recent_logs = logs[-n:]  # Get the last n logs
-    return [parse_log_line(log.strip()) for log in recent_logs]
+    
+    parsed_logs = [parse_log_line(log.strip()) for log in logs]
+    
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since)
+            parsed_logs = [
+                log for log in parsed_logs 
+                if log['timestamp'] and datetime.fromisoformat(log['timestamp']) > since_dt
+            ]
+        except ValueError as e:
+            app.logger.error(f"Error parsing timestamp: {e}")
+            # If there's an error parsing the timestamp, return the last n logs
+            return parsed_logs[-n:]
+    
+    return parsed_logs[-n:]  # Return at most n logs
 
 def parse_log_line(line):
-    parts = line.split(' - ', 2)
-    if len(parts) == 3:
-        timestamp, level, message = parts
-        return {'timestamp': timestamp, 'level': level, 'message': message}
+    parts = line.split(' - ', 3)
+    if len(parts) == 4:
+        timestamp, module, level, message = parts
+        try:
+            # Validate the timestamp
+            datetime.fromisoformat(timestamp)
+        except ValueError:
+            timestamp = ''  # Set to empty string if invalid
+        
+        level = level.strip().lower()  # Normalize the level
+        return {'timestamp': timestamp, 'level': level, 'message': f"{module} - {message}"}
     else:
-        return {'timestamp': '', 'level': 'INFO', 'message': line}
+        return {'timestamp': '', 'level': 'info', 'message': line}
+    
 def get_log_level(log_entry):
     if ' - DEBUG - ' in log_entry:
         return 'debug'
@@ -1699,6 +1736,36 @@ def save_version_settings():
     except Exception as e:
         app.logger.error(f"Error saving version settings: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/delete_database', methods=['POST'])
+@admin_required
+def delete_database():
+    confirm_delete = request.form.get('confirm_delete')
+    if confirm_delete != 'DELETE':
+        return jsonify({'success': False, 'error': 'Invalid confirmation'})
+
+    try:
+        # Close any open database connections
+        db.session.close()
+        db.engine.dispose()
+
+        # Delete the media_items.db file
+        db_path = os.path.join(app.root_path, 'db_content', 'media_items.db')
+        if os.path.exists(db_path):
+            os.remove(db_path)
+            logging.info(f"Deleted media_items.db file: {db_path}")
+        else:
+            logging.info(f"media_items.db file not found: {db_path}")
+
+        # Recreate the tables
+        create_tables()
+        verify_database()
+
+        return jsonify({'success': True, 'message': 'Database deleted and tables recreated successfully'})
+    except Exception as e:
+        logging.error(f"Error deleting database: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'})
+
 
 @app.route('/run_scrape', methods=['POST'])
 def run_scrape():
