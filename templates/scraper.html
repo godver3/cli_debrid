@@ -11,6 +11,36 @@
             </select>
             <button id="searchformButton" type="submit">Search</button>
         </form>
+        <div class="trending-container" id="trendingContainer">
+            <div class="trending-movies">
+                <div class="trending-header">
+                    <h2 class="trending-title">Trending Movies</h2>
+                    <div class="trending-navigation">
+                        <button id="scrollLeft_mv" class="trending-nav-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                        </button>
+                        <button id="scrollRight_mv" class="trending-nav-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="movieContainer" class="movie-list"></div>
+            </div>
+            <div class="trending-shows">
+                <div class="trending-header">
+                    <h2 class="trending-title">Trending Shows</h2>
+                    <div class="trending-navigation">
+                        <button id="scrollLeft_tv" class="trending-nav-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                        </button>
+                        <button id="scrollRight_tv" class="trending-nav-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="showContainer" class="show-list"></div>
+            </div>
+        </div>
         <div id="seasonResults" style="display: none;">
             <div id="season-info"></div>
             <select id="seasonDropdown"></select><button id="seasonPackButton">Season Pack</button>
