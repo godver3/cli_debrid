@@ -13,6 +13,9 @@ from fuzzywuzzy import fuzz
 from functools import wraps
 import random
 import time
+import aiohttp
+import asyncio
+from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
 
 def get_db_connection():
     db_path = os.path.join('db_content', 'media_items.db')
@@ -57,7 +60,7 @@ def migrate_media_items_table():
     try:
         # Step 1: Create a new table with the desired structure
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS media_items (
+            CREATE TABLE IF NOT EXISTS media_items_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 imdb_id TEXT,
                 tmdb_id TEXT,
@@ -78,6 +81,7 @@ def migrate_media_items_table():
                 scrape_results TEXT,
                 version TEXT,
                 hybrid_flag TEXT,
+                collected_at TIMESTAMP,
                 UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
             )
         ''')
@@ -87,12 +91,15 @@ def migrate_media_items_table():
             INSERT INTO media_items_new 
             (imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
              season_number, episode_number, filled_by_title, filled_by_magnet, 
-             last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, version)
+             last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, version,
+             hybrid_flag, collected_at)
             SELECT 
                 imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
                 season_number, episode_number, filled_by_title, filled_by_magnet, 
                 last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, 
-                COALESCE(version, 'default')
+                COALESCE(version, 'default'),
+                hybrid_flag,
+                CASE WHEN state = 'Collected' THEN last_updated ELSE NULL END
             FROM media_items
         ''')
 
@@ -103,7 +110,7 @@ def migrate_media_items_table():
         cursor.execute('ALTER TABLE media_items_new RENAME TO media_items')
 
         conn.commit()
-        logging.info("Successfully migrated media_items table to include version in unique constraint.")
+        logging.info("Successfully migrated media_items table to include collected_at column.")
     except Exception as e:
         conn.rollback()
         logging.error(f"Error during media_items table migration: {str(e)}")
@@ -535,9 +542,9 @@ def add_collected_items(media_items_batch, recent=False):
                             if current_state != 'Collected':
                                 conn.execute('''
                                     UPDATE media_items
-                                    SET state = ?, last_updated = ?
+                                    SET state = ?, last_updated = ?, collected_at = ?
                                     WHERE id = ?
-                                ''', ('Collected', datetime.now(), item_id))
+                                ''', ('Collected', datetime.now(), datetime.now(), item_id))
                                 logging.debug(f"Updating item in DB to Collected: {normalized_title} (Version: {version})")
                         else:
                             logging.debug(f"  No match: DB Filled By File does not match Plex Filename (Fuzzy match: {match_ratio}%)")
@@ -584,39 +591,39 @@ def add_collected_items(media_items_batch, recent=False):
                     if item_type == 'movie':
                         conn.execute('''
                             UPDATE media_items
-                            SET state = ?, last_updated = ?
+                            SET state = ?, last_updated = ?, collected_at = ?
                             WHERE id = ?
-                        ''', ('Collected', datetime.now(), item_id))
+                        ''', ('Collected', datetime.now(), datetime.now(), item_id))
                     else:
                         conn.execute('''
                             UPDATE media_items
-                            SET state = ?, last_updated = ?, airtime = ?
+                            SET state = ?, last_updated = ?, collected_at = ?, airtime = ?
                             WHERE id = ?
-                        ''', ('Collected', datetime.now(), airtime, item_id))
+                        ''', ('Collected', datetime.now(), datetime.now(), airtime, item_id))
                     logging.debug(f"Updating existing item to Collected: {normalized_title}")
                 else:
                     # Insert new item
                     if item_type == 'movie':
                         cursor = conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version)
-                            VALUES (?,?,?,?,?,?,?,?,?,?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Collected', 'movie',
-                            datetime.now(), datetime.now(), 'unknown'
+                            datetime.now(), datetime.now(), 'unknown', datetime.now()
                         ))
                         logging.info(f"Adding new movie to DB as Collected: {normalized_title}")
                     else:
                         cursor = conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Collected', 'episode',
                             item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), datetime.now(), 'unknown', airtime
+                            datetime.now(), datetime.now(), 'unknown', airtime, datetime.now()
                         ))
                         logging.info(f"Adding new episode to DB as Collected: {normalized_title} S{item['season_number']}E{item['episode_number']} (Airtime: {airtime})")
                 
@@ -631,7 +638,7 @@ def add_collected_items(media_items_batch, recent=False):
                 if item_info:
                     title, state, version = item_info
                     if state not in ['Collected', 'Blacklisted']:
-                        conn.execute('UPDATE media_items SET state = ?, last_updated = ? WHERE id = ?', ('Wanted', datetime.now(), item_id))
+                        conn.execute('UPDATE media_items SET state = ?, last_updated = ?, collected_at = NULL WHERE id = ?', ('Wanted', datetime.now(), item_id))
                         logging.debug(f"Moving non-Collected/non-Blacklisted item back to Wanted state: ID {item_id}, {title} (Version: {version})")
                     else:
                         logging.debug(f"Keeping {state} item in DB: ID {item_id}, {title} (Version: {version})")
@@ -668,6 +675,11 @@ def update_media_item_state(item_id, state, **kwargs):
                 if field == 'scrape_results':
                     value = json.dumps(value) if value else None
                 params.append(value)
+
+        # Update collected_at if the state is changing to 'Collected'
+        if state == 'Collected':
+            query += ", collected_at = ?"
+            params.append(datetime.now())
 
         # Complete the query
         query += " WHERE id = ?"
@@ -780,7 +792,18 @@ def create_database():
     create_upgrading_table()
     #logging.info("Database created and tables initialized.")
 
-# Modify the verify_database function to include verifying the upgrading table
+def add_collected_at_column():
+    conn = get_db_connection()
+    try:
+        conn.execute('ALTER TABLE media_items ADD COLUMN collected_at TIMESTAMP')
+        conn.commit()
+        logging.info("Successfully added collected_at column to media_items table.")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e):
+            logging.error(f"Error adding collected_at column: {str(e)}")
+    finally:
+        conn.close()
+
 def verify_database():
     #logging.info("Starting database verification...")
     create_tables()
@@ -797,6 +820,7 @@ def verify_database():
     add_hybrid_flag_column()
     add_filled_by_file_column()
     add_airtime_column()
+    add_collected_at_column()  # Add this line
 
     logging.info("Database verification complete.")
 
@@ -1070,7 +1094,8 @@ def bulk_delete_by_imdb_id(imdb_id):
     finally:
         conn.close()
 
-def get_recently_added_items(limit=30, days=7):
+async def get_recently_added_items(movie_limit=5, show_limit=5, days=7):
+    start_time = time.time()
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -1078,39 +1103,129 @@ def get_recently_added_items(limit=30, days=7):
         threshold_date = datetime.now() - timedelta(days=days)
         
         query = """
-        SELECT title, year, type, season_number, episode_number, last_updated as added_at
+        SELECT title, year, type, season_number, episode_number, collected_at, imdb_id, tmdb_id, version
         FROM media_items
-        WHERE state = 'Collected' AND last_updated > ?
-        ORDER BY last_updated DESC
-        LIMIT ?
+        WHERE collected_at > ?
+        ORDER BY collected_at DESC
         """
         
-        cursor.execute(query, (threshold_date, limit))
+        query_start = time.time()
+        cursor.execute(query, (threshold_date,))
         results = cursor.fetchall()
+        query_end = time.time()
         
-        logging.debug(f"Retrieved {len(results)} items from the database")
-        for result in results:
-            logging.debug(f"Raw item: {dict(result)}")
+        movies = []
+        shows = {}
         
-        recently_added = []
-        for row in results:
-            item = dict(row)
-            if item['type'] == 'episode':
-                existing_item = next((x for x in recently_added if x['title'] == item['title'] and x['season_number'] == item['season_number']), None)
-                if existing_item:
-                    if item['added_at'] > existing_item['added_at']:
-                        existing_item['added_at'] = item['added_at']
-                        existing_item['episode_number'] = item['episode_number']
+        process_start = time.time()
+        async with aiohttp.ClientSession() as session:
+            poster_tasks = []
+            for row in results:
+                item = dict(row)
+                
+                if item['collected_at']:
+                    item['collected_at'] = datetime.fromisoformat(item['collected_at']).isoformat()
+                
+                media_type = 'movie' if item['type'] == 'movie' else 'tv'
+                
+                # Check cache for poster URL
+                cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
+                if cached_url:
+                    item['poster_url'] = cached_url
                 else:
-                    recently_added.append(item)
-            else:
-                recently_added.append(item)
+                    # Create a task for fetching the poster URL
+                    poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
+                    poster_tasks.append((item, poster_task))
+                
+                if item['type'] == 'movie':
+                    if len(movies) < movie_limit:
+                        movies.append(item)
+                elif item['type'] == 'episode':
+                    if item['title'] not in shows and len(shows) < show_limit:
+                        shows[item['title']] = {
+                            'title': item['title'],
+                            'year': item['year'],
+                            'type': 'show',
+                            'collected_at': item['collected_at'],
+                            'imdb_id': item['imdb_id'],
+                            'tmdb_id': item['tmdb_id'],
+                            'seasons': [item['season_number']],
+                            'latest_episode': (item['season_number'], item['episode_number']),
+                            'versions': [item['version']],
+                            'poster_url': item.get('poster_url')  # Add this line
+                        }
+                    elif item['title'] in shows:
+                        show = shows[item['title']]
+                        if item['season_number'] not in show['seasons']:
+                            show['seasons'].append(item['season_number'])
+                        show['collected_at'] = max(show['collected_at'], item['collected_at'])
+                        show['latest_episode'] = max(show['latest_episode'], (item['season_number'], item['episode_number']))
+                        if item['version'] not in show['versions']:
+                            show['versions'].append(item['version'])
+                        if 'poster_url' not in show and 'poster_url' in item:
+                            show['poster_url'] = item['poster_url']
+                
+                if len(movies) >= movie_limit and len(shows) >= show_limit:
+                    break
+            
+            # Wait for all poster URL tasks to complete
+            poster_start = time.time()
+            await asyncio.gather(*[task for _, task in poster_tasks])
+            poster_end = time.time()
+            
+            # Assign poster URLs to items and cache them
+            for item, task in poster_tasks:
+                url = await task
+                item['poster_url'] = url
+                cache_poster_url(item['tmdb_id'], 'movie' if item['type'] == 'movie' else 'tv', url)
+                
+                # Update show poster URL if this is a TV show episode
+                if item['type'] == 'episode' and item['title'] in shows:
+                    shows[item['title']]['poster_url'] = url
         
-        recently_added.sort(key=lambda x: x['added_at'], reverse=True)
-        logging.debug(f"Processed items: {recently_added}")
-        return recently_added[:limit]
+        process_end = time.time()
+        
+        recently_added = movies + list(shows.values())
+        recently_added.sort(key=lambda x: x['collected_at'], reverse=True)
+        
+        for item in recently_added:
+            if 'seasons' in item:
+                item['seasons'].sort()  # Sort the seasons list
+            if 'versions' in item:
+                item['versions'].sort()  # Sort the versions list
+        
+        # Clean expired cache entries
+        clean_expired_cache()
+        
+        end_time = time.time()
+        total_time = end_time - start_time
+
+        return recently_added
     except Exception as e:
         logging.error(f"Error in get_recently_added_items: {str(e)}")
         return []
     finally:
         conn.close()
+
+async def get_poster_url(session, tmdb_id, media_type):
+    from content_checkers.overseerr import get_overseerr_headers
+
+    overseerr_url = get_setting('Overseerr', 'url', '').rstrip('/')
+    overseerr_api_key = get_setting('Overseerr', 'api_key', '')
+    
+    if not overseerr_url or not overseerr_api_key:
+        return None
+    
+    headers = get_overseerr_headers(overseerr_api_key)
+    
+    url = f"{overseerr_url}/api/v1/{media_type}/{tmdb_id}"
+    try:
+        async with session.get(url, headers=headers) as response:
+            if response.status == 200:
+                data = await response.json()
+                poster_path = data.get('posterPath')
+                if poster_path:
+                    return f"https://image.tmdb.org/t/p/w300{poster_path}"
+    except Exception as e:
+        print(f"Error fetching poster URL: {e}")
+    return None
