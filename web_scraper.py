@@ -7,6 +7,7 @@ from debrid.real_debrid import extract_hash_from_magnet, add_to_real_debrid, is_
 from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
+from poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
 
 def search_overseerr(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     overseerr_url = get_setting('Overseerr', 'url')
@@ -88,7 +89,7 @@ def get_media_meta(tmdb_id, media_type):
     
     if not overseerr_url or not overseerr_api_key:
         logging.error("Overseerr URL or API key not set. Please configure in settings.")
-        return []
+        return None
 
     headers = {
         'X-Api-Key': overseerr_api_key,
@@ -96,24 +97,30 @@ def get_media_meta(tmdb_id, media_type):
     }
 
     url = f"{overseerr_url}/api/v1/{media_type}/{tmdb_id}"
-    genres = []
+    
     try:
         response = api.get(url, headers=headers)
         response.raise_for_status()
         data = response.json()
+        
         poster_path = data.get('posterPath', '')
-        poster_path =  f"https://image.tmdb.org/t/p/w300{poster_path}"
+        if poster_path:
+            poster_path = f"https://image.tmdb.org/t/p/w300{poster_path}"
+            cache_poster_url(tmdb_id, media_type, poster_path)
+
         show_overview = data.get('overview', '')
-        for genre in data.get('genres', ''):
-            genres.append(genre['name'])
-        genre_ids = genres
+        genres = [genre['name'] for genre in data.get('genres', [])]
         vote_average = data.get('voteAverage', '')
         backdrop_path = data.get('backdropPath', '')
 
-        return poster_path, show_overview, genre_ids, vote_average, backdrop_path
+        media_meta = (poster_path, show_overview, genres, vote_average, backdrop_path)
+        cache_media_meta(tmdb_id, media_type, media_meta)
+        logging.info(f"Cached poster and metadata for {media_type} (TMDB ID: {tmdb_id})")
+
+        return media_meta
     except api.exceptions.RequestException as e:
-        logging.error(f"Error searching Overseerr: {e}")
-        return []
+        logging.error(f"Error fetching media meta from Overseerr: {e}")
+        return None
 
 
 def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[int] = None, season: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -273,33 +280,54 @@ def trending_movies():
         return []
 
     headers = {
-                'Content-Type': 'application/json',
-                'trakt-api-version': '2',
-                'trakt-api-key': trakt_client_id
-            }
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': trakt_client_id
+    }
     api_url = "https://api.trakt.tv/movies/watched/weekly?extended=full"
-
 
     try:
         response = api.get(api_url, headers=headers)
         response.raise_for_status()
         data = response.json()
-        return {
-            "trendingMovies": [
-                {
-                    "title": result['movie']['title'],
-                    "year": result['movie']['year'],
-                    "imdb_id": result['movie']['ids']['imdb'],
-                    "tmdb_id": result['movie']['ids']['tmdb'],
-                    "rating": result['movie']['rating'],
-                    "watcher_count": result['watcher_count'],
-                    "poster_path": (get_media_meta(result['movie']['ids']['tmdb'], 'movie'))[0]
-                }
-                for result in data
-            ]
-        }
+        trending_movies = []
+        for result in data:
+            tmdb_id = result['movie']['ids']['tmdb']
+            cached_poster_url = get_cached_poster_url(tmdb_id, 'movie')
+            cached_media_meta = get_cached_media_meta(tmdb_id, 'movie')
+
+            if cached_poster_url and cached_media_meta:
+                #logging.info(f"Using cached data for movie {result['movie']['title']} (TMDB ID: {tmdb_id})")
+                poster_path = cached_poster_url
+                media_meta = cached_media_meta
+            else:
+                logging.info(f"Fetching data for movie {result['movie']['title']} (TMDB ID: {tmdb_id})")
+                media_meta = get_media_meta(tmdb_id, 'movie')
+                if media_meta:
+                    poster_path = media_meta[0]
+                    cache_poster_url(tmdb_id, 'movie', poster_path)
+                    cache_media_meta(tmdb_id, 'movie', media_meta)
+                    logging.info(f"Cached poster and metadata for movie {result['movie']['title']} (TMDB ID: {tmdb_id})")
+                else:
+                    poster_path = None
+
+            trending_movies.append({
+                "title": result['movie']['title'],
+                "year": result['movie']['year'],
+                "imdb_id": result['movie']['ids']['imdb'],
+                "tmdb_id": tmdb_id,
+                "rating": result['movie']['rating'],
+                "watcher_count": result['watcher_count'],
+                "poster_path": poster_path,
+                "movie_overview": media_meta[1] if media_meta else '',
+                "genre_ids": media_meta[2] if media_meta else [],
+                "vote_average": media_meta[3] if media_meta else 0,
+                "backdrop_path": media_meta[4] if media_meta else ''
+            })
+
+        return {"trendingMovies": trending_movies}
     except api.exceptions.RequestException as e:
-        logging.error(f"Error retreiving Trakt Trending Movies: {e}")
+        logging.error(f"Error retrieving Trakt Trending Movies: {e}")
         return []
 
 def trending_shows():
@@ -310,37 +338,54 @@ def trending_shows():
         return []
 
     headers = {
-                'Content-Type': 'application/json',
-                'trakt-api-version': '2',
-                'trakt-api-key': trakt_client_id
-            }
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': trakt_client_id
+    }
     api_url = "https://api.trakt.tv/shows/watched/weekly?extended=full"
-
 
     try:
         response = api.get(api_url, headers=headers)
         response.raise_for_status()
         data = response.json()
-        return {
-            "trendingShows": [
-                {
-                    "title": result['show']['title'],
-                    "year": result['show']['year'],
-                    "imdb_id": result['show']['ids']['imdb'],
-                    "tmdb_id": result['show']['ids']['tmdb'],
-                    "rating": result['show']['rating'],
-                    "watcher_count": result['watcher_count'],
-                    "poster_path": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[0],
-                    "show_overview": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[1],
-                    "genre_ids": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[2],
-                    "vote_average": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[3],
-                    "backdrop_path": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[4]
-                }
-                for result in data
-            ]
-        }
+        trending_shows = []
+        for result in data:
+            tmdb_id = result['show']['ids']['tmdb']
+            cached_poster_url = get_cached_poster_url(tmdb_id, 'tv')
+            cached_media_meta = get_cached_media_meta(tmdb_id, 'tv')
+
+            if cached_poster_url and cached_media_meta:
+                #logging.info(f"Using cached data for show {result['show']['title']} (TMDB ID: {tmdb_id})")
+                poster_path = cached_poster_url
+                media_meta = cached_media_meta
+            else:
+                logging.info(f"Fetching data for show {result['show']['title']} (TMDB ID: {tmdb_id})")
+                media_meta = get_media_meta(tmdb_id, 'tv')
+                if media_meta:
+                    poster_path = media_meta[0]
+                    cache_poster_url(tmdb_id, 'tv', poster_path)
+                    cache_media_meta(tmdb_id, 'tv', media_meta)
+                    logging.info(f"Cached poster and metadata for show {result['show']['title']} (TMDB ID: {tmdb_id})")
+                else:
+                    poster_path = None
+
+            trending_shows.append({
+                "title": result['show']['title'],
+                "year": result['show']['year'],
+                "imdb_id": result['show']['ids']['imdb'],
+                "tmdb_id": tmdb_id,
+                "rating": result['show']['rating'],
+                "watcher_count": result['watcher_count'],
+                "poster_path": poster_path,
+                "show_overview": media_meta[1] if media_meta else '',
+                "genre_ids": media_meta[2] if media_meta else [],
+                "vote_average": media_meta[3] if media_meta else 0,
+                "backdrop_path": media_meta[4] if media_meta else ''
+            })
+
+        return {"trendingShows": trending_shows}
     except api.exceptions.RequestException as e:
-        logging.error(f"Error retreiving Trakt Trending Movies: {e}")
+        logging.error(f"Error retrieving Trakt Trending Shows: {e}")
         return []
 
 def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str) -> List[Dict[str, Any]]:
