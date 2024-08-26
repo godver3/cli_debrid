@@ -294,7 +294,18 @@ function updateSettings() {
         
         current[nameParts[nameParts.length - 1]] = value;
     });
-  
+
+    // Ensure UI Settings section exists
+    if (!settingsData['UI Settings']) {
+        settingsData['UI Settings'] = {};
+    }
+
+    // Save user system enabled setting
+    const userSystemEnabledCheckbox = document.querySelector('input[name="UI Settings.enable_user_system"]');
+    if (userSystemEnabledCheckbox) {
+        settingsData['UI Settings']['enable_user_system'] = userSystemEnabledCheckbox.checked;
+    }
+
     // Process Notification settings
     const notificationsTab = document.getElementById('notifications');
     if (notificationsTab) {
@@ -475,8 +486,8 @@ function updateSettings() {
         });
     }
 
-    // Update the list of top-level fields to include Notifications
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB'];
+    // Update the list of top-level fields to include UI Settings
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];

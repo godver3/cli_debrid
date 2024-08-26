@@ -261,32 +261,40 @@
                 }
 
                 showConfirmationPopup(confirmMessage, () => {
-                    submitForm(url, method, form);
+                    submitForm(url, method, new FormData(form));
                 });
             });
         });
 
-        function submitForm(url, method, form) {
-            if (form.id === 'download-logs-form') {
-                const formData = new FormData(form);
-                const params = new URLSearchParams(formData);
-                window.location.href = `${url}?${params.toString()}`;
-            } else {
-                fetch(url, { method: method })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        showNotification(data.message || 'Action completed successfully', 'success');
-                        form.reset();
+        function submitForm(url, method, formData) {
+            fetch(url, {
+                method: method,
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(data.message || 'Action completed successfully', 'success');
+                    if (method === 'POST' && url.includes('delete_database')) {
+                        // Refresh the page after a short delay if the database was deleted
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 3000);
                     } else {
-                        showNotification(data.error || 'An error occurred', 'error');
+                        // Reset the form for other actions
+                        const form = document.querySelector(`form[action="${url}"]`);
+                        if (form) {
+                            form.reset();
+                        }
                     }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    showNotification('An error occurred', 'error');
-                });
-            }
+                } else {
+                    throw new Error(data.error || 'An error occurred');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showNotification(error.message || 'An error occurred', 'error');
+            });
         }
 
         function showConfirmationPopup(message, onConfirm) {
@@ -316,6 +324,10 @@
         }
 
         function showNotification(message, type) {
+            // Remove any existing notifications
+            const existingNotifications = document.querySelectorAll('.notification-popup');
+            existingNotifications.forEach(notification => notification.remove());
+
             const popup = document.createElement('div');
             popup.className = 'notification-popup';
             popup.innerHTML = `
@@ -327,7 +339,7 @@
             `;
             document.body.appendChild(popup);
 
-            // Automatically remove the popup after 5 seconds
+            // Automatically remove the popup after 15 seconds
             setTimeout(() => {
                 popup.remove();
             }, 15000);
