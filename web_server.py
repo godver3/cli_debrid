@@ -7,7 +7,7 @@ import logging
 import os
 from settings import get_all_settings, set_setting, get_setting, load_config, save_config, to_bool, ensure_trakt_auth
 from collections import OrderedDict, defaultdict
-from web_scraper import web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection, get_available_versions
+from web_scraper import web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection, get_available_versions, trending_movies, trending_shows
 from debrid.real_debrid import add_to_real_debrid
 import re
 from datetime import datetime, timedelta
@@ -903,6 +903,28 @@ def statistics():
         # If it's a regular request, render the template
         return render_template('statistics.html', stats=stats)
     
+@app.route('/movies_trending', methods=['GET', 'POST'])
+def movies_trending():
+    versions = get_available_versions()
+    if request.method == 'GET':
+        trendingMovies = trending_movies()
+        if trendingMovies:
+            return jsonify(trendingMovies)
+        else:
+            return jsonify({'error': 'Error restrieving Trakt Trending Movies'})
+    return render_template('scraper.html', versions=versions)
+
+@app.route('/shows_trending', methods=['GET', 'POST'])
+def shows_trending():
+    versions = get_available_versions()
+    if request.method == 'GET':
+        trendingShows = trending_shows()
+        if trendingShows:
+            return jsonify(trendingShows)
+        else:
+            return jsonify({'error': 'Error restrieving Trakt Trending Shows'})
+    return render_template('scraper.html', versions=versions)
+
 @app.route('/scraper', methods=['GET', 'POST'])
 @user_required
 def scraper():

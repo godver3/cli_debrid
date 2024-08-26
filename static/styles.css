@@ -603,7 +603,7 @@ main {
 
 p.episode-sub {
     font-size: .888rem;
-    line-height: 1rem;
+    line-height: 3rem;
     color: rgb(191 191 190);
 }
 
@@ -634,6 +634,7 @@ h2.episode-title {
     line-height: 1.3rem;
     color: rgb(191 191 190);
     margin-block-end: -10px;
+    padding-top: 10px;
 }
 
 #episodeResults > div {
@@ -941,6 +942,8 @@ h2.searchresult-item {
     font-size: 0.999rem;
     line-height: 1.3rem;
     color: rgb(191 191 190);
+    padding-top: 10px;
+    padding-bottom: 10px;
 }
 
 /* Custom scrollbar styles */
@@ -1663,4 +1666,203 @@ h2.searchresult-item {
 
 .error-popup-content button:hover {
     background-color: #d32f2f;
+}
+
+.trending-container {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding-top: 20px;
+}
+
+.trending-movies {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    margin-bottom: 30px;
+}
+
+.trending-shows {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.trending-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.trending-title {
+    font-size: 24px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.trending-navigation {
+    display: flex;
+    gap: 10px;
+}
+
+.trending-nav-button {
+    background-color: transparent;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.trending-nav-button:hover {
+    opacity: 0.8;
+}
+
+.trending-nav-button:disabled {
+    color: #4a4a4a;    
+    cursor: not-allowed;
+}
+
+.movie-list {
+    display: flex;
+    overflow-x: auto;
+    gap: 20px;
+    padding-bottom: 20px;
+    scroll-behavior: smooth;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+}
+
+.movie-list::-webkit-scrollbar {
+    display: none; /* WebKit */
+}
+
+.media-card {
+    flex: 0 0 auto;
+    width: 176px;
+}
+
+.show-list {
+    display: flex;
+    overflow-x: auto;
+    gap: 20px;
+    padding-bottom: 20px;
+    scroll-behavior: smooth;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+}
+
+.show-list::-webkit-scrollbar {
+    display: none; /* WebKit */
+}
+
+.media-poster {
+    position: relative;
+    width: 176px;
+    height: 264px;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.media-poster-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s ease;
+}
+
+.media-title {
+    position: absolute;
+    bottom: 0px;
+    width: 100%;
+    height: 25%;
+    background-color: rgb(0 0 0 / 63%);
+    color: white;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    font-family: Arial, sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 19px;
+    text-align: center;
+    box-sizing: border-box;
+    z-index: 1;
+    padding-top: 10px;
+}
+
+.media-poster:hover .media-poster-img {
+    transform: scale(1.1);
+}
+
+.media-poster:hover .media-title {
+    opacity: 1;
+}
+
+.media-poster:hover {
+    cursor: pointer;
+}
+
+#trending-rating {
+    position: absolute;
+    margin: 5px;
+    width: 26px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: #ed1c23c0;
+    z-index: 1;
+}
+
+#trending-watchers {
+    position: absolute;
+    right: 0;
+    margin: 5px;
+    width: 52px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: rgb(0 0 0 / 72%);
+    z-index: 1;
+}
+
+/* Responsive styles */
+@media (max-width: 1200px) {
+    .media-card {
+        width: calc((100% - 40px) / 3);
+    }
+    .media-poster {
+        width: 100%;
+        height: 100%;
+    }
+}
+
+@media (max-width: 768px) {
+    .media-card {
+        width: calc((100% - 20px) / 2);
+    }
+}
+
+@media (max-width: 480px) {
+    .media-card {
+        width: calc((100% - 40px) / 3);
+    }
+    .trending-title {
+        font-size: 16px;
+    }
 }

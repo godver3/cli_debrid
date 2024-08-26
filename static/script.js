@@ -407,7 +407,7 @@ function hideLoadingState() {
 
 
 function displayEpisodeResults(episodeResults, title, year) {
-    toggleResultsVisibility(true);
+    toggleResultsVisibility('displayEpisodeResults');
     const episodeResultsDiv = document.getElementById('episodeResults');
     episodeResultsDiv.innerHTML = '';
     
@@ -452,27 +452,40 @@ function displayEpisodeResults(episodeResults, title, year) {
 
 
 
-function toggleResultsVisibility(showDetailed) {
+function toggleResultsVisibility(section) {
+    const trendingContainer = document.getElementById('trendingContainer');
     const searchResult = document.getElementById('searchResult');
     const seasonResults = document.getElementById('seasonResults');
     const dropdown = document.getElementById('seasonDropdown');
     const seasonPackButton = document.getElementById('seasonPackButton');
     const episodeResultsDiv = document.getElementById('episodeResults');
-    if (showDetailed) {
+    if (section === 'displayEpisodeResults') {
+        trendingContainer.style.display = 'none';
         searchResult.style.display = 'none';
         seasonResults.style.display = 'block';
         dropdown.style.display = 'block';
         seasonPackButton.style.display = 'block';
         episodeResultsDiv.style.display = 'block';
-    } else {
+    }
+    if (section === 'displaySearchResults') {
+        trendingContainer.style.display = 'none';
         searchResult.style.display = 'block';
         seasonResults.style.display = 'none';
         episodeResultsDiv.style.display = 'none';
     }
+    if (section === 'get_trendingMovies') {
+        trendingContainer.style.display = 'block';
+        searchResult.style.display = 'none';
+        seasonResults.style.display = 'none';
+        dropdown.style.display = 'none';
+        seasonPackButton.style.display = 'none';
+        episodeResultsDiv.style.display = 'none';
+
+    }
 }
 
 function displaySearchResults(searchResult) {
-    toggleResultsVisibility(false);
+    toggleResultsVisibility('displaySearchResults');
     const searchResultsDiv = document.getElementById('searchResult');
     searchResultsDiv.innerHTML = '';
     
@@ -680,12 +693,145 @@ document.addEventListener('DOMContentLoaded', function() {
 
     loadDarkModePreference();
     
+    const container_mv = document.getElementById('movieContainer');
+    const scrollLeftBtn_mv = document.getElementById('scrollLeft_mv');
+    const scrollRightBtn_mv = document.getElementById('scrollRight_mv');
+    scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
+    function updateButtonStates_mv() {
+        scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
+        scrollRightBtn_mv.disabled = container_mv.scrollLeft >= container_mv.scrollWidth - container_mv.offsetWidth;
+    }
+
+    function scroll_mv(direction) {
+        const scrollAmount = container_mv.offsetWidth;
+        const newPosition = direction === 'left'
+            ? Math.max(container_mv.scrollLeft - scrollAmount, 0)
+            : Math.min(container_mv.scrollLeft + scrollAmount, container_mv.scrollWidth - container_mv.offsetWidth);
+        
+        container_mv.scrollTo({ left: newPosition, behavior: 'smooth' });
+    }
+
+    scrollLeftBtn_mv.addEventListener('click', () => scroll_mv('left'));
+    scrollRightBtn_mv.addEventListener('click', () => scroll_mv('right'));
+    container_mv.addEventListener('scroll', updateButtonStates_mv);
+
+    const container_tv = document.getElementById('showContainer');
+    const scrollLeftBtn_tv = document.getElementById('scrollLeft_tv');
+    const scrollRightBtn_tv = document.getElementById('scrollRight_tv');
+    scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
+    function updateButtonStates_tv() {
+        scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
+        scrollRightBtn_tv.disabled = container_tv.scrollLeft >= container_tv.scrollWidth - container_tv.offsetWidth;
+    }
+
+    function scroll_tv(direction) {
+        const scrollAmount = container_tv.offsetWidth;
+        const newPosition = direction === 'left'
+            ? Math.max(container_tv.scrollLeft - scrollAmount, 0)
+            : Math.min(container_tv.scrollLeft+ scrollAmount, container_tv.scrollWidth - container_tv.offsetWidth);
+        
+        container_tv.scrollTo({ left: newPosition, behavior: 'smooth' });
+    }
+
+    scrollLeftBtn_tv.addEventListener('click', () => scroll_tv('left'));
+    scrollRightBtn_tv.addEventListener('click', () => scroll_tv('right'));
+    container_tv.addEventListener('scroll', updateButtonStates_tv);
+
+    function createMovieElement(data) {
+        const movieElement = document.createElement('div');
+        movieElement.className = 'media-card';
+        movieElement.innerHTML = `
+            <div class="media-poster">
+                <span id="trending-rating">${(data.rating).toFixed(1)}</span>
+                <span id="trending-watchers">👁 ${data.watcher_count}</span>
+                <span class="media-title">${data.title}</br><span style="font-size: 14px; opacity: 0.8;">${data.year}</span></span>
+                <img src="${data.poster_path}" alt="${data.title}" class="media-poster-img">
+            </div>
+        `;
+        movieElement.onclick = function() {
+            selectMedia(data.tmdb_id, data.title, data.year, 'movie', 'null', 'null', 'False');
+        };
+        return movieElement;
+    }
+
+    function createShowElement(data) {
+        const movieElement = document.createElement('div');
+        movieElement.className = 'media-card';
+        movieElement.innerHTML = `
+            <div class="media-poster">
+                <span id="trending-rating">${(data.rating).toFixed(1)}</span>
+                <span id="trending-watchers">👁 ${data.watcher_count}</span>
+                <span class="media-title">${data.title}</br><span style="font-size: 14px; opacity: 0.8;">${data.year}</span></span>
+                <img src="${data.poster_path}" alt="${data.title}" class="media-poster-img">
+            </div>
+        `;
+        movieElement.onclick = function() {
+            selectSeason(data.tmdb_id, data.title, data.year, 'tv', 'null', 'null', 'True', data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview)
+        };
+        return movieElement;
+    }
+    
+    function get_trendingMovies() {
+        toggleResultsVisibility('get_trendingMovies');
+        fetch('/movies_trending', {
+            method: 'GET'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                displayError(data.error);
+            } else {
+                const trendingMovies = data.trendingMovies;
+                trendingMovies.forEach(item => {
+                    const movieElement = createMovieElement(item);
+                    container_mv.appendChild(movieElement);
+                });
+
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            displayError('An error occurred.');
+        });
+    }
+
+    function get_trendingShows() {
+        toggleResultsVisibility('get_trendingMovies');
+        fetch('/shows_trending', {
+            method: 'GET'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                displayError(data.error);
+            } else {
+                const trendingShows = data.trendingShows;
+                trendingShows.forEach(item => {
+                    const showElement = createShowElement(item);
+                    container_tv.appendChild(showElement);
+                });
+
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            displayError('An error occurred.');
+        });
+    }
+
     // Add event listener for search form
     const searchForm = document.getElementById('search-form');
     if (searchForm) {
+        fetch('/trakt_auth_status')
+            .then(response => response.json())
+            .then(status => {
+                if (status.status == 'authorized') {
+                    get_trendingMovies();
+                    get_trendingShows();
+                }
+                });
         searchForm.addEventListener('submit', searchMedia);
     }
-
     // Database-specific functionality
     const columnForm = document.getElementById('column-form');
     const filterForm = document.getElementById('filter-form');
