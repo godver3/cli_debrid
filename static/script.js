@@ -760,7 +760,7 @@ document.addEventListener('DOMContentLoaded', function() {
         };
         return movieElement;
     }
-
+    
     function createShowElement(data) {
         const movieElement = document.createElement('div');
         movieElement.className = 'media-card';
