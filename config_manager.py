@@ -26,7 +26,7 @@ def release_lock(lock_file):
 def load_config():
     try:
         if not os.path.exists(CONFIG_FILE):
-            return {'Scraping': {'versions': {}}}
+            return {'Scraping': {'versions': {}}, 'Notifications': {}}
         with open(CONFIG_FILE, 'r') as config_file:
             config = json.load(config_file)
         
@@ -36,16 +36,22 @@ def load_config():
         if 'versions' not in config['Scraping']:
             config['Scraping']['versions'] = {}
         
-        # logging.debug(f"Config loaded: {json.dumps(config, indent=2)}")
+        # Ensure 'Notifications' exists and remove any None values
+        if 'Notifications' not in config:
+            config['Notifications'] = {}
+        config['Notifications'] = {k: v for k, v in config['Notifications'].items() if v is not None}
+        
         return config
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}")
-        return {'Scraping': {'versions': {}}}
+        return {'Scraping': {'versions': {}}, 'Notifications': {}}
 
 def save_config(config):
     process_id = str(uuid.uuid4())[:8]
     lock_file = acquire_lock()
     try:
+        config = clean_notifications(config)
+        
         #logging.debug(f"[{process_id}] Saving config")
         #log_config_state(f"[{process_id}] Config before saving", config)
         
@@ -311,3 +317,8 @@ def update_scraper(scraper_id, scraper_config):
         save_config(config)
         return True
     return False
+
+def clean_notifications(config):
+    if 'Notifications' in config:
+        config['Notifications'] = {k: v for k, v in config['Notifications'].items() if v is not None}
+    return config
