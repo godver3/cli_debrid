@@ -55,6 +55,8 @@ function initializeAllFunctionalities() {
     initializeScrapingFunctionality();
     initializeTraktAuthorization();
     initializeNotificationsFunctionality();
+
+    reinitializeAllExpandCollapse();
 }
 
 function checkProgramStatus() {
@@ -112,7 +114,7 @@ function openTab(tabName) {
     localStorage.setItem('currentTab', tabName);
 }
 
-function reinitializeExpandCollapse() {
+function reinitializeAllExpandCollapse() {
     const allSections = document.querySelectorAll('.settings-section');
     allSections.forEach(section => {
         initializeExpandCollapseForSection(section);
@@ -126,20 +128,35 @@ function initializeExpandCollapseForSection(section) {
     const toggleIcon = header.querySelector('.settings-toggle-icon');
 
     if (header && content && toggleIcon) {
-        header.removeEventListener('click', toggleSection);
-        header.addEventListener('click', toggleSection);
+        header.removeEventListener('click', toggleSectionHandler);
+        header.addEventListener('click', toggleSectionHandler);
+    }
+}
+
+function toggleSectionHandler(event) {
+    if (!event.target.closest('button')) {
+        toggleSection(event);
     }
 }
 
 function initializeExpandCollapse() {
+    const allSections = document.querySelectorAll('.settings-section');
+    allSections.forEach(section => {
+        const header = section.querySelector('.settings-section-header');
+        const content = section.querySelector('.settings-section-content');
+        const toggleIcon = header.querySelector('.settings-toggle-icon');
+
+        if (header && content && toggleIcon) {
+            header.removeEventListener('click', toggleSectionHandler);
+            header.addEventListener('click', toggleSectionHandler);
+        }
+    });
+
     const allTabContents = document.querySelectorAll('.settings-tab-content');
     
     allTabContents.forEach(tabContent => {
         const expandAllButton = tabContent.querySelector('.settings-expand-all');
         const collapseAllButton = tabContent.querySelector('.settings-collapse-all');
-        const sections = tabContent.querySelectorAll('.settings-section');
-
-        sections.forEach(section => initializeExpandCollapseForSection(section));
 
         if (expandAllButton) {
             expandAllButton.removeEventListener('click', expandAllHandler);
@@ -151,8 +168,27 @@ function initializeExpandCollapse() {
             collapseAllButton.addEventListener('click', collapseAllHandler);
         }
     });
+
+    console.log(`Initialized expand/collapse for ${allSections.length} sections`);
 }
 
+function toggleSectionHandler(e) {
+    if (!e.target.closest('button')) {
+        const header = e.currentTarget;
+        const content = header.nextElementSibling;
+        const icon = header.querySelector('.settings-toggle-icon');
+        
+        if (content.style.display === 'none' || content.style.display === '') {
+            content.style.display = 'block';
+            icon.textContent = '-';
+        } else {
+            content.style.display = 'none';
+            icon.textContent = '+';
+        }
+    }
+}
+
+// Add this new function to reinitialize all expand/collapse functionality
 function reinitializeAllExpandCollapse() {
     const allSections = document.querySelectorAll('.settings-section');
     allSections.forEach(section => {
@@ -161,17 +197,18 @@ function reinitializeAllExpandCollapse() {
     console.log(`Reinitialized expand/collapse for ${allSections.length} sections`);
 }
 
-function toggleSection(event) {
-    if (!event.target.classList.contains('delete-source-btn')) {
-        event.stopPropagation();
-        const content = this.nextElementSibling;
-        const toggleIcon = this.querySelector('.settings-toggle-icon');
+function toggleSection(headerOrEvent) {
+    const header = headerOrEvent.currentTarget || headerOrEvent;
+    const content = header.nextElementSibling;
+    const icon = header.querySelector('.settings-toggle-icon');
+    
+    if (content && icon) {
         if (content.style.display === 'none' || content.style.display === '') {
             content.style.display = 'block';
-            toggleIcon.textContent = '-';
+            icon.textContent = '-';
         } else {
             content.style.display = 'none';
-            toggleIcon.textContent = '+';
+            icon.textContent = '+';
         }
     }
 }
@@ -258,6 +295,49 @@ function updateSettings() {
         current[nameParts[nameParts.length - 1]] = value;
     });
   
+    // Process Notification settings
+    const notificationsTab = document.getElementById('notifications');
+    if (notificationsTab) {
+        console.log("Processing Notifications tab");
+        const notificationSections = notificationsTab.querySelectorAll('.settings-section');
+        console.log(`Found ${notificationSections.length} notification sections`);
+
+        if (!settingsData['Notifications']) {
+            settingsData['Notifications'] = {};
+        }
+
+        notificationSections.forEach(section => {
+            const notificationId = section.getAttribute('data-notification-id');
+            if (!notificationId) {
+                console.log("Skipping section: No notification ID found");
+                return;
+            }
+            console.log(`Processing notification: ${notificationId}`);
+
+            const notificationData = {};
+
+            // Get the title from the header
+            const headerElement = section.querySelector('.settings-section-header h4');
+            if (headerElement) {
+                notificationData.title = headerElement.textContent.split('_')[0].trim();
+            }
+
+            section.querySelectorAll('input, select').forEach(input => {
+                const fieldName = input.name.split('.').pop();
+                if (input.type === 'checkbox') {
+                    notificationData[fieldName] = input.checked;
+                } else {
+                    notificationData[fieldName] = input.value;
+                }
+            });
+
+            console.log(`Notification data for ${notificationId}:`, JSON.stringify(notificationData));
+            settingsData['Notifications'][notificationId] = notificationData;
+        });
+    } else {
+        console.log("Notifications tab not found");
+    }
+
     // Ensure 'Content Sources' section exists
     if (!settingsData['Content Sources']) {
         settingsData['Content Sources'] = {};
@@ -395,8 +475,8 @@ function updateSettings() {
         });
     }
 
-    // Remove any top-level fields that should be nested
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers'];
+    // Update the list of top-level fields to include Notifications
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -491,7 +571,6 @@ function updateSettings() {
         body: JSON.stringify(settingsData)
     })
     .then(response => response.json())
-    // In the updateSettings function
     .then(data => {
         console.log("Server response:", data);
         if (data.status === 'success') {
@@ -500,8 +579,9 @@ function updateSettings() {
             return updateContentSourcesTab()
                 .then(() => updateScrapersTab())
                 .then(() => updateScrapingTab())
+                .then(() => updateNotificationsTab())  // Add this line
                 .then(() => {
-                    reinitializeExpandCollapse();
+                    reinitializeAllExpandCollapse();
                     console.log("Expand/collapse functionality reinitialized");
                 });
         } else {
@@ -515,16 +595,17 @@ function updateSettings() {
     });
 }
 
-function showConfirmationPopup(message, onConfirm) {
+function showConfirmationPopup(message, onConfirm, needInput = false) {
     const popup = document.createElement('div');
     popup.className = 'confirmation-popup';
     popup.innerHTML = `
         <div class="confirmation-popup-content">
             <h3>Confirmation</h3>
             <p>${message}</p>
+            ${needInput ? '<div class="confirmation-input"><input type="text" id="confirmationInput"></div>' : ''}
             <div class="confirmation-buttons">
-                <button id="confirmYes">Yes</button>
-                <button id="confirmNo">No</button>
+                <button id="confirmYes">Confirm</button>
+                <button id="confirmNo">Cancel</button>
             </div>
         </div>
     `;
@@ -538,6 +619,10 @@ function showConfirmationPopup(message, onConfirm) {
     document.getElementById('confirmNo').addEventListener('click', () => {
         popup.remove();
     });
+
+    if (needInput) {
+        document.getElementById('confirmationInput').focus();
+    }
 }
 
 function showNotification(message, type) {
@@ -635,6 +720,9 @@ function initializeScrapersFunctionality() {
             deleteScraper(scraperId);
         });
     });
+
+    reinitializeAllExpandCollapse();
+    initializeExpandCollapse();
 }
 
 function initializeScrapingFunctionality() {
@@ -667,7 +755,7 @@ function initializeScrapingFunctionality() {
         });
     });
 
-    document.querySelectorAll('input[name$=".display_name"]').forEach(input => {
+    document.querySelectorAll('input[name$=".name"]').forEach(input => {
         input.addEventListener('change', function() {
             updateVersionDisplayName(this);
         });
@@ -686,6 +774,21 @@ function initializeScrapingFunctionality() {
             const version = this.getAttribute('data-version');
             const filterType = this.getAttribute('data-filter-type');
             addFilterItem(version, filterType);
+        });
+    });
+
+    document.querySelectorAll('.settings-section[data-version-id] input[name$=".name"]').forEach(input => {
+        const versionName = input.value;
+        input.setAttribute('data-original-name', versionName);
+        input.addEventListener('change', function() {
+            updateVersionDisplayName(this);
+        });
+    });
+
+    document.querySelectorAll('.rename-version-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const versionId = this.getAttribute('data-version-id');
+            renameVersion(versionId);
         });
     });
 
@@ -745,13 +848,41 @@ function duplicateVersion(versionId) {
 }
 
 function updateVersionDisplayName(input) {
-    const versionId = input.name.split('.')[2];
-    const newDisplayName = input.value;
+    const oldName = input.getAttribute('data-original-name');
+    const newName = input.value.trim();
     const header = input.closest('.settings-section').querySelector('h4');
-    header.textContent = newDisplayName;
 
-    // Update the server with the new display name
-    updateSettings();
+    if (oldName === newName) {
+        return; // No change, exit early
+    }
+
+    // Update the server with the new version name
+    fetch('/versions/rename', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ old_name: oldName, new_name: newName })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            header.textContent = newName;
+            input.setAttribute('data-original-name', newName);
+            input.name = input.name.replace(oldName, newName);
+            showNotification('Version renamed successfully', 'success');
+            updateScrapingTab();
+        } else {
+            // Revert the input value if there's an error
+            input.value = oldName;
+            showNotification('Error renaming version: ' + (data.error || 'Unknown error'), 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        input.value = oldName;
+        showNotification('Error renaming version', 'error');
+    });
 }
 
 function updateDynamicFields(type) {
@@ -826,6 +957,7 @@ function handleAddSourceSubmit(e) {
     })
     .then(() => {
         showNotification('Content source added successfully', 'success');
+        reinitializeAllExpandCollapse();  // Add this line
     })
     .catch(error => {
         console.error('Error:', error);
@@ -871,6 +1003,7 @@ function handleAddScraperSubmit(e) {
                 if (newSection) {
                     initializeExpandCollapseForSection(newSection);
                 }
+                reinitializeAllExpandCollapse();  // Add this line
             });
             showNotification('Scraper added successfully', 'success');
         } else {
@@ -906,6 +1039,7 @@ function handleAddVersionSubmit(e) {
                 if (newSection) {
                     initializeExpandCollapseForSection(newSection);
                 }
+                reinitializeAllExpandCollapse();  // Add this line
             });
             showNotification('Version added successfully', 'success');
         } else {
@@ -1038,7 +1172,7 @@ function updateScrapersTab() {
             if (scrapersTab) {
                 scrapersTab.innerHTML = html;
                 initializeScrapersFunctionality();
-                initializeExpandCollapse();
+                initializeExpandCollapse();  // Re-initialize expand/collapse functionality
             }
         })
         .catch(error => {
@@ -1088,6 +1222,39 @@ function createVersionsField() {
 
     div.appendChild(versionsDiv);
     return div;
+}
+
+function renameVersion(oldName) {
+    showConfirmationPopup(`Enter new name for version "${oldName}":`, () => {
+        const newName = document.getElementById('confirmationInput').value.trim();
+        if (newName && newName !== oldName) {
+            fetch('/versions/rename', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ old_name: oldName, new_name: newName })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    updateScrapingTab().then(() => {
+                        showNotification('Version renamed successfully', 'success');
+                    });
+                } else {
+                    showNotification('Error renaming version: ' + (data.error || 'Unknown error'), 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showNotification('Error renaming version', 'error');
+            });
+        } else if (newName === oldName) {
+            showNotification('New name is the same as the old name. No changes made.', 'info');
+        } else {
+            showNotification('Invalid name. Version not renamed.', 'error');
+        }
+    }, true); // Pass true to indicate we need an input field
 }
 
 function createFormField(setting, value, type) {
@@ -1238,7 +1405,8 @@ function initializeNotificationsFunctionality() {
     }
 
     document.querySelectorAll('.delete-notification-btn').forEach(button => {
-        button.addEventListener('click', function() {
+        button.addEventListener('click', function(e) {
+            e.stopPropagation(); // Prevent expanding when clicking delete
             const notificationId = this.getAttribute('data-notification-id');
             deleteNotification(notificationId);
         });
@@ -1252,16 +1420,14 @@ function handleAddNotificationSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
-    const notificationData = {
-        type: form.elements['notification-type'].value
-    };
+    const notificationType = form.elements['notification-type'].value;
 
     fetch('/notifications/add', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify(notificationData)
+        body: JSON.stringify({ type: notificationType })
     })
     .then(response => response.json())
     .then(data => {
@@ -1275,16 +1441,16 @@ function handleAddNotificationSubmit(e) {
     })
     .then(() => {
         showNotification('Notification added successfully', 'success');
+        reinitializeAllExpandCollapse();  // Add this line
     })
     .catch(error => {
         console.error('Error:', error);
         showNotification('Error adding notification: ' + error.message, 'error');
-        return updateNotificationsTab();
     });
 }
 
 function deleteNotification(notificationId) {
-    showConfirmationPopup(`Are you sure you want to delete the notification "${notificationId}"?`, () => {
+    showConfirmationPopup(`Are you sure you want to delete this notification?`, () => {
         fetch('/notifications/delete', {
             method: 'POST',
             headers: {
@@ -1295,38 +1461,42 @@ function deleteNotification(notificationId) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                // Remove the notification from the DOM
-                const notificationElement = document.querySelector(`.settings-section[data-notification-id="${notificationId}"]`);
-                if (notificationElement) {
-                    notificationElement.remove();
-                    showNotification('Notification deleted successfully', 'success');
-                } else {
-                    console.error(`Notification element with ID ${notificationId} not found in the DOM`);
-                }
+                return updateNotificationsTab();
             } else {
-                showNotification('Error deleting notification: ' + (data.error || 'Unknown error'), 'error');
+                throw new Error(data.error || 'Unknown error');
             }
+        })
+        .then(() => {
+            showNotification('Notification deleted successfully', 'success');
         })
         .catch(error => {
             console.error('Error:', error);
-            showNotification('Error deleting notification', 'error');
+            showNotification('Error deleting notification: ' + error.message, 'error');
         });
     });
 }
 
 function updateNotificationsTab() {
-    return fetch('/notifications/content')
+    return fetch('/settings')
         .then(response => response.text())
         .then(html => {
-            const notificationsTab = document.getElementById('notifications');
-            if (notificationsTab) {
-                notificationsTab.innerHTML = html;
-                initializeNotificationsFunctionality();
-                initializeExpandCollapse();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newNotificationsTab = doc.getElementById('notifications');
+            
+            if (newNotificationsTab) {
+                const currentNotificationsTab = document.getElementById('notifications');
+                if (currentNotificationsTab) {
+                    currentNotificationsTab.innerHTML = newNotificationsTab.innerHTML;
+                    initializeNotificationsFunctionality();
+                    initializeExpandCollapse();
+                }
+            } else {
+                throw new Error('Notifications tab not found in the response');
             }
         })
         .catch(error => {
             console.error('Error updating Notifications tab:', error);
-            showNotification('Error updating Notifications tab', 'error');
+            showNotification('Error updating Notifications tab: ' + error.message, 'error');
         });
 }

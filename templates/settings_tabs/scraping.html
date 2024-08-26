@@ -24,17 +24,16 @@
 <div class="settings-section" data-version-id="{{ version }}">
     <div class="settings-section-header">
         <span class="settings-toggle-icon">+</span>
-        <h4>{{ config.get('display_name', version) }}</h4>
-        <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete Version</button>
-        <button type="button" class="duplicate-version-btn" data-version-id="{{ version }}">Duplicate Version</button>
+        <h4>{{ version }}</h4>
+        <div class="version-buttons">
+            <button class="rename-version-btn" data-version-id="{{ version }}">Rename</button>
+            <button class="duplicate-version-btn" data-version-id="{{ version }}">Duplicate</button>
+            <button class="delete-version-btn" data-version-id="{{ version }}">Delete</button>
+        </div>
     </div>
     <div class="settings-section-content">
-        <div class="settings-form-group">
-            <label for="scraping-{{ version }}-display_name" class="settings-title">Display Name:</label>
-            <input type="text" id="scraping-{{ version }}-display_name" name="Scraping.versions.{{ version }}.display_name" value="{{ config.get('display_name', version) }}" class="settings-input">
-        </div>
         {% for key, value in config.items() %}
-            {% if key not in ['display_name', 'filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+            {% if key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
                 <div class="settings-form-group">
                     {% if value is boolean %}
                         <label class="settings-title">

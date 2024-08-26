@@ -43,7 +43,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 1.1em
+    font-size: 1.1em;
 }
 
 .settings-section-header h4 {
@@ -51,6 +51,49 @@
     color: #fff;
     text-align: left;
     flex-grow: 1;
+}
+
+.settings-toggle-icon {
+    color: #fff;
+    font-weight: bold;
+    margin-right: 10px;
+}
+
+.version-buttons,
+.source-buttons {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+}
+
+.rename-version-btn,
+.duplicate-version-btn,
+.delete-version-btn,
+.delete-source-btn {
+    background-color: #3498db;
+    color: white;
+    padding: 5px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1.5;
+    height: 30px; /* Add this line to ensure consistent height */
+}
+
+.rename-version-btn:hover,
+.duplicate-version-btn:hover {
+    background-color: #2980b9;
+}
+
+.delete-version-btn,
+.delete-source-btn {
+    background-color: #e74c3c;
+}
+
+.delete-version-btn:hover,
+.delete-source-btn:hover {
+    background-color: #c0392b;
 }
 
 .settings-section-content {
@@ -112,10 +155,6 @@
     box-sizing: border-box;
     font-family: inherit;
 }
-.settings-toggle-icon {
-    color: #fff;
-    font-weight: bold;
-}
 
 .settings-expand-collapse-buttons {
     margin-bottom: 15px;
@@ -157,6 +196,30 @@
 
 .settings-submit-button:hover {
     background-color: #45a049;
+}
+
+button#add-source-btn {
+    margin: 0;
+    box-sizing: border-box;
+    display: inline-block;
+    margin-bottom: 10px;
+    padding: 5px 10px;
+    background-color: #4CAF50;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    opacity: 1;
+    cursor: pointer;
+}
+
+button#add-notification-btn {
+    display: inline-block;
+    margin-bottom: 10px;
+    padding: 5px 10px;
+    background-color: #4CAF50;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
 }
 
 .settings-submit-button:disabled,
@@ -268,6 +331,7 @@ body.dark-mode .settings-description {
     color: #fff;
     border-radius: 3px;
     box-sizing: border-box;
+    margin-bottom: 15px;
 }
 
 .popup-content button {
@@ -289,74 +353,6 @@ body.dark-mode .settings-description {
 }
 
 .popup-content button[type="button"]:hover {
-    background-color: #d32f2f;
-}
-
-.settings-section-header {
-    display: flex;
-    align-items: center;
-}
-
-.settings-toggle-icon {
-    margin-right: 10px;
-}
-
-.delete-version-btn {
-    background-color: #f44336;
-    color: white;
-    padding: 5px 10px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    margin-left: auto;
-    margin-right: 5px; /* Add right margin for spacing */
-}
-
-.delete-version-btn:hover {
-    background-color: #d32f2f;
-}
-
-.duplicate-version-btn {
-    background-color: #4CAF50;
-    color: white;
-    padding: 5px 10px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    /* Remove margin-left: auto; to allow buttons to be next to each other */
-}
-
-.duplicate-version-btn:hover {
-    background-color: #45a049;
-}
-
-.add-source-link, .add-version-link {
-    display: inline-block;
-    margin-bottom: 10px;
-    padding: 5px 10px;
-    background-color: #4CAF50;
-    color: white;
-    text-decoration: none;
-    border-radius: 4px;
-    cursor: pointer;
-    border: none;
-}
-
-.add-source-link:hover, .add-version-link:hover {
-    background-color: #45a049;
-}
-
-.delete-source-btn, .delete-version-btn {
-    background-color: #f44336;
-    color: white;
-    padding: 5px 10px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    margin-left: auto;
-}
-
-.delete-source-btn:hover, .delete-version-btn:hover {
     background-color: #d32f2f;
 }
 
