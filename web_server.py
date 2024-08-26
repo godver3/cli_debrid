@@ -1067,6 +1067,54 @@ def get_log_level(log_entry):
     else:
         return 'info'  # Default to info if level can't be determined
 
+@app.route('/notifications/delete', methods=['POST'])
+def delete_notification():
+    try:
+        notification_id = request.json.get('notification_id')
+        if not notification_id:
+            return jsonify({'success': False, 'error': 'No notification ID provided'}), 400
+
+        config = load_config()
+        if 'Notifications' in config and notification_id in config['Notifications']:
+            del config['Notifications'][notification_id]
+            save_config(config)
+            logging.info(f"Notification {notification_id} deleted successfully")
+            return jsonify({'success': True})
+        else:
+            logging.warning(f"Failed to delete notification: {notification_id}")
+            return jsonify({'success': False, 'error': 'Notification not found'}), 404
+    except Exception as e:
+        logging.error(f"Error deleting notification: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/notifications/add', methods=['POST'])
+def add_notification():
+    try:
+        notification_data = request.json
+        if not notification_data or 'type' not in notification_data:
+            return jsonify({'success': False, 'error': 'Invalid notification data'}), 400
+
+        config = load_config()
+        if 'Notifications' not in config:
+            config['Notifications'] = {}
+
+        # Generate a unique ID for the new notification
+        notification_id = f"notification_{len(config['Notifications']) + 1}"
+
+        # Add the new notification to the config
+        config['Notifications'][notification_id] = {
+            'type': notification_data['type'],
+            'enabled': True  # Default to enabled
+        }
+
+        save_config(config)
+
+        logging.info(f"Notification {notification_id} added successfully")
+        return jsonify({'success': True, 'notification_id': notification_id})
+    except Exception as e:
+        logging.error(f"Error adding notification: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/settings', methods=['GET'])
 @admin_required
 def settings():
