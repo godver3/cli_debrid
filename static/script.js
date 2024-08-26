@@ -696,7 +696,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const container_mv = document.getElementById('movieContainer');
     const scrollLeftBtn_mv = document.getElementById('scrollLeft_mv');
     const scrollRightBtn_mv = document.getElementById('scrollRight_mv');
-    scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
+    if (scrollLeftBtn_mv) {
+        scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
+    }
     function updateButtonStates_mv() {
         scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
         scrollRightBtn_mv.disabled = container_mv.scrollLeft >= container_mv.scrollWidth - container_mv.offsetWidth;
@@ -711,14 +713,18 @@ document.addEventListener('DOMContentLoaded', function() {
         container_mv.scrollTo({ left: newPosition, behavior: 'smooth' });
     }
 
-    scrollLeftBtn_mv.addEventListener('click', () => scroll_mv('left'));
-    scrollRightBtn_mv.addEventListener('click', () => scroll_mv('right'));
-    container_mv.addEventListener('scroll', updateButtonStates_mv);
+    if (container_mv) {
+        scrollLeftBtn_mv.addEventListener('click', () => scroll_mv('left'));
+        scrollRightBtn_mv.addEventListener('click', () => scroll_mv('right'));
+        container_mv.addEventListener('scroll', updateButtonStates_mv);
+    }
 
     const container_tv = document.getElementById('showContainer');
     const scrollLeftBtn_tv = document.getElementById('scrollLeft_tv');
     const scrollRightBtn_tv = document.getElementById('scrollRight_tv');
-    scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
+    if (scrollLeftBtn_tv) {
+        scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
+    }
     function updateButtonStates_tv() {
         scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
         scrollRightBtn_tv.disabled = container_tv.scrollLeft >= container_tv.scrollWidth - container_tv.offsetWidth;
@@ -732,10 +738,11 @@ document.addEventListener('DOMContentLoaded', function() {
         
         container_tv.scrollTo({ left: newPosition, behavior: 'smooth' });
     }
-
-    scrollLeftBtn_tv.addEventListener('click', () => scroll_tv('left'));
-    scrollRightBtn_tv.addEventListener('click', () => scroll_tv('right'));
-    container_tv.addEventListener('scroll', updateButtonStates_tv);
+    if (container_tv) {
+        scrollLeftBtn_tv.addEventListener('click', () => scroll_tv('left'));
+        scrollRightBtn_tv.addEventListener('click', () => scroll_tv('right'));
+        container_tv.addEventListener('scroll', updateButtonStates_tv);
+    }
 
     function createMovieElement(data) {
         const movieElement = document.createElement('div');
