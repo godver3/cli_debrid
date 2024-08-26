@@ -82,6 +82,39 @@ def overseerr_genre(ids: str) -> List[Dict[str, Any]]:
         logging.error(f"Error searching Overseerr: {e}")
         return []
 
+def get_media_meta(tmdb_id, media_type):
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    
+    if not overseerr_url or not overseerr_api_key:
+        logging.error("Overseerr URL or API key not set. Please configure in settings.")
+        return []
+
+    headers = {
+        'X-Api-Key': overseerr_api_key,
+        'Accept': 'application/json'
+    }
+
+    url = f"{overseerr_url}/api/v1/{media_type}/{tmdb_id}"
+    genres = []
+    try:
+        response = api.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        poster_path = data.get('posterPath', '')
+        poster_path =  f"https://image.tmdb.org/t/p/w300{poster_path}"
+        show_overview = data.get('overview', '')
+        for genre in data.get('genres', ''):
+            genres.append(genre['name'])
+        genre_ids = genres
+        vote_average = data.get('voteAverage', '')
+        backdrop_path = data.get('backdropPath', '')
+
+        return poster_path, show_overview, genre_ids, vote_average, backdrop_path
+    except api.exceptions.RequestException as e:
+        logging.error(f"Error searching Overseerr: {e}")
+        return []
+
 
 def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[int] = None, season: Optional[int] = None) -> List[Dict[str, Any]]:
     overseerr_url = get_setting('Overseerr', 'url')
@@ -231,6 +264,84 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
                 if result['seasonNumber'] != 0
             ]
         }
+
+def trending_movies():
+    trakt_client_id = get_setting('Trakt', 'client_id')
+    
+    if not trakt_client_id:
+        logging.error("Trakt Client ID key not set. Please configure in settings.")
+        return []
+
+    headers = {
+                'Content-Type': 'application/json',
+                'trakt-api-version': '2',
+                'trakt-api-key': trakt_client_id
+            }
+    api_url = "https://api.trakt.tv/movies/watched/weekly?extended=full"
+
+
+    try:
+        response = api.get(api_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "trendingMovies": [
+                {
+                    "title": result['movie']['title'],
+                    "year": result['movie']['year'],
+                    "imdb_id": result['movie']['ids']['imdb'],
+                    "tmdb_id": result['movie']['ids']['tmdb'],
+                    "rating": result['movie']['rating'],
+                    "watcher_count": result['watcher_count'],
+                    "poster_path": (get_media_meta(result['movie']['ids']['tmdb'], 'movie'))[0]
+                }
+                for result in data
+            ]
+        }
+    except api.exceptions.RequestException as e:
+        logging.error(f"Error retreiving Trakt Trending Movies: {e}")
+        return []
+
+def trending_shows():
+    trakt_client_id = get_setting('Trakt', 'client_id')
+    
+    if not trakt_client_id:
+        logging.error("Trakt Client ID key not set. Please configure in settings.")
+        return []
+
+    headers = {
+                'Content-Type': 'application/json',
+                'trakt-api-version': '2',
+                'trakt-api-key': trakt_client_id
+            }
+    api_url = "https://api.trakt.tv/shows/watched/weekly?extended=full"
+
+
+    try:
+        response = api.get(api_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "trendingShows": [
+                {
+                    "title": result['show']['title'],
+                    "year": result['show']['year'],
+                    "imdb_id": result['show']['ids']['imdb'],
+                    "tmdb_id": result['show']['ids']['tmdb'],
+                    "rating": result['show']['rating'],
+                    "watcher_count": result['watcher_count'],
+                    "poster_path": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[0],
+                    "show_overview": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[1],
+                    "genre_ids": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[2],
+                    "vote_average": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[3],
+                    "backdrop_path": (get_media_meta(result['show']['ids']['tmdb'], 'tv'))[4]
+                }
+                for result in data
+            ]
+        }
+    except api.exceptions.RequestException as e:
+        logging.error(f"Error retreiving Trakt Trending Movies: {e}")
+        return []
 
 def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str) -> List[Dict[str, Any]]:
     logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
