@@ -1295,9 +1295,14 @@ function deleteNotification(notificationId) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                updateNotificationsTab().then(() => {
+                // Remove the notification from the DOM
+                const notificationElement = document.querySelector(`.settings-section[data-notification-id="${notificationId}"]`);
+                if (notificationElement) {
+                    notificationElement.remove();
                     showNotification('Notification deleted successfully', 'success');
-                });
+                } else {
+                    console.error(`Notification element with ID ${notificationId} not found in the DOM`);
+                }
             } else {
                 showNotification('Error deleting notification: ' + (data.error || 'Unknown error'), 'error');
             }
