@@ -61,27 +61,24 @@
         font-size: 0.8em;
         color: #bbb;
     }
+
+    .timezone-icon {
+        font-size: 0.8em;
+        cursor: help;
+        margin-left: 5px;
+    }
 </style>
 
 <div class="stats-container">
 
     <div class="stats-box recently-aired">
-        <h3>Recently Aired</h3>
+        <h3>Recently Aired <span class="timezone-icon" title="Loading timezone...">🌐</span></h3>
         {% if stats.recently_aired %}
             <ul>
             {% for item in stats.recently_aired %}
                 <li style="color: #FFA500;">
                     {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
-                    <span class="air-date" style="color: #f4f4f4;">
-                        {% if item.air_datetime.date() == stats.today %}
-                            Today
-                        {% elif item.air_datetime.date() == stats.yesterday %}
-                            Yesterday
-                        {% else %}
-                            {{ item.air_datetime.strftime('%Y-%m-%d') }}
-                        {% endif %}
-                    </span>
-                    <span class="air-time" style="color: #f4f4f4;">at {{ item.air_datetime.strftime('%H:%M') }}</span>
+                    <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
                 </li>
             {% endfor %}
             </ul>
@@ -97,16 +94,7 @@
             {% for item in stats.airing_soon %}
                 <li style="color: #FFA500;">
                     {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
-                    <span class="air-date" style="color: #f4f4f4;">
-                        {% if item.air_datetime.date() == stats.today %}
-                            Today
-                        {% elif item.air_datetime.date() == stats.tomorrow %}
-                            Tomorrow
-                        {% else %}
-                            {{ item.air_datetime.strftime('%Y-%m-%d') }}
-                        {% endif %}
-                    </span>
-                    <span class="air-time" style="color: #f4f4f4;">at {{ item.air_datetime.strftime('%H:%M') }}</span>
+                    <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
                 </li>
             {% endfor %}
             </ul>
@@ -122,15 +110,7 @@
             {% for item in stats.upcoming_releases %}
                 <li style="color: #FFA500;">
                     {{ item.titles|join(', ') }} - 
-                    <span class="release-date" style="color: #f4f4f4;">
-                        {% if item.release_date == stats.today %}
-                            Today
-                        {% elif item.release_date == stats.tomorrow %}
-                            Tomorrow
-                        {% else %}
-                            {{ item.release_date }}
-                        {% endif %}
-                    </span>
+                    <span class="release-date" style="color: #f4f4f4;">{{ item.release_date }}</span>
                 </li>
             {% endfor %}
             </ul>
@@ -204,6 +184,8 @@
 </div>
 
 <script>
+let initialLoadComplete = false;
+
 function updateStatistics() {
     fetch('/statistics', {
         headers: {
@@ -219,13 +201,25 @@ function updateStatistics() {
         document.getElementById('total-episodes').textContent = data.total_episodes;
         document.getElementById('uptime').textContent = formatUptime(data.uptime);
         
-        // Update other sections
+        // Update all sections, including on initial load
         updateRecentlyAired(data.recently_aired);
         updateAiringSoon(data.airing_soon);
         updateUpcomingReleases(data.upcoming_releases);
         updateRecentlyAdded(data.recently_added_movies, data.recently_added_shows);
+        
+        // Update timezone information
+        updateTimezone(data.timezone);
+        
+        initialLoadComplete = true;
     })
     .catch(error => console.error('Error updating statistics:', error));
+}
+
+function updateTimezone(timezone) {
+    const timezoneIcon = document.querySelector('.timezone-icon');
+    if (timezoneIcon) {
+        timezoneIcon.title = `Timezone: ${timezone}`;
+    }
 }
 
 function formatUptime(seconds) {
@@ -242,8 +236,7 @@ function updateRecentlyAired(recentlyAired) {
         ul.innerHTML = recentlyAired.map(item => `
             <li style="color: #FFA500;">
                 ${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} - 
-                <span class="air-date" style="color: #f4f4f4;">${formatDate(item.air_datetime)}</span>
-                <span class="air-time" style="color: #f4f4f4;">at ${formatTime(item.air_datetime)}</span>
+                <span class="air-date" style="color: #f4f4f4;">${formatDate(item.air_datetime)} ${formatTime(item.air_datetime)}</span>
             </li>
         `).join('');
         if (!container.contains(ul)) container.appendChild(ul);
@@ -257,8 +250,7 @@ function updateAiringSoon(airingSoon) {
         ul.innerHTML = airingSoon.map(item => `
             <li style="color: #FFA500;">
                 ${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} - 
-                <span class="air-date" style="color: #f4f4f4;">${formatDate(item.air_datetime)}</span>
-                <span class="air-time" style="color: #f4f4f4;">at ${formatTime(item.air_datetime)}</span>
+                <span class="air-date" style="color: #f4f4f4;">${formatDate(item.air_datetime)} ${formatTime(item.air_datetime)}</span>
             </li>
         `).join('');
         if (!container.contains(ul)) container.appendChild(ul);
@@ -288,12 +280,19 @@ function updateRecentlyAdded(movies, shows) {
 
 function updateRecentlyAddedSection(type, items) {
     console.log(`Updating ${type} section with:`, items);
-    const section = document.querySelector(`.recently-added-section h4:contains('${type}')`);
+    const sections = document.querySelectorAll('.recently-added-section');
+    let section = null;
+    for (let s of sections) {
+        if (s.querySelector('h4').textContent.trim() === type) {
+            section = s;
+            break;
+        }
+    }
     if (!section) {
         console.error(`Section for ${type} not found`);
         return;
     }
-    const container = section.closest('.recently-added-section').querySelector('.card-container') || document.createElement('div');
+    const container = section.querySelector('.card-container') || document.createElement('div');
     container.className = 'card-container';
     if (Array.isArray(items) && items.length > 0) {
         container.innerHTML = items.map(item => `
@@ -301,7 +300,7 @@ function updateRecentlyAddedSection(type, items) {
                 ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
                 <div class="card-content">
                     <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                    <p class="added-date">Added: ${item.added_at}</p>
+                    <p class="added-date">Added: ${formatDate(item.added_at)}</p>
                     ${type === 'TV Shows' && item.seasons ? `<p class="seasons">Seasons: ${item.seasons.join(', ')}</p>` : ''}
                 </div>
             </div>
@@ -310,40 +309,95 @@ function updateRecentlyAddedSection(type, items) {
         console.log(`No items to display for ${type}`);
         container.innerHTML = `<p>No recent additions</p>`;
     }
-    const parentSection = section.closest('.recently-added-section');
-    if (!parentSection.contains(container)) {
-        parentSection.appendChild(container);
+    if (!section.contains(container)) {
+        section.appendChild(container);
     }
 }
 
 function formatDate(dateString) {
-    const date = new Date(dateString);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    console.log('formatDate input:', dateString);
+    if (!dateString) {
+        console.error('Invalid date string:', dateString);
+        return 'Invalid Date';
+    }
+    
+    let date;
+    // Check if the dateString is already in the "Day, DD Mon YYYY HH:MM:SS GMT" format
+    if (/^[A-Za-z]{3},\s\d{1,2}\s[A-Za-z]{3}\s\d{4}\s\d{2}:\d{2}:\d{2}\sGMT$/.test(dateString)) {
+        date = new Date(dateString);
+    } else {
+        date = new Date(dateString + 'Z');  // Append 'Z' to treat as UTC
+    }
+    
+    console.log('Parsed date:', date);
+    if (isNaN(date.getTime())) {
+        console.error('Invalid date object:', date);
+        return 'Invalid Date';
+    }
+    
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const tomorrow = new Date(now);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
 
-    if (date.toDateString() === today.toDateString()) {
+    if (isSameDay(date, now)) {
         return 'Today';
-    } else if (date.toDateString() === yesterday.toDateString()) {
+    } else if (isSameDay(date, yesterday)) {
         return 'Yesterday';
-    } else if (date.toDateString() === tomorrow.toDateString()) {
+    } else if (isSameDay(date, tomorrow)) {
         return 'Tomorrow';
     } else {
-        return date.toISOString().split('T')[0]; // YYYY-MM-DD format
+        return date.toUTCString().split(' ').slice(0, 4).join(' ');
     }
 }
 
 function formatTime(dateString) {
-    const date = new Date(dateString);
-    return date.toTimeString().split(' ')[0].substr(0, 5); // HH:MM format
+    console.log('formatTime input:', dateString);
+    if (!dateString) {
+        console.error('Invalid date string:', dateString);
+        return 'Invalid Time';
+    }
+    
+    let date;
+    // Check if the dateString is already in the "Day, DD Mon YYYY HH:MM:SS GMT" format
+    if (/^[A-Za-z]{3},\s\d{1,2}\s[A-Za-z]{3}\s\d{4}\s\d{2}:\d{2}:\d{2}\sGMT$/.test(dateString)) {
+        date = new Date(dateString);
+    } else {
+        date = new Date(dateString + 'Z');  // Append 'Z' to treat as UTC
+    }
+    
+    console.log('Parsed date:', date);
+    if (isNaN(date.getTime())) {
+        console.error('Invalid date object:', date);
+        return 'Invalid Time';
+    }
+    
+    return date.getUTCHours().toString().padStart(2, '0') + ':' + 
+           date.getUTCMinutes().toString().padStart(2, '0');
 }
 
-// Update statistics every minute
-setInterval(updateStatistics, 60000);
+function isSameDay(date1, date2) {
+    return date1.getUTCFullYear() === date2.getUTCFullYear() &&
+           date1.getUTCMonth() === date2.getUTCMonth() &&
+           date1.getUTCDate() === date2.getUTCDate();
+}
+
+// Update statistics every 5 minutes
+setInterval(updateStatistics, 300000);
 
 // Initial update
-updateStatistics();
+document.addEventListener('DOMContentLoaded', () => {
+    initialLoadComplete = false;
+    updateStatistics();
+    
+    // Format dates that are already in the HTML
+    document.querySelectorAll('.air-date, .release-date').forEach(elem => {
+        const originalDate = elem.textContent.trim();
+        const formattedDate = formatDate(originalDate);
+        const formattedTime = formatTime(originalDate);
+        elem.textContent = `${formattedDate} ${formattedTime}`;
+    });
+});
 </script>
 {% endblock %}

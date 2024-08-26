@@ -893,7 +893,8 @@ def statistics():
         'yesterday': (now - timedelta(days=1)).date(),
         'tomorrow': (now + timedelta(days=1)).date(),
         'recently_added_movies': recent_from_plex['movies'],
-        'recently_added_shows': recent_from_plex['shows']
+        'recently_added_shows': recent_from_plex['shows'],
+        'timezone': time.tzname[0]  # Add this line to include the timezone
     }
 
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
