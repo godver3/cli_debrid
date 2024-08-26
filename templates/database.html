@@ -75,36 +75,40 @@
         {% endif %}
     </div>
     <div class="table-container">
-        <table id="database-table">
-            <thead>
-                <tr>
-                    <th>Delete</th>
-                    {% for column in selected_columns %}
-                    <th>{{ column }}</th>
+        {% if items %}
+            <table id="database-table">
+                <thead>
+                    <tr>
+                        <th>Delete</th>
+                        {% for column in selected_columns %}
+                        <th>{{ column }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>
+                            <button class="delete-item" data-item-id="{{ item.id }}">Delete</button>
+                        </td>
+                        {% for column in selected_columns %}
+                        <td>
+                            <div class="cell-content">
+                                {% if content_type == 'movie' and column in ['season_number', 'episode_number', 'episode_title'] %}
+                                    <!-- Don't display these columns for movies -->
+                                {% elif item[column] is not none and item[column] != 'None' %}
+                                    {{ item[column] }}
+                                {% endif %}
+                            </div>
+                        </td>
+                        {% endfor %}
+                    </tr>
                     {% endfor %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in items %}
-                <tr>
-                    <td>
-                        <button class="delete-item" data-item-id="{{ item[0] }}">Delete</button>
-                    </td>
-                    {% for column in selected_columns %}
-                    <td>
-                        <div class="cell-content">
-                            {% if content_type == 'movie' and column in ['season_number', 'episode_number', 'episode_title'] %}
-                                <!-- Don't display these columns for movies -->
-                            {% elif item[loop.index0] is not none and item[loop.index0] != 'None' %}
-                                {{ item[loop.index0] }}
-                            {% endif %}
-                        </div>
-                    </td>
-                    {% endfor %}
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        {% else %}
+            <p>No items found in the database.</p>
+        {% endif %}
     </div>
 </div>
 
@@ -137,8 +141,10 @@
         });
     
         function clearFilter() {
-            document.getElementById('filter_column').value = '';
-            document.getElementById('filter_value').value = '';
+            const filterColumn = document.getElementById('filter-column');
+            const filterValue = document.getElementById('filter-value');
+            if (filterColumn) filterColumn.value = '';
+            if (filterValue) filterValue.value = '';
         }
     
         function updateContent(url, formData = null) {
