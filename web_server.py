@@ -50,6 +50,7 @@ from content_checkers.overseerr import get_overseerr_details, get_overseerr_head
 import shutil
 
 app = Flask(__name__)
+
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
 app.secret_key = '9683650475'
@@ -100,6 +101,10 @@ def inject_version():
     except FileNotFoundError:
         version = "Unknown"
     return dict(version=version)
+    
+def is_user_system_enabled():
+    config = load_config()
+    return config.get('UI Settings', {}).get('enable_user_system', True)
 
 def create_default_admin():
     # Check if there are any existing users
@@ -209,8 +214,9 @@ def sync_run_get_recent_from_plex():
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if not is_user_system_enabled():
+            return f(*args, **kwargs)
         if not current_user.is_authenticated or current_user.role != 'admin':
-            flash('You need to be an admin to access this page.', 'error')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
@@ -218,15 +224,18 @@ def admin_required(f):
 def user_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if not is_user_system_enabled():
+            return f(*args, **kwargs)
         if not current_user.is_authenticated:
-            flash('You need to be logged in to access this page.', 'error')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    if is_user_system_enabled():
+        return User.query.get(int(user_id))
+    return None
 
 def initialize_app():
     with app.app_context():
@@ -277,6 +286,9 @@ def check_program_conditions():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if not is_user_system_enabled():
+        return redirect(url_for('statistics'))
+    
     if current_user.is_authenticated:
         return redirect(url_for('statistics'))
     if request.method == 'POST':
@@ -350,9 +362,13 @@ def change_password():
             flash('Passwords do not match.', 'error')
     return render_template('change_password.html')
 
+# Modify the manage_users route
 @app.route('/manage_users')
 @admin_required
 def manage_users():
+    if not is_user_system_enabled():
+        flash('User management is disabled.', 'error')
+        return redirect(url_for('statistics'))
     users = User.query.all()
     return render_template('manage_users.html', users=users)
 
@@ -397,8 +413,12 @@ def delete_user(user_id):
         app.logger.error(f"Error deleting user: {str(e)}")
         return jsonify({'success': False, 'error': 'Database error'}), 500
 
+# Modify the register route
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    if not is_user_system_enabled():
+        return redirect(url_for('statistics'))
+    
     if current_user.is_authenticated:
         return redirect(url_for('statistics'))
     if request.method == 'POST':
@@ -419,9 +439,12 @@ def register():
         return redirect(url_for('statistics'))
     return render_template('register.html')
 
+# Modify the logout route
 @app.route('/logout')
 @login_required
 def logout():
+    if not is_user_system_enabled():
+        return redirect(url_for('statistics'))
     logout_user()
     return redirect(url_for('login'))
 
@@ -569,7 +592,7 @@ def update_trakt_config(key, value):
 
 @app.context_processor
 def utility_processor():
-    return dict(render_settings=render_settings, render_content_sources=render_content_sources)
+    return dict(render_settings=render_settings, render_content_sources=render_content_sources, is_user_system_enabled=is_user_system_enabled)
 
 @app.route('/delete_item', methods=['POST'])
 def delete_item():
@@ -1250,6 +1273,15 @@ def settings():
                 configured_scrapers[scraper] = scraper_config
         
         config['Scrapers'] = configured_scrapers
+
+        # Ensure 'UI Settings' exists in the config
+        if 'UI Settings' not in config:
+            config['UI Settings'] = {}
+        
+        # Ensure 'enable_user_system' exists in 'UI Settings'
+        if 'enable_user_system' not in config['UI Settings']:
+            config['UI Settings']['enable_user_system'] = True  # Default to True
+        
         
         # Ensure 'Content Sources' exists in the config
         if 'Content Sources' not in config:
@@ -1303,6 +1335,11 @@ def update_settings():
         config = load_config()
         #logging.debug(f"Current config before update: {json.dumps(config, indent=2)}")
         
+        if 'UI Settings' in new_settings:
+            if 'enable_user_system' in new_settings['UI Settings']:
+                # Handle enabling/disabling user system
+                pass  # You may want to add logic here to handle user data when disabling the system
+
         # Update the config with new settings
         for section, settings in new_settings.items():
             if section not in config:

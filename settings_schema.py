@@ -1,6 +1,14 @@
 # settings_schema.py
 
 SETTINGS_SCHEMA = {
+    "UI Settings": {
+        "tab": "Additional Settings",
+        "enable_user_system": {
+            "type": "boolean",
+            "description": "Enable user account system",
+            "default": True
+        },
+    },
     "Plex": {
         "tab": "Required Settings",
         "url": {

@@ -116,7 +116,15 @@
         align-items: center;
         margin-bottom: 20px;
         font-size: 0.9em;
+        margin-bottom: 0px;
     }
+
+    @media (max-width: 768px) {
+        .toggle-container {
+            padding-top: 20px;
+        }
+    }
+
     .toggle-item {
         display: flex;
         align-items: center;
@@ -165,23 +173,10 @@
         transform: translateX(20px);
     }
 
-
-    .toggle-container {
-        order: -1;  /* This ensures it appears before other elements */
-        margin-bottom: 20px;  /* Add some space between the toggle and stats */
-    }
-
-
-
     .statistics-wrapper {
         display: flex;
         flex-direction: column;
         width: 100%;
-    }
-
-    .toggle-container {
-        width: 100%;
-        margin-bottom: 20px;
     }
 
     .stats-container {
@@ -286,7 +281,7 @@
                             </div>
                             <div class="card-hover-content">
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
-                                <p class="info-line">Added: {{ formatDate(movie.collected_at) }} {{ formatTime(movie.collected_at) }}</p>
+                                <p class="info-line">Added: {{ movie.collected_at }}</p>
                                 <p class="info-line">Versions: {{ movie.version }}</p>
                             </div>
                         </div>
@@ -310,7 +305,7 @@
                             </div>
                             <div class="card-hover-content">
                                 <h5>{{ show.title }}</h5>
-                                <p class="info-line">Added: {{ formatDate(show.collected_at) }} {{ formatTime(show.collected_at) }}</p>
+                                <p class="info-line">Added: {{ show.collected_at }}</p>
                                 <p class="info-line">Versions: {{ show.versions|join(', ') }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
@@ -335,53 +330,49 @@ let use24HourFormat = localStorage.getItem('use24HourFormat') !== 'false'; // De
 function updateAllTimes() {
     console.log('Updating all times. use24HourFormat:', use24HourFormat);
     document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
-        const originalDateTime = elem.getAttribute('data-original-datetime');
-        console.log('Element:', elem, 'Original date-time:', originalDateTime);
-        if (originalDateTime) {
-            const date = new Date(originalDateTime);
-            if (!isNaN(date.getTime())) {
-                if (elem.classList.contains('info-line')) {
-                    // For info-line elements, only update the time part
-                    const originalText = elem.textContent;
-                    const timePart = originalText.split(':').slice(-2).join(':');
-                    const newTimePart = formatTime(date);
-                    console.log('Updating info-line:', originalText, '->', newTimePart);
-                    elem.textContent = originalText.replace(timePart, newTimePart);
-                } else {
-                    // For air-date and release-date elements, update both date and time
-                    const formattedDate = formatDate(date);
-                    const formattedTime = formatTime(date);
-                    console.log('Updating date/time:', elem.textContent, '->', `${formattedDate} ${formattedTime}`);
-                    elem.textContent = `${formattedDate} ${formattedTime}`;
-                }
+        let originalTime = elem.dataset.originalTime;
+        
+        if (!originalTime) {
+            const originalText = elem.textContent;
+            console.log('Element:', elem, 'Original text:', originalText);
+            
+            // Match date and time in various formats, including "Sun, 25 Aug 2024 19:00:00 GMT"
+            const dateTimeMatch = originalText.match(/(\w{3}, \d{1,2} \w{3} \d{4}) (\d{2}:\d{2}(?::\d{2})?)(?: GMT)?/);
+            
+            if (dateTimeMatch) {
+                const [, datePart, timePart] = dateTimeMatch;
+                originalTime = timePart;
+                elem.dataset.originalTime = originalTime;
+                elem.dataset.datePart = datePart;
             } else {
-                console.log('Invalid date-time:', originalDateTime);
+                console.log('No valid date-time format found for element:', elem);
+                return;
             }
-        } else {
-            console.log('No original date-time found for element:', elem);
         }
+        
+        const formattedTime = formatTime(originalTime);
+        const formattedDateTime = `${elem.dataset.datePart} ${formattedTime}`;
+        console.log('Updating date/time:', elem.textContent, '->', formattedDateTime);
+        elem.textContent = formattedDateTime;
     });
 }
 
-function formatDate(date) {
-    return date.toISOString().split('T')[0];
-}
-
-function formatTime(date) {
-    console.log('Formatting time:', date, 'use24HourFormat:', use24HourFormat);
+function formatTime(timeString) {
+    console.log('Formatting time:', timeString, 'use24HourFormat:', use24HourFormat);
+    
+    const [hours, minutes] = timeString.split(':');
+    const hour = parseInt(hours, 10);
     
     if (use24HourFormat) {
-        return date.toTimeString().split(' ')[0].slice(0, 5);
+        return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}`;
     } else {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const ampm = hour >= 12 ? 'PM' : 'AM';
+        const hour12 = hour % 12 || 12;
+        return `${hour12}:${minutes.padStart(2, '0')} ${ampm}`;
     }
 }
 
-// Initial update
 document.addEventListener('DOMContentLoaded', () => {
-    initialLoadComplete = false;
-    updateStatistics();
-    
     const timeFormatToggle = document.getElementById('time-format-toggle');
     
     // Set the initial state of the toggle based on the saved preference
@@ -393,19 +384,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // Save the preference to localStorage
         localStorage.setItem('use24HourFormat', use24HourFormat);
         updateAllTimes();
-    });
-    
-    // Store original date-time strings
-    document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
-        const originalText = elem.textContent.trim();
-        console.log('Processing element:', elem, 'Original text:', originalText);
-        let dateTimeMatch = originalText.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
-        if (dateTimeMatch) {
-            console.log('Setting data-original-datetime:', dateTimeMatch[1]);
-            elem.setAttribute('data-original-datetime', dateTimeMatch[1]);
-        } else {
-            console.log('Skipping element, no valid date-time format found:', originalText);
-        }
     });
     
     // Initial time format update
@@ -438,21 +416,6 @@ function updateStatistics() {
         
         initialLoadComplete = true;
 
-        // Store original date-time strings for dynamically added elements
-        document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
-            if (!elem.hasAttribute('data-original-datetime')) {
-                const originalText = elem.textContent.trim();
-                console.log('Processing dynamically added element:', elem, 'Original text:', originalText);
-                let dateTimeMatch = originalText.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
-                if (dateTimeMatch) {
-                    console.log('Setting data-original-datetime:', dateTimeMatch[1]);
-                    elem.setAttribute('data-original-datetime', dateTimeMatch[1]);
-                } else {
-                    console.log('Skipping element, no valid date-time format found:', originalText);
-                }
-            }
-        });
-
         // Update times for dynamically added elements
         updateAllTimes();
     })
@@ -460,10 +423,7 @@ function updateStatistics() {
 }
 
 function updateTimezone(timezone) {
-    const timezoneSpan = document.getElementById('current-timezone');
-    if (timezoneSpan) {
-        timezoneSpan.textContent = timezone;
-    }
+    // Remove this function or leave it empty if you don't want to display the timezone
 }
 
 function formatUptime(seconds) {
@@ -480,7 +440,7 @@ function updateRecentlyAired(recentlyAired) {
         ul.innerHTML = recentlyAired.map(item => `
             <li style="color: #FFA500;">
                 ${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} - 
-                <span class="air-date" style="color: #f4f4f4;">${formatDate(item.air_datetime)} ${formatTime(item.air_datetime)}</span>
+                <span class="air-date" style="color: #f4f4f4;">${item.air_datetime}</span>
             </li>
         `).join('');
         if (!container.contains(ul)) container.appendChild(ul);
@@ -494,7 +454,7 @@ function updateAiringSoon(airingSoon) {
         ul.innerHTML = airingSoon.map(item => `
             <li style="color: #FFA500;">
                 ${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} - 
-                <span class="air-date" style="color: #f4f4f4;">${formatDate(item.air_datetime)} ${formatTime(item.air_datetime)}</span>
+                <span class="air-date" style="color: #f4f4f4;">${item.air_datetime}</span>
             </li>
         `).join('');
         if (!container.contains(ul)) container.appendChild(ul);
@@ -508,7 +468,7 @@ function updateUpcomingReleases(upcomingReleases) {
         ul.innerHTML = upcomingReleases.map(item => `
             <li style="color: #FFA500;">
                 ${item.titles.join(', ')} - 
-                <span class="release-date" style="color: #f4f4f4;">${formatDate(item.release_date)}</span>
+                <span class="release-date" style="color: #f4f4f4;">${item.release_date}</span>
             </li>
         `).join('');
         if (!container.contains(ul)) container.appendChild(ul);
@@ -547,7 +507,7 @@ function updateRecentlyAddedSection(type, items) {
                 </div>
                 <div class="card-hover-content">
                     <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                    <p class="info-line">Added: ${formatDate(item.collected_at)} ${formatTime(item.collected_at)}</p>
+                    <p class="info-line">Added: ${item.collected_at}</p>
                     <p class="info-line">Versions: ${item.versions ? item.versions.join(', ') : item.version}</p>
                     ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
                         `<p class="info-line">Seasons: ${item.seasons.join(', ')}</p>
@@ -561,25 +521,6 @@ function updateRecentlyAddedSection(type, items) {
     }
     if (!section.contains(container)) {
         section.appendChild(container);
-    }
-}
-
-function formatDate(dateString) {
-    if (!dateString) return 'Invalid Date';
-    let date = new Date(dateString);
-    if (isNaN(date.getTime())) return 'Invalid Date';
-    return date.toISOString().split('T')[0];
-}
-
-function formatTime(dateString) {
-    if (!dateString) return 'Invalid Time';
-    let date = new Date(dateString);
-    if (isNaN(date.getTime())) return 'Invalid Time';
-    
-    if (use24HourFormat) {
-        return date.toTimeString().split(' ')[0].slice(0, 5);
-    } else {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 }
 
@@ -603,19 +544,6 @@ document.addEventListener('DOMContentLoaded', () => {
         use24HourFormat = this.checked;
         console.log('Toggle changed. use24HourFormat:', use24HourFormat);
         updateAllTimes();
-    });
-    
-    // Store original date-time strings
-    document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
-        const originalText = elem.textContent.trim();
-        console.log('Processing element:', elem, 'Original text:', originalText);
-        let dateTimeMatch = originalText.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
-        if (dateTimeMatch) {
-            console.log('Setting data-original-datetime:', dateTimeMatch[1]);
-            elem.setAttribute('data-original-datetime', dateTimeMatch[1]);
-        } else {
-            console.log('Skipping element, no valid date-time format found:', originalText);
-        }
     });
     
     // Initial time format update
