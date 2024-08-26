@@ -109,6 +109,8 @@ input[type="text"] {
     font-family: inherit;
 }
 
+
+
 select#version-select {
     padding: 8px;
     background-color: #444;
@@ -1489,7 +1491,6 @@ h2.searchresult-item {
     background-color: #45a049;
 }
 
-/* Header button styles */
 .auth-controls a,
 .user-controls a,
 #programControlButton {
@@ -1509,10 +1510,13 @@ h2.searchresult-item {
     vertical-align: middle;
 }
 
-.auth-controls a:hover,
-.user-controls a:hover,
-#programControlButton:hover {
-    background-color: #45a049;
+/* Apply hover styles only for devices that support hover */
+@media (hover: hover) {
+    .auth-controls a:hover,
+    .user-controls a:hover,
+    #programControlButton:hover {
+        background-color: #45a049;
+    }
 }
 
 /* Spacing between buttons */
@@ -1564,6 +1568,17 @@ h2.searchresult-item {
     width: 90%;
 }
 
+.confirmation-input input[type="text"] {
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+    margin-bottom: 15px;
+}
+
 .confirmation-popup h3,
 .notification-popup h3 {
     margin-top: 0;
@@ -1576,11 +1591,15 @@ h2.searchresult-item {
     color: #f4f4f4;
 }
 
-.confirmation-buttons,
-.notification-popup-content button {
+.confirmation-buttons {
     display: flex;
     justify-content: center;
     gap: 10px;
+}
+
+.notification-popup-content button {
+    display: block;
+    margin: 0 auto;
 }
 
 .confirmation-buttons button,

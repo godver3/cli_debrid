@@ -43,34 +43,38 @@
         </form>
     </div>
 </div>
-{% if settings['Notifications'] is defined and settings['Notifications'] is mapping %}
-    {% for notification_id, config in settings['Notifications'].items() %}
-    <div class="settings-section" data-notification-id="{{ notification_id }}">
-        <div class="settings-section-header">
-            <span class="settings-toggle-icon">+</span>
-            <h4>{{ notification_id }}</h4>
-            <button type="button" class="delete-notification-btn" data-notification-id="{{ notification_id }}">Delete Notification</button>
-        </div>
-        <div class="settings-section-content" style="display: none;">
-            {% for key, value in config.items() %}
-            <div class="settings-form-group">
-                {% if key == 'enabled' %}
-                    <label class="settings-title">
-                        <input type="checkbox" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" {% if value %}checked{% endif %}>
-                        {{ key|replace('_', ' ')|title }}
-                    </label>
-                {% else %}
-                    <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                    <input type="{% if 'password' in key %}password{% else %}text{% endif %}" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" value="{{ value }}" class="settings-input">
-                {% endif %}
-                {% if settings_schema['Notifications'] is defined and settings_schema['Notifications'].schema is defined and settings_schema['Notifications'].schema[notification_id] is defined and settings_schema['Notifications'].schema[notification_id][key] is defined and settings_schema['Notifications'].schema[notification_id][key].description is defined %}
-                <p class="settings-description">{{ settings_schema['Notifications'].schema[notification_id][key].description }}</p>
-                {% endif %}
+{% if notification_settings %}
+    {% for notification_id, config in notification_settings.items() %}
+        {% if config is not none %}
+        <div class="settings-section" data-notification-id="{{ notification_id }}">
+            <div class="settings-section-header">
+                <span class="settings-toggle-icon">+</span>
+                <h4>{{ config.title }}_{{ notification_id.split('_')[-1] }}</h4>
+                <button type="button" class="delete-notification-btn" data-notification-id="{{ notification_id }}">Delete Notification</button>
             </div>
-            {% endfor %}
+            <div class="settings-section-content" style="display: none;">
+                {% for key, value in config.items() %}
+                    {% if key not in ['type', 'title'] %}
+                    <div class="settings-form-group">
+                        {% if key == 'enabled' %}
+                            <label class="settings-title">
+                                <input type="checkbox" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" {% if value %}checked{% endif %}>
+                                {{ key|replace('_', ' ')|title }}
+                            </label>
+                        {% else %}
+                            <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                            <input type="{% if 'password' in key %}password{% else %}text{% endif %}" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" value="{{ value }}" class="settings-input">
+                        {% endif %}
+                        {% if settings_schema['Notifications'] is defined and settings_schema['Notifications'].schema is defined and settings_schema['Notifications'].schema[config.type] is defined and settings_schema['Notifications'].schema[config.type][key] is defined and settings_schema['Notifications'].schema[config.type][key].description is defined %}
+                        <p class="settings-description">{{ settings_schema['Notifications'].schema[config.type][key].description }}</p>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
         </div>
-    </div>
+        {% endif %}
     {% endfor %}
 {% else %}
-    <p>No Notifications configured or invalid configuration.</p>
+    <p>No Notifications configured.</p>
 {% endif %}

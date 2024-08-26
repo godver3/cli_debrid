@@ -33,7 +33,9 @@
                     {{ source_id }}
                 {% endif %}
             </h4>
-            <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
+            <div class="source-buttons">
+                <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
+            </div>
         </div>
         <div class="settings-section-content" style="display: none;">
             {% for key, value in config.items() %}

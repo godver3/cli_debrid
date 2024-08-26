@@ -1,4 +1,5 @@
 from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash, Response
+import traceback
 from flask_session import Session
 import threading
 import time
@@ -24,7 +25,7 @@ from shared import app, update_stats
 from run_program import ProgramRunner
 from queue_utils import safe_process_queue
 from run_program import process_overseerr_webhook, ProgramRunner
-from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings, update_all_content_sources
+from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings, update_all_content_sources, clean_notifications
 from settings_schema import SETTINGS_SCHEMA
 from trakt.core import get_device_code, get_device_token
 from scraper.scraper import scrape
@@ -1121,14 +1122,37 @@ def add_notification():
         if 'Notifications' not in config:
             config['Notifications'] = {}
 
-        # Generate a unique ID for the new notification
-        notification_id = f"notification_{len(config['Notifications']) + 1}"
+        notification_type = notification_data['type']
+        existing_count = sum(1 for key in config['Notifications'] if key.startswith(f"{notification_type}_"))
+        notification_id = f"{notification_type}_{existing_count + 1}"
 
-        # Add the new notification to the config
+        notification_title = notification_type.replace('_', ' ').title()
+
         config['Notifications'][notification_id] = {
-            'type': notification_data['type'],
-            'enabled': True  # Default to enabled
+            'type': notification_type,
+            'enabled': True,
+            'title': notification_title
         }
+
+        # Add default values based on the notification type
+        if notification_type == 'Telegram':
+            config['Notifications'][notification_id].update({
+                'bot_token': '',
+                'chat_id': ''
+            })
+        elif notification_type == 'Discord':
+            config['Notifications'][notification_id].update({
+                'webhook_url': ''
+            })
+        elif notification_type == 'Email':
+            config['Notifications'][notification_id].update({
+                'smtp_server': '',
+                'smtp_port': 587,
+                'smtp_username': '',
+                'smtp_password': '',
+                'from_address': '',
+                'to_address': ''
+            })
 
         save_config(config)
 
@@ -1138,11 +1162,42 @@ def add_notification():
         logging.error(f"Error adding notification: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/notifications/content', methods=['GET'])
+def notifications_content():
+    try:
+        config = load_config()
+        notification_settings = config.get('Notifications', {})
+        
+        # Sort notifications by type and then by number
+        sorted_notifications = sorted(
+            notification_settings.items(),
+            key=lambda x: (x[1]['type'], int(x[0].split('_')[-1]))
+        )
+        
+        html_content = render_template(
+            'settings_tabs/notifications_content.html',
+            notification_settings=dict(sorted_notifications),
+            settings_schema=SETTINGS_SCHEMA
+        )
+        
+        return jsonify({
+            'status': 'success',
+            'html': html_content
+        })
+    except Exception as e:
+        app.logger.error(f"Error generating notifications content: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': f'An error occurred while generating notifications content: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
+
 @app.route('/settings', methods=['GET'])
 @admin_required
 def settings():
     try:
         config = load_config()
+        config = clean_notifications(config)  # Clean notifications before rendering
         scraper_types = list(scraper_manager.scraper_settings.keys())
         source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
         
@@ -1167,15 +1222,10 @@ def settings():
         for source, source_config in config['Content Sources'].items():
             if not isinstance(source_config, dict):
                 config['Content Sources'][source] = {}
-                # Initialize notification_settings
 
         # Initialize notification_settings
-        notification_settings = {}
-        if 'Notifications' in config:
-            notification_settings = config['Notifications']
-        else:
-            # If 'Notifications' is not in settings, initialize it with default values
-            notification_settings = {
+        if 'Notifications' not in config:
+            config['Notifications'] = {
                 'Telegram': {'enabled': False, 'bot_token': '', 'chat_id': ''},
                 'Discord': {'enabled': False, 'webhook_url': ''},
                 'Email': {
@@ -1191,7 +1241,7 @@ def settings():
 
         return render_template('settings_base.html', 
                                settings=config, 
-                               notification_settings=notification_settings,
+                               notification_settings=config['Notifications'],
                                scraper_types=scraper_types, 
                                scraper_settings=scraper_manager.scraper_settings,
                                source_types=source_types,
@@ -1411,6 +1461,27 @@ def delete_version():
         return jsonify({'success': True})
     else:
         return jsonify({'success': False, 'error': 'Version not found'}), 404
+
+@app.route('/versions/rename', methods=['POST'])
+def rename_version():
+    data = request.json
+    old_name = data.get('old_name')
+    new_name = data.get('new_name')
+    
+    if not old_name or not new_name:
+        return jsonify({'success': False, 'error': 'Missing old_name or new_name'}), 400
+
+    config = load_config()
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions = config['Scraping']['versions']
+        if old_name in versions:
+            versions[new_name] = versions.pop(old_name)
+            save_config(config)
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Version not found'}), 404
+    else:
+        return jsonify({'success': False, 'error': 'Scraping versions not found in config'}), 404
 
 @app.route('/versions/duplicate', methods=['POST'])
 def duplicate_version():
