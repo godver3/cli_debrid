@@ -61,12 +61,12 @@
         display: none;
         position: fixed;
         left: 50%;
-        top: 20px;
-        transform: translateX(-50%);
-        background-color: #4CAF50;
-        color: white;
-        padding: 15px;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        background-color: #f9f9f9;
+        padding: 20px;
         border-radius: 5px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
         z-index: 1000;
     }
 
@@ -78,7 +78,7 @@
     }
 
     .form-group label {
-        width: 80px;
+        width: 320px;  // Increased from 80px to 160px
         margin-bottom: 0;
         margin-right: 10px;
     }
@@ -89,13 +89,104 @@
     }
 
     .form-actions {
-        margin-left: 90px; /* Aligns with the input field */
+        margin-left: 0px;  // Adjusted to align with the wider label
     }
 
     /* Add this new style for spacing between sections */
     .debug-section {
         margin-bottom: 30px;
     }
+
+    #confirmation-popup {
+        text-align: center;
+    }
+
+    #confirmation-popup button {
+        margin: 10px;
+        padding: 5px 10px;
+        cursor: pointer;
+    }
+
+    #confirm-yes {
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+    }
+
+    #confirm-no {
+        background-color: #f44336;
+        color: white;
+        border: none;
+    }
+
+    .confirmation-popup {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.4);
+    }
+
+    .confirmation-popup-content {
+        background-color: #333;
+        color: #fff;
+        margin: 15% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        width: 80%;
+        max-width: 500px;
+        border-radius: 5px;
+    }
+
+    .confirmation-popup-content h3 {
+        margin-top: 0;
+        color: #fff;
+    }
+
+    .confirmation-buttons {
+        text-align: right;
+        margin-top: 20px;
+    }
+
+    .confirmation-buttons button {
+        padding: 8px 15px;
+        margin-left: 10px;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    #confirmYes {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    #confirmNo {
+        background-color: #f44336;
+        color: white;
+    }
+
+    .notification-popup {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1000;
+    }
+
+    .notification-popup-content {
+        padding: 15px 20px;
+        border-radius: 5px;
+        color: white;
+        font-size: 16px;
+        max-width: 300px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
 </style>
 
 <div class="debug-container">
@@ -121,50 +212,125 @@
                 <label for="log_lines">Number of log lines:</label>
                 <input type="number" id="log_lines" name="lines" value="500" min="1" max="10000" required>
             </div>
+            <input type="hidden" name="download" value="true">
             <div class="form-actions">
                 <button type="submit">Download Logs</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="debug-section">
+        <h3>Delete Database</h3>
+        <form action="{{ url_for('delete_database') }}" method="POST" id="delete-database-form">
+            <div class="form-group">
+                <label for="confirm_delete">Type 'DELETE' to confirm:</label>
+                <input type="text" id="confirm_delete" name="confirm_delete" required>
+            </div>
+            <div class="form-actions">
+                <button type="submit">Delete Database</button>
             </div>
         </form>
     </div>
 </div>
 
 <div id="success-popup" class="popup"></div>
+<div id="confirmation-popup" class="popup">
+    <p id="confirmation-message"></p>
+    <button id="confirm-yes">Yes</button>
+    <button id="confirm-no">No</button>
+</div>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        const form = document.getElementById('bulk-delete-form');
-        const popup = document.getElementById('success-popup');
+        const forms = document.querySelectorAll('form');
+        
+        forms.forEach(form => {
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const url = form.action;
+                const method = form.method;
 
-        form.addEventListener('submit', function(e) {
-            e.preventDefault();
-            const formData = new FormData(form);
-
-            fetch('{{ url_for('bulk_delete_by_imdb') }}', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showPopup(data.message);
-                    form.reset();
-                } else {
-                    showPopup(data.error, true);
+                let confirmMessage = 'Are you sure you want to perform this action?';
+                if (form.id === 'delete-database-form') {
+                    const confirmDelete = document.getElementById('confirm_delete').value;
+                    if (confirmDelete !== 'DELETE') {
+                        showNotification('Please type DELETE to confirm database deletion', 'error');
+                        return;
+                    }
+                    confirmMessage = 'Are you sure you want to delete the entire database? This action cannot be undone.';
                 }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showPopup('An error occurred', true);
+
+                showConfirmationPopup(confirmMessage, () => {
+                    submitForm(url, method, form);
+                });
             });
         });
 
-        function showPopup(message, isError = false) {
-            popup.textContent = message;
-            popup.style.backgroundColor = isError ? '#f44336' : '#4CAF50';
+        function submitForm(url, method, form) {
+            if (form.id === 'download-logs-form') {
+                const formData = new FormData(form);
+                const params = new URLSearchParams(formData);
+                window.location.href = `${url}?${params.toString()}`;
+            } else {
+                fetch(url, { method: method })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showNotification(data.message || 'Action completed successfully', 'success');
+                        form.reset();
+                    } else {
+                        showNotification(data.error || 'An error occurred', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showNotification('An error occurred', 'error');
+                });
+            }
+        }
+
+        function showConfirmationPopup(message, onConfirm) {
+            const popup = document.createElement('div');
+            popup.className = 'confirmation-popup';
             popup.style.display = 'block';
+            popup.innerHTML = `
+                <div class="confirmation-popup-content">
+                    <h3>Confirmation</h3>
+                    <p>${message}</p>
+                    <div class="confirmation-buttons">
+                        <button id="confirmYes">Confirm</button>
+                        <button id="confirmNo">Cancel</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(popup);
+
+            document.getElementById('confirmYes').addEventListener('click', () => {
+                onConfirm();
+                popup.remove();
+            });
+
+            document.getElementById('confirmNo').addEventListener('click', () => {
+                popup.remove();
+            });
+        }
+
+        function showNotification(message, type) {
+            const popup = document.createElement('div');
+            popup.className = 'notification-popup';
+            popup.innerHTML = `
+                <div class="notification-popup-content ${type}">
+                    <h3>${type === 'success' ? 'Success' : 'Error'}</h3>
+                    <p>${message}</p>
+                    <button onclick="this.closest('.notification-popup').remove()">Close</button>
+                </div>
+            `;
+            document.body.appendChild(popup);
+
+            // Automatically remove the popup after 5 seconds
             setTimeout(() => {
-                popup.style.display = 'none';
-            }, 3000);
+                popup.remove();
+            }, 15000);
         }
 
         function checkProgramStatus() {
@@ -172,50 +338,32 @@
                 .then(response => response.json())
                 .then(data => {
                     const isRunning = data.running;
-                    const forms = document.querySelectorAll('form');
-                    forms.forEach(form => {
-                        const inputs = form.querySelectorAll('input');
-                        const buttons = form.querySelectorAll('button');
-                        
-                        inputs.forEach(input => {
-                            input.disabled = isRunning;
-                            input.style.opacity = isRunning ? '0.5' : '1';
-                        });
-                        
-                        buttons.forEach(button => {
-                            button.disabled = isRunning;
-                            button.style.opacity = isRunning ? '0.5' : '1';
-                            button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
-                        });
+                    const buttons = document.querySelectorAll('button[type="submit"]');
+                    buttons.forEach(button => {
+                        button.disabled = isRunning;
+                        button.style.opacity = isRunning ? '0.5' : '1';
+                        button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
                     });
 
+                    const runningMessage = document.getElementById('programRunningMessage');
                     if (isRunning) {
-                        const message = document.createElement('div');
-                        message.id = 'programRunningMessage';
-                        message.textContent = 'Program is running. Debug functions are disabled.';
-                        message.style.color = 'red';
-                        message.style.marginBottom = '10px';
-                        document.querySelector('.debug-container').prepend(message);
-                    } else {
-                        const existingMessage = document.getElementById('programRunningMessage');
-                        if (existingMessage) {
-                            existingMessage.remove();
+                        if (!runningMessage) {
+                            const message = document.createElement('div');
+                            message.id = 'programRunningMessage';
+                            message.textContent = 'Program is running. Debug functions are disabled.';
+                            message.style.color = 'red';
+                            message.style.marginBottom = '10px';
+                            document.querySelector('.debug-container').prepend(message);
                         }
+                    } else if (runningMessage) {
+                        runningMessage.remove();
                     }
                 })
                 .catch(error => console.error('Error checking program status:', error));
         }
 
-        // Check program status initially and every 5 seconds
         checkProgramStatus();
         setInterval(checkProgramStatus, 5000);
-
-        const downloadForm = document.getElementById('download-logs-form');
-        downloadForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            const lines = document.getElementById('log_lines').value;
-            window.location.href = `{{ url_for('api_logs') }}?lines=${lines}&download=true`;
-        });
     });
 </script>
 {% endblock %}
