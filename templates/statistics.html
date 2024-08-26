@@ -70,7 +70,22 @@
 </style>
 
 <div class="stats-container">
-
+    <div class="stats-box collection-stats">
+        <div class="stat-items">
+            <div class="stat-item">
+                <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
+            </div>
+            <div class="stat-item">
+                <p>Total TV Shows: <span id="total-shows">{{ stats.total_shows }}</span></p>
+            </div>
+            <div class="stat-item">
+                <p>Total Episodes: <span id="total-episodes">{{ stats.total_episodes }}</span></p>
+            </div>
+            <div class="stat-item uptime">
+                <p>Uptime: <span id="uptime">{{ '%d days, %d hours, %d minutes' % (stats.uptime // 86400, (stats.uptime % 86400) // 3600, (stats.uptime % 3600) // 60) }}</span></p>
+            </div>
+        </div>
+    </div>
     <div class="stats-box recently-aired">
         <h3>Recently Aired <span class="timezone-icon" title="Loading timezone...">🌐</span></h3>
         {% if stats.recently_aired %}
@@ -161,24 +176,6 @@
             {% else %}
                 <p>No TV shows added recently.</p>
             {% endif %}
-        </div>
-    </div>
-
-    <div class="stats-box collection-stats">
-        <h3>Collection Statistics</h3>
-        <div class="stat-items">
-            <div class="stat-item">
-                <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
-            </div>
-            <div class="stat-item">
-                <p>Total TV Shows: <span id="total-shows">{{ stats.total_shows }}</span></p>
-            </div>
-            <div class="stat-item">
-                <p>Total Episodes: <span id="total-episodes">{{ stats.total_episodes }}</span></p>
-            </div>
-            <div class="stat-item uptime">
-                <p>Uptime: <span id="uptime">{{ '%d days, %d hours, %d minutes' % (stats.uptime // 86400, (stats.uptime % 86400) // 3600, (stats.uptime % 3600) // 60) }}</span></p>
-            </div>
         </div>
     </div>
 </div>
