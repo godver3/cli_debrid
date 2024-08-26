@@ -6,8 +6,41 @@ from metadata.metadata import get_year_from_imdb_id
 from settings import get_setting, load_config as get_jackett_settings
 from urllib.parse import quote, urlencode
 import json
+import re
 
 JACKETT_FILTER = "!status:failing,test:passed"
+
+def rename_special_characters(text: str) -> str:
+    replacements = [
+        ("&", "and"),
+        ("\u00fc", "ue"),
+        ("\u00e4", "ae"),
+        ("\u00e2", "a"),
+        ("\u00e1", "a"),
+        ("\u00e0", "a"),
+        ("\u00f6", "oe"),
+        ("\u00f4", "o"),
+        ("\u00e8", "e"),
+        (":", ""),
+        ("(", ""),
+        (")", ""),
+        ("`", ""),
+        (",", ""),
+        ("!", ""),
+        ("?", ""),
+        (" - ", " "),
+        ("'", ""),
+        ("*", ""),
+        (" ", "."),
+    ]
+    
+    for old, new in replacements:
+        text = text.replace(old, new)
+    
+    # Remove any remaining apostrophes
+    text = text.replace("'", "")
+    
+    return text
 
 def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     jackett_results = []
@@ -51,6 +84,10 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], title: str,
             params = f"{params}.s{season:02d}"
             if episode is not None and not multi:
                 params = f"{params}e{episode:02d}"
+
+    # Apply special character renaming
+    params = rename_special_characters(params)
+    logging.debug(f"Search params after special character renaming: {params}")
 
     search_endpoint = f"{jackett_url}/api/v2.0/indexers/{jackett_filter}/results?apikey={jackett_api}"
     query_params = {'Query': params}

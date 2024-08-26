@@ -37,7 +37,7 @@
     {% endif %}
 </head>
 <style>
-    .user-controls {
+    .user-controls, .program-controls {
         display: flex;
         align-items: center;
     }
@@ -57,6 +57,94 @@
         font-size: 0.9em;
         color: #888;
     }
+
+    .icon-button {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 1.5rem;
+        color: #007bff;
+        padding: 5px;
+        display: flex;
+        align-items: center;
+    }
+
+    .icon-button .button-text {
+        margin-left: 5px;
+    }
+
+    .auth-controls a,
+    .user-controls a,
+    #programControlButton {
+        display: inline-block;
+        padding: 8px 15px;
+        background-color: #4CAF50;
+        color: white;
+        text-decoration: none;
+        border-radius: 3px;
+        transition: background-color 0.3s;
+        border: none;
+        font-size: 14px;
+        cursor: pointer;
+        line-height: 1.5;
+        height: 36px;
+        box-sizing: border-box;
+        vertical-align: middle;
+    }
+
+    /* Program Control Button Styles */
+    #programControlButton {
+        padding: 10px 15px;
+        border: none;
+        border-radius: 5px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background-color 0.3s, opacity 0.3s;
+    }
+
+    #programControlButton.start-program {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    #programControlButton.stop-program {
+        background-color: #f44336;
+        color: white;
+    }
+
+    #programControlButton:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    #programControlButton[data-status="Running"] {
+        background-color: #f44336;
+    }
+
+    @media (max-width: 768px) {
+        .header-controls {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+
+        .user-controls, .program-controls {
+            margin-bottom: 5px;
+        }
+
+        .user-info {
+            margin-right: 0;
+            margin-bottom: 5px;
+        }
+
+        .button-text {
+            display: none;
+        }
+
+        .icon-button {
+            font-size: 1.2rem;
+        }
+    }
 </style>
 <body>
     <header>
@@ -66,19 +154,15 @@
         </div>
         <nav id="mainNav">
             <ul id="navMenu">
-                {% if current_user.role in ['user', 'admin'] %}
                 <li><a href="{{ url_for('statistics') }}">Home</a></li>
                 <li><a href="{{ url_for('queues') }}">Queues</a></li>
                 <li><a href="{{ url_for('scraper') }}">Scraper</a></li>
-                {% endif %}
-                {% if current_user.role == 'admin' %}
                 <li><a href="{{ url_for('logs') }}">Logs</a></li>
                 <li><a href="{{ url_for('settings') }}">Settings</a></li>
                 <li><a href="{{ url_for('manage_users') }}">Manage Users</a></li>
                 <li><a href="{{ url_for('database') }}">Database</a></li>
                 <li><a href="{{ url_for('scraper_tester') }}">Scraper Tester</a></li>
                 <li><a href="{{ url_for('debug_functions') }}">Debug Functions</a></li>
-                {% endif %}
             </ul>
             <div class="hamburger-menu">
                 <div class="bar"></div>
@@ -87,23 +171,42 @@
             </div>
         </nav>
         <div class="header-controls">
-            {% if current_user.is_authenticated %}
-            <div class="user-controls">
-                <div class="user-info">
-                    <span class="username">Welcome, {{ current_user.username }}</span>
-                    <span class="version-info">v{{ version }}</span>
-                </div>
-                <a href="{{ url_for('logout') }}">Logout</a>
-            </div>
-            {% if current_user.role == 'admin' %}
-            <div class="program-controls">
-                <button id="programControlButton">Start Program</button>
-            </div>
-            {% endif %}
+            {% if is_user_system_enabled() %}
+                {% if current_user.is_authenticated %}
+                    <div class="user-controls">
+                        <div class="user-info">
+                            <span class="username">Welcome, {{ current_user.username }}</span>
+                            <span class="version-info">v{{ version }}</span>
+                        </div>
+                        <a href="{{ url_for('logout') }}" class="icon-button">
+                            <i class="fas fa-sign-out-alt"></i>
+                            <span class="button-text">Logout</span>
+                        </a>
+                    </div>
+                    {% if current_user.role == 'admin' %}
+                        <div class="program-controls">
+                            <button id="programControlButton" class="icon-button">
+                                <i class="fas fa-play"></i>
+                                <span class="button-text">Start Program</span>
+                            </button>
+                        </div>
+                    {% endif %}
+                {% else %}
+                    <div class="auth-controls">
+                        <a href="{{ url_for('login') }}" class="icon-button">
+                            <i class="fas fa-sign-in-alt"></i>
+                            <span class="button-text">Login</span>
+                        </a>
+                    </div>
+                {% endif %}
             {% else %}
-            <div class="auth-controls">
-                <a href="{{ url_for('login') }}">Login</a>
-            </div>
+                <div class="version-info">v{{ version }}</div>
+                <div class="program-controls">
+                    <button id="programControlButton" class="icon-button">
+                        <i class="fas fa-play"></i>
+                        <span class="button-text">Start Program</span>
+                    </button>
+                </div>
             {% endif %}
         </div>
     </header>
