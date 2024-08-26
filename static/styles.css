@@ -36,11 +36,17 @@ header {
     justify-content: space-between;
     align-items: center;
     font-size: 0.8em;
-    position: fixed; /* Add this line */
-    top: 0; /* Add this line */
-    left: 0; /* Add this line */
-    right: 0; /* Add this line */
-    z-index: 1000; /* Add this line to ensure header stays on top */
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+}
+
+.header-content {
+    flex: 0 0 auto; /* Change from flex: 1 to flex: 0 0 auto */
+    display: flex;
+    align-items: center;
 }
 
 header h1 {
@@ -48,16 +54,11 @@ header h1 {
     margin: 0;
 }
 
-.header-content {
-    flex: 1;
-    display: flex;
-    align-items: center;
-}
-
 .header-controls {
+    flex: 0 0 auto; /* Change from flex: 1 to flex: 0 0 auto */
     display: flex;
     align-items: center;
-    gap: 5px; /* This adds space between control groups */
+    gap: 5px;
 }
 
 header h1 {
@@ -72,7 +73,9 @@ header h1 {
 }
 
 nav {
-    flex-grow: 1;
+    position: absolute; /* Add this */
+    left: 50%; /* Add this */
+    transform: translateX(-50%); /* Add this */
     display: flex;
     justify-content: center;
 }
@@ -176,33 +179,77 @@ nav ul li a {
     text-decoration: none;
 }
 
+/* Navigation menu styles */
 #navMenu {
-display: flex;
-list-style-type: none;
-margin: 0;
-padding: 0;
+    display: flex;
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+    justify-content: center; /* Add this */
 }
 
 #navMenu li {
-margin-right: 20px;
+    margin: 0 3px; /* Change from margin-right to margin */
 }
 
-#navMenu.active {
-display: flex;
-flex-direction: column;
-position: absolute;
-top: 60px;
-left: 0;
-width: 100%;
-background-color: #1f1f1f;
-box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-padding: 10px 0;
-z-index: 2;
+#navMenu li a {
+    color: white;
+    text-decoration: none;
+    padding: 10px 15px;
+    border-radius: 3px;
+    transition: background-color 0.3s;
+    white-space: nowrap; /* Add this to prevent wrapping */
 }
 
-#navMenu.active li {
-margin-right: 0;
-padding: 10px 20px;
+#navMenu li a:hover {
+    background-color: #444;
+}
+
+/* Responsive styles for the navigation menu */
+@media (max-width: 768px) {
+    header {
+        flex-wrap: wrap; /* Allow wrapping for smaller screens */
+    }
+
+    nav {
+        position: relative; /* Reset position for mobile */
+        left: 0; /* Reset left for mobile */
+        transform: none; /* Reset transform for mobile */
+        width: 100%; /* Full width on mobile */
+        order: 3; /* Move nav below header controls on mobile */
+        padding-top: 10px;
+    }
+
+    #navMenu {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        background-color: #1a1a1a;
+    }
+
+    #navMenu.active {
+        display: flex;
+    }
+
+    #navMenu li {
+        margin: 0;
+        text-align: center;
+    }
+
+    #navMenu li a {
+        display: block;
+        padding: 15px;
+        border-bottom: 1px solid #333;
+    }
+
+    .hamburger-menu {
+        display: flex;
+        order: 2; /* Move hamburger menu to the right side */
+    }
+
+    .header-controls {
+        order: 1; /* Move header controls to the left side */
+    }
 }
 
 .program-controls {
@@ -1493,24 +1540,7 @@ h2.searchresult-item {
     background-color: #45a049;
 }
 
-.auth-controls a,
-.user-controls a,
-#programControlButton {
-    display: inline-block;
-    padding: 8px 15px;
-    background-color: #4CAF50;
-    color: white;
-    text-decoration: none;
-    border-radius: 3px;
-    transition: background-color 0.3s;
-    border: none;
-    font-size: 14px;
-    cursor: pointer;
-    line-height: 1.5;
-    height: 36px;
-    box-sizing: border-box;
-    vertical-align: middle;
-}
+
 
 /* Apply hover styles only for devices that support hover */
 @media (hover: hover) {
