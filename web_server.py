@@ -318,7 +318,6 @@ def login():
             if user.is_default:
                 flash('Please set up your admin account.', 'warning')
                 return redirect(url_for('setup_admin'))
-            flash('Logged in successfully.', 'success')
             return redirect(url_for('statistics'))
         else:
             flash('Invalid username or password.', 'error')
@@ -400,15 +399,13 @@ def add_user():
     
     existing_user = User.query.filter_by(username=username).first()
     if existing_user:
-        flash('Username already exists.', 'error')
+        return jsonify({'success': False, 'error': 'Username already exists.'})
     else:
         hashed_password = generate_password_hash(password)
         new_user = User(username=username, password=hashed_password, role=role)
         db.session.add(new_user)
         db.session.commit()
-        flash('User added successfully.', 'success')
-    
-    return redirect(url_for('manage_users'))
+        return jsonify({'success': True})
 
 @app.route('/delete_user/<int:user_id>', methods=['POST'])
 @admin_required
