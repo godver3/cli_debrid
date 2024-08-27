@@ -2,7 +2,7 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "dev" ]
+    branches: [ "main" ]
   workflow_dispatch:  # This enables manual triggering
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
         file: ./Dockerfile
         platforms: linux/amd64
         push: true
-        tags: godver3/cli_debrid:dev
+        tags: godver3/cli_debrid:main
         build-args: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
@@ -44,6 +44,6 @@ jobs:
         file: ./Dockerfile
         platforms: linux/arm64
         push: true
-        tags: godver3/cli_debrid:dev-arm64
+        tags: godver3/cli_debrid:main-arm64
         build-args: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
