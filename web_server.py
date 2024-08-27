@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash, Response
+from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash, Response, make_response
 import traceback
 from flask_session import Session
 import threading
@@ -91,6 +91,14 @@ failed_additions = 0
 
 CONFIG_FILE = './config/config.json'
 TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+
+def program_is_running():
+    global program_runner
+    return program_runner.is_running() if program_runner else False
+
+@app.context_processor
+def inject_program_status():
+    return dict(program_is_running=program_is_running)
 
 # Add this after app initialization
 @app.context_processor
@@ -211,6 +219,11 @@ async def get_recent_from_plex(movie_limit=5, show_limit=5):
 def sync_run_get_recent_from_plex():
     return asyncio.run(get_recent_from_plex())
 
+@app.template_filter('isinstance')
+def isinstance_filter(value, class_name):
+    return isinstance(value, getattr(datetime, class_name, type(None)))
+
+
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -291,6 +304,11 @@ def login():
     
     if current_user.is_authenticated:
         return redirect(url_for('statistics'))
+
+    # Clear any existing flash messages when rendering the login page
+    if request.method == 'GET':
+        session.pop('_flashes', None)
+
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -304,6 +322,7 @@ def login():
             return redirect(url_for('statistics'))
         else:
             flash('Invalid username or password.', 'error')
+    
     return render_template('login.html')
 
 @app.route('/setup_admin', methods=['GET', 'POST'])
@@ -885,14 +904,55 @@ def format_date(date_string):
     except ValueError:
         return date_string
 
-def format_time(date_string):
-    if not date_string:
+def format_time(date_input):
+    if not date_input:
         return ''
     try:
-        date = datetime.fromisoformat(date_string)
+        if isinstance(date_input, str):
+            date = datetime.fromisoformat(date_input.rstrip('Z'))  # Remove 'Z' if present
+        elif isinstance(date_input, datetime):
+            date = date_input
+        else:
+            return ''
         return date.strftime('%H:%M:%S')
     except ValueError:
         return ''
+    
+def format_datetime_preference(date_input, use_24hour_format):
+    if not date_input:
+        return ''
+    try:
+        if isinstance(date_input, str):
+            date = datetime.fromisoformat(date_input.rstrip('Z'))  # Remove 'Z' if present
+        elif isinstance(date_input, datetime):
+            date = date_input
+        else:
+            return str(date_input)
+        
+        now = datetime.now()
+        today = now.date()
+        yesterday = today - timedelta(days=1)
+        tomorrow = today + timedelta(days=1)
+
+        if date.date() == today:
+            day_str = "Today"
+        elif date.date() == yesterday:
+            day_str = "Yesterday"
+        elif date.date() == tomorrow:
+            day_str = "Tomorrow"
+        else:
+            day_str = date.strftime("%a, %d %b %Y")
+
+        time_format = "%H:%M" if use_24hour_format else "%I:%M %p"
+        formatted_time = date.strftime(time_format)
+        
+        # Remove leading zero from hour in 12-hour format
+        if not use_24hour_format:
+            formatted_time = formatted_time.lstrip("0")
+        
+        return f"{day_str} {formatted_time}"
+    except ValueError:
+        return str(date_input)  # Return original string if parsing fails
 
 @app.route('/statistics')
 @user_required
@@ -912,6 +972,17 @@ def statistics():
     recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
     recently_added_end = time.time()
     
+    cookie_value = request.cookies.get('use24HourFormat')
+    use_24hour_format = cookie_value == 'true' if cookie_value is not None else True
+    
+    # Format times for recently aired and airing soon
+    for item in recently_aired + airing_soon:
+        item['formatted_time'] = format_datetime_preference(item['air_datetime'], use_24hour_format)
+    
+    # Format times for upcoming releases (if they have time information)
+    for item in upcoming_releases:
+        item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
+                        
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],
@@ -925,6 +996,10 @@ def statistics():
         'tomorrow': (now + timedelta(days=1)).date(),
         'recently_added_movies': recently_added['movies'],  # Changed this line
         'recently_added_shows': recently_added['shows'],   # Changed this line
+        'use_24hour_format': use_24hour_format,
+        'recently_aired': recently_aired,
+        'airing_soon': airing_soon,
+        'upcoming_releases': upcoming_releases,
         'timezone': time.tzname[0]
     }
 
@@ -934,8 +1009,38 @@ def statistics():
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return jsonify(stats)
     else:
-        return render_template('statistics.html', stats=stats, formatDate=format_date, formatTime=format_time)
+        return render_template('statistics.html', stats=stats)
+        
+@app.route('/set_time_preference', methods=['POST'])
+def set_time_preference():
+    data = request.json
+    use_24hour_format = data.get('use24HourFormat', True)
     
+    # Format times with the new preference
+    recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+    upcoming_releases = get_upcoming_releases()
+    
+    for item in recently_aired + airing_soon:
+        item['formatted_time'] = format_datetime_preference(item['air_datetime'], use_24hour_format)
+    
+    for item in upcoming_releases:
+        item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
+    
+    response = make_response(jsonify({
+        'status': 'OK', 
+        'use24HourFormat': use_24hour_format,
+        'recently_aired': recently_aired,
+        'airing_soon': airing_soon,
+        'upcoming_releases': upcoming_releases
+    }))
+    response.set_cookie('use24HourFormat', 
+                        str(use_24hour_format).lower(), 
+                        max_age=31536000,  # 1 year
+                        path='/',  # Ensure cookie is available for entire site
+                        secure=True,  # Only send over HTTPS
+                        httponly=False)  # Allow JavaScript access
+    return response
+
 @app.route('/movies_trending', methods=['GET', 'POST'])
 def movies_trending():
     versions = get_available_versions()
@@ -1489,7 +1594,7 @@ def start_program():
     else:
         return jsonify({"status": "error", "message": "Program is already running"})
 
-@app.route('/api/reset_program', methods=['POST'])
+@app.route('/api/stop_program', methods=['POST'])
 def reset_program():
     global program_runner
     if program_runner is not None:

@@ -150,7 +150,11 @@
         transform: scaleX(1);
     }
 
-    /* User and Program Controls */
+    .controls-group {
+        display: flex;
+        align-items: center;
+    }
+
     .user-controls, .program-controls {
         display: flex;
         align-items: center;
@@ -170,49 +174,6 @@
     .version-info {
         font-size: 0.8em;
         color: #888;
-    }
-
-    /* Button Styles */
-    .icon-button,
-    .auth-controls a,
-    .user-controls a,
-    #programControlButton {
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 10px;
-        background-color: #4CAF50;
-        color: white;
-        text-decoration: none;
-        border: none;
-        border-radius: 3px;
-        font-size: 14px;
-        cursor: pointer;
-        transition: background-color 0.3s, opacity 0.3s;
-    }
-
-    .icon-button {
-        background: none;
-        color: #007bff;
-        font-size: 1.2rem;
-        padding: 3px;
-    }
-
-    .icon-button .button-text {
-        margin-left: 5px;
-    }
-
-    #programControlButton.start-program {
-        background-color: #4CAF50;
-    }
-
-    #programControlButton.stop-program,
-    #programControlButton[data-status="Running"] {
-        background-color: #f44336;
-    }
-
-    #programControlButton:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
     }
 
     /* Universal Popup Styles */
@@ -303,23 +264,163 @@
     /* Hamburger menu styles */
     .hamburger-menu {
         display: none;
-        flex-direction: column;
-        justify-content: space-between;
-        width: 30px;
-        height: 21px;
-        cursor: pointer;
     }
 
-    .hamburger-menu .bar {
-        width: 100%;
-        height: 3px;
-        background-color: rgb(191 191 190);
+
+
+    .header-controls {
+        display: flex;
+        align-items: center;
+    }
+
+    .user-info {
+        margin-right: 15px; /* Adjust as needed */
+    }
+
+    .action-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .action-controls .icon-button, .start-program {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #4CAF50;
+        color: white;
+        text-decoration: none;
+        border: none;
         border-radius: 3px;
-        transition: all 0.3s ease-in-out;
+        font-size: 14px;
+        cursor: pointer;
+        transition: background-color 0.3s, opacity 0.3s;
+        padding: 8px 12px;
+        min-width: 120px;
+        height: 36px;
+    }
+
+    .action-controls .icon-button i, .start-program i {
+        margin-right: 5px;
+    }
+
+    #programControlButton.start-program {
+        background-color: #4CAF50;
+    }
+
+    #programControlButton.stop-program,
+    #programControlButton[data-status="Running"] {
+        background-color: #f44336;
+    }
+
+    .action-controls .icon-button:hover, .start-program:hover {
+        opacity: 0.9;
     }
 
     /* Media Queries */
-    @media (max-width: 768px) {
+    @media (max-width: 1360px) {
+        .header-content {
+            position: absolute;
+            left: 10px;
+        }
+
+        .hamburger-menu {
+            flex-direction: column;
+            justify-content: space-between;
+            width: 30px;
+            height: 21px;
+            cursor: pointer;
+            display: flex;
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .hamburger-menu .bar {
+            width: 100%;
+            height: 3px;
+            background-color: rgb(191 191 190);
+            border-radius: 3px;
+            transition: all 0.3s ease-in-out;
+        }
+
+        /* Hamburger menu animation */
+        .hamburger-menu.active .bar:nth-child(1) {
+            transform: translateY(9px) rotate(45deg);
+        }
+
+        .hamburger-menu.active .bar:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger-menu.active .bar:nth-child(3) {
+            transform: translateY(-9px) rotate(-45deg);
+        }
+
+        nav ul {
+            flex-direction: column;
+            position: absolute;
+            top: 50px;
+            left: 0;
+            width: 100%;
+            background-color: #1a1a1a;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+
+        nav ul.show {
+            max-height: 500px; /* Adjust this value based on your menu's height */
+            transition: max-height 0.5s ease-in;
+        }
+
+        nav ul li {
+            opacity: 0;
+            transform: translateY(-20px);
+            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+        }
+
+        nav ul.show li {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.3s ease-out 0.2s, transform 0.3s ease-out 0.2s;
+        }
+
+        .header-controls {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .user-info {
+            display: none;  /* Hide the welcome message */
+        }
+
+        .action-controls {
+            display: flex;
+            gap: 5px;
+        }
+
+        .action-controls .icon-button, 
+        .action-controls .start-program,
+        .action-controls #programControlButton {
+            width: 36px;
+            height: 36px;
+            min-width: 36px;
+            padding: 0;
+        }
+
+        .button-text {
+            display: none;
+        }
+
+        .action-controls .icon-button i, 
+        .action-controls .start-program i,
+        .action-controls #programControlButton i {
+            margin-right: 0;
+        }
+
         .header-controls {
             display: flex;
             flex-direction: column;
@@ -330,35 +431,12 @@
             margin-bottom: 5px;
         }
 
-        .user-info {
-            margin-right: 0;
-            margin-bottom: 5px;
-        }
-
         .button-text {
             display: none;
         }
 
         .icon-button {
             font-size: 1.2rem;
-        }
-
-        .hamburger-menu {
-            display: flex;
-        }
-
-        nav ul {
-            display: none;
-            flex-direction: column;
-            position: absolute;
-            top: 30px;
-            left: 0;
-            width: 100%;
-            background-color: #1a1a1a;
-        }
-
-        nav ul.show {
-            display: flex;
         }
 
         nav ul li {
@@ -374,9 +452,24 @@
         nav ul li a::after {
             bottom: 0;
         }
+
+        /* Adjust time zone and 24-hour toggle layout */
+        .time-controls {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+        }
+
+        .time-controls .form-group {
+            margin-bottom: 0;
+            margin-right: 10px;
+        }
     }
+
 </style>
-<body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}">
+<body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
     <header>
         <div class="header-content">
             <img src="{{ url_for('static', filename='icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
@@ -386,6 +479,11 @@
             </div>
         </div>
         <nav id="mainNav">
+            <div class="hamburger-menu">
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+            </div>
             <ul id="navMenu">
                 <li><a href="{{ url_for('statistics') }}">Home</a></li>
                 <li><a href="{{ url_for('queues') }}">Queues</a></li>
@@ -397,45 +495,31 @@
                 <li><a href="{{ url_for('scraper_tester') }}">Scraper Tester</a></li>
                 <li><a href="{{ url_for('debug_functions') }}">Debug Functions</a></li>
             </ul>
-            <div class="hamburger-menu">
-                <div class="bar"></div>
-                <div class="bar"></div>
-                <div class="bar"></div>
-            </div>
         </nav>
         <div class="header-controls">
             {% if is_user_system_enabled() %}
                 {% if current_user.is_authenticated %}
-                    <div class="user-controls">
-                        <div class="user-info">
-                            <span class="username">Welcome, {{ current_user.username }}</span>
-                        </div>
+                    <div class="user-info">
+                        <span class="username">Welcome, {{ current_user.username }}</span>
+                    </div>
+                    <div class="action-controls">
                         <a href="{{ url_for('logout') }}" class="icon-button">
                             <i class="fas fa-sign-out-alt"></i>
                             <span class="button-text">Logout</span>
                         </a>
-                    </div>
-                    {% if current_user.role == 'admin' %}
-                        <div class="program-controls">
-                            <button id="programControlButton" class="icon-button">
-                                <i class="fas fa-play"></i>
-                                <span class="button-text">Start Program</span>
+                        {% if current_user.role == 'admin' %}
+                            <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
+                                <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
+                                <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                             </button>
-                        </div>
-                    {% endif %}
-                {% else %}
-                    <div class="auth-controls">
-                        <a href="{{ url_for('login') }}" class="icon-button">
-                            <i class="fas fa-sign-in-alt"></i>
-                            <span class="button-text">Login</span>
-                        </a>
+                        {% endif %}
                     </div>
                 {% endif %}
             {% else %}
-                <div class="program-controls">
-                    <button id="programControlButton" class="icon-button">
-                        <i class="fas fa-play"></i>
-                        <span class="button-text">Start Program</span>
+                <div class="action-controls">
+                    <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
+                        <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
+                        <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                     </button>
                 </div>
             {% endif %}
@@ -444,7 +528,7 @@
     <main>
         {% block content %}{% endblock %}
     </main>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <!-- <script src="{{ url_for('static', filename='script.js') }}"></script> -->
     <script type="module">
         import { initializeProgramControls } from "{{ url_for('static', filename='js/program_controls.js') }}";
         import { showPopup, POPUP_TYPES } from "{{ url_for('static', filename='js/notifications.js') }}";
@@ -457,7 +541,45 @@
             // Make showPopup and POPUP_TYPES available globally
             window.showPopup = showPopup;
             window.POPUP_TYPES = POPUP_TYPES;
+
+            const userSystemEnabled = document.body.dataset.userSystemEnabled === 'true';
+            const isAuthenticated = {{ 'true' if current_user.is_authenticated else 'false' }};
+
+            initializeHamburgerMenu(userSystemEnabled, isAuthenticated);
         });
+
+        function initializeHamburgerMenu(userSystemEnabled, isAuthenticated) {
+            const hamburger = document.querySelector('.hamburger-menu');
+            const navMenu = document.querySelector('#navMenu');
+
+            if (hamburger && navMenu) {
+                const navItems = navMenu.querySelectorAll('li');
+
+                // Show hamburger menu only if user system is disabled or user is authenticated
+                if (!userSystemEnabled || isAuthenticated) {
+                    hamburger.style.display = 'flex';
+                } else {
+                    hamburger.style.display = 'none';
+                }
+
+                hamburger.addEventListener('click', function() {
+                    hamburger.classList.toggle('active');
+                    navMenu.classList.toggle('show');
+                    
+                    if (navMenu.classList.contains('show')) {
+                        // Animate menu items when opening
+                        navItems.forEach((item, index) => {
+                            item.style.transitionDelay = `${index * 0.1}s`;
+                        });
+                    } else {
+                        // Remove transition delay when closing
+                        navItems.forEach(item => {
+                            item.style.transitionDelay = '0s';
+                        });
+                    }
+                });
+            }
+        }
     </script>
     {% block scripts %}{% endblock %}
 </body>
