@@ -4,31 +4,175 @@
 
 {% block content %}
 <style>
+    /* Main container */
+    .statistics-wrapper {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        align-items: center;
+    }
+
+    .stats-container {
+        width: 90%;
+    }
+
+    /* Row 1: Toggle container */
+    .toggle-container {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding: 0px 5%;
+        margin-bottom: 10px;
+        font-size: 0.9em;
+        justify-content: flex-start;
+    }
+
+    /* Row 2: Collection stats */
+    .stats-box.collection-stats {
+        margin-bottom: 10px;
+    }
+
+    /* Row 3: Recently aired, Airing soon, Upcoming releases */
+    .top-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        margin-bottom: 10px;
+    }
+
+    .stats-box.recently-aired,
+    .stats-box.airing-soon,
+    .stats-box.upcoming-releases {
+        width: 100%;
+    }
+
+    /* Row 4: Recently added */
     .stats-box.recently-added {
-        grid-column: 1 / -1;
+        width: 100%;
         margin-bottom: 20px;
     }
 
-    .stats-box.recently-added ul {
+    /* Common styles for stats boxes */
+    .stats-box {
+        background-color: #444;
+        border-radius: 5px;
+        padding: 15px;
+    }
+
+    .stats-box h3 {
+        margin-top: 0;
+        margin-bottom: 5px;
+    }
+
+    .stats-box ul {
         list-style-type: none;
         padding: 0;
         margin: 0;
     }
 
-    .stats-box.recently-added li {
+    /* Content styles */
+    .stats-box.recently-added li,
+    .stats-box.airing-soon li,
+    .stats-box.upcoming-releases li {
         margin-bottom: 10px;
         color: #FFA500;
     }
 
-    .stats-box.recently-added .added-date {
+    .added-date,
+    .air-date,
+    .air-time,
+    .release-date {
         display: inline-block;
         margin-left: 5px;
         font-style: italic;
         color: #f4f4f4;
     }
 
+    /* Collection stats */
+    .collection-stats .stat-items {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .collection-stats .stat-item {
+        flex: 1 1 calc(25% - 10px);
+        min-width: 200px;
+        padding: 10px;
+        background-color: #555;
+        border-radius: 3px;
+    }
+
+    .collection-stats .stat-item p {
+        margin: 0;
+        color: #f4f4f4;
+    }
+
+    .collection-stats .stat-item span {
+        font-weight: bold;
+        color: #4CAF50;
+    }
+
+    /* Toggle styles */
+    .toggle-item {
+        display: flex;
+        align-items: center;
+        margin-right: 15px;
+    }
+
+    .toggle-label {
+        margin-right: 5px;
+    }
+
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 40px;
+        height: 20px;
+    }
+
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: .4s;
+        border-radius: 20px;
+    }
+
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 2px;
+        bottom: 2px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+    }
+
+    input:checked + .toggle-slider {
+        background-color: #2196F3;
+    }
+
+    input:checked + .toggle-slider:before {
+        transform: translateX(20px);
+    }
+
+    /* Card styles */
     .card-container {
         display: flex;
+        justify-content: center;
         flex-wrap: wrap;
         gap: 20px;
     }
@@ -53,28 +197,26 @@
         object-fit: cover;
     }
 
-    .card-content {
+    .card-content,
+    .card-hover-content {
         position: absolute;
-        bottom: 0;
         left: 0;
         right: 0;
-        background: rgba(0, 0, 0, 0.7);
         color: white;
         padding: 10px;
         transition: opacity 0.3s ease;
     }
 
+    .card-content {
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+    }
+
     .card-hover-content {
-        position: absolute;
         top: 0;
-        left: 0;
-        right: 0;
         bottom: 0;
         background: rgba(0, 0, 0, 0.9);
-        color: white;
-        padding: 20px;
         opacity: 0;
-        transition: opacity 0.3s ease;
         overflow-y: auto;
     }
 
@@ -105,82 +247,34 @@
         color: #ddd;
     }
 
-    .timezone-icon {
-        font-size: 0.8em;
-        cursor: help;
-        margin-left: 5px;
+    h4 {
+        margin-bottom: 10px;
+        margin-top: 10px;
     }
 
-    .toggle-container {
+    .stats-box.recently-added h3, h4 {
         display: flex;
-        align-items: center;
-        margin-bottom: 20px;
-        font-size: 0.9em;
-        margin-bottom: 0px;
+        justify-content: center;
     }
 
+    /* Responsive adjustments */
     @media (max-width: 768px) {
-        .toggle-container {
-            padding-top: 20px;
+        .stats-container {
+            width: 95%;
         }
-    }
-
-    .toggle-item {
-        display: flex;
-        align-items: center;
-        margin-right: 15px;
-    }
-    .toggle-label {
-        margin-right: 5px;
-    }
-    .toggle-switch {
-        position: relative;
-        display: inline-block;
-        width: 40px;
-        height: 20px;
-    }
-    .toggle-switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-    }
-    .toggle-slider {
-        position: absolute;
-        cursor: pointer;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: #ccc;
-        transition: .4s;
-        border-radius: 20px;
-    }
-    .toggle-slider:before {
-        position: absolute;
-        content: "";
-        height: 16px;
-        width: 16px;
-        left: 2px;
-        bottom: 2px;
-        background-color: white;
-        transition: .4s;
-        border-radius: 50%;
-    }
-    input:checked + .toggle-slider {
-        background-color: #2196F3;
-    }
-    input:checked + .toggle-slider:before {
-        transform: translateX(20px);
-    }
-
-    .statistics-wrapper {
-        display: flex;
-        flex-direction: column;
-        width: 100%;
-    }
-
-    .stats-container {
-        width: 100%;
+        
+        .top-stats {
+            grid-template-columns: 1fr;
+        }
+        
+        .toggle-container {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .toggle-item {
+            margin-bottom: 10px;
+        }
     }
 </style>
 
@@ -199,7 +293,6 @@
     </div>
 
     <div class="stats-container">
-
         <div class="stats-box collection-stats">
             <div class="stat-items">
                 <div class="stat-item">
@@ -217,52 +310,54 @@
             </div>
         </div>
 
-        <div class="stats-box recently-aired">
-            <h3>Recently Aired</h3>
-            {% if stats.recently_aired %}
-                <ul>
-                {% for item in stats.recently_aired %}
-                    <li style="color: #FFA500;">
-                        {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
-                        <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
-                    </li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p>No shows aired recently.</p>
-            {% endif %}
-        </div>
+        <div class="top-stats">
+            <div class="stats-box recently-aired">
+                <h3>Recently Aired</h3>
+                {% if stats.recently_aired %}
+                    <ul>
+                    {% for item in stats.recently_aired %}
+                        <li>
+                            {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
+                            <span class="air-date">{{ item.air_datetime }}</span>
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No shows aired recently.</p>
+                {% endif %}
+            </div>
 
-        <div class="stats-box airing-soon">
-            <h3>Airing Soon</h3>
-            {% if stats.airing_soon %}
-                <ul>
-                {% for item in stats.airing_soon %}
-                    <li style="color: #FFA500;">
-                        {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
-                        <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
-                    </li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p>No shows airing soon.</p>
-            {% endif %}
-        </div>
+            <div class="stats-box airing-soon">
+                <h3>Airing Soon</h3>
+                {% if stats.airing_soon %}
+                    <ul>
+                    {% for item in stats.airing_soon %}
+                        <li>
+                            {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
+                            <span class="air-date">{{ item.air_datetime }}</span>
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No shows airing soon.</p>
+                {% endif %}
+            </div>
 
-        <div class="stats-box upcoming-releases">
-            <h3>Upcoming Releases</h3>
-            {% if stats.upcoming_releases %}
-                <ul>
-                {% for item in stats.upcoming_releases %}
-                    <li style="color: #FFA500;">
-                        {{ item.titles|join(', ') }} - 
-                        <span class="release-date" style="color: #f4f4f4;">{{ item.release_date }}</span>
-                    </li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p>No upcoming releases in the next week.</p>
-            {% endif %}
+            <div class="stats-box upcoming-releases">
+                <h3>Upcoming Releases</h3>
+                {% if stats.upcoming_releases %}
+                    <ul>
+                    {% for item in stats.upcoming_releases %}
+                        <li>
+                            {{ item.titles|join(', ') }} - 
+                            <span class="release-date">{{ item.release_date }}</span>
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No upcoming releases in the next week.</p>
+                {% endif %}
+            </div>
         </div>
 
         <div class="stats-box recently-added">
@@ -318,8 +413,6 @@
                 {% endif %}
             </div>
         </div>
-
-
     </div>
 </div>
 
@@ -328,13 +421,11 @@ let initialLoadComplete = false;
 let use24HourFormat = localStorage.getItem('use24HourFormat') !== 'false'; // Default to true if not set
 
 function updateAllTimes() {
-    console.log('Updating all times. use24HourFormat:', use24HourFormat);
     document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
         let originalTime = elem.dataset.originalTime;
         
         if (!originalTime) {
             const originalText = elem.textContent;
-            console.log('Element:', elem, 'Original text:', originalText);
             
             // Match date and time in various formats, including "Sun, 25 Aug 2024 19:00:00 GMT"
             const dateTimeMatch = originalText.match(/(\w{3}, \d{1,2} \w{3} \d{4}) (\d{2}:\d{2}(?::\d{2})?)(?: GMT)?/);
@@ -345,20 +436,17 @@ function updateAllTimes() {
                 elem.dataset.originalTime = originalTime;
                 elem.dataset.datePart = datePart;
             } else {
-                console.log('No valid date-time format found for element:', elem);
                 return;
             }
         }
         
         const formattedTime = formatTime(originalTime);
         const formattedDateTime = `${elem.dataset.datePart} ${formattedTime}`;
-        console.log('Updating date/time:', elem.textContent, '->', formattedDateTime);
         elem.textContent = formattedDateTime;
     });
 }
 
 function formatTime(timeString) {
-    console.log('Formatting time:', timeString, 'use24HourFormat:', use24HourFormat);
     
     const [hours, minutes] = timeString.split(':');
     const hour = parseInt(hours, 10);
@@ -380,7 +468,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     timeFormatToggle.addEventListener('change', function() {
         use24HourFormat = this.checked;
-        console.log('Toggle changed. use24HourFormat:', use24HourFormat);
         // Save the preference to localStorage
         localStorage.setItem('use24HourFormat', use24HourFormat);
         updateAllTimes();
@@ -398,7 +485,6 @@ function updateStatistics() {
     })
     .then(response => response.json())
     .then(data => {
-        console.log('Received statistics data:', data);
         // Update the statistics on the page
         document.getElementById('total-movies').textContent = data.total_movies;
         document.getElementById('total-shows').textContent = data.total_shows;
@@ -483,7 +569,6 @@ function updateRecentlyAdded(movies, shows) {
 }
 
 function updateRecentlyAddedSection(type, items) {
-    console.log(`Updating ${type} section with:`, items);
     const sections = document.querySelectorAll('.recently-added-section');
     let section = null;
     for (let s of sections) {
@@ -516,7 +601,6 @@ function updateRecentlyAddedSection(type, items) {
             </div>
         `).join('');
     } else {
-        console.log(`No items to display for ${type}`);
         container.innerHTML = `<p>No recent additions</p>`;
     }
     if (!section.contains(container)) {
@@ -542,7 +626,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     timeFormatToggle.addEventListener('change', function() {
         use24HourFormat = this.checked;
-        console.log('Toggle changed. use24HourFormat:', use24HourFormat);
         updateAllTimes();
     });
     

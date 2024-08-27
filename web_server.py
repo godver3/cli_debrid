@@ -1320,6 +1320,31 @@ def settings():
         app.logger.error(f"Error in settings route: {str(e)}", exc_info=True)
         return render_template('error.html', error_message="An error occurred while loading settings."), 500
 
+@app.route('/api/program_settings', methods=['GET'])
+@admin_required
+def api_program_settings():
+    try:
+        config = load_config()
+        program_settings = {
+            'Scrapers': config.get('Scrapers', {}),
+            'Content Sources': config.get('Content Sources', {}),
+            'Plex': {
+                'url': config.get('Plex', {}).get('url', ''),
+                'token': config.get('Plex', {}).get('token', '')
+            },
+            'Overseerr': {
+                'url': config.get('Overseerr', {}).get('url', ''),
+                'api_key': config.get('Overseerr', {}).get('api_key', '')
+            },
+            'RealDebrid': {
+                'api_key': config.get('RealDebrid', {}).get('api_key', '')
+            }
+        }
+        return jsonify(program_settings)
+    except Exception as e:
+        app.logger.error(f"Error in api_program_settings route: {str(e)}", exc_info=True)
+        return jsonify({"error": "An error occurred while loading program settings."}), 500
+
 @app.route('/scraping/get')
 def get_scraping_settings():
     config = load_config()
