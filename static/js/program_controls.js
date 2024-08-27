@@ -1,26 +1,68 @@
 import { showPopup, POPUP_TYPES } from './notifications.js';
 
+let currentSettings = {};
+
 export function initializeProgramControls() {
-    const controlButton = document.getElementById('programControlButton');
-    if (!controlButton) return; // Exit if the button doesn't exist
+    const programControlButton = document.getElementById('programControlButton');
+    if (!programControlButton) return;
 
-    let currentStatus = 'Initialized';
-    let currentSettings = {};
+    // Use the initial state from the data attribute
+    const initialStatus = document.body.dataset.programStatus;
+    updateButtonState(initialStatus === 'Running');
 
-    function updateButtonState(status) {
-        const buttonText = status === 'Running' ? 'Stop Program' : 'Start Program';
-        const iconClass = status === 'Running' ? 'fa-stop' : 'fa-play';
-        
-        // Update button content while preserving the icon
-        controlButton.innerHTML = `<i class="fas ${iconClass}"></i> <span class="button-text">${buttonText}</span>`;
-        
-        controlButton.setAttribute('data-status', status === 'Running' ? 'Running' : 'Initialized');
-        controlButton.classList.toggle('stop-program', status === 'Running');
-        controlButton.classList.toggle('start-program', status !== 'Running');
-        
-        controlButton.disabled = false; // Always enable the button
-        currentStatus = status;
-        updateSettingsManagement(status === 'Running');
+    programControlButton.addEventListener('click', toggleProgram);
+
+    function toggleProgram() {
+        const currentStatus = programControlButton.dataset.status;
+        const action = currentStatus === 'Running' ? 'stop' : 'start';
+
+        if (action === 'start') {
+            const conditions = checkRequiredConditions();
+            if (!conditions.canRun) {
+                let errorMessage = "The program cannot start due to the following reasons:<ul>";
+                if (!conditions.scrapersEnabled) {
+                    errorMessage += "<li>No scrapers are enabled. Please enable at least one scraper.</li>";
+                }
+                if (!conditions.contentSourcesEnabled) {
+                    errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
+                }
+                if (!conditions.requiredSettingsComplete) {
+                    errorMessage += "<li>Some required settings are missing. Please fill in all fields in the Required Settings tab (Plex, Overseerr, and RealDebrid settings).</li>";
+                }
+                errorMessage += "</ul>";
+                showErrorPopup(errorMessage);
+                return;
+            }
+        }
+
+        fetch(`/api/${action}_program`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateButtonState(action === 'start');
+                } else {
+                    showErrorPopup(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error controlling program:', error);
+                showErrorPopup('An error occurred while trying to control the program. Please check the console for more details.');
+            });
+    }
+
+    function updateButtonState(isRunning) {
+        if (isRunning) {
+            programControlButton.innerHTML = '<i class="fas fa-stop"></i><span class="button-text">Stop Program</span>';
+            programControlButton.classList.remove('start-program');
+            programControlButton.classList.add('stop-program');
+            programControlButton.dataset.status = 'Running';
+        } else {
+            programControlButton.innerHTML = '<i class="fas fa-play"></i><span class="button-text">Start Program</span>';
+            programControlButton.classList.remove('stop-program');
+            programControlButton.classList.add('start-program');
+            programControlButton.dataset.status = 'Stopped';
+        }
+        updateSettingsManagement(isRunning);
     }
 
     function updateSettingsManagement(isRunning) {
@@ -46,17 +88,6 @@ export function initializeProgramControls() {
         } else if (runningMessage) {
             runningMessage.remove();
         }
-    }
-
-    function updateStatus() {
-        fetch('/api/program_status')
-            .then(response => response.json())
-            .then(data => {
-                updateButtonState(data.running ? 'Running' : 'Initialized');
-            })
-            .catch(error => {
-                console.error('Error fetching program status:', error);
-            });
     }
 
     function checkRequiredConditions() {
@@ -101,54 +132,17 @@ export function initializeProgramControls() {
     function showErrorPopup(message) {
         showPopup({
             type: POPUP_TYPES.ERROR,
-            title: 'Unable to Start Program',
+            title: 'Program Control Error',
             message: message
         });
     }
 
-    controlButton.addEventListener('click', function() {
-        if (currentStatus !== 'Running') {
-            const conditions = checkRequiredConditions();
-            if (!conditions.canRun) {
-                let errorMessage = "The program cannot start due to the following reasons:<ul>";
-                if (!conditions.scrapersEnabled) {
-                    errorMessage += "<li>No scrapers are enabled. Please enable at least one scraper.</li>";
-                }
-                if (!conditions.contentSourcesEnabled) {
-                    errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
-                }
-                if (!conditions.requiredSettingsComplete) {
-                    errorMessage += "<li>Some required settings are missing. Please fill in all fields in the Required Settings tab (Plex, Overseerr, and RealDebrid settings).</li>";
-                }
-                errorMessage += "</ul>";
-                showErrorPopup(errorMessage);
-                return;
-            }
-        }
-
-        const action = currentStatus === 'Running' ? 'reset' : 'start';
-        fetch(`/api/${action}_program`, { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    updateStatus();
-                } else {
-                    showErrorPopup(data.message);
-                }
-            })
-            .catch(error => {
-                console.error('Error controlling program:', error);
-                showErrorPopup('An error occurred while trying to control the program. Please check the console for more details.');
-            });
-    });
-
-    // Fetch current settings
     function fetchSettings() {
         fetch('/api/program_settings')
             .then(response => response.json())
             .then(data => {
                 currentSettings = data;
-                updateStatus(); // Update status after fetching settings
+                updateButtonState(programControlButton.dataset.status === 'Running');
             })
             .catch(error => {
                 console.error('Error fetching program settings:', error);
@@ -159,13 +153,20 @@ export function initializeProgramControls() {
     fetchSettings();
     setInterval(fetchSettings, 30000);
 
-    // Update status every 5 seconds
-    setInterval(updateStatus, 5000);
+    // Fetch program status every 30 seconds
+    setInterval(() => {
+        fetch('/api/program_status')
+            .then(response => response.json())
+            .then(data => {
+                updateButtonState(data.running);
+            })
+            .catch(error => console.error('Error fetching program status:', error));
+    }, 30000);
 
     // Add event listeners to update button state when settings change
     document.addEventListener('change', function(event) {
         if (event.target.matches('#scrapers input[type="checkbox"], #content-sources input[type="checkbox"], #required input')) {
-            updateButtonState(currentStatus);
+            updateButtonState(programControlButton.dataset.status === 'Running');
         }
     });
 }
