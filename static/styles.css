@@ -264,40 +264,6 @@ nav ul li a {
 
 
 
-.queue-container { 
-    display: flex; 
-    flex-direction: column;
-}
-
-.queue { 
-    margin: 10px 0; 
-    background: #444; 
-    padding: 15px; 
-    border-radius: 5px;
-}
-
-.queue-title { 
-    font-size: 18px; 
-    font-weight: bold; 
-    cursor: pointer; 
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.queue-title:hover { 
-    color: #007bff; 
-}
-
-.queue-items { 
-    display: none; 
-    margin-top: 10px; 
-}
-
-.item { 
-    margin-left: 20px; 
-    padding: 5px 0; 
-}
 
 .log-entry {
     font-family: monospace;
@@ -1318,75 +1284,7 @@ h2.searchresult-item {
     background-color: #f44336;
 }
 
-/* Manage Users styles */
-.manage-users {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 20px;
-}
 
-.user-list {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 20px;
-}
-
-.user-list th, .user-list td {
-    padding: 10px;
-    border: 1px solid #555;
-    text-align: left;
-}
-
-.user-list th {
-    background-color: #2a2a2a;
-    color: #f4f4f4;
-}
-
-.user-list tr:nth-child(even) {
-    background-color: #333;
-}
-
-.add-user-form {
-    margin-top: 30px;
-    background-color: #2a2a2a;
-    padding: 20px;
-    border-radius: 5px;
-}
-
-.add-user-form h3 {
-    margin-top: 0;
-    color: #f4f4f4;
-}
-
-.add-user-form input[type="text"],
-.add-user-form input[type="password"],
-.add-user-form select {
-    width: 100%;
-    padding: 10px;
-    margin-bottom: 15px;
-    border: 1px solid #555;
-    border-radius: 3px;
-    background-color: #333;
-    color: #f4f4f4;
-    font-size: 16px;
-    box-sizing: border-box;
-}
-
-.add-user-form input[type="submit"] {
-    width: 100%;
-    padding: 10px;
-    border: none;
-    border-radius: 3px;
-    background-color: #4CAF50;
-    color: white;
-    cursor: pointer;
-    font-size: 16px;
-    transition: background-color 0.3s;
-}
-
-.add-user-form input[type="submit"]:hover {
-    background-color: #45a049;
-}
 
 
 
