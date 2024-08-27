@@ -1,21 +1,24 @@
-document.addEventListener('DOMContentLoaded', function() {
+import { showPopup, POPUP_TYPES } from './notifications.js';
+
+export function initializeProgramControls() {
     const controlButton = document.getElementById('programControlButton');
+    if (!controlButton) return; // Exit if the button doesn't exist
+
     let currentStatus = 'Initialized';
+    let currentSettings = {};
 
     function updateButtonState(status) {
-        const canRun = checkRequiredConditions();
-        if (status === 'Running') {
-            controlButton.textContent = 'Stop Program';
-            controlButton.setAttribute('data-status', 'Running');
-            controlButton.classList.remove('start-program');
-            controlButton.classList.add('stop-program');
-        } else {
-            controlButton.textContent = 'Start Program';
-            controlButton.setAttribute('data-status', 'Initialized');
-            controlButton.classList.remove('stop-program');
-            controlButton.classList.add('start-program');
-        }
-        controlButton.disabled = !canRun && status !== 'Running';
+        const buttonText = status === 'Running' ? 'Stop Program' : 'Start Program';
+        const iconClass = status === 'Running' ? 'fa-stop' : 'fa-play';
+        
+        // Update button content while preserving the icon
+        controlButton.innerHTML = `<i class="fas ${iconClass}"></i> <span class="button-text">${buttonText}</span>`;
+        
+        controlButton.setAttribute('data-status', status === 'Running' ? 'Running' : 'Initialized');
+        controlButton.classList.toggle('stop-program', status === 'Running');
+        controlButton.classList.toggle('start-program', status !== 'Running');
+        
+        controlButton.disabled = false; // Always enable the button
         currentStatus = status;
         updateSettingsManagement(status === 'Running');
     }
@@ -62,35 +65,27 @@ document.addEventListener('DOMContentLoaded', function() {
         let requiredSettingsComplete = true;
 
         // Check if at least one scraper is enabled
-        const scrapers = document.querySelectorAll('#scrapers .settings-section');
-        scrapers.forEach(scraper => {
-            const enabledCheckbox = scraper.querySelector('input[name$=".enabled"]');
-            if (enabledCheckbox && enabledCheckbox.checked) {
-                scrapersEnabled = true;
-            }
-        });
+        if (currentSettings.Scrapers) {
+            scrapersEnabled = Object.values(currentSettings.Scrapers).some(scraper => scraper.enabled);
+        }
 
         // Check if at least one content source is enabled
-        const contentSources = document.querySelectorAll('#content-sources .settings-section');
-        contentSources.forEach(source => {
-            const enabledCheckbox = source.querySelector('input[name$=".enabled"]');
-            if (enabledCheckbox && enabledCheckbox.checked) {
-                contentSourcesEnabled = true;
-            }
-        });
+        if (currentSettings['Content Sources']) {
+            contentSourcesEnabled = Object.values(currentSettings['Content Sources']).some(source => source.enabled);
+        }
 
-        // Explicitly check each required field
+        // Check required settings
         const requiredFields = [
-            'plex-url',
-            'plex-token',
-            'overseerr-url',
-            'overseerr-api_key',
-            'realdebrid-api_key'
+            'Plex.url',
+            'Plex.token',
+            'Overseerr.url',
+            'Overseerr.api_key',
+            'RealDebrid.api_key'
         ];
 
-        requiredFields.forEach(fieldId => {
-            const field = document.getElementById(fieldId);
-            if (!field || !field.value.trim()) {
+        requiredFields.forEach(field => {
+            const [section, key] = field.split('.');
+            if (!currentSettings[section] || !currentSettings[section][key]) {
                 requiredSettingsComplete = false;
             }
         });
@@ -104,16 +99,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function showErrorPopup(message) {
-        const popup = document.createElement('div');
-        popup.className = 'error-popup';
-        popup.innerHTML = `
-            <div class="error-popup-content">
-                <h3>Unable to Start Program</h3>
-                <p>${message}</p>
-                <button onclick="this.parentElement.parentElement.remove()">Close</button>
-            </div>
-        `;
-        document.body.appendChild(popup);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Unable to Start Program',
+            message: message
+        });
     }
 
     controlButton.addEventListener('click', function() {
@@ -152,11 +142,24 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     });
 
-    // Set initial button text
-    controlButton.textContent = 'Start Program';
+    // Fetch current settings
+    function fetchSettings() {
+        fetch('/api/program_settings')
+            .then(response => response.json())
+            .then(data => {
+                currentSettings = data;
+                updateStatus(); // Update status after fetching settings
+            })
+            .catch(error => {
+                console.error('Error fetching program settings:', error);
+            });
+    }
 
-    // Update status immediately and then every 5 seconds
-    updateStatus();
+    // Fetch settings initially and then every 30 seconds
+    fetchSettings();
+    setInterval(fetchSettings, 30000);
+
+    // Update status every 5 seconds
     setInterval(updateStatus, 5000);
 
     // Add event listeners to update button state when settings change
@@ -165,4 +168,4 @@ document.addEventListener('DOMContentLoaded', function() {
             updateButtonState(currentStatus);
         }
     });
-});
+}

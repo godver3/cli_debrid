@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>cli_debrid - {% block title %}{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <!-- <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}"> -->
     
     <!-- Standard favicon -->
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icon-32x32.png') }}">
@@ -37,6 +37,120 @@
     {% endif %}
 </head>
 <style>
+    /* CSS Reset */
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body { 
+        font-family: Arial, sans-serif; 
+        line-height: 1.6; 
+        color: #f4f4f4; 
+        background-color: #333;
+        margin: 0;
+        padding-top: 60px;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+    }
+
+    .container { 
+        width: 95%; 
+        max-width: 1200px;
+        margin: 0 auto; 
+        padding: 20px; 
+        flex-grow: 1;
+    }
+
+    /* Header layout */
+    header {
+        background-color: #1a1a1a;
+        color: white;
+        padding: 5px 20px; 
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.7em; 
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+        height: 50px; 
+    }
+
+    .header-content {
+        display: flex;
+        align-items: center;
+    }
+
+    .header-icon {
+        width: 25px; 
+        height: 25px; 
+        margin-right: 5px; 
+    }
+
+    .title-version {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    h1 {
+        font-size: 1.4em;
+        margin: 0;
+    }
+
+    /* Navigation styles */
+    nav {
+        display: flex;
+        align-items: center;
+    }
+
+    nav ul {
+        list-style-type: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+    }
+
+    nav ul li {
+        margin-right: 10px;
+        position: relative;
+    }
+
+    nav ul li a {
+        color: white;
+        text-decoration: none;
+        font-size: 1.3em;
+        padding: 5px 8px; /* Added padding for larger hit area */
+        transition: color 0.3s ease; /* Smooth transition for color change */
+    }
+
+        /* Hover effect for menu items */
+    nav ul li a::after {
+        content: '';
+        position: absolute;
+        width: 100%;
+        height: 2px;
+        bottom: -2px;
+        left: 0;
+        background-color: #FFA500; /* You can change this color as needed */
+        transform: scaleX(0);
+        transition: transform 0.3s ease;
+    }
+
+    nav ul li a:hover {
+        color: #FFA500; /* Change text color on hover */
+    }
+
+    nav ul li a:hover::after {
+        transform: scaleX(1);
+    }
+
+    /* User and Program Controls */
     .user-controls, .program-controls {
         display: flex;
         align-items: center;
@@ -46,7 +160,7 @@
         display: flex;
         flex-direction: column;
         align-items: flex-end;
-        margin-right: 10px;
+        margin-right: 5px;
     }
 
     .username {
@@ -54,62 +168,46 @@
     }
 
     .version-info {
-        font-size: 0.9em;
+        font-size: 0.8em;
         color: #888;
+    }
+
+    /* Button Styles */
+    .icon-button,
+    .auth-controls a,
+    .user-controls a,
+    #programControlButton {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        background-color: #4CAF50;
+        color: white;
+        text-decoration: none;
+        border: none;
+        border-radius: 3px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: background-color 0.3s, opacity 0.3s;
     }
 
     .icon-button {
         background: none;
-        border: none;
-        cursor: pointer;
-        font-size: 1.5rem;
         color: #007bff;
-        padding: 5px;
-        display: flex;
-        align-items: center;
+        font-size: 1.2rem;
+        padding: 3px;
     }
 
     .icon-button .button-text {
         margin-left: 5px;
     }
 
-    .auth-controls a,
-    .user-controls a,
-    #programControlButton {
-        display: inline-block;
-        padding: 8px 15px;
-        background-color: #4CAF50;
-        color: white;
-        text-decoration: none;
-        border-radius: 3px;
-        transition: background-color 0.3s;
-        border: none;
-        font-size: 14px;
-        cursor: pointer;
-        line-height: 1.5;
-        height: 36px;
-        box-sizing: border-box;
-        vertical-align: middle;
-    }
-
-    /* Program Control Button Styles */
-    #programControlButton {
-        padding: 10px 15px;
-        border: none;
-        border-radius: 5px;
-        font-size: 16px;
-        cursor: pointer;
-        transition: background-color 0.3s, opacity 0.3s;
-    }
-
     #programControlButton.start-program {
         background-color: #4CAF50;
-        color: white;
     }
 
-    #programControlButton.stop-program {
+    #programControlButton.stop-program,
+    #programControlButton[data-status="Running"] {
         background-color: #f44336;
-        color: white;
     }
 
     #programControlButton:disabled {
@@ -117,10 +215,110 @@
         cursor: not-allowed;
     }
 
-    #programControlButton[data-status="Running"] {
-        background-color: #f44336;
+    /* Universal Popup Styles */
+    .universal-popup {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
     }
 
+    .popup-content {
+        background-color: #2a2a2a;
+        padding: 35px;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        max-width: 80%;
+        max-height: 80%;
+        overflow-y: auto;
+        color: #f4f4f4;
+    }
+
+    .popup-content h3 {
+        margin: 0 0 15px;
+        font-size: 1.2em;
+    }
+
+    .popup-content p {
+        margin-bottom: 15px;
+    }
+
+    .popup-content button {
+        padding: 8px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background-color 0.3s;
+    }
+
+    .popup-content button:hover {
+        opacity: 0.9;
+    }
+
+    .popup-buttons {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 20px;
+    }
+
+    #popupInput {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 15px;
+        background-color: #333;
+        border: 1px solid #555;
+        color: #f4f4f4;
+        border-radius: 4px;
+    }
+
+    /* Popup Type-Specific Styles */
+    .popup-content.error { border-left-color: #f44336; }
+    .popup-content.success { border-left-color: #4CAF50; }
+    .popup-content.info { border-left-color: #2196F3; }
+    .popup-content.warning { border-left-color: #FF9800; }
+
+    .popup-content.error h3 { color: #f44336; }
+    .popup-content.success h3 { color: #4CAF50; }
+    .popup-content.info h3 { color: #2196F3; }
+    .popup-content.warning h3 { color: #FF9800; }
+
+    #popupClose, #popupCancel {
+        background-color: #555;
+        color: white;
+        margin-right: 10px;
+    }
+
+    #popupConfirm {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    /* Hamburger menu styles */
+    .hamburger-menu {
+        display: none;
+        flex-direction: column;
+        justify-content: space-between;
+        width: 30px;
+        height: 21px;
+        cursor: pointer;
+    }
+
+    .hamburger-menu .bar {
+        width: 100%;
+        height: 3px;
+        background-color: rgb(191 191 190);
+        border-radius: 3px;
+        transition: all 0.3s ease-in-out;
+    }
+
+    /* Media Queries */
     @media (max-width: 768px) {
         .header-controls {
             display: flex;
@@ -144,13 +342,48 @@
         .icon-button {
             font-size: 1.2rem;
         }
+
+        .hamburger-menu {
+            display: flex;
+        }
+
+        nav ul {
+            display: none;
+            flex-direction: column;
+            position: absolute;
+            top: 30px;
+            left: 0;
+            width: 100%;
+            background-color: #1a1a1a;
+        }
+
+        nav ul.show {
+            display: flex;
+        }
+
+        nav ul li {
+            margin-right: 0;
+            margin-bottom: 5px;
+        }
+
+        nav ul li a {
+            display: block;
+            padding: 10px;
+        }
+
+        nav ul li a::after {
+            bottom: 0;
+        }
     }
 </style>
-<body>
+<body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}">
     <header>
         <div class="header-content">
             <img src="{{ url_for('static', filename='icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
-            <h1>cli_debrid</h1>
+            <div class="title-version">
+                <h1>cli_debrid</h1>
+                <span class="version-info">v{{ version }}</span>
+            </div>
         </div>
         <nav id="mainNav">
             <ul id="navMenu">
@@ -176,7 +409,6 @@
                     <div class="user-controls">
                         <div class="user-info">
                             <span class="username">Welcome, {{ current_user.username }}</span>
-                            <span class="version-info">v{{ version }}</span>
                         </div>
                         <a href="{{ url_for('logout') }}" class="icon-button">
                             <i class="fas fa-sign-out-alt"></i>
@@ -200,7 +432,6 @@
                     </div>
                 {% endif %}
             {% else %}
-                <div class="version-info">v{{ version }}</div>
                 <div class="program-controls">
                     <button id="programControlButton" class="icon-button">
                         <i class="fas fa-play"></i>
@@ -214,6 +445,20 @@
         {% block content %}{% endblock %}
     </main>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script type="module">
+        import { initializeProgramControls } from "{{ url_for('static', filename='js/program_controls.js') }}";
+        import { showPopup, POPUP_TYPES } from "{{ url_for('static', filename='js/notifications.js') }}";
+
+        document.addEventListener('DOMContentLoaded', function() {
+            if (document.getElementById('programControlButton')) {
+                initializeProgramControls();
+            }
+            
+            // Make showPopup and POPUP_TYPES available globally
+            window.showPopup = showPopup;
+            window.POPUP_TYPES = POPUP_TYPES;
+        });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
