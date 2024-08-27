@@ -909,7 +909,7 @@ def statistics():
     
     # Fetch recently added items from the database
     recently_added_start = time.time()
-    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5, days=7))
+    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
     recently_added_end = time.time()
     
     stats = {
@@ -923,8 +923,8 @@ def statistics():
         'today': now.date(),
         'yesterday': (now - timedelta(days=1)).date(),
         'tomorrow': (now + timedelta(days=1)).date(),
-        'recently_added_movies': [item for item in recently_added if item['type'] == 'movie'],
-        'recently_added_shows': [item for item in recently_added if item['type'] == 'show'],
+        'recently_added_movies': recently_added['movies'],  # Changed this line
+        'recently_added_shows': recently_added['shows'],   # Changed this line
         'timezone': time.tzname[0]
     }
 
