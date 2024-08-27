@@ -1173,8 +1173,6 @@ def logs():
     logs = get_recent_logs(500)  # Get the 500 most recent log entries
     return render_template('logs.html', logs=logs)
 
-from datetime import datetime
-
 @app.route('/api/logs')
 @admin_required
 def api_logs():
