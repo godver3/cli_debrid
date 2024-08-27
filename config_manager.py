@@ -305,6 +305,19 @@ def get_version_settings(version):
     
     return settings
 
+def get_content_source_settings():
+    config = load_config()
+    content_sources = config.get('Content Sources', {})
+    
+    # Create a dictionary of content source types and their settings
+    content_source_settings = {}
+    for source_id, source_config in content_sources.items():
+        source_type = source_config.get('type')
+        if source_type not in content_source_settings:
+            content_source_settings[source_type] = SETTINGS_SCHEMA['Content Sources']['schema'].get(source_type, {})
+    
+    return content_source_settings
+
 def update_scraper(scraper_id, scraper_config):
     config = load_config()
     if 'Scrapers' in config and scraper_id in config['Scrapers']:
