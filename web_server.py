@@ -25,7 +25,7 @@ from shared import app, update_stats
 from run_program import ProgramRunner
 from queue_utils import safe_process_queue
 from run_program import process_overseerr_webhook, ProgramRunner
-from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings, update_all_content_sources, clean_notifications
+from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings, update_all_content_sources, clean_notifications, get_content_source_settings
 from settings_schema import SETTINGS_SCHEMA
 from trakt.core import get_device_code, get_device_token
 from scraper.scraper import scrape
@@ -1360,7 +1360,21 @@ def settings():
         config = clean_notifications(config)  # Clean notifications before rendering
         scraper_types = list(scraper_manager.scraper_settings.keys())
         source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
-        
+
+        # Fetch content source settings
+        content_source_settings_response = get_content_source_settings_route()
+        if isinstance(content_source_settings_response, Response):
+            content_source_settings = content_source_settings_response.get_json()
+        else:
+            content_source_settings = content_source_settings_response        
+            
+        # Fetch scraping versions
+        scraping_versions_response = get_scraping_versions()
+        if isinstance(scraping_versions_response, Response):
+            scraping_versions = scraping_versions_response.get_json()['versions']
+        else:
+            scraping_versions = scraping_versions_response['versions']
+
         # Ensure 'Scrapers' exists in the config
         if 'Scrapers' not in config:
             config['Scrapers'] = {}
@@ -1414,7 +1428,8 @@ def settings():
                                scraper_types=scraper_types, 
                                scraper_settings=scraper_manager.scraper_settings,
                                source_types=source_types,
-                               content_source_settings=SETTINGS_SCHEMA['Content Sources']['schema'],
+                               content_source_settings=content_source_settings,
+                               scraping_versions=scraping_versions,
                                settings_schema=SETTINGS_SCHEMA)
     except Exception as e:
         app.logger.error(f"Error in settings route: {str(e)}", exc_info=True)
@@ -1826,6 +1841,25 @@ def scraper_tester():
     return render_template('scraper_tester.html', versions=versions)
 
 @app.route('/get_scraping_versions', methods=['GET'])
+def get_scraping_versions_route():
+    try:
+        config = load_config()
+        versions = config.get('Scraping', {}).get('versions', {}).keys()
+        return jsonify({'versions': list(versions)})
+    except Exception as e:
+        app.logger.error(f"Error getting scraping versions: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    
+@app.route('/get_content_source_settings', methods=['GET'])
+def get_content_source_settings_route():
+    try:
+        content_source_settings = get_content_source_settings()
+        return jsonify(content_source_settings)
+    except Exception as e:
+        app.logger.error(f"Error getting content source settings: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get_scraping_versions', methods=['GET'])
 def get_scraping_versions():
     try:
         config = load_config()
@@ -1836,7 +1870,7 @@ def get_scraping_versions():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/get_version_settings')
-def get_version_settings_route():
+def get_version_settings():
     try:
         version = request.args.get('version')
         if not version:

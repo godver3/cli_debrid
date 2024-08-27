@@ -17,6 +17,7 @@ export function showPopup(options) {
         confirmText = 'Confirm',
         cancelText = 'Cancel',
         inputPlaceholder,
+        dropdownOptions,
         onConfirm,
         onCancel,
         autoClose = 5000 // Auto close after 5 seconds for non-interactive popups
@@ -32,7 +33,14 @@ export function showPopup(options) {
     `;
 
     if (type === POPUP_TYPES.PROMPT) {
-        content += `<input type="text" id="popupInput" placeholder="${inputPlaceholder || ''}">`;
+        if (dropdownOptions) {
+            content += `
+                <select id="popupDropdown">
+                    ${dropdownOptions.map(option => `<option value="${option.value}">${option.text}</option>`).join('')}
+                </select>`;
+        } else {
+            content += `<input type="text" id="popupInput" placeholder="${inputPlaceholder || ''}">`;
+        }
     }
 
     if (type === POPUP_TYPES.CONFIRM || type === POPUP_TYPES.PROMPT) {
@@ -124,6 +132,15 @@ export function showPopup(options) {
         .universal-popup .popup-content.success h3 { color: #4CAF50; }
         .universal-popup .popup-content.info h3 { color: #2196F3; }
         .universal-popup .popup-content.warning h3 { color: #FF9800; }
+        .universal-popup #popupDropdown {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            background-color: #333;
+            border: 1px solid #555;
+            color: #f4f4f4;
+            border-radius: 4px;
+        }
     `;
     document.head.appendChild(style);
 
@@ -133,17 +150,35 @@ export function showPopup(options) {
     }
 
     if (type === POPUP_TYPES.CONFIRM || type === POPUP_TYPES.PROMPT) {
-        document.getElementById('popupConfirm').addEventListener('click', () => {
-            const inputValue = type === POPUP_TYPES.PROMPT ? document.getElementById('popupInput').value : null;
-            if (onConfirm) onConfirm(inputValue);
-            closePopup();
-        });
-        document.getElementById('popupCancel').addEventListener('click', () => {
-            if (onCancel) onCancel();
-            closePopup();
-        });
+        const confirmButton = popup.querySelector('#popupConfirm');
+        const cancelButton = popup.querySelector('#popupCancel');
+
+        if (confirmButton) {
+            confirmButton.addEventListener('click', () => {
+                let inputValue;
+                if (type === POPUP_TYPES.PROMPT) {
+                    if (dropdownOptions) {
+                        inputValue = popup.querySelector('#popupDropdown').value;
+                    } else {
+                        inputValue = popup.querySelector('#popupInput').value;
+                    }
+                }
+                if (onConfirm) onConfirm(inputValue);
+                closePopup();
+            });
+        }
+
+        if (cancelButton) {
+            cancelButton.addEventListener('click', () => {
+                if (onCancel) onCancel();
+                closePopup();
+            });
+        }
     } else {
-        document.getElementById('popupClose').addEventListener('click', closePopup);
+        const closeButton = popup.querySelector('#popupClose');
+        if (closeButton) {
+            closeButton.addEventListener('click', closePopup);
+        }
         if (autoClose) {
             setTimeout(closePopup, autoClose);
         }

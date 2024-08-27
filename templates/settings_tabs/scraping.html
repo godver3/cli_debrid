@@ -6,30 +6,273 @@
 
 <button id="add-version-btn" class="add-version-link">Add New Version</button>
 
-<div id="add-version-popup" class="popup">
-    <div class="popup-content">
-        <h4>Add New Version</h4>
-        <form id="add-version-form">
-            <div class="form-group">
-                <label for="version-name">Version Name:</label>
-                <input type="text" id="version-name" name="name" required>
-            </div>
-            <button type="submit">Add Version</button>
-            <button type="button" id="cancel-add-version">Cancel</button>
-        </form>
-    </div>
-</div>
+<script>
+    function initializeScrapingFunctionality() {
+        initializeAddVersionButton();
+        initializeVersionButtons();
+        initializeFilterButtons();
+    }
+
+    function initializeAddVersionButton() {
+        const addButton = document.querySelector('#add-version-btn');
+        if (addButton) {
+            addButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                showAddVersionPopup();
+            });
+        } else {
+            console.error('Add version button not found');
+        }
+    }
+
+    function showAddVersionPopup() {
+        window.showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Version',
+            message: 'Enter a name for the new version:',
+            inputPlaceholder: 'Version name',
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: (versionName) => {
+                if (versionName) {
+                    addVersion(versionName);
+                } else {
+                    console.error('No version name entered');
+                }
+            }
+        });
+    }
+
+    function addVersion(versionName) {
+        fetch('/versions/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name: versionName })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('scraping', () => {
+                    window.initializeExpandCollapse();
+                    window.showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: 'Version added successfully',
+                    });
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding version:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding version: ' + error.message
+            });
+        });
+    }
+
+    function initializeVersionButtons() {
+        document.querySelectorAll('.rename-version-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const versionId = this.getAttribute('data-version-id');
+                renameVersion(versionId);
+            });
+        });
+
+        document.querySelectorAll('.duplicate-version-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const versionId = this.getAttribute('data-version-id');
+                duplicateVersion(versionId);
+            });
+        });
+
+        document.querySelectorAll('.delete-version-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const versionId = this.getAttribute('data-version-id');
+                deleteVersion(versionId);
+            });
+        });
+    }
+
+    function renameVersion(versionId) {
+        window.showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Rename Version',
+            message: 'Enter a new name for the version:',
+            inputPlaceholder: 'New version name',
+            confirmText: 'Rename',
+            cancelText: 'Cancel',
+            onConfirm: (newName) => {
+                if (newName) {
+                    fetch('/versions/rename', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ old_name: versionId, new_name: newName })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            window.reloadTabContent('scraping', () => {
+                                window.initializeExpandCollapse();
+                                window.showPopup({
+                                    type: POPUP_TYPES.SUCCESS,
+                                    message: 'Version renamed successfully',
+                                });
+                            });
+                        } else {
+                            throw new Error(data.error || 'Unknown error');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error renaming version:', error);
+                        window.showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'Error renaming version: ' + error.message
+                        });
+                    });
+                }
+            }
+        });
+    }
+
+    function duplicateVersion(versionId) {
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Duplicate Version',
+            message: 'Are you sure you want to duplicate this version?',
+            confirmText: 'Duplicate',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/versions/duplicate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ version_id: versionId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.reloadTabContent('scraping', () => {
+                            window.initializeExpandCollapse();
+                            window.showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: 'Version duplicated successfully',
+                            });
+                        });
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error duplicating version:', error);
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error duplicating version: ' + error.message
+                    });
+                });
+            }
+        });
+    }
+
+    function deleteVersion(versionId) {
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Version',
+            message: 'Are you sure you want to delete this version?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/versions/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ version_id: versionId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.reloadTabContent('scraping', () => {
+                            window.initializeExpandCollapse();
+                            window.showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: 'Version deleted successfully',
+                            });
+                        });
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting version:', error);
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error deleting version: ' + error.message
+                    });
+                });
+            }
+        });
+    }
+
+    function initializeFilterButtons() {
+        document.querySelectorAll('.add-filter-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const versionId = this.getAttribute('data-version-id');
+                const filterType = this.getAttribute('data-filter-type');
+                addFilterItem(versionId, filterType);
+            });
+        });
+
+        // Initialize remove filter buttons
+        document.querySelectorAll('.filter-list').forEach(list => {
+            list.addEventListener('click', function(event) {
+                if (event.target.classList.contains('remove-filter')) {
+                    event.target.closest('.filter-item').remove();
+                }
+            });
+        });
+    }
+
+    function addFilterItem(version, filterType) {
+        const list = document.querySelector(`.filter-list[data-version="${version}"][data-filter-type="${filterType}"]`);
+        const newItem = document.createElement('div');
+        newItem.className = 'filter-item';
+
+        if (filterType.startsWith('preferred_')) {
+            newItem.innerHTML = `
+                <input type="text" class="filter-term" placeholder="Term">
+                <input type="number" class="filter-weight" min="1" value="1" placeholder="Weight">
+                <button type="button" class="remove-filter">Remove</button>
+            `;
+        } else {
+            newItem.innerHTML = `
+                <input type="text" class="filter-term" placeholder="Term">
+                <button type="button" class="remove-filter">Remove</button>
+            `;
+        }
+
+        list.appendChild(newItem);
+    }
+
+    document.addEventListener('dashboardInitialized', function() {
+        initializeScrapingFunctionality();
+    });
+</script>
 
 {% for version, config in settings.Scraping.versions.items() %}
 <div class="settings-section" data-version-id="{{ version }}">
     <div class="settings-section-header">
         <span class="settings-toggle-icon">+</span>
         <h4>{{ version }}</h4>
-        <div class="version-buttons">
-            <button class="rename-version-btn" data-version-id="{{ version }}">Rename</button>
-            <button class="duplicate-version-btn" data-version-id="{{ version }}">Duplicate</button>
-            <button class="delete-version-btn" data-version-id="{{ version }}">Delete</button>
-        </div>
+        <button type="button" class="rename-version-btn" data-version-id="{{ version }}">Rename</button>
+        <button type="button" class="duplicate-version-btn" data-version-id="{{ version }}">Duplicate</button>
+        <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete</button>
     </div>
     <div class="settings-section-content">
         {% for key, value in config.items() %}
@@ -62,29 +305,54 @@
             {% endif %}
         {% endfor %}
         
-        {% for filter_type in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
-            <div class="settings-form-group">
-                <label class="settings-title">{{ filter_type|replace('_', ' ')|title }}:</label>
-                <div class="filter-list" data-version="{{ version }}" data-filter-type="{{ filter_type }}">
-                    {% for item in config.get(filter_type, []) %}
-                        <div class="filter-item">
-                            {% if filter_type.startswith('preferred_') %}
-                                <input type="text" value="{{ item[0] }}" class="filter-term">
-                                <input type="number" value="{{ item[1] }}" class="filter-weight" min="1">
-                            {% else %}
-                                <input type="text" value="{{ item }}" class="filter-term">
-                            {% endif %}
-                            <button type="button" class="remove-filter">Remove</button>
-                        </div>
-                    {% endfor %}
+        <div class="filter-section">
+            <h5>Filters</h5>
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="filter_in">Add Filter In</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_in">
+                {% for filter in config.filter_in %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}">
+                    <button type="button" class="remove-filter">Remove</button>
                 </div>
-                <button type="button" class="add-filter" data-version="{{ version }}" data-filter-type="{{ filter_type }}">Add {{ filter_type|replace('_', ' ')|title }}</button>
+                {% endfor %}
             </div>
-        {% endfor %}
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="filter_out">Add Filter Out</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_out">
+                {% for filter in config.filter_out %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}">
+                    <button type="button" class="remove-filter">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="preferred-filter-section">
+            <h5>Preferred Filters</h5>
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="preferred_filter_in">Add Preferred Filter In</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_in">
+                {% for filter, weight in config.preferred_filter_in %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}">
+                    <input type="number" class="filter-weight" min="1" value="{{ weight }}">
+                    <button type="button" class="remove-filter">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="preferred_filter_out">Add Preferred Filter Out</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_out">
+                {% for filter, weight in config.preferred_filter_out %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}">
+                    <input type="number" class="filter-weight" min="1" value="{{ weight }}">
+                    <button type="button" class="remove-filter">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
     </div>
 </div>
 {% endfor %}
-
 <div class="settings-section">
     <div class="settings-section-header">
         <h4>Other Scraping Settings</h4>
