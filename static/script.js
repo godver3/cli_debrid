@@ -1,4 +1,4 @@
-console.log('Script started');
+error fetchingconsole.log('Script started');
 
 let deleteInProgress = false;
 let isEventListenerAttached = false;
