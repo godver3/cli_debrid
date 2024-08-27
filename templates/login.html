@@ -14,6 +14,51 @@
     .login-reminder strong {
         color: #333;
     }
+
+    .auth-form {
+        max-width: 300px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: #2a2a2a;
+        border-radius: 5px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .auth-form h2 {
+        text-align: center;
+        color: #f4f4f4;
+        margin-bottom: 20px;
+    }
+
+    /* Update the input styles to include password fields */
+    .auth-form input[type="text"],
+    .auth-form input[type="password"] {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 15px;
+        border: 1px solid #555;
+        border-radius: 3px;
+        background-color: #333;
+        color: #f4f4f4;
+        font-size: 16px;
+        box-sizing: border-box; /* This ensures padding is included in the width */
+    }
+
+    .auth-form input[type="submit"] {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 3px;
+        background-color: #4CAF50;
+        color: white;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background-color 0.3s;
+    }
+
+    .auth-form input[type="submit"]:hover {
+        background-color: #45a049;
+    }
 </style>
 <div class="auth-form">
     <h2>Login</h2>
