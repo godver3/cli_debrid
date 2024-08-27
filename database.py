@@ -16,6 +16,7 @@ import time
 import aiohttp
 import asyncio
 from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
+from aiohttp import ClientConnectorError, ClientResponseError, ServerTimeoutError
 
 def get_db_connection():
     db_path = os.path.join('db_content', 'media_items.db')
@@ -591,15 +592,15 @@ def add_collected_items(media_items_batch, recent=False):
                     if item_type == 'movie':
                         conn.execute('''
                             UPDATE media_items
-                            SET state = ?, last_updated = ?, collected_at = ?
+                            SET state = ?, last_updated = ?
                             WHERE id = ?
-                        ''', ('Collected', datetime.now(), datetime.now(), item_id))
+                        ''', ('Collected', datetime.now(), item_id))
                     else:
                         conn.execute('''
                             UPDATE media_items
-                            SET state = ?, last_updated = ?, collected_at = ?, airtime = ?
+                            SET state = ?, last_updated = ?, airtime = ?
                             WHERE id = ?
-                        ''', ('Collected', datetime.now(), datetime.now(), airtime, item_id))
+                        ''', ('Collected', datetime.now(), airtime, item_id))
                     logging.debug(f"Updating existing item to Collected: {normalized_title}")
                 else:
                     # Insert new item
@@ -1094,116 +1095,119 @@ def bulk_delete_by_imdb_id(imdb_id):
     finally:
         conn.close()
 
-async def get_recently_added_items(movie_limit=5, show_limit=5, days=7):
-    start_time = time.time()
+from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
+
+async def get_recently_added_items(movie_limit=5, show_limit=5):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
-        threshold_date = datetime.now() - timedelta(days=days)
+        # Query for movies
+        movie_query = """
+        SELECT title, year, type, collected_at, imdb_id, tmdb_id, version
+        FROM media_items
+        WHERE type = 'movie' AND collected_at IS NOT NULL
+        ORDER BY collected_at DESC
+        LIMIT ?
+        """
         
-        query = """
+        # Query for episodes
+        episode_query = """
         SELECT title, year, type, season_number, episode_number, collected_at, imdb_id, tmdb_id, version
         FROM media_items
-        WHERE collected_at > ?
+        WHERE type = 'episode' AND collected_at IS NOT NULL
         ORDER BY collected_at DESC
         """
         
-        query_start = time.time()
-        cursor.execute(query, (threshold_date,))
-        results = cursor.fetchall()
-        query_end = time.time()
+        cursor.execute(movie_query, (movie_limit,))
+        movie_results = cursor.fetchall()
+        
+        cursor.execute(episode_query)
+        episode_results = cursor.fetchall()
         
         movies = []
         shows = {}
         
-        process_start = time.time()
         async with aiohttp.ClientSession() as session:
             poster_tasks = []
-            for row in results:
+            
+            # Process movies
+            for row in movie_results:
                 item = dict(row)
-                
-                if item['collected_at']:
-                    item['collected_at'] = datetime.fromisoformat(item['collected_at']).isoformat()
-                
-                media_type = 'movie' if item['type'] == 'movie' else 'tv'
-                
-                # Check cache for poster URL
+                media_type = 'movie'
                 cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
                 if cached_url:
                     item['poster_url'] = cached_url
                 else:
-                    # Create a task for fetching the poster URL
                     poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
-                    poster_tasks.append((item, poster_task))
+                    poster_tasks.append((item, poster_task, media_type))
+                movies.append(item)
+            
+            # Process episodes
+            for row in episode_results:
+                item = dict(row)
+                media_type = 'tv'
                 
-                if item['type'] == 'movie':
-                    if len(movies) < movie_limit:
-                        movies.append(item)
-                elif item['type'] == 'episode':
-                    if item['title'] not in shows and len(shows) < show_limit:
-                        shows[item['title']] = {
-                            'title': item['title'],
-                            'year': item['year'],
-                            'type': 'show',
-                            'collected_at': item['collected_at'],
-                            'imdb_id': item['imdb_id'],
-                            'tmdb_id': item['tmdb_id'],
-                            'seasons': [item['season_number']],
-                            'latest_episode': (item['season_number'], item['episode_number']),
-                            'versions': [item['version']],
-                            'poster_url': item.get('poster_url')  # Add this line
-                        }
-                    elif item['title'] in shows:
-                        show = shows[item['title']]
-                        if item['season_number'] not in show['seasons']:
-                            show['seasons'].append(item['season_number'])
-                        show['collected_at'] = max(show['collected_at'], item['collected_at'])
-                        show['latest_episode'] = max(show['latest_episode'], (item['season_number'], item['episode_number']))
-                        if item['version'] not in show['versions']:
-                            show['versions'].append(item['version'])
-                        if 'poster_url' not in show and 'poster_url' in item:
-                            show['poster_url'] = item['poster_url']
-                
-                if len(movies) >= movie_limit and len(shows) >= show_limit:
-                    break
+                if item['title'] not in shows and len(shows) < show_limit:
+                    show_item = {
+                        'title': item['title'],
+                        'year': item['year'],
+                        'type': 'show',
+                        'collected_at': item['collected_at'],
+                        'imdb_id': item['imdb_id'],
+                        'tmdb_id': item['tmdb_id'],
+                        'seasons': [item['season_number']],
+                        'latest_episode': (item['season_number'], item['episode_number']),
+                        'versions': [item['version']]
+                    }
+                    cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
+                    if cached_url:
+                        show_item['poster_url'] = cached_url
+                    else:
+                        poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
+                        poster_tasks.append((show_item, poster_task, media_type))
+                    shows[item['title']] = show_item
+                elif item['title'] in shows:
+                    show = shows[item['title']]
+                    if item['season_number'] not in show['seasons']:
+                        show['seasons'].append(item['season_number'])
+                    show['collected_at'] = max(show['collected_at'], item['collected_at'])
+                    show['latest_episode'] = max(show['latest_episode'], (item['season_number'], item['episode_number']))
+                    if item['version'] not in show['versions']:
+                        show['versions'].append(item['version'])
             
             # Wait for all poster URL tasks to complete
-            poster_start = time.time()
-            await asyncio.gather(*[task for _, task in poster_tasks])
-            poster_end = time.time()
+            poster_results = await asyncio.gather(*[task for _, task, _ in poster_tasks], return_exceptions=True)
             
             # Assign poster URLs to items and cache them
-            for item, task in poster_tasks:
-                url = await task
-                item['poster_url'] = url
-                cache_poster_url(item['tmdb_id'], 'movie' if item['type'] == 'movie' else 'tv', url)
-                
-                # Update show poster URL if this is a TV show episode
-                if item['type'] == 'episode' and item['title'] in shows:
-                    shows[item['title']]['poster_url'] = url
+            for (item, _, media_type), result in zip(poster_tasks, poster_results):
+                if isinstance(result, Exception):
+                    logging.error(f"Error fetching poster for {media_type} with TMDB ID {item['tmdb_id']}: {result}")
+                elif result:
+                    item['poster_url'] = result
+                    cache_poster_url(item['tmdb_id'], media_type, result)
+                else:
+                    logging.warning(f"No poster URL found for {media_type} with TMDB ID {item['tmdb_id']}")
+
         
-        process_end = time.time()
+        # Convert shows dict to list and sort
+        shows_list = list(shows.values())
+        shows_list.sort(key=lambda x: x['collected_at'], reverse=True)
         
-        recently_added = movies + list(shows.values())
-        recently_added.sort(key=lambda x: x['collected_at'], reverse=True)
-        
-        for item in recently_added:
+        # Final processing
+        for item in movies + shows_list:
             if 'seasons' in item:
-                item['seasons'].sort()  # Sort the seasons list
+                item['seasons'].sort()
             if 'versions' in item:
-                item['versions'].sort()  # Sort the versions list
+                item['versions'].sort()
         
         # Clean expired cache entries
         clean_expired_cache()
-        
-        end_time = time.time()
-        total_time = end_time - start_time
 
-        return recently_added
+        return {'movies': movies, 'shows': shows_list[:show_limit]}
     except Exception as e:
         logging.error(f"Error in get_recently_added_items: {str(e)}")
-        return []
+        return {'movies': [], 'shows': []}
     finally:
         conn.close()
 
@@ -1214,18 +1218,34 @@ async def get_poster_url(session, tmdb_id, media_type):
     overseerr_api_key = get_setting('Overseerr', 'api_key', '')
     
     if not overseerr_url or not overseerr_api_key:
+        logging.warning("Overseerr URL or API key is missing")
         return None
     
     headers = get_overseerr_headers(overseerr_api_key)
     
     url = f"{overseerr_url}/api/v1/{media_type}/{tmdb_id}"
+    
     try:
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, timeout=10) as response:
             if response.status == 200:
                 data = await response.json()
                 poster_path = data.get('posterPath')
                 if poster_path:
                     return f"https://image.tmdb.org/t/p/w300{poster_path}"
+                else:
+                    logging.warning(f"No poster path found for {media_type} with TMDB ID {tmdb_id}")
+            else:
+                logging.error(f"Overseerr API returned status {response.status} for {media_type} with TMDB ID {tmdb_id}")
+                
+    except ClientConnectorError as e:
+        logging.error(f"Unable to connect to Overseerr: {e}")
+    except ServerTimeoutError:
+        logging.error(f"Timeout while connecting to Overseerr for {media_type} with TMDB ID {tmdb_id}")
+    except ClientResponseError as e:
+        logging.error(f"Overseerr API error: {e}")
+    except asyncio.TimeoutError:
+        logging.error(f"Request to Overseerr timed out for {media_type} with TMDB ID {tmdb_id}")
     except Exception as e:
-        print(f"Error fetching poster URL: {e}")
+        logging.error(f"Unexpected error fetching poster URL for {media_type} with TMDB ID {tmdb_id}: {e}")
+    
     return None
