@@ -43,10 +43,16 @@ class WantedQueue:
             try:
                 # Determine airtime offset based on content type
                 if item['type'] == 'movie':
-                    airtime_offset = int(get_setting("Queue", "movie_airtime_offset", "19"))
+                    movie_airtime_offset = get_setting("Queue", "movie_airtime_offset", "19")
+                    if not movie_airtime_offset:
+                        logging.warning("movie_airtime_offset setting is empty, using default value of 19")
+                    airtime_offset = int(movie_airtime_offset) if movie_airtime_offset else 19
                     airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(hours=airtime_offset)).time()
                 elif item['type'] == 'episode':
-                    airtime_offset = int(get_setting("Queue", "episode_airtime_offset", "0"))
+                    episode_airtime_offset = get_setting("Queue", "episode_airtime_offset", "0")
+                    if not episode_airtime_offset:
+                        logging.warning("episode_airtime_offset setting is empty, using default value of 0")
+                    airtime_offset = int(episode_airtime_offset) if episode_airtime_offset else 0
                     
                     # Get the airtime from the database
                     conn = get_db_connection()

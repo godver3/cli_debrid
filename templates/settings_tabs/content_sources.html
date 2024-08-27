@@ -4,23 +4,260 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 <button id="add-source-btn" class="add-source-link">Add New Source</button>
-<div id="add-source-popup" class="popup">
-    <div class="popup-content">
-        <h4>Add New Content Source</h4>
-        <form id="add-source-form">
-            <div class="form-group">
-                <label for="source-type">Source Type:</label>
-                <select id="source-type" name="type" required>
-                    {% for source_type in source_types %}
-                        <option value="{{ source_type }}">{{ source_type }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <button type="submit">Add Source</button>
-            <button type="button" id="cancel-add-source">Cancel</button>
-        </form>
-    </div>
-</div>
+
+<script>
+    let contentSourceSettingsLoaded = false;
+    let scrapingVersionsLoaded = false;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSettings();
+    });
+
+    function loadSettings() {
+        Promise.all([
+            fetch('/get_content_source_settings').then(response => response.json()),
+            fetch('/get_scraping_versions').then(response => response.json())
+        ]).then(([contentSourceSettings, scrapingVersions]) => {
+            window.contentSourceSettings = contentSourceSettings;
+            window.scrapingVersions = scrapingVersions.versions;
+            contentSourceSettingsLoaded = true;
+            scrapingVersionsLoaded = true;
+            initializeContentSourcesFunctionality();
+        }).catch(error => {
+            console.error('Error fetching settings:', error);
+        });
+    }
+
+    function initializeContentSourcesFunctionality() {
+        initializeAddSourceButton();
+        initializeSourceButtons();
+    }
+
+    function initializeAddSourceButton() {
+        const addButton = document.getElementById('add-source-btn');
+        if (addButton) {
+            addButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                if (contentSourceSettingsLoaded && scrapingVersionsLoaded) {
+                    showAddSourcePopup();
+                } else {
+                    console.error('Settings not loaded yet');
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Settings are still loading. Please try again in a moment.'
+                    });
+                }
+            });
+        } else {
+            console.error('Add source button not found');
+        }
+    }
+
+    function showAddSourcePopup() {
+        const sourceTypes = Object.keys(window.contentSourceSettings);
+        if (sourceTypes.length === 0) {
+            console.error('No content source types available');
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'No content source types available. Please check your configuration.'
+            });
+            return;
+        }
+
+        let sourceTypeOptions = sourceTypes.map(type => `<option value="${type}">${type}</option>`).join('');
+        
+        window.showPopup({
+            type: POPUP_TYPES.CUSTOM,
+            title: 'Add New Content Source',
+            content: `
+                <form id="add-source-form">
+                    <div class="form-group">
+                        <label for="source-type">Source Type:</label>
+                        <select id="source-type" name="type" required>
+                            ${sourceTypeOptions}
+                        </select>
+                    </div>
+                    <div id="dynamic-fields"></div>
+                </form>
+            `,
+            confirmText: 'Add Source',
+            cancelText: 'Cancel',
+            onShow: () => {
+                const sourceTypeSelect = document.getElementById('source-type');
+                sourceTypeSelect.addEventListener('change', updateDynamicFields);
+                updateDynamicFields();
+            },
+            onConfirm: () => {
+                const form = document.getElementById('add-source-form');
+                const formData = new FormData(form);
+                const sourceData = Object.fromEntries(formData.entries());
+                addContentSource(sourceData);
+            }
+        });
+    }
+
+    function updateDynamicFields() {
+        const sourceType = document.getElementById('source-type').value;
+        const dynamicFields = document.getElementById('dynamic-fields');
+        dynamicFields.innerHTML = '';
+
+        const settings = window.contentSourceSettings[sourceType];
+        if (!settings) {
+            console.error(`Settings for ${sourceType} are not defined`);
+            return;
+        }
+
+        Object.entries(settings).forEach(([setting, config]) => {
+            if (setting !== 'type' && !setting.startsWith('_')) {
+                const field = createFormField(setting, '', config.type);
+                dynamicFields.appendChild(field);
+            }
+        });
+
+        // Add version checkboxes
+        const versionsField = createVersionsField();
+        dynamicFields.appendChild(versionsField);
+    }
+
+    function createFormField(setting, value, type) {
+        const div = document.createElement('div');
+        div.className = 'form-group';
+        
+        const label = document.createElement('label');
+        label.htmlFor = setting;
+        label.textContent = setting.charAt(0).toUpperCase() + setting.slice(1) + ':';
+        
+        let input;
+        if (type === 'boolean') {
+            input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = value;
+        } else {
+            input = document.createElement('input');
+            input.type = 'text';
+            input.value = value;
+        }
+        
+        input.id = setting;
+        input.name = setting;
+        input.className = 'settings-input';
+        
+        div.appendChild(label);
+        div.appendChild(input);
+        return div;
+    }
+
+    function createVersionsField() {
+        const div = document.createElement('div');
+        div.className = 'form-group';
+        
+        const label = document.createElement('label');
+        label.textContent = 'Versions:';
+        div.appendChild(label);
+
+        const versionsDiv = document.createElement('div');
+        versionsDiv.className = 'version-checkboxes';
+
+        Object.keys(window.scrapingVersions).forEach(version => {
+            const checkboxLabel = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = 'versions';
+            checkbox.value = version;
+            checkboxLabel.appendChild(checkbox);
+            checkboxLabel.appendChild(document.createTextNode(` ${version}`));
+            versionsDiv.appendChild(checkboxLabel);
+        });
+
+        div.appendChild(versionsDiv);
+        return div;
+    }
+
+    function addContentSource(sourceData) {
+        fetch('/content_sources/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(sourceData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('content-sources', () => {
+                    window.initializeExpandCollapse();
+                    window.showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: 'Content source added successfully',
+                    });
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding content source:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding content source: ' + error.message
+            });
+        });
+    }
+
+    function initializeSourceButtons() {
+        document.querySelectorAll('.delete-source-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const sourceId = this.getAttribute('data-source-id');
+                deleteContentSource(sourceId);
+            });
+        });
+    }
+
+    function deleteContentSource(sourceId) {
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Content Source',
+            message: `Are you sure you want to delete the source "${sourceId}"?`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/content_sources/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ source_id: sourceId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.reloadTabContent('content-sources', () => {
+                            window.initializeExpandCollapse();
+                            window.showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: 'Content source deleted successfully',
+                            });
+                        });
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting content source:', error);
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error deleting content source: ' + error.message
+                    });
+                });
+            }
+        });
+    }
+
+    document.addEventListener('dashboardInitialized', function() {
+        initializeContentSourcesFunctionality();
+    });
+</script>
+
 {% if settings['Content Sources'] is defined and settings['Content Sources'] is mapping %}
     {% for source_id, config in settings['Content Sources'].items() %}
     <div class="settings-section" data-source-id="{{ source_id }}">
