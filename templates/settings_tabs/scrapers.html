@@ -7,28 +7,160 @@
 <button id="add-scraper-btn" class="add-scraper-link">Add New Scraper</button>
 
 <script>
-    window.scraperSettings = {{ scraper_settings | default({}) | tojson | safe }};
+    function initializeScrapersFunctionality() {
+        initializeAddScraperButton();
+        initializeDeleteButtons();
+    }
+
+    function initializeAddScraperButton() {
+        const addButton = document.querySelector('#add-scraper-btn');
+        if (addButton) {
+            addButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                showAddScraperPopup();
+            });
+        } else {
+            console.error('Add scraper button not found');
+        }
+    }
+
+    function showAddScraperPopup() {
+        window.showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Scraper',
+            message: 'Select the type of scraper you want to add:',
+            dropdownOptions: [
+                { value: 'Zilean', text: 'Zilean' },
+                { value: 'Comet', text: 'Comet' },
+                { value: 'Jackett', text: 'Jackett' },
+                { value: 'Torrentio', text: 'Torrentio' }
+            ],
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: (selectedType) => {
+                if (selectedType) {
+                    addScraper(selectedType);
+                } else {
+                    console.error('No scraper type selected');
+                }
+            }
+        });
+    }
+
+    function addScraper(scraperType) {
+        console.log('Adding scraper of type:', scraperType);
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Add Scraper',
+            message: `Are you sure you want to add a scraper of type: ${scraperType}?`,
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/scrapers/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ type: scraperType })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (typeof window.reloadTabContent === 'function') {
+                            window.reloadTabContent('scrapers', () => {
+                                window.initializeExpandCollapse(); // Reinitialize expand/collapse
+                                window.showPopup({
+                                    type: POPUP_TYPES.SUCCESS,
+                                    message: 'Scraper added and tab content reloaded successfully',
+                                });
+                            });
+                        } else {
+                            console.error('reloadTabContent is not a function');
+                            window.showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Scraper added, but failed to reload tab content',
+                            });
+                        }
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error adding scraper:', error);
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error adding scraper: ' + error.message
+                    });
+                });
+            },
+            onCancel: () => {
+            }
+        });
+    }
+
+    function deleteScraper(scraperId) {
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Scraper',
+            message: 'Are you sure you want to delete this scraper?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/scrapers/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ scraper_id: scraperId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (typeof window.reloadTabContent === 'function') {
+                            window.reloadTabContent('scrapers', () => {
+                                window.initializeExpandCollapse(); // Reinitialize expand/collapse
+                                window.showPopup({
+                                    type: POPUP_TYPES.SUCCESS,
+                                    message: 'Scraper deleted and tab content reloaded successfully',
+                                });
+                            });
+                        } else {
+                            console.error('reloadTabContent is not a function');
+                            window.showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Scraper deleted, but failed to reload tab content',
+                            });
+                        }
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting scraper:', error);
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error deleting scraper: ' + error.message
+                    });
+                });
+            }
+        });
+    }
+
+    function initializeDeleteButtons() {
+        const deleteButtons = document.querySelectorAll('.delete-scraper-btn');
+        deleteButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const scraperId = this.getAttribute('data-scraper-id');
+                deleteScraper(scraperId);
+            });
+        });
+    }
+
+    document.addEventListener('dashboardInitialized', function() {
+        initializeScrapersFunctionality();
+    });
 </script>
 
-<div id="add-scraper-popup" class="popup">
-    <div class="popup-content">
-        <h4>Add New Scraper</h4>
-        <form id="add-scraper-form">
-            <div class="form-group">
-                <label for="scraper-type">Scraper Type:</label>
-                <select id="scraper-type" name="type" required>
-                    {% for type in scraper_types %}
-                    <option value="{{ type }}">{{ type }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <button type="submit">Add Scraper</button>
-            <button type="button" id="cancel-add-scraper">Cancel</button>
-        </form>
-    </div>
-</div>
-
-<!-- Existing scraper list -->
 {% for scraper, config in settings.Scrapers.items() %}
 <div class="settings-section">
     <div class="settings-section-header">
