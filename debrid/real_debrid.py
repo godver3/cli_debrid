@@ -89,7 +89,11 @@ def add_to_real_debrid(magnet_link):
             links_info = links_response.json()
 
             if links_info['status'] == 'downloaded':
+<<<<<<< HEAD
                 logging.info(f"Successfully added cached torrent to Real-Debrid. Torrent ID: {torrent_id}")
+=======
+                logging.info(f"Successfully added torrent to Real-Debrid. Torrent ID: {torrent_id}")
+>>>>>>> 2a62e907601595e74b50121da707e5cea3988978
                 return links_info['links']
             elif links_info['status'] == 'downloading' or links_info['status'] == 'queued':
                 logging.info(f"Successfully added uncached torrent to Real-Debrid. Torrent ID: {torrent_id}")
