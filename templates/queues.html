@@ -4,87 +4,63 @@
 <div class="container">
     <h2>Queues</h2>
     <div id="queue-contents" class="queue-container">
-    {% set has_content = false %}
-    {% for queue_name in ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted'] %}
-        {% if queue_name in queue_contents and queue_contents[queue_name]|length > 0 %}
-        {% set has_content = true %}
-        <div class="queue">
-            <div class="queue-title" onclick="toggleQueue(this)">
-                <span>{{ queue_name }}</span>
-                {% if queue_name == 'Checking' %}
-                    <span class="filename-toggle" onclick="toggleFilenames(event)">
-                        <i class="fas fa-file"></i>
-                    </span>
-                {% endif %}
-                <span class="queue-count">{{ queue_contents[queue_name]|length }} items</span>
-            </div>
-            <div class="queue-items">
-                {% if queue_name in ['Blacklisted', 'Unreleased'] %}
-                {% for item in queue_contents[queue_name]|groupby('title') %}
-                <div class="item">
-                    {{ item.grouper }} ({{ item.list[0].year }}) - Version(s): {{ item.list|map(attribute='version')|join(', ') }}
-                    {% if item.list[0].type == 'episode' %}
-                        - Season(s): {{ item.list|map(attribute='season_number')|unique|join(', ') }}
-                    {% endif %}
-                    {% if queue_name == 'Unreleased' %}
-                        - Release Date: {{ item.list[0].release_date }}
-                    {% endif %}
-                </div>
-                {% endfor %}
-                {% else %}
-                {% for item in queue_contents[queue_name] %}
-                <div class="item">
-                    {{ item.title }} ({{ item.year }}){{ item.season_episode }} - Version: {{ item.version }}
-                    {% if queue_name == 'Checking' %}
-                        <span class="filename-content" style="display: none">- Checking: {{ item.filled_by_file }}</span>
-                    {% endif %}
-                    {% if queue_name == 'Upgrading' %}
-                        - Current Quality: {{ item.current_quality }}
-                        - Target Quality: {{ item.target_quality }}
-                        - Time Added: {{ item.time_added|datetime }}
-                        - Upgrades Found: {{ item.upgrades_found }}
-                    {% elif queue_name == 'Sleeping' %}
-                        - Wake Count: {{ item.wake_count }}
-                    {% endif %}
-                </div>
-                {% endfor %}
-                {% endif %}
-            </div>
-        </div>
-        {% endif %}
-    {% endfor %}
+        <!-- Queue contents will be dynamically inserted here -->
     </div>
 </div>
 
 <style>
-    .toggle-container {
-        margin-left: 20px;
-        margin-bottom: 10px;
+    .queue-container { 
+        display: flex; 
+        flex-direction: column;
+    }
+
+    .queue { 
+        margin: 10px 0; 
+        background: #444; 
+        padding: 15px; 
+        border-radius: 5px;
+    }
+
+    .queue-title { 
+        font-size: 18px; 
+        font-weight: bold; 
+        cursor: pointer; 
         display: flex;
+        justify-content: space-between;
         align-items: center;
     }
-    .toggle-container label {
-        margin-right: 10px;
+
+    .queue-title:hover { 
+        color: #007bff; 
     }
-    .filename {
-        display: none;
+
+    .queue-count {
+        margin-left: auto;
     }
+
+    .queue-items { 
+        display: none; 
+        margin-top: 10px; 
+    }
+
+    .item { 
+        margin-left: 20px; 
+        padding: 5px 0; 
+    }
+
     .filename-toggle {
         cursor: pointer;
-        margin-left: 5px;
-        margin-right: 5px;
+        margin: 0 5px;
         font-size: 1em;
         transition: transform 0.3s ease;
     }
+
     .filename-toggle.active i {
         transform: rotate(45deg);
     }
-    .queue-title {
-        display: flex;
-        align-items: center;
-    }
-    .queue-count {
-        margin-left: auto;
+
+    .filename-content {
+        display: none;
     }
 </style>
 
@@ -225,9 +201,12 @@
             .catch(error => console.error('Error fetching queue contents:', error));
     }
 
-    // Initial update and set interval for refreshing
-    updateQueueContents();
-    setInterval(updateQueueContents, 5000);  // Refresh every 5 seconds
+    // Initial update
+    document.addEventListener('DOMContentLoaded', function() {
+        updateQueueContents();
+        // Set interval for refreshing after initial load
+        setInterval(updateQueueContents, 5000);  // Refresh every 5 seconds
+    });
 
     console.log('Queue script loaded and running');
 </script>
