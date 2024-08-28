@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Database{% endblock %}
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/database.css') }}">
 <div class="container">
     <h2>Database Content</h2>
     <div id="column-selector-wrapper">
@@ -74,136 +75,35 @@
             <p>No pagination data available</p>
         {% endif %}
     </div>
-    <div class="table-container">
-        {% if items %}
-            <table id="database-table">
-                <thead>
-                    <tr>
-                        <th>Delete</th>
-                        {% for column in selected_columns %}
-                        <th>{{ column }}</th>
-                        {% endfor %}
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in items %}
-                    <tr>
-                        <td>
-                            <button class="delete-item" data-item-id="{{ item.id }}">Delete</button>
-                        </td>
-                        {% for column in selected_columns %}
-                        <td>
-                            <div class="cell-content">
-                                {% if content_type == 'movie' and column in ['season_number', 'episode_number', 'episode_title'] %}
-                                    <!-- Don't display these columns for movies -->
-                                {% elif item[column] is not none and item[column] != 'None' %}
-                                    {{ item[column] }}
-                                {% endif %}
-                            </div>
-                        </td>
-                        {% endfor %}
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        {% else %}
-            <p>No items found in the database.</p>
-        {% endif %}
-    </div>
 </div>
-
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Handle content type filter clicks
-        document.querySelectorAll('.content-type-link').forEach(link => {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
-                var contentType = this.getAttribute('data-content-type');
-                clearFilter();
-                updateContent(`{{ url_for('database') }}?content_type=${contentType}`);
-            });
-        });
-    
-        // Handle pagination clicks
-        document.querySelectorAll('.pagination-link').forEach(link => {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
-                var letter = this.getAttribute('data-letter');
-                clearFilter();
-                updateContent(`{{ url_for('database') }}?letter=${letter}`);
-            });
-        });
-    
-        // Handle filter form submission
-        document.getElementById('filter-form').addEventListener('submit', function(e) {
-            e.preventDefault();
-            updateContent('{{ url_for('database') }}', new FormData(this));
-        });
-    
-        function clearFilter() {
-            const filterColumn = document.getElementById('filter-column');
-            const filterValue = document.getElementById('filter-value');
-            if (filterColumn) filterColumn.value = '';
-            if (filterValue) filterValue.value = '';
-        }
-    
-        function updateContent(url, formData = null) {
-            var fetchOptions = {
-                method: 'GET',
-            };
-    
-            if (formData) {
-                url += '?' + new URLSearchParams(formData).toString();
-            }
-    
-            fetch(url, fetchOptions)
-                .then(response => response.text())
-                .then(html => {
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
-                    document.querySelector('.table-container').innerHTML = doc.querySelector('.table-container').innerHTML;
-                    document.querySelector('.pagination').innerHTML = doc.querySelector('.pagination').innerHTML;
-                    
-                    // Update content type links
-                    document.querySelectorAll('.content-type-link').forEach(link => {
-                        if (doc.querySelector(`.content-type-link[data-content-type="${link.getAttribute('data-content-type')}"]`).classList.contains('active')) {
-                            link.classList.add('active');
-                        } else {
-                            link.classList.remove('active');
-                        }
-                    });
-    
-                    // Reattach event listeners
-                    attachEventListeners();
-                });
-        }
-    
-        function attachEventListeners() {
-            document.querySelectorAll('.content-type-link').forEach(link => {
-                link.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    var contentType = this.getAttribute('data-content-type');
-                    clearFilter();
-                    updateContent(`{{ url_for('database') }}?content_type=${contentType}`);
-                });
-            });
-    
-            document.querySelectorAll('.pagination-link').forEach(link => {
-                link.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    var letter = this.getAttribute('data-letter');
-                    clearFilter();
-                    updateContent(`{{ url_for('database') }}?letter=${letter}`);
-                });
-            });
-        }
-    });
-    </script>
+<div class="table-container">
+    {% if items %}
+        <table>
+            <thead>
+                <tr>
+                    {% for column in selected_columns %}
+                        <th>{{ column }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                    <tr>
+                        {% for column in selected_columns %}
+                            <td class="truncate">{{ item[column] }}</td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No items found in the database.</p>
+    {% endif %}
+</div>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const contentTypeLinks = document.querySelectorAll('.content-type-link');
-    const paginationLinks = document.querySelectorAll('.pagination-link');
     const availableColumns = document.getElementById('available-columns');
     const selectedColumns = document.getElementById('selected-columns');
     const addColumnBtn = document.getElementById('add-column');
@@ -211,25 +111,55 @@ document.addEventListener('DOMContentLoaded', function() {
     const updateColumnsBtn = document.getElementById('update-columns');
     const toggleColumnSelectorBtn = document.getElementById('toggle-column-selector');
     const columnSelector = document.getElementById('column-selector');
+    const filterForm = document.getElementById('filter-form');
+    
+    let currentContentType = 'movie'; // Default to 'movie'
+    let currentLetter = 'A'; // Default to 'A'
 
-    function moveOptions(from, to) {
-        const selectedOptions = Array.from(from.selectedOptions);
-        selectedOptions.forEach(option => {
-            to.appendChild(option);
+    const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+
+    const absoluteOrder = [
+        'id', 'imdb_id', 'tmdb_id', 'title', 'year', 'release_date', 'state', 'type',
+        'episode_title', 'season_number', 'episode_number', 'airtime', 'collected_at', 'version'
+    ];
+
+    function sortOptionsWithAbsoluteOrder(selectElement) {
+        const options = Array.from(selectElement.options);
+        options.sort((a, b) => {
+            const indexA = absoluteOrder.indexOf(a.value.toLowerCase());
+            const indexB = absoluteOrder.indexOf(b.value.toLowerCase());
+            
+            if (indexA !== -1 && indexB !== -1) {
+                return indexA - indexB;
+            } else if (indexA !== -1) {
+                return -1;
+            } else if (indexB !== -1) {
+                return 1;
+            } else {
+                return a.text.localeCompare(b.text);
+            }
         });
+        options.forEach(option => selectElement.appendChild(option));
+    }
+
+    function moveOptions(fromSelect, toSelect) {
+        Array.from(fromSelect.selectedOptions).forEach(option => {
+            toSelect.appendChild(option);
+        });
+        sortOptionsWithAbsoluteOrder(fromSelect);
+        sortOptionsWithAbsoluteOrder(toSelect);
     }
 
     addColumnBtn.addEventListener('click', () => moveOptions(availableColumns, selectedColumns));
     removeColumnBtn.addEventListener('click', () => moveOptions(selectedColumns, availableColumns));
-
+    
     updateColumnsBtn.addEventListener('click', function() {
         const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
         
-        // Create a form and submit it
         const form = document.createElement('form');
         form.method = 'POST';
         form.action = window.location.href;
-
+    
         selectedColumnValues.forEach(value => {
             const input = document.createElement('input');
             input.type = 'hidden';
@@ -237,22 +167,34 @@ document.addEventListener('DOMContentLoaded', function() {
             input.value = value;
             form.appendChild(input);
         });
-
+    
         document.body.appendChild(form);
         form.submit();
     });
-
+    
     toggleColumnSelectorBtn.addEventListener('click', function() {
-        columnSelector.classList.toggle('show');
+        columnSelector.classList.toggle('hidden');
         this.classList.toggle('active');
-        if (this.classList.contains('active')) {
-            this.textContent = 'Select Columns to Display';
-        } else {
-            this.textContent = 'Select Columns to Display';
-        }
+        this.textContent = columnSelector.classList.contains('hidden') 
+            ? 'Select Columns to Display' 
+            : 'Hide Column Selector';
     });
+    
+    function clearFilter() {
+        const filterColumn = document.getElementById('filter-column');
+        const filterValue = document.getElementById('filter-value');
+        if (filterColumn) filterColumn.value = '';
+        if (filterValue) filterValue.value = '';
+    }
+    
+    function updateContent(url, params = {}) {
+        // Preserve current states if not explicitly changed
+        params.content_type = params.content_type || currentContentType;
+        params.letter = params.letter || currentLetter;
 
-    function updateContent(url) {
+        const queryString = new URLSearchParams(params).toString();
+        url += '?' + queryString;
+
         fetch(url)
             .then(response => response.text())
             .then(html => {
@@ -260,73 +202,68 @@ document.addEventListener('DOMContentLoaded', function() {
                 const doc = parser.parseFromString(html, 'text/html');
                 document.querySelector('.table-container').innerHTML = doc.querySelector('.table-container').innerHTML;
                 document.querySelector('.pagination').innerHTML = doc.querySelector('.pagination').innerHTML;
-                attachPaginationListeners();
-            });
+                document.querySelector('.content-type-filter').innerHTML = doc.querySelector('.content-type-filter').innerHTML;
+                
+                // Update current states
+                currentContentType = params.content_type;
+                currentLetter = params.letter;
+
+                // Reattach event listeners
+                attachEventListeners();
+            })
+            .catch(error => console.error('Error updating content:', error));
     }
 
-    function attachPaginationListeners() {
+    function attachEventListeners() {
+        document.querySelectorAll('.content-type-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                var contentType = this.getAttribute('data-content-type');
+                clearFilter();
+                updateContent('{{ url_for('database') }}', { content_type: contentType });
+            });
+        });
+
         document.querySelectorAll('.pagination-link').forEach(link => {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
-                const letter = this.getAttribute('data-letter');
-                const url = new URL(window.location);
-                url.searchParams.set('letter', letter);
-                updateContent(url);
-                history.pushState({}, '', url);
+                var letter = this.getAttribute('data-letter');
+                clearFilter();
+                updateContent('{{ url_for('database') }}', { letter: letter });
             });
         });
     }
 
-    contentTypeLinks.forEach(link => {
-        link.addEventListener('click', function(e) {
-            e.preventDefault();
-            const contentType = this.getAttribute('data-content-type');
-            const url = new URL(window.location);
-            url.searchParams.set('content_type', contentType);
-            updateContent(url);
-            history.pushState({}, '', url);
-            
-            // Update active class
-            contentTypeLinks.forEach(l => l.classList.remove('active'));
-            this.classList.add('active');
-        });
+    // Handle filter form submission
+    filterForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const params = Object.fromEntries(formData.entries());
+        updateContent('{{ url_for('database') }}', params);
     });
 
-    attachPaginationListeners();
-
-    // Add this script at the end of the file, just before the closing tag
-    function checkProgramStatus() {
-        fetch('/api/program_status')
-            .then(response => response.json())
-            .then(data => {
-                const isRunning = data.running;
-                const deleteButtons = document.querySelectorAll('.delete-item');
-                deleteButtons.forEach(button => {
-                    button.disabled = isRunning;
-                    button.style.opacity = isRunning ? '0.5' : '1';
-                    button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
-                });
-
-                let existingMessage = document.getElementById('programRunningMessage');
-                if (isRunning) {
-                    if (!existingMessage) {
-                        existingMessage = document.createElement('div');
-                        existingMessage.id = 'programRunningMessage';
-                        existingMessage.textContent = 'Program is running. Delete functionality is disabled.';
-                        existingMessage.style.color = 'red';
-                        existingMessage.style.marginBottom = '10px';
-                        document.querySelector('.container').prepend(existingMessage);
-                    }
-                } else if (existingMessage) {
-                    existingMessage.remove();
-                }
-            })
-            .catch(error => console.error('Error checking program status:', error));
-    }
-
-    // Check program status initially and every 5 seconds
-    checkProgramStatus();
-    setInterval(checkProgramStatus, 5000);
+    // Initial attachment of event listeners
+    initializeColumnSelection();
+    attachEventListeners();
 });
+
+function initializeColumnSelection() {
+    const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+    
+    if (selectedColumns.options.length === 0) {
+        // If no columns are selected, add default columns
+        defaultColumns.forEach(column => {
+            const option = availableColumns.querySelector(`option[value="${column}"]`);
+            if (option) {
+                selectedColumns.appendChild(option.cloneNode(true));
+                option.remove();
+            }
+        });
+    }
+    
+    sortOptionsWithAbsoluteOrder(availableColumns);
+    sortOptionsWithAbsoluteOrder(selectedColumns);
+}
+
 </script>
 {% endblock %}

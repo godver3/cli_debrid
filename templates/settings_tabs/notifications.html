@@ -1,28 +1,10 @@
-
-
 <h3>Notification Settings</h3>
 <div class="settings-expand-collapse-buttons">
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 <button id="add-notification-btn" class="add-source-link">Add New Notification</button>
-<div id="add-notification-popup" class="popup">
-    <div class="popup-content">
-        <h4>Add New Notification</h4>
-        <form id="add-notification-form">
-            <div class="form-group">
-                <label for="notification-type">Notification Type:</label>
-                <select id="notification-type" name="type" required>
-                    <option value="Telegram">Telegram</option>
-                    <option value="Discord">Discord</option>
-                    <option value="Email">Email</option>
-                </select>
-            </div>
-            <button type="submit">Add Notification</button>
-            <button type="button" id="cancel-add-notification">Cancel</button>
-        </form>
-    </div>
-</div>
+
 {% if notification_settings %}
     {% for notification_id, config in notification_settings.items() %}
         {% if config is not none %}
@@ -58,3 +40,166 @@
 {% else %}
     <p>No Notifications configured.</p>
 {% endif %}
+
+<script>
+function initializeNotificationsFunctionality() {
+    console.log('Initializing Notifications Functionality');
+
+    const addNotificationBtn = document.getElementById('add-notification-btn');
+
+    if (addNotificationBtn) {
+        addNotificationBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showAddNotificationPopup();
+        });
+    }
+
+    document.querySelectorAll('.delete-notification-btn').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const notificationId = this.getAttribute('data-notification-id');
+            deleteNotification(notificationId);
+        });
+    });
+}
+
+function showAddNotificationPopup() {
+    import('/static/js/notifications.js').then(module => {
+        const { showPopup, POPUP_TYPES } = module;
+        showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Notification',
+            message: 'Select the notification type:',
+            dropdownOptions: [
+                { value: 'Telegram', text: 'Telegram' },
+                { value: 'Discord', text: 'Discord' },
+                { value: 'Email', text: 'Email' }
+            ],
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: (selectedType) => {
+                if (selectedType) {
+                    addNotification(selectedType);
+                }
+            }
+        });
+    });
+}
+
+function addNotification(notificationType) {
+    fetch('/notifications/add', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: notificationType })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            return updateNotificationsTab();
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .then(() => {
+        showPopup({
+            type: POPUP_TYPES.SUCCESS,
+            title: 'Success',
+            message: 'Notification added successfully',
+            confirmText: 'OK'
+        });
+        initializeNotificationsFunctionality();
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('Error adding notification: ' + error.message, 'error');
+    });
+}
+
+function deleteNotification(notificationId) {
+    import('/static/js/notifications.js').then(module => {
+        const { showPopup, POPUP_TYPES } = module;
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Notification',
+            message: 'Are you sure you want to delete this notification?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                performDeleteNotification(notificationId);
+            }
+        });
+    });
+}
+
+function performDeleteNotification(notificationId) {
+    fetch('/notifications/delete', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notification_id: notificationId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            return updateNotificationsTab();
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .then(() => {
+        showPopup({
+            type: POPUP_TYPES.SUCCESS,
+            title: 'Success',
+            message: 'Notification deleted successfully',
+            confirmText: 'OK'
+        });
+        initializeNotificationsFunctionality();    })
+    .catch(error => {
+        console.error('Error:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Error',
+            message: 'Error deleting notification: ' + error.message,
+            confirmText: 'OK'
+        });
+    });
+}
+
+function updateNotificationsTab() {
+    return fetch('/settings')
+        .then(response => response.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newNotificationsTab = doc.getElementById('notifications');
+            
+            if (newNotificationsTab) {
+                const currentNotificationsTab = document.getElementById('notifications');
+                if (currentNotificationsTab) {
+                    currentNotificationsTab.innerHTML = newNotificationsTab.innerHTML;
+                    initializeNotificationsFunctionality();
+                    initializeExpandCollapse();
+                }
+            } else {
+                throw new Error('Notifications tab not found in the response');
+            }
+        })
+        .catch(error => {
+            console.error('Error updating Notifications tab:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Error updating Notifications tab: ' + error.message,
+                confirmText: 'OK'
+            });
+            initializeNotificationsFunctionality();
+        });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    initializeNotificationsFunctionality();
+});
+</script>

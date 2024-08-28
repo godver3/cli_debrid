@@ -6,6 +6,7 @@ from urllib.parse import urlparse, parse_qs
 # Setup logging for API calls
 api_logger = logging.getLogger('api_calls')
 api_logger.setLevel(logging.INFO)
+api_logger.propagate = False  # Prevent propagation to root logger
 handler = logging.FileHandler('logs/api_calls.log')
 formatter = logging.Formatter('%(asctime)s - %(message)s')
 handler.setFormatter(formatter)
