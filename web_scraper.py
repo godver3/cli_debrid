@@ -412,8 +412,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
 
     # Process the results
     processed_results = []
-    hashes=[]
-    cache_status = []
+    hashes = []
     for result in scrape_results:
         if isinstance(result, dict):
             magnet_link = result.get('magnet')
@@ -421,15 +420,21 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 if 'magnet:?xt=urn:btih:' in magnet_link:
                     magnet_hash = extract_hash_from_magnet(magnet_link)
                     torrent_type = 'magnet'
-                    hashes += [magnet_hash]
+                    hashes.append(magnet_hash)
                     result['hash'] = magnet_hash
                 else:
-                    #adding_queue = AddingQueue()
-                    #magnet_hash = adding_queue.download_and_extract_hash(magnet_link)
                     torrent_type = 'torrent_file'
                 processed_results.append(result)
-    cache_status = is_cached_on_rd(hashes)
-    
+
+    # Check cache status for all hashes at once
+    cache_status = is_cached_on_rd(hashes) if hashes else {}
+
+    # Update processed_results with cache status
+    for result in processed_results:
+        result_hash = result.get('hash')
+        if result_hash:
+            result['cached'] = cache_status.get(result_hash, False)
+
     return processed_results, cache_status
 
 def get_available_versions():

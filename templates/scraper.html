@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Scraper{% endblock %}
 {% block content %}
+<style>
+    @import url('{{ url_for('static', filename='css/scraper.css') }}');
+</style>
     <div id="scraper-container">
         <form id="search-form" action="{{ url_for('scraper') }}" method="post">
             <input type="text" name="search_term" placeholder="Enter search term" required>

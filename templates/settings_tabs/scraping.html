@@ -56,6 +56,7 @@
             if (data.success) {
                 window.reloadTabContent('scraping', () => {
                     window.initializeExpandCollapse();
+                    initializeScrapingFunctionality();
                     window.showPopup({
                         type: POPUP_TYPES.SUCCESS,
                         message: 'Version added successfully',
@@ -160,6 +161,7 @@
                     if (data.success) {
                         window.reloadTabContent('scraping', () => {
                             window.initializeExpandCollapse();
+                            initializeScrapingFunctionality();
                             window.showPopup({
                                 type: POPUP_TYPES.SUCCESS,
                                 message: 'Version duplicated successfully',
@@ -261,6 +263,11 @@
     }
 
     document.addEventListener('dashboardInitialized', function() {
+        initializeScrapingFunctionality();
+    });
+
+    // Add this new event listener
+    document.addEventListener('scrapingContentLoaded', function() {
         initializeScrapingFunctionality();
     });
 </script>

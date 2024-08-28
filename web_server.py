@@ -625,7 +625,7 @@ def delete_item():
         logging.error(f"Error deleting item: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/content_sources/content')
+@app.route('/content-sources/content')
 def content_sources_content():
     config = load_config()
     source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
@@ -731,6 +731,14 @@ def get_scrapers():
     scraper_types = scraper_manager.get_scraper_types()
     return render_template('settings_tabs/scrapers.html', settings=config, scraper_types=scraper_types)
 
+@app.route('/get_content_source_types', methods=['GET'])
+def get_content_source_types():
+    content_sources = SETTINGS_SCHEMA['Content Sources']['schema']
+    return jsonify({
+        'source_types': list(content_sources.keys()),
+        'settings': content_sources
+    })
+
 @app.route('/scrapers/delete', methods=['POST'])
 def delete_scraper():
     data = request.json
@@ -781,84 +789,114 @@ def manifest():
 
 @app.route('/database', methods=['GET', 'POST'])
 def database():
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    # Get all column names
-    cursor.execute("PRAGMA table_info(media_items)")
-    all_columns = [column[1] for column in cursor.fetchall()]
+        # Get all column names
+        cursor.execute("PRAGMA table_info(media_items)")
+        all_columns = [column[1] for column in cursor.fetchall()]
 
-    # Get or set selected columns
-    if request.method == 'POST':
-        selected_columns = request.form.getlist('columns')
-        session['selected_columns'] = selected_columns
-    else:
-        selected_columns = session.get('selected_columns', all_columns[:10])  # Default to first 10 columns
+        # Define the default columns
+        default_columns = [
+            'imdb_id', 'title', 'year', 'release_date', 'state', 'type',
+            'season_number', 'episode_number', 'collected_at', 'version'
+        ]
 
-    # Get filter and sort parameters
-    filter_column = request.args.get('filter_column', '')
-    filter_value = request.args.get('filter_value', '')
-    sort_column = request.args.get('sort_column', 'id')  # Default sort by id
-    sort_order = request.args.get('sort_order', 'asc')
-    content_type = request.args.get('content_type', 'movie')  # Default to 'movie'
-    current_letter = request.args.get('letter', 'A')
+        # Get or set selected columns
+        if request.method == 'POST':
+            selected_columns = request.form.getlist('columns')
+            session['selected_columns'] = selected_columns
+        else:
+            selected_columns = session.get('selected_columns')
 
-    # Define alphabet here
-    alphabet = list(string.ascii_uppercase)
+        # If no columns are selected, use the default columns
+        if not selected_columns:
+            selected_columns = [col for col in default_columns if col in all_columns]
+            if not selected_columns:
+                selected_columns = ['id']  # Fallback to ID if none of the default columns exist
 
-    # Construct the SQL query
-    query = f"SELECT {', '.join(selected_columns)} FROM media_items"
-    where_clauses = []
-    params = []
+        # Ensure at least one column is selected
+        if not selected_columns:
+            selected_columns = ['id']
 
-    # Apply custom filter if present, otherwise apply content type and letter filters
-    if filter_column and filter_value:
-        where_clauses.append(f"{filter_column} LIKE ?")
-        params.append(f"%{filter_value}%")
-        # Reset content_type and current_letter when custom filter is applied
-        content_type = 'all'
-        current_letter = ''
-    else:
-        if content_type != 'all':
-            where_clauses.append("type = ?")
-            params.append(content_type)
+        # Get filter and sort parameters
+        filter_column = request.args.get('filter_column', '')
+        filter_value = request.args.get('filter_value', '')
+        sort_column = request.args.get('sort_column', 'id')  # Default sort by id
+        sort_order = request.args.get('sort_order', 'asc')
+        content_type = request.args.get('content_type', 'movie')  # Default to 'movie'
+        current_letter = request.args.get('letter', 'A')
+
+        # Define alphabet here
+        alphabet = list(string.ascii_uppercase)
+
+        # Construct the SQL query
+        query = f"SELECT {', '.join(selected_columns)} FROM media_items"
+        where_clauses = []
+        params = []
+
+        # Apply custom filter if present, otherwise apply content type and letter filters
+        if filter_column and filter_value:
+            where_clauses.append(f"{filter_column} LIKE ?")
+            params.append(f"%{filter_value}%")
+            # Reset content_type and current_letter when custom filter is applied
+            content_type = 'all'
+            current_letter = ''
+        else:
+            if content_type != 'all':
+                where_clauses.append("type = ?")
+                params.append(content_type)
+            
+            if current_letter:
+                if current_letter == '#':
+                    where_clauses.append("title LIKE '0%' OR title LIKE '1%' OR title LIKE '2%' OR title LIKE '3%' OR title LIKE '4%' OR title LIKE '5%' OR title LIKE '6%' OR title LIKE '7%' OR title LIKE '8%' OR title LIKE '9%' OR title LIKE '[%' OR title LIKE '(%' OR title LIKE '{%'")
+                elif current_letter.isalpha():
+                    where_clauses.append("title LIKE ?")
+                    params.append(f"{current_letter}%")
+
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+
+        query += f" ORDER BY {sort_column} {sort_order}"
+
+         # Log the query and parameters for debugging
+        logging.debug(f"Executing query: {query}")
+        logging.debug(f"Query parameters: {params}")
+
+        # Execute the query
+        cursor.execute(query, params)
+        items = cursor.fetchall()
+
+        # Log the number of items fetched
+        logging.debug(f"Fetched {len(items)} items from the database")
+
+        conn.close()
+
+        # Convert items to a list of dictionaries
+        items = [dict(zip(selected_columns, item)) for item in items]
+
+
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({
+                'table': render_template('database_table.html', 
+                                        items=items, 
+                                        selected_columns=selected_columns,
+                                        content_type=content_type),
+                'pagination': render_template('database_pagination.html',
+                                            alphabet=alphabet,
+                                            current_letter=current_letter,
+                                            content_type=content_type,
+                                            filter_column=filter_column,
+                                            filter_value=filter_value,
+                                            sort_column=sort_column,
+                                            sort_order=sort_order)
+            })
         
-        if current_letter:
-            if current_letter == '#':
-                where_clauses.append("title LIKE '0%' OR title LIKE '1%' OR title LIKE '2%' OR title LIKE '3%' OR title LIKE '4%' OR title LIKE '5%' OR title LIKE '6%' OR title LIKE '7%' OR title LIKE '8%' OR title LIKE '9%' OR title LIKE '[%' OR title LIKE '(%' OR title LIKE '{%'")
-            elif current_letter.isalpha():
-                where_clauses.append("title LIKE ?")
-                params.append(f"{current_letter}%")
-
-    if where_clauses:
-        query += " WHERE " + " AND ".join(where_clauses)
-
-    query += f" ORDER BY {sort_column} {sort_order}"
-
-    # Execute the query
-    cursor.execute(query, params)
-    items = cursor.fetchall()
-
-    conn.close()
-
-    # Convert items to a list of dictionaries
-    items = [dict(zip(selected_columns, item)) for item in items]
-
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        return jsonify({
-            'table': render_template('database_table.html', 
-                                     items=items, 
-                                     selected_columns=selected_columns,
-                                     content_type=content_type),
-            'pagination': render_template('database_pagination.html',
-                                          alphabet=alphabet,
-                                          current_letter=current_letter,
-                                          content_type=content_type,
-                                          filter_column=filter_column,
-                                          filter_value=filter_value,
-                                          sort_column=sort_column,
-                                          sort_order=sort_order)
-        })
+    except Exception as e:
+        logging.error(f"Error in database route: {str(e)}")
+        items = []  # Set items to an empty list in case of error
+        # You might want to flash an error message here
 
     return render_template('database.html', 
                            items=items, 
@@ -871,6 +909,7 @@ def database():
                            alphabet=alphabet,
                            current_letter=current_letter,
                            content_type=content_type)
+
 
 @app.route('/add_to_real_debrid', methods=['POST'])
 def add_torrent_to_real_debrid():
@@ -1857,7 +1896,10 @@ def get_content_source_settings_route():
         return jsonify(content_source_settings)
     except Exception as e:
         app.logger.error(f"Error getting content source settings: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 @app.route('/get_scraping_versions', methods=['GET'])
 def get_scraping_versions():
@@ -1870,7 +1912,7 @@ def get_scraping_versions():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/get_version_settings')
-def get_version_settings():
+def get_version_settings_route():
     try:
         version = request.args.get('version')
         if not version:
