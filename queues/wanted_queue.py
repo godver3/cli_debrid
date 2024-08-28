@@ -96,7 +96,9 @@ class WantedQueue:
                 current_datetime = datetime.now()
 
                 if current_datetime < release_datetime:
+                    time_until_release = release_datetime - current_datetime
                     logging.info(f"Item {item_identifier} is not released yet. Moving to Unreleased state.")
+                    logging.debug(f"Will start scraping for {item_identifier} at {release_datetime}, time until: {time_until_release}")
                     items_to_unreleased.append(item)
                     continue
                 
