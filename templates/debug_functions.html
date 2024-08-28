@@ -16,7 +16,7 @@
 
     h2, h3 {
         color: #f4f4f4;
-        margin-bottom: 20px;
+        margin-bottom: 16px;
         border-bottom: 2px solid #444;
         padding-bottom: 10px;
     }
@@ -88,38 +88,30 @@
 <div class="debug-container">
     <h2>Debug Functions</h2>
 
-    <div class="debug-section">
-        <h3>Bulk Delete from Database</h3>
-        <form action="{{ url_for('bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
-            <div class="form-group">
-                <label for="imdb_id">IMDB ID:</label>
-                <input type="text" id="imdb_id" name="imdb_id" required>
-            </div>
-            <button type="submit">Delete</button>
-        </form>
-    </div>
-
-    <div class="debug-section">
-        <h3>Download Logs</h3>
-        <form id="download-logs-form">
-            <div class="form-group">
-                <label for="log_lines">Number of log lines:</label>
-                <input type="number" id="log_lines" name="lines" value="250" min="1" max="1000">
-            </div>
-            <button type="submit">Download Logs</button>
-        </form>
-    </div>
-
-    <div class="debug-section">
-        <h3>Delete Database</h3>
-        <form action="{{ url_for('delete_database') }}" method="POST" id="delete-database-form">
-            <div class="form-group">
-                <label for="confirm_delete">Type 'DELETE' to confirm:</label>
-                <input type="text" id="confirm_delete" name="confirm_delete" required>
-            </div>
-            <button type="submit">Delete Database</button>
-        </form>
-    </div>
+    <h3>Bulk Delete from Database</h3>
+    <form action="{{ url_for('bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
+        <div class="form-group">
+            <label for="imdb_id">IMDB ID:</label>
+            <input type="text" id="imdb_id" name="imdb_id" required>
+        </div>
+        <button type="submit">Delete</button>
+    </form>
+    <h3>Download Logs</h3>
+    <form id="download-logs-form">
+        <div class="form-group">
+            <label for="log_lines">Number of log lines:</label>
+            <input type="number" id="log_lines" name="lines" value="250" min="1" max="1000">
+        </div>
+        <button type="submit">Download Logs</button>
+    </form>
+    <h3>Delete Database</h3>
+    <form action="{{ url_for('delete_database') }}" method="POST" id="delete-database-form">
+        <div class="form-group">
+            <label for="confirm_delete">Type 'DELETE' to confirm:</label>
+            <input type="text" id="confirm_delete" name="confirm_delete" required>
+        </div>
+        <button type="submit">Delete Database</button>
+    </form>
 </div>
 
 <script>

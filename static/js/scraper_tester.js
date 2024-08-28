@@ -221,7 +221,9 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch(`/get_version_settings?version=${version}`)
             .then(response => {
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    return response.json().then(errorData => {
+                        throw new Error(`Server error: ${errorData.error || response.statusText}`);
+                    });
                 }
                 return response.json();
             })
