@@ -247,16 +247,24 @@ class AddingQueue:
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Blacklisting item {item_identifier} and related old season items with the same version")
 
-        # Blacklist the current item
-        self.blacklist_item(item, queue_manager)
+        # Check if the item is in the Checking queue before blacklisting
+        if queue_manager.get_item_queue(item) != 'Checking':
+            self.blacklist_item(item, queue_manager)
+        else:
+            logging.info(f"Skipping blacklisting of {item_identifier} as it's already in Checking queue")
 
         # Find and blacklist related items in the same season with the same version that are also old
         related_items = self.find_related_season_items(item, queue_manager)
         for related_item in related_items:
+            related_identifier = queue_manager.generate_identifier(related_item)
             if self.is_item_old(related_item) and related_item['version'] == item['version']:
-                self.blacklist_item(related_item, queue_manager)
+                # Check if the related item is in the Checking queue before blacklisting
+                if queue_manager.get_item_queue(related_item) != 'Checking':
+                    self.blacklist_item(related_item, queue_manager)
+                else:
+                    logging.info(f"Skipping blacklisting of {related_identifier} as it's already in Checking queue")
             else:
-                logging.debug(f"Not blacklisting {queue_manager.generate_identifier(related_item)} as it's either not old enough or has a different version")
+                logging.debug(f"Not blacklisting {related_identifier} as it's either not old enough or has a different version")
 
     def find_related_season_items(self, item: Dict[str, Any], queue_manager) -> List[Dict[str, Any]]:
         related_items = []
@@ -521,6 +529,11 @@ class AddingQueue:
                 filled_by_file = os.path.basename(matching_files[0])  # Get the filename
                 queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file)
                 logging.debug(f"Moved original item {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
+                
+                # Handle multi-episode file if applicable
+                episode_range = self.extract_episode_range(filled_by_file)
+                if episode_range:
+                    self.handle_multi_episode(item, episode_range, filled_by_file, queue_manager, title, link)
             else:
                 logging.warning(f"Original item {item_identifier} did not match any files in the torrent.")
                 return False
@@ -541,7 +554,7 @@ class AddingQueue:
             # Match files with items
             moved_items = 0
             for file_path in files:
-                for matching_item in matching_items:
+                for matching_item in matching_items[:]:  # Use a copy of the list for iteration
                     if self.file_matches_item(file_path, matching_item):
                         item_id = queue_manager.generate_identifier(matching_item)
                         logging.debug(f"Matched file {file_path} with item {item_id}")
@@ -551,6 +564,11 @@ class AddingQueue:
                         logging.debug(f"Moved item {item_id} to Checking queue with filled_by_file: {filled_by_file}")
                         matching_items.remove(matching_item)
                         moved_items += 1
+                        
+                        # Handle multi-episode file if applicable
+                        episode_range = self.extract_episode_range(filled_by_file)
+                        if episode_range:
+                            self.handle_multi_episode(matching_item, episode_range, filled_by_file, queue_manager, title, link)
                         break
 
             logging.info(f"Processed multi-pack: moved {moved_items + 1} matching episodes (including original item) to Checking queue")
@@ -559,41 +577,70 @@ class AddingQueue:
             logging.error(f"Exception in process_multi_pack for {item_identifier}: {str(e)}")
             logging.exception("Traceback:")
             return False
-            
-    def file_matches_item(self, file_path: str, item: Dict[str, Any]) -> bool:
-        logging.debug(f"Checking if file {file_path} matches item {item}")
-        file_name = file_path.split('/')[-1].lower()
-        logging.debug(f"Extracted filename: {file_name}")
 
-        if 'sample' in file_name:
-            logging.debug(f"Skipping sample file: {file_name}")
-            return False
+    def extract_episode_range(self, file_name):
+        match = re.search(r'S\d+E(\d+)(?:-|-)E?(\d+)', file_name, re.IGNORECASE)
+        if match:
+            return (int(match.group(1)), int(match.group(2)))
+        return None
+
+    def handle_multi_episode(self, item, episode_range, file_name, queue_manager, title, link):
+        start_ep, end_ep = episode_range
+        season_number = item['season_number']
         
-        if item['type'] == 'episode':
-            season_number = item['season_number']
-            episode_number = item['episode_number']
+        for ep_num in range(start_ep, end_ep + 1):
+            if ep_num != int(item['episode_number']):  # Skip the current item as it's already handled
+                related_item = self.find_related_episode(item, ep_num, queue_manager)
+                if related_item:
+                    logging.info(f"Moving related episode S{season_number}E{ep_num} to Checking queue")
+                    queue_manager.move_to_checking(related_item, queue_manager.get_item_queue(related_item), title, link, file_name)
+                else:
+                    logging.warning(f"Related episode S{season_number}E{ep_num} not found in queues")
+
+    def find_related_episode(self, item, episode_number, queue_manager):
+        for queue_name in ['Wanted', 'Scraping', 'Sleeping']:
+            queue = queue_manager.queues[queue_name]
+            for queue_item in queue.get_contents():
+                if (queue_item['type'] == 'episode' and
+                    queue_item['imdb_id'] == item['imdb_id'] and
+                    queue_item['season_number'] == item['season_number'] and
+                    int(queue_item['episode_number']) == episode_number):
+                    return queue_item
+        return None
             
-            pattern = rf'(?i)(?:s0*{season_number}(?:[.-]?|\s*)e0*{episode_number}|' \
-                    rf'0*{season_number}x0*{episode_number}|' \
-                    rf'season\s*0*{season_number}\s*episode\s*0*{episode_number}|' \
-                    rf'(?<!\d)0*{season_number}x0*{episode_number}(?!\d))'
-            
-            logging.debug(f"Attempting to match pattern: {pattern}")
-            match = re.search(pattern, file_name)
-            if match:
-                logging.debug(f"Episode match found: {file_name}. Matched part: {match.group()}")
+    def file_matches_item(self, file: str, item: Dict[str, Any]) -> bool:
+        filename = os.path.basename(file).lower()
+        logging.debug(f"Extracted filename: {filename}")
+
+        season_number = int(item['season_number'])
+        episode_number = int(item['episode_number'])
+        quality = item['version'].lower()
+
+        # Pattern for single episodes
+        single_ep_pattern = rf"(?i)s0*{season_number}(?:[.-]?|\s*)e0*{episode_number}(?!\d)"
+        
+        # Pattern for episode ranges
+        range_pattern = rf"(?i)s0*{season_number}(?:[.-]?|\s*)e0*(\d+)(?:-|-)0*(\d+)"
+
+        logging.debug(f"Attempting to match patterns: {single_ep_pattern} or {range_pattern}")
+
+        single_match = re.search(single_ep_pattern, filename)
+        range_match = re.search(range_pattern, filename)
+
+        if single_match:
+            logging.debug(f"Single episode match found: {filename}. Matched part: {single_match.group()}")
+            return True
+        elif range_match:
+            start_ep, end_ep = map(int, range_match.groups())
+            if start_ep <= episode_number <= end_ep:
+                logging.debug(f"Episode {episode_number} falls within range {start_ep}-{end_ep} in file: {filename}")
                 return True
             else:
-                logging.debug(f"No regex match found for episode file: {file_name}")
-            
-            if 'name' in item:
-                episode_title = item['name'].lower()
-                if episode_title in file_name:
-                    logging.debug(f"Episode match found by title: {file_name}")
-                    return True
-            
-            logging.debug(f"No match found for episode file: {file_name}")
-            return False
+                logging.debug(f"Episode {episode_number} not in range {start_ep}-{end_ep} in file: {filename}")
+        else:
+            logging.debug(f"No match found for {filename}")
+
+        return False
 
     def remove_unwanted_torrent(self, torrent_id):
         try:

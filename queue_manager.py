@@ -85,7 +85,7 @@ class QueueManager:
         self.queues["Blacklisted"].process(self)
 
     def blacklist_item(self, item: Dict[str, Any], from_queue: str):
-        self.queues["Blacklisted"].blacklist_item(item)
+        self.queues["Blacklisted"].blacklist_item(item, self)
         self.queues[from_queue].remove_item(item)
 
     def blacklist_old_season_items(self, item: Dict[str, Any], from_queue: str):
