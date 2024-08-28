@@ -39,7 +39,7 @@ def add_to_real_debrid(magnet_link):
     try:
         rate_limited()
         # Step 1: Add magnet or torrent file
-        if 'magnet:?xt=urn:btih:' in magnet_link:
+        if magnet_link.startswith('magnet:'):
             magnet_data = {'magnet': magnet_link}
             torrent_response = api.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
         else:

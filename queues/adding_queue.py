@@ -612,34 +612,44 @@ class AddingQueue:
         filename = os.path.basename(file).lower()
         logging.debug(f"Extracted filename: {filename}")
 
-        season_number = int(item['season_number'])
-        episode_number = int(item['episode_number'])
         quality = item['version'].lower()
 
-        # Pattern for single episodes
-        single_ep_pattern = rf"(?i)s0*{season_number}(?:[.-]?|\s*)e0*{episode_number}(?!\d)"
-        
-        # Pattern for episode ranges
-        range_pattern = rf"(?i)s0*{season_number}(?:[.-]?|\s*)e0*(\d+)(?:-|-)0*(\d+)"
-
-        logging.debug(f"Attempting to match patterns: {single_ep_pattern} or {range_pattern}")
-
-        single_match = re.search(single_ep_pattern, filename)
-        range_match = re.search(range_pattern, filename)
-
-        if single_match:
-            logging.debug(f"Single episode match found: {filename}. Matched part: {single_match.group()}")
-            return True
-        elif range_match:
-            start_ep, end_ep = map(int, range_match.groups())
-            if start_ep <= episode_number <= end_ep:
-                logging.debug(f"Episode {episode_number} falls within range {start_ep}-{end_ep} in file: {filename}")
+        if item['type'] == 'movie':
+            # For movies, we just need to check if the title and year are in the filename
+            title = item['title'].lower().replace(' ', '.')
+            year = item['year']
+            movie_pattern = rf"(?i){re.escape(title)}.*{year}"
+            
+            if re.search(movie_pattern, filename):
+                logging.debug(f"Movie match found: {filename}")
                 return True
-            else:
-                logging.debug(f"Episode {episode_number} not in range {start_ep}-{end_ep} in file: {filename}")
-        else:
-            logging.debug(f"No match found for {filename}")
+        elif item['type'] == 'episode':
+            season_number = int(item['season_number'])
+            episode_number = int(item['episode_number'])
 
+            # Pattern for single episodes
+            single_ep_pattern = rf"(?i)s0*{season_number}(?:[.-]?|\s*)e0*{episode_number}(?!\d)"
+            
+            # Pattern for episode ranges
+            range_pattern = rf"(?i)s0*{season_number}(?:[.-]?|\s*)e0*(\d+)(?:-|-)0*(\d+)"
+
+            logging.debug(f"Attempting to match patterns: {single_ep_pattern} or {range_pattern}")
+
+            single_match = re.search(single_ep_pattern, filename)
+            range_match = re.search(range_pattern, filename)
+
+            if single_match:
+                logging.debug(f"Single episode match found: {filename}. Matched part: {single_match.group()}")
+                return True
+            elif range_match:
+                start_ep, end_ep = map(int, range_match.groups())
+                if start_ep <= episode_number <= end_ep:
+                    logging.debug(f"Episode {episode_number} falls within range {start_ep}-{end_ep} in file: {filename}")
+                    return True
+                else:
+                    logging.debug(f"Episode {episode_number} not in range {start_ep}-{end_ep} in file: {filename}")
+
+        logging.debug(f"No match found for {filename}")
         return False
 
     def remove_unwanted_torrent(self, torrent_id):
