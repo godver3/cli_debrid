@@ -59,18 +59,29 @@
     .auth-form input[type="submit"]:hover {
         background-color: #45a049;
     }
+
+    .flash-message {
+        max-width: 300px;
+        margin: 50px auto;
+        padding: 10px;
+        margin-bottom: 15px;
+        border-radius: 3px;
+        text-align: center;
+        opacity: 0;
+        transition: opacity 0.5s ease-in-out;
+    }
+
+    .flash-message.error {
+        background-color: #ff6b6b;
+        color: white;
+    }
+
+    .flash-message.show {
+        opacity: 1;
+    }
 </style>
 <div class="auth-form">
     <h2>Login</h2>
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            <ul class="flash-messages">
-            {% for category, message in messages %}
-                <li class="flash-message {{ category }}">{{ message }}</li>
-            {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
     <form method="POST">
         <input type="text" name="username" placeholder="Username" required>
         <input type="password" name="password" placeholder="Password" required>
@@ -78,4 +89,32 @@
     </form>
     <p class="login-reminder">Initial login: username <strong>admin</strong>, password <strong>admin</strong></p>
 </div>
+<div class="flash-messages">
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+    <div class="flash-messages">
+    {% for category, message in messages %}
+        <div class="flash-message {{ category }}" id="flash-message">{{ message }}</div>
+    {% endfor %}
+    </div>
+{% endif %}
+{% endwith %}
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var flashMessage = document.getElementById('flash-message');
+        if (flashMessage) {
+            // Fade in
+            setTimeout(function() {
+                flashMessage.classList.add('show');
+            }, 100);
+
+            // Fade out
+            setTimeout(function() {
+                flashMessage.classList.remove('show');
+            }, 5000);
+        }
+    });
+</script>
+
 {% endblock %}
