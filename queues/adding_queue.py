@@ -612,6 +612,10 @@ class AddingQueue:
         filename = os.path.basename(file).lower()
         logging.debug(f"Extracted filename: {filename}")
 
+        if 'sample' in filename:
+            logging.debug(f"Skipping sample file: {filename}")
+            return False
+
         quality = item['version'].lower()
 
         if item['type'] == 'movie':
