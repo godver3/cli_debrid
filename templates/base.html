@@ -606,30 +606,30 @@
                 <div class="bar"></div>
             </div>
             <ul id="navMenu">
+                {% set menu_items = [
+                    ('statistics', 'Home'),
+                    ('queues', 'Queues'),
+                    ('scraper', 'Scraper'),
+                    ('logs', 'Logs'),
+                    ('settings', 'Settings'),
+                    ('manage_users', 'Manage Users'),
+                    ('database', 'Database'),
+                    ('scraper_tester', 'Scraper Tester'),
+                    ('debug_functions', 'Debug Functions')
+                ] %}
+                
                 {% if is_user_system_enabled() %}
-                        {% if current_user.is_authenticated %}
-                        {% set menu_items = [
-                            ('statistics', 'Home'),
-                            ('queues', 'Queues'),
-                            ('scraper', 'Scraper')
-                        ] %}
-                        
-                        {% if current_user.role == 'admin' %}
-                            {% set admin_menu_items = [
-                                ('logs', 'Logs'),
-                                ('settings', 'Settings'),
-                                ('manage_users', 'Manage Users'),
-                                ('database', 'Database'),
-                                ('scraper_tester', 'Scraper Tester'),
-                                ('debug_functions', 'Debug Functions')
-                            ] %}
-                            {% set menu_items = menu_items + admin_menu_items %}
-                        {% endif %}
-                        
+                    {% if current_user.is_authenticated %}
                         {% for route, label in menu_items %}
+                            {% if current_user.role == 'admin' or loop.index <= 3 %}
                                 <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                            {% endif %}
                         {% endfor %}
                     {% endif %}
+                {% else %}
+                    {% for route, label in menu_items %}
+                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                    {% endfor %}
                 {% endif %}
             </ul>
         </nav>
