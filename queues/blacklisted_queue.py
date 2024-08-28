@@ -59,13 +59,18 @@ class BlacklistedQueue:
         queue_manager.move_to_wanted(item, "Blacklisted")
         self.remove_item(item)
 
-    def blacklist_item(self, item: Dict[str, Any]):
+    def blacklist_item(self, item: Dict[str, Any], queue_manager):
         item_id = item['id']
-        item_identifier = self.generate_identifier(item)
+        item_identifier = queue_manager.generate_identifier(item)
         update_media_item_state(item_id, 'Blacklisted')
         
         # Add to blacklisted queue
         self.add_item(item)
+        
+        # Remove from current queue
+        current_queue = queue_manager.get_item_queue(item)
+        if current_queue:
+            queue_manager.queues[current_queue].remove_item(item)
         
         logging.info(f"Moved item {item_identifier} to Blacklisted state")
 
@@ -73,16 +78,24 @@ class BlacklistedQueue:
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Blacklisting item {item_identifier} and related old season items with the same version")
 
-        # Blacklist the current item
-        self.blacklist_item(item)
+        # Check if the item is in the Checking queue before blacklisting
+        if queue_manager.get_item_queue(item) != 'Checking':
+            self.blacklist_item(item, queue_manager)
+        else:
+            logging.info(f"Skipping blacklisting of {item_identifier} as it's already in Checking queue")
 
         # Find and blacklist related items in the same season with the same version that are also old
         related_items = self.find_related_season_items(item, queue_manager)
         for related_item in related_items:
+            related_identifier = queue_manager.generate_identifier(related_item)
             if self.is_item_old(related_item) and related_item['version'] == item['version']:
-                self.blacklist_item(related_item)
+                # Check if the related item is in the Checking queue before blacklisting
+                if queue_manager.get_item_queue(related_item) != 'Checking':
+                    self.blacklist_item(related_item, queue_manager)
+                else:
+                    logging.info(f"Skipping blacklisting of {related_identifier} as it's already in Checking queue")
             else:
-                logging.debug(f"Not blacklisting {queue_manager.generate_identifier(related_item)} as it's either not old enough or has a different version")
+                logging.debug(f"Not blacklisting {related_identifier} as it's either not old enough or has a different version")
 
     def find_related_season_items(self, item: Dict[str, Any], queue_manager) -> List[Dict[str, Any]]:
         related_items = []

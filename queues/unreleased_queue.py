@@ -8,6 +8,7 @@ from settings import get_setting
 class UnreleasedQueue:
     def __init__(self):
         self.items = []
+        self.last_report_time = datetime.min
 
     def update(self):
         self.items = [dict(row) for row in get_all_media_items(state="Unreleased")]
@@ -25,6 +26,7 @@ class UnreleasedQueue:
         logging.debug(f"Processing unreleased queue. Items: {len(self.items)}")
         current_datetime = datetime.now()
         items_to_move = []
+        unreleased_report = []
 
         for item in self.items:
             item_identifier = queue_manager.generate_identifier(item)
@@ -69,7 +71,8 @@ class UnreleasedQueue:
                     items_to_move.append(item)
                 else:
                     time_until_release = release_datetime - current_datetime
-                    logging.debug(f"Item {item_identifier} will be released in {time_until_release}.")
+                    logging.debug(f"Item {item_identifier} will be released in {time_until_release}. Will start scraping at {release_datetime}")
+                    unreleased_report.append((item_identifier, release_datetime, time_until_release))
             except ValueError:
                 logging.error(f"Invalid release date format for item {item_identifier}: {release_date_str}")
 
@@ -77,6 +80,14 @@ class UnreleasedQueue:
         for item in items_to_move:
             queue_manager.move_to_wanted(item, "Unreleased")
             self.remove_item(item)
+
+        # Print debug report for unreleased items every hour
+        if current_datetime - self.last_report_time >= timedelta(hours=1):
+            if unreleased_report:
+                logging.debug("Hourly unreleased items report:")
+                for item_id, release_time, time_until in unreleased_report:
+                    logging.debug(f"  {item_id}: Start scraping at {release_time}, time until: {time_until}")
+            self.last_report_time = current_datetime
 
         logging.debug(f"Unreleased queue processing complete. Items moved to Wanted queue: {len(items_to_move)}")
         logging.debug(f"Remaining items in Unreleased queue: {len(self.items)}")
