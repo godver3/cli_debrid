@@ -106,8 +106,6 @@
         font-size: 16px;
     }
 
-    .delete-notification-btn { margin-left: auto; }
-
     /* Add buttons */
     #add-source-btn,
     #add-notification-btn,
@@ -206,13 +204,18 @@
         font-size: 0.9em;
     }
 
+    .settings-description a {
+        color: #dfdfdf;
+    }
+
     /* Version, scraper, and source action buttons */
     .version-buttons button,
     .delete-scraper-btn,
     .delete-source-btn,
     .duplicate-version-btn,
     .rename-version-btn,
-    .delete-version-btn {
+    .delete-version-btn,
+    .delete-notification-btn {
         composes: btn btn-primary;
         display: inline-block;
         padding: 5px 10px;
@@ -224,7 +227,8 @@
 
     .delete-scraper-btn,
     .delete-source-btn,
-    .delete-version-btn {
+    .delete-version-btn,
+    .delete-notification-btn {
         background-color: #f44336;
     }
 
@@ -385,6 +389,7 @@
     
     <div id="saveStatus"></div>
 </div>
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
 <script>
     // Define reloadTabContent in the global scope
     window.reloadTabContent = function(tabName, callback) {
@@ -401,6 +406,10 @@
                     if (tabName === 'scrapers') {
                         console.log('Dispatching scrapersContentLoaded event');
                         const event = new CustomEvent('scrapersContentLoaded');
+                        document.dispatchEvent(event);
+                    } else if (tabName === 'scraping') {
+                        console.log('Dispatching scrapingContentLoaded event');
+                        const event = new CustomEvent('scrapingContentLoaded');
                         document.dispatchEvent(event);
                     }
                     initializeExpandCollapse();
@@ -548,6 +557,17 @@
 
         // Dispatch an event to signal that dashboard initialization is complete
         document.dispatchEvent(new Event('dashboardInitialized'));
+
+        // Add event listener for the Save Settings button
+        const saveSettingsButton = document.getElementById('saveSettingsButton');
+        saveSettingsButton.addEventListener('click', function() {
+            // Assuming updateSettings is exported from settings.js
+            if (typeof updateSettings === 'function') {
+                updateSettings();
+            } else {
+                console.error('updateSettings function not found. Make sure it is exported from settings.js');
+            }
+        });
     });
 </script>
 {% endblock %}

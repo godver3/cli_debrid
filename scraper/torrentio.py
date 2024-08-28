@@ -3,7 +3,7 @@ from api_tracker import api
 import re
 from typing import List, Dict, Any
 from urllib.parse import quote_plus
-from settings import load_config
+from settings import load_config, get_setting
 
 DEFAULT_OPTS = "sort=qualitysize|qualityfilter=480p,scr,cam"
 TORRENTIO_BASE_URL = "https://torrentio.strem.fun"
@@ -32,7 +32,9 @@ def scrape_torrentio(imdb_id: str, title: str, year: int, content_type: str, sea
     return all_results
 
 def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    opts = settings.get('opts', DEFAULT_OPTS)
+    logging.info(f"Scraping Torrentio instance: {instance}")
+    opts = get_setting(instance, 'opts', DEFAULT_OPTS)
+    logging.info(f"Opts: {opts}")
     
     try:
         url = construct_url(imdb_id, content_type, season, episode, opts)

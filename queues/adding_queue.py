@@ -561,37 +561,31 @@ class AddingQueue:
             return False
             
     def file_matches_item(self, file_path: str, item: Dict[str, Any]) -> bool:
-        logging.debug(f"Checking if file {file_path} matches item {item.get('id')}")
+        logging.debug(f"Checking if file {file_path} matches item {item}")
         file_name = file_path.split('/')[-1].lower()
+        logging.debug(f"Extracted filename: {file_name}")
 
         if 'sample' in file_name:
             logging.debug(f"Skipping sample file: {file_name}")
             return False
         
-        if item['type'] == 'movie':
-            # For movies, check if the file has a common video extension
-            common_video_extensions = ('.mkv', '.mp4', '.avi', '.mov', '.m4v', '.wmv')
-            if file_name.endswith(common_video_extensions):
-                logging.debug(f"Movie file match found: {file_name}")
-                return True
-            logging.debug(f"No match found for movie file: {file_name}")
-            return False
-        elif item['type'] == 'episode':
-            # For episodes, use a more flexible regex pattern
+        if item['type'] == 'episode':
             season_number = item['season_number']
             episode_number = item['episode_number']
             
-            # Improved pattern to match various season and episode formats
             pattern = rf'(?i)(?:s0*{season_number}(?:[.-]?|\s*)e0*{episode_number}|' \
-                      rf'0*{season_number}x0*{episode_number}|' \
-                      rf'season\s*0*{season_number}\s*episode\s*0*{episode_number}|' \
-                      rf'(?<!\d)0*{season_number}x0*{episode_number}(?!\d))'
+                    rf'0*{season_number}x0*{episode_number}|' \
+                    rf'season\s*0*{season_number}\s*episode\s*0*{episode_number}|' \
+                    rf'(?<!\d)0*{season_number}x0*{episode_number}(?!\d))'
             
-            if re.search(pattern, file_name):
-                logging.debug(f"Episode match found: {file_name}")
+            logging.debug(f"Attempting to match pattern: {pattern}")
+            match = re.search(pattern, file_name)
+            if match:
+                logging.debug(f"Episode match found: {file_name}. Matched part: {match.group()}")
                 return True
+            else:
+                logging.debug(f"No regex match found for episode file: {file_name}")
             
-            # If no match found, try matching with the episode title (if available)
             if 'name' in item:
                 episode_title = item['name'].lower()
                 if episode_title in file_name:
@@ -600,9 +594,6 @@ class AddingQueue:
             
             logging.debug(f"No match found for episode file: {file_name}")
             return False
-        
-        logging.debug(f"No match found for file {file_path}")
-        return False
 
     def remove_unwanted_torrent(self, torrent_id):
         try:
