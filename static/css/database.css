@@ -151,6 +151,24 @@
         padding: 8px;
     }
 
+    .delete-item {
+        background-color: #ff4d4d;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 25px;
+        height: 25px;
+        font-size: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding-right: 1px;
+    }
+    .delete-item:hover {
+        background-color: #ff1a1a;
+    }
+
     /* Mobile view adjustments */
     @media screen and (max-width: 768px) {
         .column-selector-container {
