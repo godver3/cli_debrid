@@ -284,7 +284,7 @@ function updateSettings() {
     }
 
     // Add this block to handle the Uncached Handling Method
-    const uncachedHandlingSelect = document.getElementById('scraping-uncached-handling');
+    const uncachedHandlingSelect = document.getElementById('scraping-uncached_content_handling');
     console.log("Uncached Handling Select element:", uncachedHandlingSelect);
     
     if (uncachedHandlingSelect) {
@@ -302,6 +302,26 @@ function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Uncached Handling Method select element not found!");
+    }
+
+    // Handle the Jackett Seeders Only checkbox
+    const jackettSeedersOnly = document.getElementById('scraping-jackett_seeders_only');
+    console.log("Jackett Seeders Only element:", jackettSeedersOnly);
+    
+    if (jackettSeedersOnly) {
+        console.log("Jackett Seeders Only found. Checked:", jackettSeedersOnly.checked);
+        
+        if (!settingsData['Scraping']) {
+            console.log("Initializing Scraping section in settingsData");
+            settingsData['Scraping'] = {};
+        }
+        
+        console.log("Setting jackett_seeders_only value");
+        settingsData['Scraping']['jackett_seeders_only'] = jackettSeedersOnly.checked;
+        
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Jackett Seeders Only checkbox element not found!");
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));

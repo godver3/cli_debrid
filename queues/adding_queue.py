@@ -320,7 +320,12 @@ class AddingQueue:
                     logging.warning(f"No matching file found for movie: {item_identifier}")
                     return False
             else:
-                return self.process_multi_pack(queue_manager, item, title, link, files)
+                success, message = self.process_multi_pack(queue_manager, item, title, link, files)
+                if success:
+                    logging.info(f"Successfully processed TV show item: {item_identifier}. {message}")
+                else:
+                    logging.warning(f"Failed to process TV show item: {item_identifier}. {message}")
+                return success
         else:
             logging.warning(f"No file information available for torrent: {item_identifier}")
             return False
@@ -536,7 +541,7 @@ class AddingQueue:
                     self.handle_multi_episode(item, episode_range, filled_by_file, queue_manager, title, link)
             else:
                 logging.warning(f"Original item {item_identifier} did not match any files in the torrent.")
-                return False
+                return False, f"No matching files found for TV show item"
 
             # Find all matching episodes in the Wanted, Scraping, and Sleeping queues
             matching_items = []
@@ -572,11 +577,11 @@ class AddingQueue:
                         break
 
             logging.info(f"Processed multi-pack: moved {moved_items + 1} matching episodes (including original item) to Checking queue")
-            return True
+            return True, f"Moved {moved_items + 1} matching episodes (including original item) to Checking queue"
         except Exception as e:
             logging.error(f"Exception in process_multi_pack for {item_identifier}: {str(e)}")
             logging.exception("Traceback:")
-            return False
+            return False, f"Error processing multi-pack: {str(e)}"
 
     def extract_episode_range(self, file_name):
         match = re.search(r'S\d+E(\d+)(?:-|-)E?(\d+)', file_name, re.IGNORECASE)

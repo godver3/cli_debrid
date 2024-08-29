@@ -396,31 +396,49 @@ def get_specific_wanted_content():
         choices=choices
     ).ask()
 
-    source_data = content_sources[selected_source]
-    source_type = selected_source.split('_')[0]
+    get_and_add_wanted_content(selected_source)
 
+def get_all_wanted_from_enabled_sources():
+    content_sources = get_all_settings().get('Content Sources', {})
+    
+    for source_id, source_data in content_sources.items():
+        if not source_data.get('enabled', False):
+            logging.info(f"Skipping disabled source: {source_id}")
+            continue
+
+        get_and_add_wanted_content(source_id)
+
+    logging.info("Finished processing all enabled content sources")
+
+def get_and_add_wanted_content(source_id):
+    content_sources = get_all_settings().get('Content Sources', {})
+    source_data = content_sources[source_id]
+    source_type = source_id.split('_')[0]
+    versions = source_data.get('versions', {})
+
+    logging.info(f"Processing source: {source_id}")
+    
     wanted_content = []
-    if source_type == 'MDBList':
+    if source_type == 'Overseerr':
+        wanted_content = get_wanted_from_overseerr()
+    elif source_type == 'MDBList':
         mdblist_urls = source_data.get('urls', '').split(',')
-        versions = source_data.get('versions', {})
         for mdblist_url in mdblist_urls:
             mdblist_url = mdblist_url.strip()
             wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
-    elif source_type == 'Trakt Lists':
-        trakt_lists = source_data.get('trakt_lists', '').split(',')
-        versions = source_data.get('versions', {})
-        for trakt_list in trakt_lists:
-            trakt_list = trakt_list.strip()
-            wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
-    elif source_type == 'Overseerr':
-        wanted_content = get_wanted_from_overseerr()
     elif source_type == 'Trakt Watchlist':
         update_trakt_settings(content_sources)
         wanted_content = get_wanted_from_trakt_watchlist()
+    elif source_type == 'Trakt Lists':
+        update_trakt_settings(content_sources)
+        trakt_lists = source_data.get('trakt_lists', '').split(',')
+        for trakt_list in trakt_lists:
+            trakt_list = trakt_list.strip()
+            wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
     elif source_type == 'Collected':
         wanted_content = get_wanted_from_collected()
 
-    logging.debug(f"wanted_content for {selected_source}: {wanted_content}")
+    logging.debug(f"wanted_content for {source_id}: {wanted_content}")
 
     if wanted_content:
         total_items = 0
@@ -433,61 +451,9 @@ def get_specific_wanted_content():
                 add_wanted_items(all_items, item_versions)
                 total_items += len(all_items)
         
-        logging.info(f"Added {total_items} wanted items from {selected_source}")
+        logging.info(f"Added {total_items} wanted items from {source_id}")
     else:
-        logging.warning(f"No wanted content retrieved from {selected_source}")
-
-def get_all_wanted_from_enabled_sources():
-    content_sources = get_all_settings().get('Content Sources', {})
-    
-    for source_id, source_data in content_sources.items():
-        if not source_data.get('enabled', False):
-            logging.info(f"Skipping disabled source: {source_id}")
-            continue
-
-        source_type = source_id.split('_')[0]
-        versions = source_data.get('versions', {})
-        logging.info(f"Processing enabled source: {source_id}")
-        
-        wanted_content = []
-        if source_type == 'Overseerr':
-            wanted_content = get_wanted_from_overseerr()
-        elif source_type == 'MDBList':
-            mdblist_urls = source_data.get('urls', '').split(',')
-            for mdblist_url in mdblist_urls:
-                mdblist_url = mdblist_url.strip()
-                wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
-        elif source_type == 'Trakt Watchlist':
-            update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_watchlist()
-        elif source_type == 'Trakt Lists':
-            update_trakt_settings(content_sources)
-            trakt_lists = source_data.get('trakt_lists', '').split(',')
-            for trakt_list in trakt_lists:
-                trakt_list = trakt_list.strip()
-                wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
-        elif source_type == 'Collected':
-            #wanted_content = get_wanted_from_collected()
-            logging.info("Add through debug menu, otherwise will populate daily")
-
-        logging.debug(f"wanted_content for {source_id}: {wanted_content}")
-
-        if wanted_content:
-            total_items = 0
-            for items, item_versions in wanted_content:
-                logging.debug(f"Processing items: {len(items)}, versions: {item_versions}")
-                processed_items = process_metadata(items)
-                if processed_items:
-                    all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                    logging.debug(f"Calling add_wanted_items with {len(all_items)} items and versions: {item_versions}")
-                    add_wanted_items(all_items, item_versions)
-                    total_items += len(all_items)
-            
-            logging.info(f"Added {total_items} wanted items from {source_id}")
-        else:
-            logging.warning(f"No wanted content retrieved from {source_id}")
-
-    logging.info("Finished processing all enabled content sources")
+        logging.warning(f"No wanted content retrieved from {source_id}")
 
 def update_trakt_settings(content_sources):
     trakt_watchlist_enabled = any(

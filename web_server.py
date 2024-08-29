@@ -48,6 +48,7 @@ import aiohttp
 import asyncio
 from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
 import shutil
+from utilities.debug_commands import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex, get_and_add_wanted_content, get_all_wanted_from_enabled_sources
 
 app = Flask(__name__)
 
@@ -945,11 +946,14 @@ def add_torrent_to_real_debrid():
             else:
                 return jsonify({'message': 'Cached torrent added to Real-Debrid successfully'})
         else:
-            return jsonify({'error': 'Failed to add torrent to Real-Debrid'}), 500
+            error_message = "No suitable video files found in the torrent."
+            logging.error(f"Failed to add torrent to Real-Debrid: {error_message}")
+            return jsonify({'error': error_message}), 500
 
     except Exception as e:
-        logging.error(f"Error adding torrent to Real-Debrid: {str(e)}")
-        return jsonify({'error': 'An error occurred while adding to Real-Debrid'}), 500
+        error_message = str(e)
+        logging.error(f"Error adding torrent to Real-Debrid: {error_message}")
+        return jsonify({'error': f'An error occurred while adding to Real-Debrid: {error_message}'}), 500
 
 def format_date(date_string):
     if not date_string:
@@ -1196,20 +1200,26 @@ def select_media():
         logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
 
         torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version)
+        
+        if not torrent_results:
+            logging.warning("No torrent results found")
+            return jsonify({'torrent_results': []})
+
         cached_results = []
         for result in torrent_results:
-            if cache_status.get(result.get('hash'), False):
-                result['cached'] = 'RD'
+            result_hash = result.get('hash')
+            if result_hash:
+                is_cached = cache_status.get(result_hash, False)
+                result['cached'] = 'RD' if is_cached else ''
             else:
                 result['cached'] = ''
             cached_results.append(result)
 
+        logging.info(f"Processed {len(cached_results)} results")
         return jsonify({'torrent_results': cached_results})
     except Exception as e:
-        logging.error(f"Error in select_media: {str(e)}")
+        logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while selecting media'}), 500
-
-
 
 @app.route('/add_torrent', methods=['POST'])
 def add_torrent():
@@ -2111,9 +2121,10 @@ def program_status():
     return jsonify({"running": is_running})
 
 @app.route('/debug_functions')
-@admin_required
 def debug_functions():
-    return render_template('debug_functions.html')
+    content_sources = get_all_settings().get('Content Sources', {})
+    enabled_sources = {source: data for source, data in content_sources.items() if data.get('enabled', False)}
+    return render_template('debug_functions.html', content_sources=enabled_sources)
 
 @app.route('/bulk_delete_by_imdb', methods=['POST'])
 def bulk_delete_by_imdb():
@@ -2148,6 +2159,39 @@ def api_call_summary():
                            summary=summary, 
                            time_frame=time_frame,
                            all_domains=all_domains)
+
+@app.route('/api/get_collected_from_plex', methods=['POST'])
+def get_collected_from_plex():
+    collection_type = request.form.get('collection_type')
+    
+    try:
+        if collection_type == 'all':
+            get_and_add_all_collected_from_plex()
+        elif collection_type == 'recent':
+            get_and_add_recent_collected_from_plex()
+        else:
+            return jsonify({'success': False, 'error': 'Invalid collection type'}), 400
+
+        return jsonify({'success': True, 'message': f'Successfully retrieved and added {collection_type} collected items from Plex'}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/get_wanted_content', methods=['POST'])
+def get_wanted_content():
+    source = request.form.get('source')
+    
+    try:
+        if source == 'all':
+            get_all_wanted_from_enabled_sources()
+            message = 'Successfully retrieved and added wanted items from all enabled sources'
+        else:
+            get_and_add_wanted_content(source)
+            message = f'Successfully retrieved and added wanted items from {source}'
+
+        return jsonify({'success': True, 'message': message}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     start_server()
