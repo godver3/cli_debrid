@@ -402,7 +402,6 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         multi = False
     elif season is not None and episode is None:
         multi = True
-    # If both season and episode are specified, keep the passed multi value
 
     logging.info(f"Adjusted scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
                  f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
@@ -419,21 +418,24 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
             if magnet_link:
                 if 'magnet:?xt=urn:btih:' in magnet_link:
                     magnet_hash = extract_hash_from_magnet(magnet_link)
-                    torrent_type = 'magnet'
-                    hashes.append(magnet_hash)
                     result['hash'] = magnet_hash
+                    hashes.append(magnet_hash)
+                    processed_results.append(result)
                 else:
-                    torrent_type = 'torrent_file'
-                processed_results.append(result)
+                    # Handle torrent file case if needed
+                    pass
 
     # Check cache status for all hashes at once
     cache_status = is_cached_on_rd(hashes) if hashes else {}
+    logging.info(f"Cache status returned: {cache_status}")
 
     # Update processed_results with cache status
     for result in processed_results:
         result_hash = result.get('hash')
         if result_hash:
-            result['cached'] = cache_status.get(result_hash, False)
+            is_cached = cache_status.get(result_hash, False)
+            result['cached'] = 'Yes' if is_cached else 'No'
+            logging.info(f"Cache status for {result['title']} (hash: {result_hash}): {result['cached']}")
 
     return processed_results, cache_status
 

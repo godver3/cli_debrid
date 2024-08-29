@@ -83,6 +83,7 @@ def migrate_media_items_table():
                 version TEXT,
                 hybrid_flag TEXT,
                 collected_at TIMESTAMP,
+                genres TEXT,
                 UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
             )
         ''')
@@ -93,14 +94,15 @@ def migrate_media_items_table():
             (imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
              season_number, episode_number, filled_by_title, filled_by_magnet, 
              last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, version,
-             hybrid_flag, collected_at)
+             hybrid_flag, collected_at, genres)
             SELECT 
                 imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
                 season_number, episode_number, filled_by_title, filled_by_magnet, 
                 last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, 
                 COALESCE(version, 'default'),
                 hybrid_flag,
-                CASE WHEN state = 'Collected' THEN last_updated ELSE NULL END
+                CASE WHEN state = 'Collected' THEN last_updated ELSE NULL END,
+                genres
             FROM media_items
         ''')
 
@@ -144,6 +146,7 @@ def create_tables():
                 last_checked TIMESTAMP,
                 scrape_results TEXT,
                 version TEXT,
+                genres TEXT,
                 UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
             )
         ''')
@@ -311,6 +314,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                 items_skipped += 1
                 continue
 
+            genres = json.dumps(item.get('genres', []))  # Convert genres list to JSON string
+
             for version, enabled in versions.items():
                 if not enabled:
                     continue
@@ -352,11 +357,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                     if item_type == 'movie':
                         conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                            item.get('release_date'), 'Wanted', 'movie', datetime.now(), version
+                            item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres
                         ))
                     else:
                         # For episodes, get the airtime
@@ -377,13 +382,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                         
                         conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, airtime)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, airtime, genres)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Wanted', 'episode',
                             item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), version, airtime
+                            datetime.now(), version, airtime, genres
                         ))
                     logging.debug(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} (Version: {version}, Airtime: {airtime if item_type == 'episode' else 'N/A'})")
                     items_added += 1
@@ -517,6 +522,8 @@ def add_collected_items(media_items_batch, recent=False):
 
             plex_filename = os.path.basename(item.get('location', ''))
 
+            genres = json.dumps(item.get('genres', []))  # Convert genres list to JSON string
+
             item_found = False
             for version in versions:
                 if item_type == 'movie':
@@ -607,24 +614,24 @@ def add_collected_items(media_items_batch, recent=False):
                     if item_type == 'movie':
                         cursor = conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Collected', 'movie',
-                            datetime.now(), datetime.now(), 'unknown', datetime.now()
+                            datetime.now(), datetime.now(), 'unknown', datetime.now(), genres
                         ))
                         logging.info(f"Adding new movie to DB as Collected: {normalized_title}")
                     else:
                         cursor = conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Collected', 'episode',
                             item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), datetime.now(), 'unknown', airtime, datetime.now()
+                            datetime.now(), datetime.now(), 'unknown', airtime, datetime.now(), genres
                         ))
                         logging.info(f"Adding new episode to DB as Collected: {normalized_title} S{item['season_number']}E{item['episode_number']} (Airtime: {airtime})")
                 

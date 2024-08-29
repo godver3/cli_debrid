@@ -168,33 +168,38 @@ function addToRealDebrid(magnetLink) {
     })
     .then(response => {
         if (!response.ok) {
-            throw new Error('Network response was not ok');
+            return response.json().then(errorData => {
+                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+            });
         }
         return response.json();
     })
     .then(data => {
         if (data.error) {
-            displayError(data.error);
+            throw new Error(data.error);
         } else {
             displaySuccess(data.message);
         }
     })
     .catch(error => {
         console.error('Error:', error);
-        displayError('An error occurred while adding to Real-Debrid.');
+        displayError(`Error adding to Real-Debrid: ${error.message}`);
+    })
+    .finally(() => {
+        hideLoadingState();
     });
 }
 
 function displayError(message) {
-    hideLoadingState();
     const overlayContent = document.getElementById('overlayStatus');
-    overlayContent.innerHTML = `<p style="color: red;">${message}</p>`;
+    overlayContent.innerHTML = `<p style="color: red;">Error: ${message}</p>`;
+    overlayContent.style.display = 'block';
 }
 
 function displaySuccess(message) {
-    hideLoadingState();
     const overlayContent = document.getElementById('overlayStatus');
     overlayContent.innerHTML = `<p style="color: green;">${message}</p>`;
+    overlayContent.style.display = 'block';
 }
 
 function showLoadingState() {

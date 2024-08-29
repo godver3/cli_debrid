@@ -367,17 +367,47 @@
     </div>
     <div class="settings-section-content">
         <div class="settings-subsection">
-            <div class="settings-form-group">
-                <label for="scraping-uncached-handling" class="settings-title">Handling Method:</label>
-                <select id="scraping-uncached-handling" name="Scraping.uncached_content_handling" class="settings-input">
-                    <option value="Hybrid" {% if settings.Scraping.uncached_content_handling == 'Hybrid' %}selected{% endif %}>Hybrid</option>
-                    <option value="Full" {% if settings.Scraping.uncached_content_handling == 'Full' %}selected{% endif %}>Full</option>
-                    <option value="None" {% if settings.Scraping.uncached_content_handling == 'None' %}selected{% endif %}>None</option>
-                </select>
-                {% if settings_schema.Scraping.uncached_content_handling.description %}
-                <p class="settings-description">{{ settings_schema.Scraping.uncached_content_handling.description }}</p>
+            {% for key, value in settings_schema.Scraping.items() %}
+                {% if key not in ['versions', 'tab'] %}
+                    <div class="settings-form-group">
+                        <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        {% if value.type == 'boolean' %}
+                            <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}" {% if settings.Scraping[key] %}checked{% endif %}>
+                        {% elif value.choices %}
+                            <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input">
+                                {% for choice in value.choices %}
+                                    <option value="{{ choice }}" {% if settings.Scraping[key] == choice %}selected{% endif %}>{{ choice }}</option>
+                                {% endfor %}
+                            </select>
+                        {% else %}
+                            <input type="{{ 'number' if value.type == 'integer' or value.type == 'float' else 'text' }}" 
+                                   id="scraping-{{ key }}" 
+                                   name="Scraping.{{ key }}" 
+                                   value="{{ settings.Scraping[key] }}" 
+                                   class="settings-input">
+                        {% endif %}
+                        {% if value.description %}
+                            {% if value.description is string %}
+                                <p class="settings-description">{{ value.description }}</p>
+                            {% else %}
+                                <div class="settings-description">
+                                    {% for item in value.description %}
+                                        {% if loop.first %}
+                                            <p>{{ item }}</p>
+                                            <ul>
+                                        {% elif loop.last %}
+                                            <li>{{ item }}</li>
+                                            </ul>
+                                        {% else %}
+                                            <li>{{ item }}</li>
+                                        {% endif %}
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        {% endif %}
+                    </div>
                 {% endif %}
-            </div>
+            {% endfor %}
         </div>
     </div>
 </div>
