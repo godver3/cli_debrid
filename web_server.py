@@ -866,8 +866,11 @@ def database():
         # Construct the ORDER BY clause safely
         order_clause = f"ORDER BY {sort_column} {sort_order}"
 
+        # Ensure 'id' is always included in the query, even if not displayed
+        query_columns = list(set(selected_columns + ['id']))
+        
         # Construct the final query
-        query = f"SELECT {', '.join(selected_columns)} FROM media_items"
+        query = f"SELECT {', '.join(query_columns)} FROM media_items"
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
         query += f" {order_clause}"
@@ -885,14 +888,15 @@ def database():
 
         conn.close()
 
-        # Convert items to a list of dictionaries
-        items = [dict(zip(selected_columns, item)) for item in items]
+        # Convert items to a list of dictionaries, always including 'id'
+        items = [dict(zip(query_columns, item)) for item in items]
 
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return jsonify({
                 'table': render_template('database_table.html', 
                                         items=items, 
+                                        all_columns=all_columns,
                                         selected_columns=selected_columns,
                                         content_type=content_type),
                 'pagination': render_template('database_pagination.html',
