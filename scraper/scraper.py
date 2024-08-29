@@ -18,6 +18,8 @@ from pprint import pformat
 import json
 from fuzzywuzzy import fuzz
 import os
+from nltk.util import ngrams
+from unidecode import unidecode
 
 def setup_scraper_logger():
     log_dir = 'logs'
@@ -127,7 +129,6 @@ def improved_title_similarity(query_title: str, result_title: str) -> float:
     similarity = max(0, min(similarity, 100))
 
     return similarity / 100  # Return as a float between 0 and 1
-
 
 def calculate_bitrate(size_gb, runtime_minutes):
     if not size_gb or not runtime_minutes:
@@ -308,6 +309,7 @@ def detect_season_pack(title: str) -> str:
     normalized_title = normalize_title(title)
     parsed = PTN.parse(normalized_title)
     
+    # Check for explicit season mentions
     if 'season' in parsed:
         seasons = parsed['season']
         if isinstance(seasons, list):
@@ -315,14 +317,31 @@ def detect_season_pack(title: str) -> str:
         else:
             return str(seasons)
     
+    # Check for complete series or all seasons
     if re.search(r'\b(complete series|all seasons|all episodes)\b', normalized_title, re.IGNORECASE):
         return 'Complete'
     
+    # Check for season range
     range_match = re.search(r'(?:s|season)\.?(\d{1,2})\.?-\.?(?:s|season)?\.?(\d{1,2})', normalized_title, re.IGNORECASE)
     if range_match:
         start, end = map(int, range_match.groups())
         return ','.join(str(s) for s in range(start, end + 1))
     
+    # Check for batch releases
+    if re.search(r'\b(batch|complete)\b', normalized_title, re.IGNORECASE):
+        return 'Complete'
+    
+    # Check for episode range (common in anime releases)
+    ep_range_match = re.search(r'(?:e|ep|episode)\.?(\d{1,3})\.?(?:-|~|to)\.?(?:e|ep|episode)?\.?(\d{1,3})', normalized_title, re.IGNORECASE)
+    if ep_range_match:
+        return 'Complete'
+    
+    # Check for multiple episodes
+    episodes = re.findall(r'(?<!\d)e(\d{1,3})(?!\d)', normalized_title, re.IGNORECASE)
+    if len(episodes) > 1:
+        return 'Complete'
+    
+    # Check for consecutive seasons
     consecutive_seasons = re.findall(r'(?<!\d)(\d{1,2})(?=[.\s]|$)', normalized_title)
     if len(consecutive_seasons) > 1:
         seasons = sorted(set(map(int, consecutive_seasons)))
@@ -660,7 +679,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
         # Check title similarity
         title_sim = improved_title_similarity(title, original_title)
-        if title_sim < 0.65:
+        if title_sim < 0.15:
             result['filter_reason'] = f"Low title similarity: {title_sim:.2f}"
             continue       
 
@@ -816,7 +835,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Get all scraper settings
         all_scraper_settings = get_setting('Scrapers')
-        logging.debug(f"Loaded scraper settings: {all_scraper_settings}")
 
         # Define scraper functions
         scraper_functions = {

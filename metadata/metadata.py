@@ -327,6 +327,17 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             if 'release_date' not in item:
                 item['release_date'] = get_release_date_if_missing(item, details)
             
+            # Check if the movie is tagged as anime
+            genres = details.get('keywords', [])
+            is_anime = False
+            if isinstance(genres, list):
+                is_anime = any(genre.get('name', '').lower() == 'anime' for genre in genres)
+            else:
+                logging.warning(f"Unexpected 'genres' format for movie {item['title']}: {genres}")
+            
+            item['genres'] = ['anime'] if is_anime else []
+            logging.debug(f"Movie {item['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {item['genres']}")
+            
             processed_items['movies'].append(item)
 
         else:  # TV show
@@ -340,6 +351,16 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             if 'year' not in item:
                 item['year'] = get_year_if_missing(item, show_details)
 
+            # Check if the show is tagged as anime
+            genres = show_details.get('keywords', [])
+            is_anime = False
+            if isinstance(genres, list):
+                is_anime = any(genre.get('name', '').lower() == 'anime' for genre in genres)
+            else:
+                logging.warning(f"Unexpected 'genres' format for show {item['title']}: {genres}")
+            
+            logging.debug(f"Show {item['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {genres}")
+
             # Get all season-episode counts
             season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
 
@@ -347,8 +368,10 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             existing_episodes = get_all_media_items(tmdb_id=item['tmdb_id'], media_type='episode')
             existing_episode_set = set((ep['season_number'], ep['episode_number']) for ep in existing_episodes)
 
+            absolute_episode_number = 0
             for season_number, episode_count in season_episode_counts.items():
                 for episode_number in range(1, episode_count + 1):
+                    absolute_episode_number += 1
                     if (season_number, episode_number) not in existing_episode_set:
                         episode_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], season_number, cookies)
                         episode = next((ep for ep in episode_details.get('episodes', []) if ep['episodeNumber'] == episode_number), None)
@@ -363,9 +386,12 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                                 'episode_number': episode_number,
                                 'episode_title': episode.get('name', 'Unknown Episode Title'),
                                 'release_date': get_release_date(episode, 'tv'),
-                                'media_type': 'episode'
+                                'media_type': 'episode',
+                                'genres': ['anime'] if is_anime else []
                             }
+                            logging.debug(f"Created episode item: {episode_item}")
                             processed_items['episodes'].append(episode_item)
+                            logging.debug(f"Added episode: S{season_number}E{episode_number}")
                         else:
                             logging.warning(f"Could not find episode details for S{season_number}E{episode_number} of show: {item['title']}")
 

@@ -89,9 +89,19 @@ SETTINGS_SCHEMA = {
         "tab": "Versions",
         "uncached_content_handling": {
             "type": "string",
-            "description": "How to handle uncached content",
+            "description": [
+                "Uncached content management in the program queue:",
+                "None: Only take the best Cached result",
+                "Hybrid: Take the first best Cached result, and if no Cached results found, take the best Uncached result",
+                "Full: Take the best result, whether it's Cached or Uncached"
+            ],
             "default": "None",
             "choices": ["None", "Hybrid", "Full"]
+        },
+        "jackett_seeders_only": {
+            "type": "boolean",
+            "description": "Return only results with seeders in Jackett",
+            "default": False
         },
         "versions": {
             "type": "dict",
@@ -158,11 +168,6 @@ SETTINGS_SCHEMA = {
         "disable_initialization": {
             "type": "boolean",
             "description": "Disable initialization tasks",
-            "default": False
-        },
-        "jackett_seeders_only": {
-            "type": "boolean",
-            "description": "Return only results with seeders in Jackett",
             "default": False
         }
     },
