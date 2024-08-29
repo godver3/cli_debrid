@@ -169,6 +169,7 @@ def is_cached_on_rd(hashes):
     url = f'{API_BASE_URL}/torrents/instantAvailability/{"/".join(hashes)}'
     response = get(url)
     if not response:
+        logging.warning(f"No response from Real-Debrid for hashes: {hashes}")
         return {hash_: False for hash_ in hashes}
 
     # Convert entire response to dictionary, including nested SimpleNamespace objects
@@ -180,20 +181,32 @@ def is_cached_on_rd(hashes):
         logging.debug(f"Checking availability for hash: {hash_key}")
         if hash_key in response:
             hash_data = response[hash_key]
-            if isinstance(hash_data, list):
-                # If the response is a list, check if it's non-empty
-                cache_status[hash_] = len(hash_data) > 0
+            has_video_files = False
+            if isinstance(hash_data, list) and hash_data:  # Check if hash_data is a non-empty list
+                files = hash_data[0].get('rd', [])
             elif isinstance(hash_data, dict):
-                # If it's a dictionary, check for the 'rd' key
-                rd_info = hash_data.get('rd', [])
-                cache_status[hash_] = len(rd_info) > 0
+                files = hash_data.get('rd', [])
             else:
-                logging.warning(f"Unexpected data type for hash {hash_key}: {type(hash_data)}")
-                cache_status[hash_] = False
+                files = []
+
+            if files:
+                logging.info(f"Files in torrent {hash_key}:")
+                for file_info in files:
+                    for filename in file_info.values():
+                        if is_video_file(filename['filename']):
+                            has_video_files = True
+                            logging.info(f"  - {filename['filename']} (Video file)")
+                        else:
+                            logging.debug(f"  - {filename['filename']} (Not a video file)")
+
+            cache_status[hash_] = has_video_files
+            logging.info(f"Cache status for hash {hash_key}: {'Cached' if has_video_files else 'Not cached'}")
+            if not has_video_files:
+                logging.info(f"No video files found in torrent {hash_key}")
         else:
-            logging.debug(f"No response data for {hash_key}")
+            logging.warning(f"No response data for {hash_key}")
             cache_status[hash_] = False
-    logging.debug(f"Cache status: {cache_status}")
+    logging.debug(f"Overall cache status: {cache_status}")
     return cache_status
 
 def get_cached_files(hash_):

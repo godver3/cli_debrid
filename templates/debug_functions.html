@@ -41,7 +41,9 @@
     }
 
     input[type="text"],
-    input[type="number"] {
+    input[type="number"], 
+    select#collection_type, 
+    select#wanted_source {
         padding: 10px;
         background-color: #3a3a3a;
         border: 1px solid #555;
@@ -83,6 +85,41 @@
         background-color: #333;
         border-radius: 6px;
     }
+
+    .loading {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 9999;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .loading-content {
+        background-color: #333;
+        padding: 20px;
+        border-radius: 5px;
+        text-align: center;
+    }
+
+    .spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
 </style>
 
 <div class="debug-container">
@@ -112,11 +149,45 @@
         </div>
         <button type="submit">Delete Database</button>
     </form>
+    <h3>Get Collected from Plex</h3>
+    <form action="{{ url_for('get_collected_from_plex') }}" method="POST" id="get-collected-form">
+        <div class="form-group">
+            <label for="collection_type">Collection Type:</label>
+            <select id="collection_type" name="collection_type" required>
+                <option value="all">All</option>
+                <option value="recent">Recent</option>
+            </select>
+        </div>
+        <button type="submit">Get Collected</button>
+    </form>
+    <h3>Get Wanted Content</h3>
+    <form action="{{ url_for('get_wanted_content') }}" method="POST" id="get-wanted-form">
+        <div class="form-group">
+            <label for="wanted_source">Source:</label>
+            <select id="wanted_source" name="source" required>
+                <option value="all">All Enabled Sources</option>
+                {% for source in content_sources %}
+                    {% if content_sources[source].enabled %}
+                        <option value="{{ source }}">{{ source }}</option>
+                    {% endif %}
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit">Get Wanted</button>
+    </form>
+</div>
+
+<div id="loading" class="loading">
+    <div class="loading-content">
+        <div class="spinner"></div>
+        <p>Processing command, please wait...</p>
+    </div>
 </div>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const forms = document.querySelectorAll('form');
+        const loading = document.getElementById('loading');
         
         forms.forEach(form => {
             form.addEventListener('submit', function(e) {
@@ -141,6 +212,10 @@
                         return;
                     }
                     confirmMessage = 'Are you sure you want to delete the entire database? This action cannot be undone.';
+                } else if (form.id === 'get-collected-form') {
+                    confirmMessage = 'Are you sure you want to get collected items from Plex?';
+                } else if (form.id === 'get-wanted-form') {
+                    confirmMessage = 'Are you sure you want to get wanted items from the selected source?';
                 }
 
                 showPopup({
@@ -148,6 +223,7 @@
                     message: confirmMessage,
                     title: 'Confirmation',
                     onConfirm: () => {
+                        loading.style.display = 'flex';
                         submitForm(url, method, new FormData(form));
                     }
                 });
@@ -161,6 +237,7 @@
             })
             .then(response => response.json())
             .then(data => {
+                loading.style.display = 'none';
                 if (data.success) {
                     showPopup({
                         type: POPUP_TYPES.SUCCESS,
@@ -182,6 +259,7 @@
                 }
             })
             .catch(error => {
+                loading.style.display = 'none';
                 console.error('Error:', error);
                 showPopup({
                     type: POPUP_TYPES.ERROR,
