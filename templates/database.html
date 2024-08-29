@@ -36,30 +36,36 @@
     </div>
     <div id="filter-sort">
         <h3>Filter and Sort:</h3>
-        <form id="filter-form">
-            <label for="filter-column">Filter Column:</label>
-            <select id="filter-column" name="filter_column">
-                <option value="">None</option>
-                {% for column in selected_columns %}
-                <option value="{{ column }}" {% if column == filter_column %}selected{% endif %}>{{ column }}</option>
-                {% endfor %}
-            </select>
-            <label for="filter-value">Filter Value:</label>
-            <input type="text" id="filter-value" name="filter_value" value="{{ filter_value }}">
-            <label for="sort-column">Sort Column:</label>
-            <select id="sort-column" name="sort_column">
-                <option value="">None</option>
-                {% for column in selected_columns %}
-                <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
-                {% endfor %}
-            </select>
-            <label for="sort-order">Sort Order:</label>
-            <select id="sort-order" name="sort_order">
-                <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
-                <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
-            </select>
-            <button type="submit">Apply</button>
+        <form id="filter-form" class="mb-3">
+            <div>
+                <label for="filter-column">Filter Column:</label>
+                <select id="filter-column" name="filter_column">
+                    <option value="">None</option>
+                    {% for column in selected_columns %}
+                    <option value="{{ column }}" {% if column == filter_column %}selected{% endif %}>{{ column }}</option>
+                    {% endfor %}
+                </select>
+                <label for="filter-value">Filter Value:</label>
+                <input type="text" id="filter-value" name="filter_value" value="{{ filter_value }}">
+                <label for="sort-column">Sort Column:</label>
+                <select id="sort-column" name="sort_column">
+                    <option value="">None</option>
+                    {% for column in selected_columns %}
+                    <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
+                    {% endfor %}
+                </select>
+                <label for="sort-order">Sort Order:</label>
+                <select id="sort-order" name="sort_order">
+                    <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
+                    <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
+                </select>
+            </div>
+            <div class="filter-buttons">
+                <button type="submit">Apply</button>
+                <button id="clear-filter-sort">Clear Filter & Sort</button>
+            </div>
         </form>
+
     </div>
     <div class="content-type-filter">
         <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
@@ -103,94 +109,155 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const contentTypeLinks = document.querySelectorAll('.content-type-link');
-    const availableColumns = document.getElementById('available-columns');
-    const selectedColumns = document.getElementById('selected-columns');
-    const addColumnBtn = document.getElementById('add-column');
-    const removeColumnBtn = document.getElementById('remove-column');
-    const updateColumnsBtn = document.getElementById('update-columns');
-    const toggleColumnSelectorBtn = document.getElementById('toggle-column-selector');
-    const columnSelector = document.getElementById('column-selector');
-    const filterForm = document.getElementById('filter-form');
-    
     let currentContentType = 'movie'; // Default to 'movie'
     let currentLetter = 'A'; // Default to 'A'
 
-    const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+    const availableColumns = document.getElementById('available-columns');
+    const selectedColumns = document.getElementById('selected-columns');
 
-    const absoluteOrder = [
-        'id', 'imdb_id', 'tmdb_id', 'title', 'year', 'release_date', 'state', 'type',
-        'episode_title', 'season_number', 'episode_number', 'airtime', 'collected_at', 'version'
-    ];
+    // Only run the column selection logic if both select elements exist
+    if (availableColumns && selectedColumns) {
+        const addColumnBtn = document.getElementById('add-column');
+        const removeColumnBtn = document.getElementById('remove-column');
+        const updateColumnsBtn = document.getElementById('update-columns');
+        const toggleColumnSelectorBtn = document.getElementById('toggle-column-selector');
+        const columnSelector = document.getElementById('column-selector');
 
-    function sortOptionsWithAbsoluteOrder(selectElement) {
-        const options = Array.from(selectElement.options);
-        options.sort((a, b) => {
-            const indexA = absoluteOrder.indexOf(a.value.toLowerCase());
-            const indexB = absoluteOrder.indexOf(b.value.toLowerCase());
-            
-            if (indexA !== -1 && indexB !== -1) {
-                return indexA - indexB;
-            } else if (indexA !== -1) {
-                return -1;
-            } else if (indexB !== -1) {
-                return 1;
-            } else {
-                return a.text.localeCompare(b.text);
-            }
-        });
-        options.forEach(option => selectElement.appendChild(option));
-    }
+        const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
 
-    function moveOptions(fromSelect, toSelect) {
-        Array.from(fromSelect.selectedOptions).forEach(option => {
-            toSelect.appendChild(option);
-        });
-        sortOptionsWithAbsoluteOrder(fromSelect);
-        sortOptionsWithAbsoluteOrder(toSelect);
-    }
+        const absoluteOrder = [
+            'id', 'imdb_id', 'tmdb_id', 'title', 'year', 'release_date', 'state', 'type',
+            'episode_title', 'season_number', 'episode_number', 'airtime', 'collected_at', 'version'
+        ];
 
-    addColumnBtn.addEventListener('click', () => moveOptions(availableColumns, selectedColumns));
-    removeColumnBtn.addEventListener('click', () => moveOptions(selectedColumns, availableColumns));
-    
-    updateColumnsBtn.addEventListener('click', function() {
-        const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
+        function sortOptionsWithAbsoluteOrder(selectElement) {
+            const options = Array.from(selectElement.options);
+            options.sort((a, b) => {
+                const indexA = absoluteOrder.indexOf(a.value.toLowerCase());
+                const indexB = absoluteOrder.indexOf(b.value.toLowerCase());
+                
+                if (indexA !== -1 && indexB !== -1) {
+                    return indexA - indexB;
+                } else if (indexA !== -1) {
+                    return -1;
+                } else if (indexB !== -1) {
+                    return 1;
+                } else {
+                    return a.text.localeCompare(b.text);
+                }
+            });
+            options.forEach(option => selectElement.appendChild(option));
+        }
+
+        function moveOptions(fromSelect, toSelect) {
+            Array.from(fromSelect.selectedOptions).forEach(option => {
+                toSelect.appendChild(option);
+            });
+            sortOptionsWithAbsoluteOrder(fromSelect);
+            sortOptionsWithAbsoluteOrder(toSelect);
+        }
+
+        addColumnBtn.addEventListener('click', () => moveOptions(availableColumns, selectedColumns));
+        removeColumnBtn.addEventListener('click', () => moveOptions(selectedColumns, availableColumns));
         
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = window.location.href;
-    
-        selectedColumnValues.forEach(value => {
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = 'columns';
-            input.value = value;
-            form.appendChild(input);
+        updateColumnsBtn.addEventListener('click', function() {
+            const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
+            
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = window.location.href;
+        
+            selectedColumnValues.forEach(value => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'columns';
+                input.value = value;
+                form.appendChild(input);
+            });
+        
+            document.body.appendChild(form);
+            form.submit();
         });
+        
+        toggleColumnSelectorBtn.addEventListener('click', function() {
+            columnSelector.classList.toggle('hidden');
+            this.classList.toggle('active');
+            this.textContent = columnSelector.classList.contains('hidden') 
+                ? 'Select Columns to Display' 
+                : 'Hide Column Selector';
+        });
+        
+        function initializeColumnSelection() {
+            if (selectedColumns.options.length === 0) {
+                defaultColumns.forEach(column => {
+                    const option = availableColumns.querySelector(`option[value="${column}"]`);
+                    if (option) {
+                        selectedColumns.appendChild(option.cloneNode(true));
+                        option.remove();
+                    }
+                });
+            }
+            
+            sortOptionsWithAbsoluteOrder(availableColumns);
+            sortOptionsWithAbsoluteOrder(selectedColumns);
+        }
+
+        // Initialize column selection
+        initializeColumnSelection();
+    }
+
+    // Filter form logic
+    const filterForm = document.getElementById('filter-form');
+    if (filterForm) {
+        filterForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const params = Object.fromEntries(formData.entries());
+            updateContent('{{ url_for('database') }}', params);
+        });
+    }
+
+    const clearFilterSortBtn = document.getElementById('clear-filter-sort');
     
-        document.body.appendChild(form);
-        form.submit();
-    });
-    
-    toggleColumnSelectorBtn.addEventListener('click', function() {
-        columnSelector.classList.toggle('hidden');
-        this.classList.toggle('active');
-        this.textContent = columnSelector.classList.contains('hidden') 
-            ? 'Select Columns to Display' 
-            : 'Hide Column Selector';
-    });
-    
-    function clearFilter() {
+    if (clearFilterSortBtn) {
+        clearFilterSortBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            clearFilterAndSort();
+        });
+    }
+
+    function clearFilterAndSort() {
+        // Reset filter inputs
         const filterColumn = document.getElementById('filter-column');
         const filterValue = document.getElementById('filter-value');
         if (filterColumn) filterColumn.value = '';
         if (filterValue) filterValue.value = '';
+
+        // Reset sort inputs (assuming you have sort controls in your HTML)
+        const sortColumn = document.getElementById('sort-column');
+        const sortOrder = document.getElementById('sort-order');
+        if (sortColumn) sortColumn.value = 'id'; // Default sort column
+        if (sortOrder) sortOrder.value = 'asc'; // Default sort order
+
+        // Reset content type to 'movie' and letter to 'A'
+        currentContentType = 'movie';
+        currentLetter = 'A';
+
+        // Update the content with default values
+        updateContent('{{ url_for('database') }}', {
+            content_type: currentContentType,
+            letter: currentLetter
+        });
     }
-    
+
     function updateContent(url, params = {}) {
         // Preserve current states if not explicitly changed
         params.content_type = params.content_type || currentContentType;
         params.letter = params.letter || currentLetter;
+
+        // Add default sort parameters if not present
+        if (!params.sort_column) params.sort_column = 'id';
+        if (!params.sort_order) params.sort_order = 'asc';
 
         const queryString = new URLSearchParams(params).toString();
         url += '?' + queryString;
@@ -208,10 +275,43 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentContentType = params.content_type;
                 currentLetter = params.letter;
 
+                // Update UI to reflect cleared state
+                updateUIForClearedState();
+
                 // Reattach event listeners
                 attachEventListeners();
             })
             .catch(error => console.error('Error updating content:', error));
+    }
+
+    function updateUIForClearedState() {
+        // Update content type buttons
+        document.querySelectorAll('.content-type-link').forEach(link => {
+            link.classList.remove('active');
+            if (link.getAttribute('data-content-type') === currentContentType) {
+                link.classList.add('active');
+            }
+        });
+
+        // Update pagination links
+        document.querySelectorAll('.pagination-link').forEach(link => {
+            link.classList.remove('active');
+            if (link.getAttribute('data-letter') === currentLetter) {
+                link.classList.add('active');
+            }
+        });
+
+        // Clear filter inputs visually
+        const filterColumn = document.getElementById('filter-column');
+        const filterValue = document.getElementById('filter-value');
+        if (filterColumn) filterColumn.value = '';
+        if (filterValue) filterValue.value = '';
+
+        // Update sort controls visually (if they exist in your HTML)
+        const sortColumn = document.getElementById('sort-column');
+        const sortOrder = document.getElementById('sort-order');
+        if (sortColumn) sortColumn.value = 'id';
+        if (sortOrder) sortOrder.value = 'asc';
     }
 
     function attachEventListeners() {
@@ -234,36 +334,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Handle filter form submission
-    filterForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        const formData = new FormData(this);
-        const params = Object.fromEntries(formData.entries());
-        updateContent('{{ url_for('database') }}', params);
-    });
+    function clearFilter() {
+        const filterColumn = document.getElementById('filter-column');
+        const filterValue = document.getElementById('filter-value');
+        if (filterColumn) filterColumn.value = '';
+        if (filterValue) filterValue.value = '';
+    }
 
     // Initial attachment of event listeners
-    initializeColumnSelection();
     attachEventListeners();
 });
-
-function initializeColumnSelection() {
-    const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
-    
-    if (selectedColumns.options.length === 0) {
-        // If no columns are selected, add default columns
-        defaultColumns.forEach(column => {
-            const option = availableColumns.querySelector(`option[value="${column}"]`);
-            if (option) {
-                selectedColumns.appendChild(option.cloneNode(true));
-                option.remove();
-            }
-        });
-    }
-    
-    sortOptionsWithAbsoluteOrder(availableColumns);
-    sortOptionsWithAbsoluteOrder(selectedColumns);
-}
-
 </script>
 {% endblock %}

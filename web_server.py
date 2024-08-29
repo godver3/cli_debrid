@@ -828,6 +828,14 @@ def database():
         content_type = request.args.get('content_type', 'movie')  # Default to 'movie'
         current_letter = request.args.get('letter', 'A')
 
+        # Validate sort_column
+        if sort_column not in all_columns:
+            sort_column = 'id'  # Fallback to 'id' if invalid column is provided
+
+        # Validate sort_order
+        if sort_order.lower() not in ['asc', 'desc']:
+            sort_order = 'asc'  # Fallback to 'asc' if invalid order is provided
+
         # Define alphabet here
         alphabet = list(string.ascii_uppercase)
 
@@ -855,12 +863,16 @@ def database():
                     where_clauses.append("title LIKE ?")
                     params.append(f"{current_letter}%")
 
+        # Construct the ORDER BY clause safely
+        order_clause = f"ORDER BY {sort_column} {sort_order}"
+
+        # Construct the final query
+        query = f"SELECT {', '.join(selected_columns)} FROM media_items"
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
+        query += f" {order_clause}"
 
-        query += f" ORDER BY {sort_column} {sort_order}"
-
-         # Log the query and parameters for debugging
+        # Log the query and parameters for debugging
         logging.debug(f"Executing query: {query}")
         logging.debug(f"Query parameters: {params}")
 
@@ -893,10 +905,14 @@ def database():
                                             sort_order=sort_order)
             })
         
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in database route: {str(e)}")
+        items = []
+        flash(f"Database error: {str(e)}", "error")
     except Exception as e:
-        logging.error(f"Error in database route: {str(e)}")
-        items = []  # Set items to an empty list in case of error
-        # You might want to flash an error message here
+        logging.error(f"Unexpected error in database route: {str(e)}")
+        items = []
+        flash("An unexpected error occurred. Please try again later.", "error")
 
     return render_template('database.html', 
                            items=items, 
