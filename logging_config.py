@@ -62,6 +62,23 @@ def setup_logging():
     # Raise logging level for urllib3 to reduce noise
     logging.getLogger('urllib3').setLevel(logging.INFO)
 
+    # Create a filter to exclude logs from specific files
+    class ExcludeFilter(logging.Filter):
+        def filter(self, record):
+            return not (record.filename == 'rules.py' or record.filename == 'rebulk.py' or record.filename == 'processors.py')
+
+    # Apply the filter to all handlers
+    for handler in root_logger.handlers:
+        handler.addFilter(ExcludeFilter())
+
+    # Apply the filter to all existing loggers
+    for name in logging.root.manager.loggerDict:
+        logger = logging.getLogger(name)
+        logger.addFilter(ExcludeFilter())
+
+    # Add the filter to the root logger
+    root_logger.addFilter(ExcludeFilter())
+
 if __name__ == "__main__":
     setup_logging()
     # Example usage

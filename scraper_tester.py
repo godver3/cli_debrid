@@ -160,7 +160,7 @@ class ScraperTester:
     def refresh_results(self, button):
         logging.debug(f"Refreshing results with movie_or_episode: {self.movie_or_episode}, version: {self.current_version}")
         
-        scrape_results = scrape(self.imdb_id, self.tmdb_id, self.title, self.year, self.movie_or_episode, self.current_version, self.season, self.episode, self.multi)
+        scrape_results = scrape(self.imdb_id, self.tmdb_id, self.title, self.year, self.movie_or_episode, self.current_version, self.season, self.episode, self.multi, self.genres)
         
         if isinstance(scrape_results, tuple) and len(scrape_results) == 2:
             self.results, self.filtered_out_results = scrape_results

@@ -24,14 +24,41 @@ function searchMedia(event) {
 }
 
 function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path, genre_ids, vote_average, backdrop_path, show_overview) {
+    console.log('Received genre_ids:', genre_ids);
     const seasonInfo = document.getElementById('season-info');
+
+    // Format genre_ids into a string of genre names
+    let genreString = '';
+    if (Array.isArray(genre_ids)) {
+        genreString = genre_ids
+            .filter(genre => genre) // Filter out null or undefined genres
+            .map(genre => {
+                if (typeof genre === 'string') {
+                    return genre;
+                } else if (typeof genre === 'object' && genre.name) {
+                    return genre.name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+                }
+                return '';
+            })
+            .filter(genre => genre) // Filter out any empty strings
+            .slice(0, 3) // Truncate to 3 genres
+            .join(', ');
+    } else if (typeof genre_ids === 'string') {
+        genreString = genre_ids;
+    }
+
+    // If genreString is empty after processing, set a default message
+    if (!genreString) {
+        genreString = 'Genres not available';
+    }
+
     seasonInfo.innerHTML = `
         <div class="season-info-container">
             <span class="show-rating">${(vote_average).toFixed(1)}</span>
             <img src="https://image.tmdb.org/t/p/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
             <div class="season-details">
                 <h2>${title} - Season ${season_num}</h2>
-                <p>${genre_ids}</p>
+                <p>${genreString}</p>
                 <div class="season-overview">
                     <p>${season_overview ? season_overview : show_overview}</p>
                 </div>
@@ -39,7 +66,6 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
         </div>
         <div class="season-bg-image" style="background-image: url('https://image.tmdb.org/t/p/w1920_and_h800_multi_faces${backdrop_path}');"></div>
     `;
-
 }
 
 function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview) {
