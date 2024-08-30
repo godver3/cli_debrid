@@ -111,7 +111,8 @@ class UpgradingQueue:
             item.get('version', 'Unknown'),  # Include version in scrape call
             item.get('season_number'),
             item.get('episode_number'),
-            False  # Set multi to False during upgrades
+            False,
+            item.get('genres')
         )
 
         # Filter out not wanted magnets

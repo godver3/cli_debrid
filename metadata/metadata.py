@@ -368,32 +368,42 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             existing_episodes = get_all_media_items(tmdb_id=item['tmdb_id'], media_type='episode')
             existing_episode_set = set((ep['season_number'], ep['episode_number']) for ep in existing_episodes)
 
-            absolute_episode_number = 0
+            logging.debug(f"Processing TV show: {item['title']} (TMDB ID: {item['tmdb_id']})")
+            logging.debug(f"Season-episode counts: {season_episode_counts}")
+
+            absolute_episode_number = 1  # Start from 1
             for season_number, episode_count in season_episode_counts.items():
-                for episode_number in range(1, episode_count + 1):
-                    absolute_episode_number += 1
+                logging.debug(f"Processing season {season_number} with {episode_count} episodes")
+                season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], season_number, cookies)
+                logging.debug(f"Episode details for season {season_number}: {season_details}")
+                
+                available_episodes = season_details.get('episodes', [])
+                for episode in available_episodes:
+                    episode_number = episode['episodeNumber']
+                    logging.debug(f"Processing S{season_number}E{episode_number} (Absolute: {absolute_episode_number})")
+                    
                     if (season_number, episode_number) not in existing_episode_set:
-                        episode_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], season_number, cookies)
-                        episode = next((ep for ep in episode_details.get('episodes', []) if ep['episodeNumber'] == episode_number), None)
+                        logging.debug(f"Episode S{season_number}E{episode_number} not in existing set, processing")
                         
-                        if episode:
-                            episode_item = {
-                                'imdb_id': item['imdb_id'],
-                                'tmdb_id': item['tmdb_id'],
-                                'title': item['title'],
-                                'year': item['year'],
-                                'season_number': season_number,
-                                'episode_number': episode_number,
-                                'episode_title': episode.get('name', 'Unknown Episode Title'),
-                                'release_date': get_release_date(episode, 'tv'),
-                                'media_type': 'episode',
-                                'genres': ['anime'] if is_anime else []
-                            }
-                            logging.debug(f"Created episode item: {episode_item}")
-                            processed_items['episodes'].append(episode_item)
-                            logging.debug(f"Added episode: S{season_number}E{episode_number}")
-                        else:
-                            logging.warning(f"Could not find episode details for S{season_number}E{episode_number} of show: {item['title']}")
+                        episode_item = {
+                            'imdb_id': item['imdb_id'],
+                            'tmdb_id': item['tmdb_id'],
+                            'title': item['title'],
+                            'year': item['year'],
+                            'season_number': season_number,
+                            'episode_number': episode_number,
+                            'episode_title': episode.get('name', 'Unknown Episode Title'),
+                            'release_date': get_release_date(episode, 'tv'),
+                            'media_type': 'episode',
+                            'genres': ['anime'] if is_anime else []
+                        }
+                        logging.debug(f"Created episode item: {episode_item}")
+                        processed_items['episodes'].append(episode_item)
+                        logging.debug(f"Added episode: S{season_number}E{episode_number}")
+                    else:
+                        logging.debug(f"Episode S{season_number}E{episode_number} already exists in the database")
+                    
+                    absolute_episode_number += 1
 
         logging.debug(f"Processed item: {item}")
 

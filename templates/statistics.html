@@ -527,8 +527,14 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('total-movies').textContent = data.total_movies;
             document.getElementById('total-shows').textContent = data.total_shows;
             document.getElementById('total-episodes').textContent = data.total_episodes;
-            //document.getElementById('uptime').textContent = data.uptime;
             
+            // Update the uptime
+            const uptimeSeconds = data.uptime;
+            const days = Math.floor(uptimeSeconds / 86400);
+            const hours = Math.floor((uptimeSeconds % 86400) / 3600);
+            const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+            document.getElementById('uptime').textContent = `${days} days, ${hours} hours, ${minutes} minutes`;
+        
             // Update all sections, including on initial load
             updateRecentlyAired(data.recently_aired);
             updateAiringSoon(data.airing_soon);

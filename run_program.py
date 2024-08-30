@@ -151,8 +151,6 @@ class ProgramRunner:
             # Call the process method and capture any return value
             result = process_method()
             
-            # Log successful processing
-            logging.info(f"Successfully processed {queue_name} queue")
             update_stats(processed=1)
             
             # Return the result if any
