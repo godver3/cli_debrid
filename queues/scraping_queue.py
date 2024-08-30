@@ -116,7 +116,8 @@ class ScrapingQueue:
             item['version'],
             item.get('season_number'),
             item.get('episode_number'),
-            is_multi_pack
+            is_multi_pack,
+            item.get('genres')
         )
 
         # Filter out unwanted magnets
@@ -136,7 +137,8 @@ class ScrapingQueue:
             item['version'],
             item.get('season_number'),
             item.get('episode_number'),
-            False  # Set is_multi_pack to False for individual scraping
+            False,
+            item.get('genres')
         )
 
         # Filter out unwanted magnets for individual results

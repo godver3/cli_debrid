@@ -4,6 +4,7 @@ import logging
 from settings import get_setting
 import time
 from typing import Dict, List, Any
+import ast
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -371,7 +372,22 @@ def is_anime(item):
     return False
 
 def filter_genres(genres):
-    return ['anime'] if 'Anime' in genres else []
+    # If genres is a string representation of a list, convert it to a list
+    if isinstance(genres, str):
+        try:
+            genres = ast.literal_eval(genres)
+        except (ValueError, SyntaxError):
+            # If it's not a valid list representation, treat it as a single genre
+            genres = [genres]
+    
+    # Ensure genres is a list
+    if not isinstance(genres, list):
+        genres = [genres]
+    
+    logger.debug(f"Filtering genres: {genres}")
+    filtered = ['anime'] if any(str(genre).strip().lower() == 'anime' for genre in genres) else []
+    logger.debug(f"Filtered genres: {filtered}")
+    return filtered
 
 async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]

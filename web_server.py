@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash, Response, make_response
+from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash, Response, make_response, current_app
 import traceback
 from flask_session import Session
 import threading
@@ -49,6 +49,16 @@ import asyncio
 from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
 import shutil
 from utilities.debug_commands import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex, get_and_add_wanted_content, get_all_wanted_from_enabled_sources
+from web_scraper import get_media_details, process_media_selection
+import pickle
+from flask.json import jsonify
+from babelfish import Language
+
+
+
+CACHE_FILE = 'db_content/api_summary_cache.pkl'
+# Add this at the global scope, outside of any function
+app_start_time = time.time()
 
 app = Flask(__name__)
 
@@ -92,6 +102,34 @@ failed_additions = 0
 
 CONFIG_FILE = './config/config.json'
 TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, 'rb') as f:
+                loaded_cache = pickle.load(f)
+                # Ensure the cache has the correct structure
+                if not isinstance(loaded_cache, dict):
+                    raise ValueError("Loaded cache is not a dictionary")
+                for time_frame in ['hour', 'day', 'month']:
+                    if time_frame not in loaded_cache or not isinstance(loaded_cache[time_frame], dict):
+                        loaded_cache[time_frame] = {}
+                if 'last_processed_line' not in loaded_cache:
+                    loaded_cache['last_processed_line'] = 0
+                return loaded_cache
+        except (EOFError, ValueError, pickle.UnpicklingError) as e:
+            logging.warning(f"Error loading cache file: {str(e)}. Creating a new cache.")
+    return {'hour': {}, 'day': {}, 'month': {}, 'last_processed_line': 0}
+
+def save_cache(cache_data):
+    with open(CACHE_FILE, 'wb') as f:
+        pickle.dump(cache_data, f)
+# Initialize the cache when the server starts
+try:
+    cache = load_cache()
+except Exception as e:
+    logging.error(f"Failed to load cache: {str(e)}. Starting with an empty cache.")
+    cache = {'hour': {}, 'day': {}, 'month': {}, 'last_processed_line': 0}
 
 def program_is_running():
     global program_runner
@@ -486,6 +524,18 @@ def summarize_api_calls(time_frame):
                 summary[key][domain] += 1
     
     return dict(summary)
+
+def get_cached_summary(time_frame):
+    current_time = datetime.now()
+    if time_frame in cache:
+        last_update, data = cache[time_frame]
+        if current_time - last_update < timedelta(hours=1):
+            return data
+    
+    data = summarize_api_calls(time_frame)
+    cache[time_frame] = (current_time, data)
+    save_cache(cache)
+    return data
 
 def get_airing_soon():
     conn = get_db_connection()
@@ -1021,7 +1071,8 @@ def statistics():
 
     start_time = time.time()
 
-    uptime = int(time.time() - start_time)
+    uptime = int(time.time() - app_start_time)
+
     collected_counts = get_collected_counts()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
     upcoming_releases = get_upcoming_releases()
@@ -1183,6 +1234,16 @@ def select_media():
         multi = request.form.get('multi', 'false').lower() in ['true', '1', 'yes', 'on']
         version = request.form.get('version')
 
+        # Fetch detailed information from Overseerr
+        details = get_media_details(media_id, media_type)
+
+        # Extract keywords and genres
+        genres = details.get('keywords', [])
+
+        logging.info(f"Retrieved genres: {genres}")
+
+        logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}, genres={genres}")
+
         if not version or version == 'undefined':
             version = get_setting('Scraping', 'default_version', '1080p')  # Fallback to a default version
 
@@ -1199,7 +1260,7 @@ def select_media():
 
         logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
 
-        torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version)
+        torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version, genres)
         
         if not torrent_results:
             logging.warning("No torrent results found")
@@ -2047,6 +2108,7 @@ def run_scrape():
         media_type = data['movie_or_episode']
         version = data['version']
         modified_settings = data.get('modifiedSettings', {})
+        genres = data.get('genres', [])
         
         if media_type == 'episode':
             season = data.get('season')
@@ -2067,7 +2129,7 @@ def run_scrape():
         
         # Run first scrape with current settings
         original_results, _ = scrape(
-            imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi
+            imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres
         )
 
         # Update version settings with modified settings
@@ -2084,7 +2146,7 @@ def run_scrape():
         # Run second scrape with modified settings
         try:
             adjusted_results, _ = scrape(
-                imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi
+                imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres
             )
         finally:
             # Revert settings back to original
@@ -2144,13 +2206,65 @@ def unauthorized():
     flash('You are not authorized to access this page.', 'error')
     return redirect(url_for('login'))
 
+def summarize_api_calls(time_frame):
+    log_path = 'logs/api_calls.log'
+    summary = defaultdict(lambda: defaultdict(int))
+    
+    with open(log_path, 'r') as f:
+        for line in f:
+            match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
+            if match:
+                timestamp, method, url, domain = match.groups()
+                dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S,%f')
+                
+                if time_frame == 'hour':
+                    key = dt.strftime('%Y-%m-%d %H:00')
+                elif time_frame == 'day':
+                    key = dt.strftime('%Y-%m-%d')
+                elif time_frame == 'month':
+                    key = dt.strftime('%Y-%m')
+                
+                summary[key][domain] += 1
+    
+    return dict(summary)
+
+def update_cache_with_new_entries():
+    global cache
+    log_path = 'logs/api_calls.log'
+    last_processed_line = cache['last_processed_line']
+    
+    with open(log_path, 'r') as f:
+        lines = f.readlines()[last_processed_line:]
+        
+    for i, line in enumerate(lines, start=last_processed_line):
+        match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
+        if match:
+            timestamp, method, url, domain = match.groups()
+            dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S,%f')
+            
+            hour_key = dt.strftime('%Y-%m-%d %H:00')
+            day_key = dt.strftime('%Y-%m-%d')
+            month_key = dt.strftime('%Y-%m')
+            
+            for time_frame, key in [('hour', hour_key), ('day', day_key), ('month', month_key)]:
+                if key not in cache[time_frame]:
+                    cache[time_frame][key] = {}
+                if domain not in cache[time_frame][key]:
+                    cache[time_frame][key][domain] = 0
+                cache[time_frame][key][domain] += 1
+    
+    cache['last_processed_line'] = last_processed_line + len(lines)
+    save_cache(cache)
+
 @app.route('/api_call_summary')
 def api_call_summary():
+    update_cache_with_new_entries()
+    
     time_frame = request.args.get('time_frame', 'day')
     if time_frame not in ['hour', 'day', 'month']:
         time_frame = 'day'
     
-    summary = summarize_api_calls(time_frame)
+    summary = cache[time_frame]
     
     # Get a sorted list of all domains
     all_domains = sorted(set(domain for period in summary.values() for domain in period))
@@ -2159,6 +2273,15 @@ def api_call_summary():
                            summary=summary, 
                            time_frame=time_frame,
                            all_domains=all_domains)
+
+@app.route('/clear_api_summary_cache', methods=['POST'])
+@admin_required
+def clear_api_summary_cache():
+    global cache
+    cache = {'hour': {}, 'day': {}, 'month': {}, 'last_processed_line': 0}
+    save_cache(cache)
+    return jsonify({"status": "success", "message": "API summary cache cleared"})
+
 
 @app.route('/api/get_collected_from_plex', methods=['POST'])
 def get_collected_from_plex():

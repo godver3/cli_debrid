@@ -14,11 +14,20 @@ from settings import get_setting
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, get, API_BASE_URL
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted
 from scraper.scraper import scrape
+from metadata.metadata import get_all_season_episode_counts, get_overseerr_cookies
+from guessit import guessit
+from fuzzywuzzy import fuzz
+import functools
+from .anime_matcher import AnimeMatcher
+import functools
 
 class AddingQueue:
     def __init__(self):
         self.items = []
         self.api_key = get_setting("RealDebrid", "api_key")
+        self.episode_count_cache = {}  # Add this line
+        self.anime_matcher = AnimeMatcher(self.calculate_absolute_episode)
+
         if not self.api_key:
             logging.error("Real-Debrid API key not found in settings")
             #raise ValueError("Real-Debrid API key not found in settings")
@@ -151,19 +160,17 @@ class AddingQueue:
     def process_hybrid_mode(self, queue_manager, item, scrape_results):
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Processing hybrid mode for item: {item_identifier}")
-        
 
-        # First pass: look for cached results
+        # First pass: look for a cached result
         for result in scrape_results:
             title = result.get('title', '')
             link = result.get('magnet', '')
 
-            logging.debug(f"Processing link in adding queue: {link}")
+            logging.debug(f"Checking cache status for link: {link}")
             
             if link.startswith('magnet:'):
                 current_hash = extract_hash_from_magnet(link)
             else:
-                logging.debug(f"Attempting to download and extract hash from URL: {link}")
                 current_hash = self.download_and_extract_hash(link)
 
             if not current_hash:
@@ -173,18 +180,18 @@ class AddingQueue:
             is_cached = is_cached_on_rd(current_hash)
             logging.debug(f"Cache status for {current_hash}: {is_cached}")
 
-            if is_cached:
-                add_result = self.add_to_real_debrid_helper(link, item_identifier, current_hash, add_if_uncached=False)
-                if add_result['success']:
-                    self.add_to_not_wanted(current_hash, item_identifier)
-                    if self.process_torrent(queue_manager, item, title, link, add_result):
-                        return
-                    else:
-                        self.remove_unwanted_torrent(add_result['torrent_id'])
-                        continue  # Try the next cached result if this one didn't work
+            if is_cached[current_hash]:
+                logging.info(f"Found cached result for {item_identifier}. Processing it.")
+                success = self.process_result(queue_manager, item, result, current_hash, is_cached=True)
+                if success:
+                    logging.info(f"Successfully processed cached result for {item_identifier}")
+                    return True
+                else:
+                    logging.warning(f"Failed to process cached result for {item_identifier}. Continuing to next result.")
 
-        # Second pass: look for uncached results
-        logging.debug(f"No cached results found for {item_identifier}. Searching for uncached results.")
+        # If we're here, no cached results were found or successfully processed. Process the first uncached result.
+        logging.info(f"No cached results found or successfully processed for {item_identifier}. Processing the first uncached result.")
+        
         for result in scrape_results:
             title = result.get('title', '')
             link = result.get('magnet', '')
@@ -198,30 +205,47 @@ class AddingQueue:
                 logging.warning(f"Failed to extract hash from link for {item_identifier}")
                 continue
 
-            add_result = self.add_to_real_debrid_helper(link, item_identifier, current_hash, add_if_uncached=True)
-            if add_result['success']:
+            # We don't need to check cache status again, we know it's uncached
+            success = self.process_result(queue_manager, item, result, current_hash, is_cached=False)
+            if success:
+                logging.info(f"Successfully processed uncached result for {item_identifier}")
+                return True
+            else:
+                logging.warning(f"Failed to process uncached result for {item_identifier}. Continuing to next result.")
+
+        logging.warning(f"No results successfully processed for {item_identifier}")
+        self.handle_failed_item(queue_manager, item, "Adding")
+        return False
+
+    def process_result(self, queue_manager, item, result, current_hash, is_cached):
+        item_identifier = queue_manager.generate_identifier(item)
+        title = result.get('title', '')
+        link = result.get('magnet', '')
+
+        logging.debug(f"Processing result for {item_identifier}. Is cached: {is_cached}")
+
+        if not link:
+            logging.error(f"No magnet link found for {item_identifier}")
+            return False
+
+        add_result = add_to_real_debrid(link)
+        if add_result:
+            if isinstance(add_result, dict) and add_result.get('status') == 'downloaded':
+                logging.info(f"Cached torrent added to Real-Debrid successfully for {item_identifier}")
                 self.add_to_not_wanted(current_hash, item_identifier)
                 if self.process_torrent(queue_manager, item, title, link, add_result):
-                    return
-                else:
-                    self.remove_unwanted_torrent(add_result['torrent_id'])
+                    return True
+            elif add_result in ['downloading', 'queued']:
+                logging.info(f"Uncached torrent added to Real-Debrid successfully for {item_identifier}")
+                self.add_to_not_wanted(current_hash, item_identifier)
+                if self.process_torrent(queue_manager, item, title, link, {'status': 'uncached', 'files': []}):
+                    return True
+            else:
+                logging.warning(f"Unexpected result from Real-Debrid for {item_identifier}: {add_result}")
+        else:
+            logging.error(f"Failed to add torrent to Real-Debrid for {item_identifier}")
 
-        # If we've gone through all results without success, try individual episode scraping
-        if item['type'] == 'episode':
-            logging.info(f"No matching files found for {item_identifier}. Attempting individual episode scraping.")
-            individual_results = self.scrape_individual_episode(item)
-            if individual_results:
-                # First try cached results from individual scraping
-                for result in individual_results:
-                    if self.process_single_result(queue_manager, item, result, cached_only=True):
-                        return
-                # Then try uncached results from individual scraping
-                for result in individual_results:
-                    if self.process_single_result(queue_manager, item, result, cached_only=False):
-                        return
-
-        # If we've gone through all results without success, handle as a failed item
-        self.handle_failed_item(queue_manager, item, "Adding")
+        return False
 
     def handle_failed_item(self, queue_manager, item, from_queue):
         item_identifier = queue_manager.generate_identifier(item)
@@ -304,8 +328,11 @@ class AddingQueue:
         logging.debug(f"Processing torrent for item: {item_identifier}")
         logging.debug(f"Add result: {json.dumps(add_result, indent=2)}")
 
-        if 'files' in add_result:
-            files = [file for file in add_result['files'] if not file.endswith('.txt')]  # Exclude .txt files
+        files = add_result.get('files', [])
+        if not files and 'links' in add_result:
+            files = add_result['links'].get('files', [])
+
+        if files:
             logging.info(f"Files in torrent for {item_identifier}: {json.dumps(files, indent=2)}")
 
             if item['type'] == 'movie':
@@ -323,9 +350,10 @@ class AddingQueue:
                 success, message = self.process_multi_pack(queue_manager, item, title, link, files)
                 if success:
                     logging.info(f"Successfully processed TV show item: {item_identifier}. {message}")
+                    return True
                 else:
                     logging.warning(f"Failed to process TV show item: {item_identifier}. {message}")
-                return success
+                    return False
         else:
             logging.warning(f"No file information available for torrent: {item_identifier}")
             return False
@@ -374,8 +402,8 @@ class AddingQueue:
             logging.info(f"Cache status for {item_identifier}: {cache_status}")
     
             if not cache_status[hash_value] and not add_if_uncached:
-                return {"success": False, "message": "Skipping uncached content in first pass of hybrid mode"}
-    
+                return {"success": False, "message": "Skipping uncached content in hybrid mode"}
+
             result = add_to_real_debrid(link)
             logging.debug(f"add_to_real_debrid result: {result}")
     
@@ -519,88 +547,94 @@ class AddingQueue:
             logging.warning(f"No file information available for uncached torrent: {item_identifier}")
             return False
 
+
     def process_multi_pack(self, queue_manager, item, title, link, files):
-        try:
-            item_identifier = queue_manager.generate_identifier(item)
-            logging.debug(f"Entered process_multi_pack for item: {item_identifier}")
-            logging.debug(f"Title: {title}")
-            logging.debug(f"Link: {link}")
-            logging.debug(f"Number of files: {len(files)}")
+        item_identifier = queue_manager.generate_identifier(item)
+        logging.info(f"Processing multi-pack for item: {item_identifier}")
 
-            # Check if the original item matches any file
-            matching_files = [file for file in files if self.file_matches_item(file, item)]
-            if matching_files:
-                logging.debug(f"Original item matched files: {matching_files}")
-                filled_by_file = os.path.basename(matching_files[0])  # Get the filename
-                queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file)
-                logging.debug(f"Moved original item {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
+        # Get all matching items from other queues
+        matching_items = self.get_matching_items_from_queues(queue_manager, item)
+        matching_items.append(item)  # Include the original item
+        logging.info(f"Total matching items (including original): {len(matching_items)}")
+
+        # Check if the item is an anime
+        is_anime = 'anime' in item.get('genres', [])
+
+        if is_anime:
+            # Use AnimeMatcher for anime series
+            logging.info("Using AnimeMatcher to match files to items")
+            matches = self.anime_matcher.match_anime_files(files, matching_items)
+        else:
+            # Use regular matching for non-anime TV shows
+            logging.info("Using regular matching for non-anime TV show")
+            matches = self.match_regular_tv_show(files, matching_items)
+
+        # Process matches
+        for file, matched_item in matches:
+            filled_by_file = os.path.basename(file)
+            current_queue = queue_manager.get_item_queue(matched_item)
+            queue_manager.move_to_checking(matched_item, current_queue, title, link, filled_by_file)
+            logging.info(f"Moved item {queue_manager.generate_identifier(matched_item)} to Checking queue with filled_by_file: {filled_by_file}")
+
+        if matches:
+            return True, f"Moved {len(matches)} matching episodes to Checking queue"
+        else:
+            logging.warning("No matches found")
+            return False, "No matching episodes found"
+
+    def match_regular_tv_show(self, files, items):
+        matches = []
+        for file in files:
+            file_info = guessit(file)
+            file_season = file_info.get('season')
+            file_episodes = file_info.get('episode')
+            
+            # Convert to list if it's a single episode
+            if isinstance(file_episodes, int):
+                file_episodes = [file_episodes]
+            
+            for item in items:
+                item_season = int(item['season_number'])
+                item_episode = int(item['episode_number'])
                 
-                # Handle multi-episode file if applicable
-                episode_range = self.extract_episode_range(filled_by_file)
-                if episode_range:
-                    self.handle_multi_episode(item, episode_range, filled_by_file, queue_manager, title, link)
-            else:
-                logging.warning(f"Original item {item_identifier} did not match any files in the torrent.")
-                return False, f"No matching files found for TV show item"
+                if file_season == item_season and item_episode in file_episodes:
+                    matches.append((file, item))
+                    
+                    # For multi-episode files, we need to find all matching items
+                    if len(file_episodes) > 1:
+                        self.handle_multi_episode_file(file, file_season, file_episodes, items, matches)
+                    
+                    break  # Move to next file after finding a match
+        
+        return matches
 
-            # Find all matching episodes in the Wanted, Scraping, and Sleeping queues
-            matching_items = []
-            for queue_name in ["Wanted", "Scraping", "Sleeping"]:
-                queue_items = queue_manager.queues[queue_name].get_contents()
-                matching_items.extend([
-                    wanted_item for wanted_item in queue_items
-                    if (wanted_item['type'] == 'episode' and
-                        wanted_item['imdb_id'] == item['imdb_id'] and
-                        wanted_item['version'] == item['version'] and
-                        wanted_item['id'] != item['id'])  # Exclude the original item
-                ])
-            logging.debug(f"Found {len(matching_items)} potential matching items in other queues")
+    def handle_multi_episode_file(self, file, file_season, file_episodes, items, matches):
+        for episode in file_episodes:
+            for item in items:
+                if (int(item['season_number']) == file_season and 
+                    int(item['episode_number']) == episode and 
+                    (file, item) not in matches):
+                    matches.append((file, item))
 
-            # Match files with items
-            moved_items = 0
-            for file_path in files:
-                for matching_item in matching_items[:]:  # Use a copy of the list for iteration
-                    if self.file_matches_item(file_path, matching_item):
-                        item_id = queue_manager.generate_identifier(matching_item)
-                        logging.debug(f"Matched file {file_path} with item {item_id}")
-                        current_queue = queue_manager.get_item_queue(matching_item)
-                        filled_by_file = os.path.basename(file_path)  # Get the filename
-                        queue_manager.move_to_checking(matching_item, current_queue, title, link, filled_by_file)
-                        logging.debug(f"Moved item {item_id} to Checking queue with filled_by_file: {filled_by_file}")
-                        matching_items.remove(matching_item)
-                        moved_items += 1
-                        
-                        # Handle multi-episode file if applicable
-                        episode_range = self.extract_episode_range(filled_by_file)
-                        if episode_range:
-                            self.handle_multi_episode(matching_item, episode_range, filled_by_file, queue_manager, title, link)
-                        break
 
-            logging.info(f"Processed multi-pack: moved {moved_items + 1} matching episodes (including original item) to Checking queue")
-            return True, f"Moved {moved_items + 1} matching episodes (including original item) to Checking queue"
-        except Exception as e:
-            logging.error(f"Exception in process_multi_pack for {item_identifier}: {str(e)}")
-            logging.exception("Traceback:")
-            return False, f"Error processing multi-pack: {str(e)}"
+    def get_matching_items_from_queues(self, queue_manager, item):
+        matching_items = []
+        for queue_name in ["Wanted", "Scraping", "Sleeping"]:
+            queue_items = queue_manager.queues[queue_name].get_contents()
+            matching_items.extend([
+                wanted_item for wanted_item in queue_items
+                if (wanted_item['type'] == 'episode' and
+                    wanted_item['imdb_id'] == item['imdb_id'] and
+                    wanted_item['version'] == item['version'] and
+                    wanted_item['id'] != item['id'])
+            ])
+        return matching_items
 
     def extract_episode_range(self, file_name):
         match = re.search(r'S\d+E(\d+)(?:-|-)E?(\d+)', file_name, re.IGNORECASE)
         if match:
             return (int(match.group(1)), int(match.group(2)))
         return None
-
-    def handle_multi_episode(self, item, episode_range, file_name, queue_manager, title, link):
-        start_ep, end_ep = episode_range
-        season_number = item['season_number']
-        
-        for ep_num in range(start_ep, end_ep + 1):
-            if ep_num != int(item['episode_number']):  # Skip the current item as it's already handled
-                related_item = self.find_related_episode(item, ep_num, queue_manager)
-                if related_item:
-                    logging.info(f"Moving related episode S{season_number}E{ep_num} to Checking queue")
-                    queue_manager.move_to_checking(related_item, queue_manager.get_item_queue(related_item), title, link, file_name)
-                else:
-                    logging.warning(f"Related episode S{season_number}E{ep_num} not found in queues")
 
     def find_related_episode(self, item, episode_number, queue_manager):
         for queue_name in ['Wanted', 'Scraping', 'Sleeping']:
@@ -614,52 +648,62 @@ class AddingQueue:
         return None
             
     def file_matches_item(self, file: str, item: Dict[str, Any]) -> bool:
-        filename = os.path.basename(file).lower()
-        logging.debug(f"Extracted filename: {filename}")
+        filename = os.path.basename(file)
+        logging.debug(f"Analyzing filename: {filename}")
 
-        if 'sample' in filename:
+        guess = guessit(filename)
+        logging.debug(f"Guessit result: {guess}")
+
+        if 'sample' in guess.get('other', []):
             logging.debug(f"Skipping sample file: {filename}")
             return False
 
-        quality = item['version'].lower()
-
         if item['type'] == 'movie':
-            # For movies, we just need to check if the title and year are in the filename
-            title = item['title'].lower().replace(' ', '.')
-            year = item['year']
-            movie_pattern = rf"(?i){re.escape(title)}.*{year}"
-            
-            if re.search(movie_pattern, filename):
-                logging.debug(f"Movie match found: {filename}")
-                return True
+            return self.match_movie(guess, item)
         elif item['type'] == 'episode':
-            season_number = int(item['season_number'])
-            episode_number = int(item['episode_number'])
-
-            # Pattern for single episodes
-            single_ep_pattern = rf"(?i)s0*{season_number}(?:[.-]?|\s*)e0*{episode_number}(?!\d)"
-            
-            # Pattern for episode ranges
-            range_pattern = rf"(?i)s0*{season_number}(?:[.-]?|\s*)e0*(\d+)(?:-|-)0*(\d+)"
-
-            logging.debug(f"Attempting to match patterns: {single_ep_pattern} or {range_pattern}")
-
-            single_match = re.search(single_ep_pattern, filename)
-            range_match = re.search(range_pattern, filename)
-
-            if single_match:
-                logging.debug(f"Single episode match found: {filename}. Matched part: {single_match.group()}")
-                return True
-            elif range_match:
-                start_ep, end_ep = map(int, range_match.groups())
-                if start_ep <= episode_number <= end_ep:
-                    logging.debug(f"Episode {episode_number} falls within range {start_ep}-{end_ep} in file: {filename}")
-                    return True
-                else:
-                    logging.debug(f"Episode {episode_number} not in range {start_ep}-{end_ep} in file: {filename}")
+            return self.match_episode(guess, item)
 
         logging.debug(f"No match found for {filename}")
         return False
+
+    def match_movie(self, guess: Dict[str, Any], item: Dict[str, Any]) -> bool:
+        if guess.get('type') != 'movie':
+            return False
+
+        title_match = self.fuzzy_title_match(guess.get('title', ''), item['title'])
+        year_match = str(guess.get('year', '')) == str(item['year'])
+
+        if title_match and year_match:
+            logging.debug(f"Movie match found: {guess.get('title')} ({guess.get('year')})")
+            return True
+
+        return False
+
+    def match_episode(self, guess: Dict[str, Any], item: Dict[str, Any]) -> bool:
+        if guess.get('type') != 'episode':
+            return False
+
+        title_match = self.fuzzy_title_match(guess.get('title', ''), item['title'])
+        season_match = guess.get('season') == int(item['season_number'])
+        episode_match = guess.get('episode') == int(item['episode_number'])
+
+        if title_match and season_match and episode_match:
+            logging.debug(f"Episode match found: {guess.get('title')} S{guess.get('season', '')}E{guess.get('episode', '')}")
+            return True
+
+        # Check for absolute episode number (mainly for anime)
+        if 'anime' in item.get('genres', []) and 'absolute_episode' in guess:
+            absolute_episode = self.calculate_absolute_episode(item)
+            if guess['absolute_episode'] == absolute_episode:
+                logging.debug(f"Anime absolute episode match found: {guess.get('title')} - {guess.get('absolute_episode')}")
+                return True
+
+        return False
+
+    def fuzzy_title_match(self, guess_title: str, item_title: str) -> bool:
+        # Perform a simple ratio match with a threshold of 80%
+        ratio = fuzz.ratio(guess_title.lower(), item_title.lower())
+        return ratio >= 80
 
     def remove_unwanted_torrent(self, torrent_id):
         try:
@@ -712,6 +756,26 @@ class AddingQueue:
 
         return False
 
+    def calculate_absolute_episode(self, item: Dict[str, Any]) -> int:
+        season_number = int(item['season_number'])
+        episode_number = int(item['episode_number'])
+        tmdb_id = item['tmdb_id']
+
+        # Check if we have cached the episode counts for this series
+        if tmdb_id not in self.episode_count_cache:
+            self.episode_count_cache[tmdb_id] = self.get_season_episode_counts(tmdb_id)
+
+        season_episode_counts = self.episode_count_cache[tmdb_id]
+
+        return sum(season_episode_counts.get(s, 0) for s in range(1, season_number)) + episode_number
+    
+    @functools.lru_cache(maxsize=1000)
+    def get_season_episode_counts(self, tmdb_id: str) -> Dict[int, int]:
+        overseerr_url = get_setting('Overseerr', 'url')
+        overseerr_api_key = get_setting('Overseerr', 'api_key')
+        cookies = get_overseerr_cookies(overseerr_url)
+        return get_all_season_episode_counts(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+
     def scrape_individual_episode(self, item):
         logging.info(f"Performing individual episode scrape for {self.generate_identifier(item)}")
         results, filtered_out = scrape(
@@ -723,7 +787,8 @@ class AddingQueue:
             item['version'],
             item.get('season_number'),
             item.get('episode_number'),
-            multi=False  # Force individual episode scraping
+            multi=False,
+            genres=item['genres']
         )
         return results  # We're not using filtered_out here, but you could if needed
 
