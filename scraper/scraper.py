@@ -18,7 +18,6 @@ from pprint import pformat
 import json
 from fuzzywuzzy import fuzz
 import os
-from nltk.util import ngrams
 from unidecode import unidecode
 from utilities.plex_functions import filter_genres
 from guessit import guessit
