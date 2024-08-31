@@ -1114,7 +1114,18 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             )
             scraper_logger.info(result_info)
 
-        return final_results, filtered_out_results if filtered_out_results else None
+        def sanitize_result(result):
+            def sanitize_value(value):
+                if isinstance(value, (str, int, float, bool, type(None))):
+                    return value
+                return str(value)
+
+            return {key: sanitize_value(value) for key, value in result.items()}
+
+        final_results = [sanitize_result(result) for result in final_results]
+        filtered_out_results = [sanitize_result(result) for result in filtered_out_results] if filtered_out_results else None
+
+        return final_results, filtered_out_results
 
     except Exception as e:
         logging.error(f"Unexpected error in scrape function for {title} ({year}): {str(e)}", exc_info=True)
