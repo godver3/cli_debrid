@@ -102,7 +102,7 @@ async def process_episode(episode: Dict[str, Any], show_title: str, season_numbe
         'genres': show_genres
     }
 
-    logger.info(f"Processing episode: {base_episode_data['title']}, genres: {base_episode_data['genres']}")
+    #logger.info(f"Processing episode: {base_episode_data['title']}, genres: {base_episode_data['genres']}")
            
     if 'Guid' in episode:
         for guid in episode['Guid']:
@@ -135,8 +135,8 @@ async def process_shows_chunk(session: aiohttp.ClientSession, plex_url: str, hea
 async def process_movies_chunk(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, movies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results = []
     for movie in movies:
-        detailed_movie = await get_detailed_movie_metadata(session, plex_url, movie['ratingKey'], headers, semaphore)
-        movie_entries = await process_movie(detailed_movie)
+        #detailed_movie = await get_detailed_movie_metadata(session, plex_url, movie['ratingKey'], headers, semaphore)
+        movie_entries = await process_movie(movie)
         results.extend(movie_entries)
     return results
 
@@ -158,7 +158,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         'genres': filter_genres(genres) 
     }
 
-    logger.debug(f"Movie: {movie_data['title']}, All genres: {genres}")
+    #logger.debug(f"Movie: {movie_data['title']}, All genres: {genres}")
     
     if 'Guid' in movie:
         for guid in movie['Guid']:
