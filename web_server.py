@@ -1080,7 +1080,7 @@ def statistics():
     
     # Fetch recently added items from the database
     recently_added_start = time.time()
-    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
+    recently_added = asyncio.run(get_recently_added_items(movie_limit=50, show_limit=50))
     recently_added_end = time.time()
     
     cookie_value = request.cookies.get('use24HourFormat')
@@ -1093,7 +1093,20 @@ def statistics():
     # Format times for upcoming releases (if they have time information)
     for item in upcoming_releases:
         item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
-                        
+
+    # Limit to 5 unique items for movies and shows after consolidation
+    def limit_unique_items(items, limit=5):
+        unique_items = {}
+        for item in items:
+            if len(unique_items) >= limit:
+                break
+            if item['title'] not in unique_items:
+                unique_items[item['title']] = item
+        return list(unique_items.values())
+    
+    recently_added['movies'] = limit_unique_items(recently_added['movies'])
+    recently_added['shows'] = limit_unique_items(recently_added['shows'])
+
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],

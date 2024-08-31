@@ -392,7 +392,7 @@ def filter_genres(genres):
 async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
-    logging.info(f"Movie: {movie['title']}, All genres: {genres}, Filtered genres: {filtered_genres}")
+    logging.info(f"Movie: {movie['title']}")
 
     movie_data = {
         'title': movie['title'],
@@ -425,7 +425,6 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                         movie_entry = movie_data.copy()
                         movie_entry['location'] = file_path
                         movie_entries.append(movie_entry)
-                        logger.info(f"Movie location: {file_path}")
     
     if not movie_entries:
         logger.error(f"No filename found for movie: {movie['title']}")
@@ -451,7 +450,7 @@ async def process_recent_season(season: Dict[str, Any], show: Dict[str, Any], se
 async def process_recent_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str, show: Dict[str, Any]) -> List[Dict[str, Any]]:
     show_genres = [genre['tag'] for genre in show.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(show_genres)
-    logging.info(f"Episode: {show_title} - {episode['title']}, genres: {filtered_genres}")
+    logging.info(f"Episode: {show_title} - {episode['title']}")
 
     episode_data = {
         'title': show_title,
@@ -489,7 +488,6 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
                         episode_entry = episode_data.copy()
                         episode_entry['location'] = file_path
                         episode_entries.append(episode_entry)
-                        logger.info(f"Episode location: {file_path}")
     
     if not episode_entries:
         logger.error(f"No filename found for episode: {show_title} - S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - {episode['title']}")
