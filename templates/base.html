@@ -107,8 +107,9 @@
         display: flex;
         align-items: center;
         position: absolute;
-        left: 50%;
         transform: translateX(-50%);
+        height: 100%;
+        left: calc(50%); /* Half of the header-content width */
     }
 
     nav ul {
@@ -162,14 +163,11 @@
         align-items: center;
     }
 
-    .user-info {
+    .username {
         display: flex;
         flex-direction: column;
-        align-items: flex-end;
+        align-items: flex-start;
         margin-right: 5px;
-    }
-
-    .username {
         font-weight: bold;
     }
 
@@ -191,7 +189,9 @@
     }
 
     .user-info {
-        margin-right: 15px; /* Adjust as needed */
+        /* margin-right: 15px; */
+        margin-left: 10px;
+        margin-bottom: 20px;   
     }
 
     .action-controls {
@@ -430,6 +430,64 @@
 
     /* Media Queries */
     @media (max-width: 1360px) {
+        .user-info {
+            display: none;  /* Hide the welcome message */
+        }
+
+        .action-controls .icon-button, 
+        .action-controls .start-program,
+        .action-controls #programControlButton {
+            width: 36px;
+            height: 36px;
+            min-width: 36px;
+            padding: 0;
+        }
+
+        .button-text {
+            display: none;
+        }
+
+        .action-controls .icon-button i, 
+        .action-controls .start-program i,
+        .action-controls #programControlButton i {
+            margin-right: 0;
+        }
+
+        .header-content {
+            flex: 0 0 auto; /* Prevent header content from shrinking */
+        }
+        
+        nav {
+            flex: 1; /* Allow nav to take remaining space */
+            justify-content: center; /* Center the nav items horizontally */
+        }
+        
+        .header-controls {
+            flex: 0 0 auto; /* Prevent header controls from shrinking */
+        }
+    }
+
+    @media (max-width: 1360px) and (min-width: 777px) {
+        .header-content {
+            flex: 0 0 auto;
+        }
+        
+        nav {
+            left: calc(50%); 
+        }
+        
+        .header-controls {
+            flex: 0 0 auto;
+        }
+    }
+
+    @media (max-width: 1300px) {
+        nav {
+            top: calc(25%); 
+        }
+    }
+
+    @media (max-width: 776px) {
         .header-content {
             position: absolute;
             left: 10px;
@@ -504,32 +562,9 @@
             transform: translateY(-50%);
         }
 
-        .user-info {
-            display: none;  /* Hide the welcome message */
-        }
-
         .action-controls {
             display: flex;
             gap: 5px;
-        }
-
-        .action-controls .icon-button, 
-        .action-controls .start-program,
-        .action-controls #programControlButton {
-            width: 36px;
-            height: 36px;
-            min-width: 36px;
-            padding: 0;
-        }
-
-        .button-text {
-            display: none;
-        }
-
-        .action-controls .icon-button i, 
-        .action-controls .start-program i,
-        .action-controls #programControlButton i {
-            margin-right: 0;
         }
 
         .header-controls {
@@ -540,10 +575,6 @@
 
         .user-controls, .program-controls {
             margin-bottom: 5px;
-        }
-
-        .button-text {
-            display: none;
         }
 
         .icon-button {
@@ -582,12 +613,6 @@
             position: static;
             transform: none;
         }
-
-        .hamburger-menu {
-            /* Remove position: absolute; */
-            /* Remove left: 50%; */
-            /* Remove transform: translateX(-50%); */
-        }
     }
 </style>
 <body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
@@ -598,6 +623,11 @@
                 <h1>cli_debrid</h1>
                 <span class="version-info">v{{ version }}</span>
             </div>
+            {% if current_user.is_authenticated %}
+            <div class="user-info">
+                <span class="username">Welcome, {{ current_user.username }}</span>
+            </div>
+            {% endif %}
         </div>
         <nav id="mainNav">
             <div class="hamburger-menu">
@@ -612,10 +642,10 @@
                     ('scraper', 'Scraper'),
                     ('logs', 'Logs'),
                     ('settings', 'Settings'),
-                    ('manage_users', 'Manage Users'),
+                    ('manage_users', 'Users'),
                     ('database', 'Database'),
-                    ('scraper_tester', 'Scraper Tester'),
-                    ('debug_functions', 'Debug Functions')
+                    ('scraper_tester', 'Tester'),
+                    ('debug_functions', 'Debug')
                 ] %}
                 
                 {% if is_user_system_enabled() %}
@@ -636,9 +666,6 @@
         <div class="header-controls">
             {% if is_user_system_enabled() %}
                 {% if current_user.is_authenticated %}
-                    <div class="user-info">
-                        <span class="username">Welcome, {{ current_user.username }}</span>
-                    </div>
                     <div class="action-controls">
                         <a href="{{ url_for('logout') }}" class="icon-button">
                             <i class="fas fa-sign-out-alt"></i>
