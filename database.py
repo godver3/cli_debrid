@@ -1104,7 +1104,7 @@ def bulk_delete_by_imdb_id(imdb_id):
 
 from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
 
-async def get_recently_added_items(movie_limit=5, show_limit=5):
+async def get_recently_added_items(movie_limit=50, show_limit=50):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -1132,7 +1132,11 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         cursor.execute(episode_query)
         episode_results = cursor.fetchall()
         
-        movies = []
+        logging.debug(f"Initial movie results: {len(movie_results)}")
+        for movie in movie_results:
+            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Version: {movie['version']}")
+        
+        consolidated_movies = {}
         shows = {}
         
         async with aiohttp.ClientSession() as session:
@@ -1141,21 +1145,32 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
             # Process movies
             for row in movie_results:
                 item = dict(row)
-                media_type = 'movie'
-                cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
-                if cached_url:
-                    item['poster_url'] = cached_url
+                key = f"{item['title']}-{item['year']}"
+                if key not in consolidated_movies:
+                    consolidated_movies[key] = {
+                        **item,
+                        'versions': [item['version']],
+                        'collected_at': item['collected_at']
+                    }
+                    media_type = 'movie'
+                    cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
+                    if cached_url:
+                        consolidated_movies[key]['poster_url'] = cached_url
+                    else:
+                        poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
+                        poster_tasks.append((consolidated_movies[key], poster_task, media_type))
                 else:
-                    poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
-                    poster_tasks.append((item, poster_task, media_type))
-                movies.append(item)
+                    consolidated_movies[key]['versions'].append(item['version'])
+                    consolidated_movies[key]['collected_at'] = max(consolidated_movies[key]['collected_at'], item['collected_at'])
+                
+                logging.debug(f"Consolidated movie: {key} - Versions: {consolidated_movies[key]['versions']}")
             
             # Process episodes
             for row in episode_results:
                 item = dict(row)
                 media_type = 'tv'
                 
-                if item['title'] not in shows and len(shows) < show_limit:
+                if item['title'] not in shows:
                     show_item = {
                         'title': item['title'],
                         'year': item['year'],
@@ -1174,7 +1189,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                         poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
                         poster_tasks.append((show_item, poster_task, media_type))
                     shows[item['title']] = show_item
-                elif item['title'] in shows:
+                else:
                     show = shows[item['title']]
                     if item['season_number'] not in show['seasons']:
                         show['seasons'].append(item['season_number'])
@@ -1182,6 +1197,8 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     show['latest_episode'] = max(show['latest_episode'], (item['season_number'], item['episode_number']))
                     if item['version'] not in show['versions']:
                         show['versions'].append(item['version'])
+                
+                logging.debug(f"Processed show: {item['title']} - Versions: {shows[item['title']]['versions']}")
             
             # Wait for all poster URL tasks to complete
             poster_results = await asyncio.gather(*[task for _, task, _ in poster_tasks], return_exceptions=True)
@@ -1197,21 +1214,51 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     logging.warning(f"No poster URL found for {media_type} with TMDB ID {item['tmdb_id']}")
 
         
+        # Convert consolidated_movies dict to list and sort
+        movies_list = list(consolidated_movies.values())
+        movies_list.sort(key=lambda x: x['collected_at'], reverse=True)
+        
         # Convert shows dict to list and sort
         shows_list = list(shows.values())
         shows_list.sort(key=lambda x: x['collected_at'], reverse=True)
         
-        # Final processing
-        for item in movies + shows_list:
-            if 'seasons' in item:
-                item['seasons'].sort()
-            if 'versions' in item:
-                item['versions'].sort()
+        logging.debug("Before limit_and_process:")
+        for movie in movies_list:
+            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
+        for show in shows_list:
+            logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
         
+        # Final processing and limiting to 5 unique items based on title
+        def limit_and_process(items, limit=5):
+            unique_items = {}
+            for item in items:
+                if len(unique_items) >= limit:
+                    break
+                if item['title'] not in unique_items:
+                    if 'seasons' in item:
+                        item['seasons'].sort()
+                    item['versions'].sort()
+                    item['versions'] = ', '.join(item['versions'])  # Join versions into a string
+                    unique_items[item['title']] = item
+                logging.debug(f"Processed item: {item['title']} - Versions: {item['versions']}")
+            return list(unique_items.values())
+
+        movies_list = limit_and_process(movies_list)
+        shows_list = limit_and_process(shows_list)
+
+        logging.debug("After limit_and_process:")
+        for movie in movies_list:
+            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
+        for show in shows_list:
+            logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
+
         # Clean expired cache entries
         clean_expired_cache()
 
-        return {'movies': movies, 'shows': shows_list[:show_limit]}
+        return {
+            'movies': movies_list,
+            'shows': shows_list
+        }
     except Exception as e:
         logging.error(f"Error in get_recently_added_items: {str(e)}")
         return {'movies': [], 'shows': []}
