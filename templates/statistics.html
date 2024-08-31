@@ -414,7 +414,7 @@
                             <div class="card-hover-content">
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
                                 <p class="info-line">Added: {{ movie.collected_at }}</p>
-                                <p class="info-line">Versions: {{ movie.version }}</p>
+                                <p class="info-line">Versions: {{ movie.versions }}</p>
                             </div>
                         </div>
                     {% endfor %}
@@ -436,7 +436,7 @@
                             <div class="card-hover-content">
                                 <h5>{{ show.title }}</h5>
                                 <p class="info-line">Added: {{ show.collected_at }}</p>
-                                <p class="info-line">Versions: {{ show.versions|join(', ') }}</p>
+                                <p class="info-line">Versions: {{ show.versions }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
                             </div>
@@ -635,7 +635,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="card-hover-content">
                             <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
                             <p class="info-line">Added: ${formattedDate}</p>
-                            <p class="info-line">Versions: ${item.versions ? item.versions.join(', ') : item.version}</p>
+                            <p class="info-line">Versions: ${item.versions}</p>
                             ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
                                 `<p class="info-line">Seasons: ${item.seasons.join(', ')}</p>
                                 <p class="info-line">Latest: S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
