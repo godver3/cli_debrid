@@ -363,11 +363,18 @@ class AddingQueue:
             return False
         
     def download_and_extract_hash(self, url: str) -> str:
+        def obfuscate_url(url: str) -> str:
+            parts = url.split('/')
+            if len(parts) > 3:
+                return '/'.join(parts[:3] + ['...'] + parts[-1:])
+            return url
+
+        obfuscated_url = obfuscate_url(url)
         try:
-            logging.debug(f"Attempting to download torrent file from URL: {url}")
+            logging.debug(f"Attempting to download torrent file from URL: {obfuscated_url}")
             response = api.get(url, timeout=30, stream=True)
             torrent_content = response.content
-            logging.debug(f"Successfully downloaded torrent file. Content length: {len(torrent_content)} bytes")
+            logging.debug(f"Successfully downloaded torrent file from {obfuscated_url}. Content length: {len(torrent_content)} bytes")
             
             # Decode the torrent file
             torrent_data = bencodepy.decode(torrent_content)
@@ -383,13 +390,13 @@ class AddingQueue:
             logging.debug(f"Successfully extracted hash: {hash_result}")
             return hash_result
         except api.exceptions.RequestException as e:
-            logging.error(f"Network error while downloading torrent file from {url}: {str(e)}")
+            logging.error(f"Network error while downloading torrent file from {obfuscated_url}: {str(e)}")
         except bencodepy.exceptions.BencodeDecodeError as e:
-            logging.error(f"Error decoding torrent file from {url}: {str(e)}")
+            logging.error(f"Error decoding torrent file from {obfuscated_url}: {str(e)}")
         except KeyError as e:
-            logging.error(f"Error extracting info from torrent file from {url}: {str(e)}")
+            logging.error(f"Error extracting info from torrent file from {obfuscated_url}: {str(e)}")
         except Exception as e:
-            logging.error(f"Unexpected error processing torrent file from {url}: {str(e)}")
+            logging.error(f"Unexpected error processing torrent file from {obfuscated_url}: {str(e)}")
         return None
 
 
