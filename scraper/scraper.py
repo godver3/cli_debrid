@@ -904,9 +904,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     # Check if the detected season and episode match the requested ones
                     detected_season = season_episode_info['seasons'][0] if season_episode_info['seasons'] else 1  # Assume season 1 if not detected
                     detected_episode = season_episode_info['episodes'][0] if season_episode_info['episodes'] else None
-                    
-                    logging.info(f"Comparing - Detected: S{detected_season}E{detected_episode}, Requested: S{season}E{episode}")
-                    
+                                      
                     if detected_episode != episode:
                         result['filter_reason'] = f"Episode mismatch: E{detected_episode} vs E{episode}"
                         continue

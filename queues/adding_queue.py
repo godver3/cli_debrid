@@ -230,11 +230,15 @@ class AddingQueue:
 
         add_result = add_to_real_debrid(link)
         if add_result:
-            if isinstance(add_result, dict) and add_result.get('status') == 'downloaded':
-                logging.info(f"Cached torrent added to Real-Debrid successfully for {item_identifier}")
-                self.add_to_not_wanted(current_hash, item_identifier)
-                if self.process_torrent(queue_manager, item, title, link, add_result):
-                    return True
+            if isinstance(add_result, dict):
+                status = add_result.get('status')
+                if status == 'downloaded' or (status in ['downloading', 'queued'] and 'files' in add_result):
+                    logging.info(f"Torrent added to Real-Debrid successfully for {item_identifier}. Status: {status}")
+                    self.add_to_not_wanted(current_hash, item_identifier)
+                    if self.process_torrent(queue_manager, item, title, link, add_result):
+                        return True
+                else:
+                    logging.warning(f"Unexpected result from Real-Debrid for {item_identifier}: {add_result}")
             elif add_result in ['downloading', 'queued']:
                 logging.info(f"Uncached torrent added to Real-Debrid successfully for {item_identifier}")
                 self.add_to_not_wanted(current_hash, item_identifier)
