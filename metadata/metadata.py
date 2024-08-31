@@ -550,16 +550,24 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
         show_data = show_response.json()
         
         # Extract and return the airtime
-        if 'first_aired' in show_data:
-            local_now = datetime.now()
-            utc = datetime.strptime(show_data['first_aired'], "%Y-%m-%dT%H:%M:%S.000Z")
-            utc = utc.replace(tzinfo=timezone.utc)
-            local_time = (utc.astimezone(local_now.tzname())).strftime('%H:%M')
-            return local_time
+        first_aired = show_data.get('first_aired')
+        if first_aired:
+            try:
+                local_now = datetime.now()
+                utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S.000Z")
+                utc = utc.replace(tzinfo=timezone.utc)
+                local_time = (utc.astimezone(local_now.tzname())).strftime('%H:%M')
+                return local_time
+            except ValueError as e:
+                logging.error(f"Error parsing 'first_aired' for show with IMDb ID {imdb_id}: {e}. Using default airtime.")
+                return DEFAULT_AIRTIME
         else:
-            logging.warning(f"No airtime found for show with IMDb ID: {imdb_id}. Using default airtime.")
+            logging.warning(f"No 'first_aired' data found for show with IMDb ID: {imdb_id}. Using default airtime.")
             return DEFAULT_AIRTIME
     
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching show data from Trakt: {e}. Using default airtime.")
+        return DEFAULT_AIRTIME
+    except Exception as e:
+        logging.error(f"Unexpected error in get_show_airtime_by_imdb_id for IMDb ID {imdb_id}: {e}. Using default airtime.")
         return DEFAULT_AIRTIME
