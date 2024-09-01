@@ -6,6 +6,8 @@ import logging
 CACHE_FILE = 'db_content/poster_cache.pkl'
 CACHE_EXPIRY_DAYS = 7  # Cache expires after 7 days
 
+UNAVAILABLE_POSTER = "UNAVAILABLE"
+
 def load_cache():
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, 'rb') as f:
@@ -23,6 +25,8 @@ def get_cached_poster_url(tmdb_id, media_type):
     cache_item = cache.get(cache_key)
     if cache_item:
         url, timestamp = cache_item
+        if url == UNAVAILABLE_POSTER:
+            return None
         if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
             return url
         else:
@@ -70,3 +74,10 @@ def cache_media_meta(tmdb_id, media_type, media_meta):
     cache[cache_key] = (media_meta, datetime.now())
     save_cache(cache)
     logging.info(f"Cached media meta for {cache_key}")
+
+def cache_unavailable_poster(tmdb_id, media_type):
+    cache = load_cache()
+    cache_key = f"{tmdb_id}_{media_type}"
+    cache[cache_key] = (UNAVAILABLE_POSTER, datetime.now())
+    save_cache(cache)
+    logging.info(f"Cached unavailable poster for {cache_key}")
