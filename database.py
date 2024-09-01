@@ -1104,7 +1104,7 @@ def bulk_delete_by_imdb_id(imdb_id):
 
 from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
 
-async def get_recently_added_items(movie_limit=50, show_limit=50):
+async def get_recently_added_items(movie_limit=5, show_limit=5):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -1114,7 +1114,8 @@ async def get_recently_added_items(movie_limit=50, show_limit=50):
         SELECT title, year, type, collected_at, imdb_id, tmdb_id, version
         FROM media_items
         WHERE type = 'movie' AND collected_at IS NOT NULL
-        ORDER BY collected_at DESC
+        GROUP BY title, year
+        ORDER BY MAX(collected_at) DESC
         LIMIT ?
         """
         
@@ -1123,13 +1124,15 @@ async def get_recently_added_items(movie_limit=50, show_limit=50):
         SELECT title, year, type, season_number, episode_number, collected_at, imdb_id, tmdb_id, version
         FROM media_items
         WHERE type = 'episode' AND collected_at IS NOT NULL
-        ORDER BY collected_at DESC
+        GROUP BY title
+        ORDER BY MAX(collected_at) DESC
+        LIMIT ?
         """
         
         cursor.execute(movie_query, (movie_limit,))
         movie_results = cursor.fetchall()
         
-        cursor.execute(episode_query)
+        cursor.execute(episode_query, (show_limit,))
         episode_results = cursor.fetchall()
         
         logging.debug(f"Initial movie results: {len(movie_results)}")
@@ -1212,7 +1215,6 @@ async def get_recently_added_items(movie_limit=50, show_limit=50):
                     cache_poster_url(item['tmdb_id'], media_type, result)
                 else:
                     logging.warning(f"No poster URL found for {media_type} with TMDB ID {item['tmdb_id']}")
-
         
         # Convert consolidated_movies dict to list and sort
         movies_list = list(consolidated_movies.values())
@@ -1267,12 +1269,18 @@ async def get_recently_added_items(movie_limit=50, show_limit=50):
 
 async def get_poster_url(session, tmdb_id, media_type):
     from content_checkers.overseerr import get_overseerr_headers
+    from poster_cache import cache_unavailable_poster
+
+    if not tmdb_id:
+        cache_unavailable_poster(tmdb_id, media_type)
+        return None
 
     overseerr_url = get_setting('Overseerr', 'url', '').rstrip('/')
     overseerr_api_key = get_setting('Overseerr', 'api_key', '')
     
     if not overseerr_url or not overseerr_api_key:
         logging.warning("Overseerr URL or API key is missing")
+        cache_unavailable_poster(tmdb_id, media_type)
         return None
     
     headers = get_overseerr_headers(overseerr_api_key)
@@ -1290,16 +1298,11 @@ async def get_poster_url(session, tmdb_id, media_type):
                     logging.warning(f"No poster path found for {media_type} with TMDB ID {tmdb_id}")
             else:
                 logging.error(f"Overseerr API returned status {response.status} for {media_type} with TMDB ID {tmdb_id}")
-                
-    except ClientConnectorError as e:
-        logging.error(f"Unable to connect to Overseerr: {e}")
-    except ServerTimeoutError:
-        logging.error(f"Timeout while connecting to Overseerr for {media_type} with TMDB ID {tmdb_id}")
-    except ClientResponseError as e:
-        logging.error(f"Overseerr API error: {e}")
-    except asyncio.TimeoutError:
-        logging.error(f"Request to Overseerr timed out for {media_type} with TMDB ID {tmdb_id}")
+            
+    except (ClientConnectorError, ServerTimeoutError, ClientResponseError, asyncio.TimeoutError) as e:
+        logging.error(f"Error fetching poster URL for {media_type} with TMDB ID {tmdb_id}: {e}")
     except Exception as e:
         logging.error(f"Unexpected error fetching poster URL for {media_type} with TMDB ID {tmdb_id}: {e}")
     
+    cache_unavailable_poster(tmdb_id, media_type)
     return None
