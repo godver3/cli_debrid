@@ -1118,9 +1118,19 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             def sanitize_value(value):
                 if isinstance(value, (str, int, float, bool, type(None))):
                     return value
+                elif isinstance(value, dict):
+                    return {k: sanitize_value(v) for k, v in value.items()}
+                elif isinstance(value, list):
+                    return [sanitize_value(item) for item in value]
                 return str(value)
 
-            return {key: sanitize_value(value) for key, value in result.items()}
+            sanitized = {key: sanitize_value(value) for key, value in result.items()}
+            
+            # Ensure score_breakdown is preserved
+            if 'score_breakdown' in result:
+                sanitized['score_breakdown'] = result['score_breakdown']
+            
+            return sanitized
 
         final_results = [sanitize_result(result) for result in final_results]
         filtered_out_results = [sanitize_result(result) for result in filtered_out_results] if filtered_out_results else None
