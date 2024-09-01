@@ -1080,7 +1080,7 @@ def statistics():
     
     # Fetch recently added items from the database
     recently_added_start = time.time()
-    recently_added = asyncio.run(get_recently_added_items(movie_limit=50, show_limit=50))
+    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
     recently_added_end = time.time()
     
     cookie_value = request.cookies.get('use24HourFormat')
@@ -1094,19 +1094,6 @@ def statistics():
     for item in upcoming_releases:
         item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
 
-    # Limit to 5 unique items for movies and shows after consolidation
-    def limit_unique_items(items, limit=5):
-        unique_items = {}
-        for item in items:
-            if len(unique_items) >= limit:
-                break
-            if item['title'] not in unique_items:
-                unique_items[item['title']] = item
-        return list(unique_items.values())
-    
-    recently_added['movies'] = limit_unique_items(recently_added['movies'])
-    recently_added['shows'] = limit_unique_items(recently_added['shows'])
-
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],
@@ -1118,8 +1105,8 @@ def statistics():
         'today': now.date(),
         'yesterday': (now - timedelta(days=1)).date(),
         'tomorrow': (now + timedelta(days=1)).date(),
-        'recently_added_movies': recently_added['movies'],  # Changed this line
-        'recently_added_shows': recently_added['shows'],   # Changed this line
+        'recently_added_movies': recently_added['movies'],
+        'recently_added_shows': recently_added['shows'],
         'use_24hour_format': use_24hour_format,
         'recently_aired': recently_aired,
         'airing_soon': airing_soon,
@@ -1161,7 +1148,6 @@ def set_time_preference():
                         str(use_24hour_format).lower(), 
                         max_age=31536000,  # 1 year
                         path='/',  # Ensure cookie is available for entire site
-                        secure=True,  # Only send over HTTPS
                         httponly=False)  # Allow JavaScript access
     return response
 
