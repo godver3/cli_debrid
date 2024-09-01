@@ -4,23 +4,170 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 <button id="add-source-btn" class="add-source-link">Add New Source</button>
-<div id="add-source-popup" class="popup">
-    <div class="popup-content">
-        <h4>Add New Content Source</h4>
-        <form id="add-source-form">
-            <div class="form-group">
-                <label for="source-type">Source Type:</label>
-                <select id="source-type" name="type" required>
-                    {% for source_type in source_types %}
-                        <option value="{{ source_type }}">{{ source_type }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <button type="submit">Add Source</button>
-            <button type="button" id="cancel-add-source">Cancel</button>
-        </form>
-    </div>
-</div>
+
+<script>
+    let contentSourceSettingsLoaded = false;
+    let scrapingVersionsLoaded = false;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSettings();
+    });
+
+    function loadSettings() {
+        Promise.all([
+            fetch('/get_content_source_settings').then(response => response.json()),
+            fetch('/get_scraping_versions').then(response => response.json())
+        ]).then(([contentSourceSettings, scrapingVersions]) => {
+            window.contentSourceSettings = contentSourceSettings;
+            window.scrapingVersions = scrapingVersions.versions;
+            contentSourceSettingsLoaded = true;
+            scrapingVersionsLoaded = true;
+            initializeContentSourcesFunctionality();
+        }).catch(error => {
+            console.error('Error fetching settings:', error);
+        });
+    }
+
+    function initializeContentSourcesFunctionality() {
+        initializeAddSourceButton();
+        initializeSourceButtons();
+    }
+
+    function initializeAddSourceButton() {
+        const addButton = document.getElementById('add-source-btn');
+        if (addButton) {
+            addButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                if (contentSourceSettingsLoaded && scrapingVersionsLoaded) {
+                    showAddSourcePopup();
+                } else {
+                    console.error('Settings not loaded yet');
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Settings are still loading. Please try again in a moment.'
+                    });
+                }
+            });
+        } else {
+            console.error('Add source button not found');
+        }
+    }
+
+    function showAddSourcePopup() {
+        fetch('/get_content_source_types')
+            .then(response => response.json())
+            .then(data => {
+                const sourceTypes = data.source_types;
+                const dropdownOptions = sourceTypes.map(type => ({
+                    value: type,
+                    text: type
+                }));
+
+                window.showPopup({
+                    type: POPUP_TYPES.PROMPT,
+                    title: 'Add New Content Source',
+                    message: 'Select a content source type:',
+                    dropdownOptions: dropdownOptions,
+                    confirmText: 'Add Source',
+                    cancelText: 'Cancel',
+                    onConfirm: (selectedType) => {
+                        addContentSource({ type: selectedType });
+                    }
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching content source types:', error);
+                window.showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Error fetching content source types. Please try again.'
+                });
+            });
+    }
+
+    function addContentSource(sourceData) {
+        fetch('/content_sources/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(sourceData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('content-sources', () => {
+                    window.initializeExpandCollapse();
+                    initializeContentSourcesFunctionality(); // Add this line
+                    window.showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: 'Content source added successfully',
+                    });
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding content source:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding content source: ' + error.message
+            });
+        });
+    }
+
+    function initializeSourceButtons() {
+        const deleteButtons = document.querySelectorAll('.delete-source-btn');
+        deleteButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const sourceId = this.getAttribute('data-source-id');
+                deleteContentSource(sourceId);
+            });
+        });
+    }
+
+    function deleteContentSource(sourceId) {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Content Source',
+            message: 'Are you sure you want to delete this content source?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/content_sources/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ source_id: sourceId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.reloadTabContent('content-sources', () => {
+                            window.initializeExpandCollapse();
+                            initializeContentSourcesFunctionality(); // Add this line
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: 'Content source deleted successfully',
+                            });
+                        });
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting content source:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error deleting content source: ' + error.message
+                    });
+                });
+            }
+        });
+    }
+</script>
+
 {% if settings['Content Sources'] is defined and settings['Content Sources'] is mapping %}
     {% for source_id, config in settings['Content Sources'].items() %}
     <div class="settings-section" data-source-id="{{ source_id }}">

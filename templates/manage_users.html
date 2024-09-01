@@ -1,6 +1,87 @@
 {% extends "base.html" %}
 {% block title %}Manage Users{% endblock %}
 {% block content %}
+<style>
+    /* Manage Users styles */
+    .manage-users {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .user-list {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+    }
+
+    .user-list th, .user-list td {
+        padding: 10px;
+        border: 1px solid #555;
+        text-align: left;
+    }
+
+    .user-list th {
+        background-color: #2a2a2a;
+        color: #f4f4f4;
+    }
+
+    .user-list tr:nth-child(even) {
+        background-color: #333;
+    }
+
+    .add-user-form {
+        margin-top: 30px;
+        background-color: #2a2a2a;
+        padding: 20px;
+        border-radius: 5px;
+    }
+
+    .add-user-form h3 {
+        margin-top: 0;
+        color: #f4f4f4;
+    }
+
+    .add-user-form input[type="text"],
+    .add-user-form input[type="password"],
+    .add-user-form select {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 15px;
+        border: 1px solid #555;
+        border-radius: 3px;
+        background-color: #333;
+        color: #f4f4f4;
+        font-size: 16px;
+        box-sizing: border-box;
+    }
+
+    .add-user-form input[type="submit"] {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 3px;
+        background-color: #4CAF50;
+        color: white;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background-color 0.3s;
+    }
+
+    .delete-button {
+        background-color: #f44336;
+        color: white;
+        padding: 5px 10px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .add-user-form input[type="submit"]:hover {
+        background-color: #45a049;
+    }
+</style>
+
 <div class="manage-users">
     <h2>Manage Users</h2>
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -37,8 +118,8 @@
     <div class="add-user-form">
         <h3>Add New User</h3>
         <form action="{{ url_for('add_user') }}" method="POST">
-            <input type="text" name="username" placeholder="Username" required>
-            <input type="password" name="password" placeholder="Password" required>
+            <input type="text" name="username" placeholder="Username" required autocomplete="new-username">
+            <input type="password" name="password" placeholder="Password" required autocomplete="new-password">
             <select name="role" required>
                 <option value="user">User</option>
                 <option value="admin">Admin</option>
@@ -50,27 +131,81 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
 <script>
-function deleteUser(userId) {
-    showConfirmationPopup("Are you sure you want to delete this user?", function() {
-        fetch(`/delete_user/${userId}`, {
-            method: 'POST',
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Remove the user row from the table
-                document.querySelector(`tr[data-user-id="${userId}"]`).remove();
-                showNotification('User deleted successfully', 'success');
-            } else {
-                showNotification('Error deleting user: ' + (data.error || 'Unknown error'), 'error');
+document.addEventListener('DOMContentLoaded', function() {
+    const addUserForm = document.querySelector('.add-user-form form');
+    addUserForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const username = formData.get('username');
+        const role = formData.get('role');
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: "Add User",
+            message: `Are you sure you want to add user "${username}" with role "${role}"?`,
+            onConfirm: function() {
+                fetch("{{ url_for('add_user') }}", {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Reload the page immediately
+                        window.location.reload();
+                    } else {
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Error',
+                            message: data.error || 'An error occurred while adding the user.'
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error',
+                        message: 'An unexpected error occurred.'
+                    });
+                });
             }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showNotification('Error deleting user', 'error');
         });
+    });
+});
+
+function deleteUser(userId) {
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: "Delete User",
+        message: "Are you sure you want to delete this user?",
+        onConfirm: function() {
+            fetch(`/delete_user/${userId}`, {
+                method: 'POST',
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Reload the page immediately
+                    window.location.reload();
+                } else {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error deleting user: ' + (data.error || 'Unknown error'),
+                        title: 'Error'
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Error deleting user',
+                    title: 'Error'
+                });
+            });
+        }
     });
 }
 </script>

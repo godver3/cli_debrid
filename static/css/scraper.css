@@ -1,0 +1,682 @@
+form#search-form {
+    text-align: center;
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+form#search-form input, select, button {
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+
+.trending-container {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding-top: 20px;
+}
+
+.trending-movies {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    margin-bottom: 30px;
+}
+
+.trending-shows {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.trending-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.trending-title {
+    font-size: 24px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.trending-navigation {
+    display: flex;
+    gap: 10px;
+}
+
+.trending-nav-button {
+    background-color: transparent;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.trending-nav-button:hover {
+    opacity: 0.8;
+}
+
+.trending-nav-button:disabled {
+    color: #4a4a4a;    
+    cursor: not-allowed;
+}
+
+.movie-list {
+    display: flex;
+    overflow-x: auto;
+    gap: 20px;
+    padding-bottom: 20px;
+    scroll-behavior: smooth;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+}
+
+.movie-list::-webkit-scrollbar {
+    display: none; /* WebKit */
+}
+
+.media-card {
+    flex: 0 0 auto;
+    width: 176px;
+}
+
+.show-list {
+    display: flex;
+    overflow-x: auto;
+    gap: 20px;
+    padding-bottom: 20px;
+    scroll-behavior: smooth;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+}
+
+.show-list::-webkit-scrollbar {
+    display: none; /* WebKit */
+}
+
+.media-poster {
+    position: relative;
+    width: 176px;
+    height: 264px;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.media-poster-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s ease;
+}
+
+.media-title {
+    position: absolute;
+    bottom: 0px;
+    width: 100%;
+    height: 25%;
+    background-color: rgb(0 0 0 / 63%);
+    color: white;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    font-family: Arial, sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 19px;
+    text-align: center;
+    box-sizing: border-box;
+    z-index: 1;
+    padding-top: 10px;
+}
+
+.media-poster:hover .media-poster-img {
+    transform: scale(1.1);
+}
+
+.media-poster:hover .media-title {
+    opacity: 1;
+}
+
+.media-poster:hover {
+    cursor: pointer;
+}
+
+#trending-rating {
+    position: absolute;
+    margin: 5px;
+    width: 26px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: #ed1c23c0;
+    z-index: 1;
+}
+
+#trending-watchers {
+    position: absolute;
+    right: 0;
+    margin: 5px;
+    width: 52px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: rgb(0 0 0 / 72%);
+    z-index: 1;
+}
+.sresult {
+    transition: transform 0.3s ease;
+    width: 200px;
+}
+
+.sresult:hover {
+    transform: scale(1.05);
+}
+
+.sresult button {
+    background-color: #100a0a17;
+    border-radius: 20px;
+    border: solid;
+    border-color: #2220;
+    padding: 0px;
+}
+
+h2.searchresult-item {
+    font-size: 0.999rem;
+    line-height: 1.3rem;
+    color: rgb(191 191 190);
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+/* Custom scrollbar styles */
+#searchResult > div::-webkit-scrollbar {
+    height: 8px;
+}
+
+#searchResult > div::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+#searchResult > div::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+#searchResult > div::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+.sresult img {
+    width: 200px;
+    height: auto;
+    margin-right: 5px;
+    border-radius: 16px;
+}
+
+.searchresult-info {
+    flex: 1;
+}
+
+#searchResult > div {
+    padding-top: 30px;
+    width: 1600px; /* (300px * 5) + (20px * 4) for gaps */
+    margin: 0 auto; /* Centers the container if it's narrower than its parent */
+}
+
+.close-btn {
+    position: absolute;
+    top: 0px;
+    right: 26px;
+    font-size: 37px;
+    cursor: pointer;
+}
+
+select#seasonDropdown {
+    position: absolute;
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+    z-index: 1;
+}
+
+button#seasonPackButton {
+    position: absolute;
+    margin-left: 111px;
+    z-index: 1;
+    transition: background-color 0.3s;
+    background-color: #4CAF50;
+    border: none;
+    color: white;
+    padding: 9px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin-right: 10px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+#seasonPackButton:hover{
+    opacity: 0.9;
+}
+
+#seasonDropdown, #seasonPackButton {
+    margin-bottom: 20px;
+}
+
+.show-rating {
+    position: absolute;
+    right: 0;
+    margin: 5px;
+    width: 50px;
+    height: 50px;
+    color: rgb(255 255 255 / 80%);
+    font-size: 21px;
+    font-weight: bold;
+    line-height: 49px;
+    text-align: center;
+    border-radius: 82px;
+    background: linear-gradient(to right, rgba(24, 170, 135, 1) 0%, rgba(1, 144, 182, 1) 100%);
+    z-index: 1;
+}
+
+.season-info-container {
+    display: flex;
+    align-items: flex-start;
+    position: relative;
+    z-index: 1;
+    padding-top: 20px;
+    padding-bottom: 20px;
+    border-radius: 10px;
+}
+
+.season-poster {
+    height: 200px;
+    object-fit: cover;
+    margin-right: 20px;
+    flex-shrink: 0;
+}
+
+.season-details {
+    flex: 1;
+}
+
+.season-overview {
+    height: 3em; /* Approximately 2 lines of text */
+    overflow: hidden;
+    position: relative;
+}
+
+.season-overview p {
+    margin: 0;
+    position: absolute;
+    width: 100%;
+}
+
+.season-bg-image {
+    position: absolute;
+    top: 128px;
+    left: 0;
+    width: 100%;
+    height: 29%;
+    background-size: cover;
+    background-position: center;
+    z-index: 0;
+}
+
+.season-bg-image::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgb(36 34 34 / 88%);
+    z-index: 1;
+}
+
+
+.episode {
+    width: 300px;
+    transition: transform 0.3s ease;
+}
+
+.episode:hover {
+    transform: scale(1.05);
+    cursor: pointer;
+}
+
+/* Custom scrollbar styles */
+#episodeResults > div::-webkit-scrollbar {
+    height: 8px;
+}
+
+#episodeResults > div::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+#episodeResults > div::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+#episodeResults > div::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+.episode button {
+    background-color: #100a0a17;
+    border-radius: 20px;
+    border: solid;
+    border-color: #2220;
+    padding: 0px;
+}
+
+.episode img {
+    height: auto;
+    margin-right: 20px;
+    border-radius: 16px;
+}
+
+.episode-info {
+    flex: 1;
+}
+
+p.episode-sub {
+    font-size: .888rem;
+    line-height: 3rem;
+    color: rgb(191 191 190);
+}
+
+p.episode-sub img {
+    width: 15px;
+    height: auto;
+    margin-right: 3px;
+    vertical-align: bottom;
+}
+
+.episode-rating {
+    position: absolute;
+    margin: 5px;
+    width: 27px;
+    height: 15px;
+    color: rgb(255 255 255 / 80%);
+    font-size: 12px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background: linear-gradient(to right, rgba(24, 170, 135, 1) 0%, rgba(1, 144, 182, 1) 100%);
+    z-index: 1;
+}
+
+h2.episode-title {
+    font-size: 0.999rem;
+    line-height: 1.3rem;
+    color: rgb(191 191 190);
+    margin-block-end: -10px;
+    padding-top: 10px;
+}
+
+#episodeResults > div {
+    position: relative;
+    width: 1600px;
+    margin: 0 auto;
+    top: 70px;
+}
+
+.overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(17, 16, 16, 0.678);
+    z-index: 1000;
+}
+
+.overlay-content {
+    position: relative;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(41, 36, 36, 0.849);
+    padding: 20px;
+    border-radius: 5px;
+    max-width: 80%;
+    max-height: 80%;
+    overflow-y: auto;
+}
+
+.torresult {
+    width: 300px;
+    border: 1px solid #ededed63;
+    margin-bottom: 5px;
+    border-radius: 12px;
+    background-color: #161515a8;
+}
+
+
+.torresult button {
+    background-color: #f9080800;
+    border: solid;
+    border-color: #2220;
+    padding: 10px;
+}
+
+p.torresult-item {
+    font-size: 0.999rem;
+    line-height: 1.3rem;
+    color: rgb(191 191 190);
+    text-align: center;
+}
+
+p.torresult-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    line-height: 1.3rem;
+    color: rgb(191 191 190);
+    text-align: left;
+}
+
+/* Custom scrollbar styles */
+#overlayContentRes > div::-webkit-scrollbar {
+    height: 8px;
+}
+
+#overlayContentRes > div::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+#overlayContentRes > div::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+#overlayContentRes > div::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+.torresult-info {
+    flex: 1;
+    overflow-wrap: anywhere;
+}
+
+#overlayContentRes > div {
+    padding-top: 10px;
+    max-width: 1024px; /* (300px * 5) + (20px * 4) for gaps */
+    min-width: 312px;
+    margin: 0 auto; /* Centers the container if it's narrower than its parent */
+}
+
+.overlay-content td button {
+    background-color: #d3d3d3;
+    border: solid;
+    border-color: #2220;
+    padding: 10px;
+    border-radius: 10px;
+}
+
+.mediatype-tv {
+    position: absolute;
+    margin: 5px;
+    width: 26px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: rgb(0 0 0 / 72%);
+    z-index: 1;
+}
+
+.mediatype-mv {
+    position: absolute;
+    margin: 5px;
+    width: 49px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: rgb(0 0 0 / 72%);
+    z-index: 1;
+}
+
+@media (max-width: 768px) {
+    #searchResult > div {
+        width: 100%;
+        padding-top: 15px;
+    }
+
+    .sresult {
+        width: 150px;
+    }
+
+    .sresult img {
+        width: 150px;
+    }
+
+    h2.searchresult-item {
+        font-size: 0.8rem;
+        line-height: 1.1rem;
+        padding-top: 5px;
+        padding-bottom: 5px;
+    }
+
+    #episodeResults > div {
+        width: 100%;
+        top: 50px;
+    }
+
+    .episode {
+        width: 200px;
+    }
+
+    .episode img {
+        width: 100%;
+    }
+
+    h2.episode-title {
+        font-size: 0.8rem;
+        line-height: 1.1rem;
+    }
+
+    h3 {
+        margin-top: 30px;
+    }
+
+    p.episode-sub {
+        font-size: 0.7rem;
+        line-height: 2rem;
+    }
+
+    .season-info-container {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .season-poster {
+        height: auto;
+        width: 150px;
+        margin-right: 0;
+        margin-bottom: 10px;
+    }
+
+    .season-details {
+        text-align: center;
+    }
+
+    .season-bg-image {
+        display: none;
+    }
+
+    select#seasonDropdown,
+    button#seasonPackButton {
+        position: static;
+        margin: 10px 0;
+        width: 100%;
+    }
+
+    .trending-container {
+        padding-top: 10px;
+    }
+
+    .trending-movies,
+    .trending-shows {
+        padding: 10px;
+    }
+
+    .media-card {
+        width: 120px;
+    }
+
+    .media-poster {
+        width: 120px;
+        height: 180px;
+    }
+
+    #overlayContentRes > div {
+        min-width: 200px;
+    }
+}

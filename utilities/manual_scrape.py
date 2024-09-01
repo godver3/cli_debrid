@@ -202,7 +202,7 @@ def imdb_id_to_title_and_year(imdb_id: str, movie_or_episode: str) -> Tuple[str,
 
     return "", 0
 
-def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi, version):
+def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi, version, genres):
     logger = logging.getLogger(__name__)
 
     # Convert input parameters
@@ -216,7 +216,7 @@ def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode
                  f"version={version}")
 
     # Call the scrape function with the version
-    scrape_result, filtered_out_results = scrape(imdb_id, tmdb_id, title, year, movie_or_episode, version, season, episode, multi)
+    scrape_result, filtered_out_results = scrape(imdb_id, tmdb_id, title, year, movie_or_episode, version, season, episode, multi, genres)
 
     # Log the type and structure of scrape_result
     #logger.debug(f"Type of scrape_result: {type(scrape_result)}")
@@ -305,9 +305,9 @@ def manual_scrape(imdb_id, tmdb_id, title, year, movie_or_episode, season, episo
 
     # Prompt the user to choose a version or use the default
     version = input(f"Enter the scraping version to use (available versions: {', '.join(scraping_versions.keys())}) [default: '1080p']: ") or '1080p'
-
+    genres = input("Enter the genres of the item (comma-separated): ") or ''
     # Log the version being used
     logging.debug(f"Using scraping version: {version}")
 
     # Call scrape_sync with the version
-    scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi, version)
+    scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi, version, genres)
