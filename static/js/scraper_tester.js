@@ -221,7 +221,9 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch(`/get_version_settings?version=${version}`)
             .then(response => {
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    return response.json().then(errorData => {
+                        throw new Error(`Server error: ${errorData.error || response.statusText}`);
+                    });
                 }
                 return response.json();
             })
@@ -503,10 +505,25 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(response => response.json())
         .then(data => {
-            displayScrapeResults(data);
+            console.log('Received data:', data);  // Log the entire response
+    
+            if (!data || (!data.originalResults && !data.adjustedResults)) {
+                console.error('Invalid response structure:', data);
+                throw new Error('Invalid response structure');
+            }
+    
+            const originalResults = data.originalResults || [];
+            const adjustedResults = data.adjustedResults || [];
+            
+            console.log('Original results:', originalResults);
+            console.log('Adjusted results:', adjustedResults);
+    
+            displayScrapeResults({originalResults, adjustedResults});
         })
         .catch(error => {
             console.error('Error:', error);
+            // Display an error message to the user
+            document.getElementById('scrape-results').innerHTML = '<p>An error occurred while fetching results. Please try again.</p>';
         });
     }
    

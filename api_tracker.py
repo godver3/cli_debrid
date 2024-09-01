@@ -6,6 +6,7 @@ from urllib.parse import urlparse, parse_qs
 # Setup logging for API calls
 api_logger = logging.getLogger('api_calls')
 api_logger.setLevel(logging.INFO)
+api_logger.propagate = False  # Prevent propagation to root logger
 handler = logging.FileHandler('logs/api_calls.log')
 formatter = logging.Formatter('%(asctime)s - %(message)s')
 handler.setFormatter(formatter)
@@ -62,15 +63,15 @@ class APITracker:
     @log_api_call
     def get(self, url, **kwargs):
         try:
-            logging.debug(f"Attempting GET request to: {url}")
+            api_logger.debug(f"Attempting GET request to: {url}")
             self.current_url = url  # Store the current URL
             self._args = None  # Reset args
             response = self.session.get(url, **kwargs)
             response.raise_for_status()
-            logging.debug(f"Successful GET request to: {url}. Status code: {response.status_code}")
+            api_logger.debug(f"Successful GET request to: {url}. Status code: {response.status_code}")
             return response
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error in GET request to {url}: {str(e)}")
+            api_logger.error(f"Error in GET request to {url}: {str(e)}")
             raise  # Re-raise the exception after logging
 
     @log_api_call

@@ -1,23 +1,68 @@
-document.addEventListener('DOMContentLoaded', function() {
-    const controlButton = document.getElementById('programControlButton');
-    let currentStatus = 'Initialized';
+import { showPopup, POPUP_TYPES } from './notifications.js';
 
-    function updateButtonState(status) {
-        const canRun = checkRequiredConditions();
-        if (status === 'Running') {
-            controlButton.textContent = 'Stop Program';
-            controlButton.setAttribute('data-status', 'Running');
-            controlButton.classList.remove('start-program');
-            controlButton.classList.add('stop-program');
-        } else {
-            controlButton.textContent = 'Start Program';
-            controlButton.setAttribute('data-status', 'Initialized');
-            controlButton.classList.remove('stop-program');
-            controlButton.classList.add('start-program');
+let currentSettings = {};
+
+export function initializeProgramControls() {
+    const programControlButton = document.getElementById('programControlButton');
+    if (!programControlButton) return;
+
+    // Use the initial state from the data attribute
+    const initialStatus = document.body.dataset.programStatus;
+    updateButtonState(initialStatus === 'Running');
+
+    programControlButton.addEventListener('click', toggleProgram);
+
+    function toggleProgram() {
+        const currentStatus = programControlButton.dataset.status;
+        const action = currentStatus === 'Running' ? 'stop' : 'start';
+
+        if (action === 'start') {
+            const conditions = checkRequiredConditions();
+            if (!conditions.canRun) {
+                let errorMessage = "The program cannot start due to the following reasons:<ul>";
+                if (!conditions.scrapersEnabled) {
+                    errorMessage += "<li>No scrapers are enabled. Please enable at least one scraper.</li>";
+                }
+                if (!conditions.contentSourcesEnabled) {
+                    errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
+                }
+                if (!conditions.requiredSettingsComplete) {
+                    errorMessage += "<li>Some required settings are missing. Please fill in all fields in the Required Settings tab (Plex, Overseerr, and RealDebrid settings).</li>";
+                }
+                errorMessage += "</ul>";
+                showErrorPopup(errorMessage);
+                return;
+            }
         }
-        controlButton.disabled = !canRun && status !== 'Running';
-        currentStatus = status;
-        updateSettingsManagement(status === 'Running');
+
+        fetch(`/api/${action}_program`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateButtonState(action === 'start');
+                } else {
+                    showErrorPopup(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error controlling program:', error);
+                showErrorPopup('An error occurred while trying to control the program. Please check the console for more details.');
+            });
+    }
+
+    function updateButtonState(isRunning) {
+        if (isRunning) {
+            programControlButton.innerHTML = '<i class="fas fa-stop"></i><span class="button-text">Stop Program</span>';
+            programControlButton.classList.remove('start-program');
+            programControlButton.classList.add('stop-program');
+            programControlButton.dataset.status = 'Running';
+        } else {
+            programControlButton.innerHTML = '<i class="fas fa-play"></i><span class="button-text">Start Program</span>';
+            programControlButton.classList.remove('stop-program');
+            programControlButton.classList.add('start-program');
+            programControlButton.dataset.status = 'Stopped';
+        }
+        updateSettingsManagement(isRunning);
     }
 
     function updateSettingsManagement(isRunning) {
@@ -45,52 +90,33 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    function updateStatus() {
-        fetch('/api/program_status')
-            .then(response => response.json())
-            .then(data => {
-                updateButtonState(data.running ? 'Running' : 'Initialized');
-            })
-            .catch(error => {
-                console.error('Error fetching program status:', error);
-            });
-    }
-
     function checkRequiredConditions() {
         let scrapersEnabled = false;
         let contentSourcesEnabled = false;
         let requiredSettingsComplete = true;
 
         // Check if at least one scraper is enabled
-        const scrapers = document.querySelectorAll('#scrapers .settings-section');
-        scrapers.forEach(scraper => {
-            const enabledCheckbox = scraper.querySelector('input[name$=".enabled"]');
-            if (enabledCheckbox && enabledCheckbox.checked) {
-                scrapersEnabled = true;
-            }
-        });
+        if (currentSettings.Scrapers) {
+            scrapersEnabled = Object.values(currentSettings.Scrapers).some(scraper => scraper.enabled);
+        }
 
         // Check if at least one content source is enabled
-        const contentSources = document.querySelectorAll('#content-sources .settings-section');
-        contentSources.forEach(source => {
-            const enabledCheckbox = source.querySelector('input[name$=".enabled"]');
-            if (enabledCheckbox && enabledCheckbox.checked) {
-                contentSourcesEnabled = true;
-            }
-        });
+        if (currentSettings['Content Sources']) {
+            contentSourcesEnabled = Object.values(currentSettings['Content Sources']).some(source => source.enabled);
+        }
 
-        // Explicitly check each required field
+        // Check required settings
         const requiredFields = [
-            'plex-url',
-            'plex-token',
-            'overseerr-url',
-            'overseerr-api_key',
-            'realdebrid-api_key'
+            'Plex.url',
+            'Plex.token',
+            'Overseerr.url',
+            'Overseerr.api_key',
+            'RealDebrid.api_key'
         ];
 
-        requiredFields.forEach(fieldId => {
-            const field = document.getElementById(fieldId);
-            if (!field || !field.value.trim()) {
+        requiredFields.forEach(field => {
+            const [section, key] = field.split('.');
+            if (!currentSettings[section] || !currentSettings[section][key]) {
                 requiredSettingsComplete = false;
             }
         });
@@ -104,65 +130,43 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function showErrorPopup(message) {
-        const popup = document.createElement('div');
-        popup.className = 'error-popup';
-        popup.innerHTML = `
-            <div class="error-popup-content">
-                <h3>Unable to Start Program</h3>
-                <p>${message}</p>
-                <button onclick="this.parentElement.parentElement.remove()">Close</button>
-            </div>
-        `;
-        document.body.appendChild(popup);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Program Control Error',
+            message: message
+        });
     }
 
-    controlButton.addEventListener('click', function() {
-        if (currentStatus !== 'Running') {
-            const conditions = checkRequiredConditions();
-            if (!conditions.canRun) {
-                let errorMessage = "The program cannot start due to the following reasons:<ul>";
-                if (!conditions.scrapersEnabled) {
-                    errorMessage += "<li>No scrapers are enabled. Please enable at least one scraper.</li>";
-                }
-                if (!conditions.contentSourcesEnabled) {
-                    errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
-                }
-                if (!conditions.requiredSettingsComplete) {
-                    errorMessage += "<li>Some required settings are missing. Please fill in all fields in the Required Settings tab (Plex, Overseerr, and RealDebrid settings).</li>";
-                }
-                errorMessage += "</ul>";
-                showErrorPopup(errorMessage);
-                return;
-            }
-        }
-
-        const action = currentStatus === 'Running' ? 'reset' : 'start';
-        fetch(`/api/${action}_program`, { method: 'POST' })
+    function fetchSettings() {
+        fetch('/api/program_settings')
             .then(response => response.json())
             .then(data => {
-                if (data.status === 'success') {
-                    updateStatus();
-                } else {
-                    showErrorPopup(data.message);
-                }
+                currentSettings = data;
+                updateButtonState(programControlButton.dataset.status === 'Running');
             })
             .catch(error => {
-                console.error('Error controlling program:', error);
-                showErrorPopup('An error occurred while trying to control the program. Please check the console for more details.');
+                console.error('Error fetching program settings:', error);
             });
-    });
+    }
 
-    // Set initial button text
-    controlButton.textContent = 'Start Program';
+    // Fetch settings initially and then every 30 seconds
+    fetchSettings();
+    setInterval(fetchSettings, 30000);
 
-    // Update status immediately and then every 5 seconds
-    updateStatus();
-    setInterval(updateStatus, 5000);
+    // Fetch program status every 30 seconds
+    setInterval(() => {
+        fetch('/api/program_status')
+            .then(response => response.json())
+            .then(data => {
+                updateButtonState(data.running);
+            })
+            .catch(error => console.error('Error fetching program status:', error));
+    }, 30000);
 
     // Add event listeners to update button state when settings change
     document.addEventListener('change', function(event) {
         if (event.target.matches('#scrapers input[type="checkbox"], #content-sources input[type="checkbox"], #required input')) {
-            updateButtonState(currentStatus);
+            updateButtonState(programControlButton.dataset.status === 'Running');
         }
     });
-});
+}

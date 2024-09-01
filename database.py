@@ -83,6 +83,7 @@ def migrate_media_items_table():
                 version TEXT,
                 hybrid_flag TEXT,
                 collected_at TIMESTAMP,
+                genres TEXT,
                 UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
             )
         ''')
@@ -93,14 +94,15 @@ def migrate_media_items_table():
             (imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
              season_number, episode_number, filled_by_title, filled_by_magnet, 
              last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, version,
-             hybrid_flag, collected_at)
+             hybrid_flag, collected_at, genres)
             SELECT 
                 imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
                 season_number, episode_number, filled_by_title, filled_by_magnet, 
                 last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, 
                 COALESCE(version, 'default'),
                 hybrid_flag,
-                CASE WHEN state = 'Collected' THEN last_updated ELSE NULL END
+                CASE WHEN state = 'Collected' THEN last_updated ELSE NULL END,
+                genres
             FROM media_items
         ''')
 
@@ -144,6 +146,7 @@ def create_tables():
                 last_checked TIMESTAMP,
                 scrape_results TEXT,
                 version TEXT,
+                genres TEXT,
                 UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
             )
         ''')
@@ -311,6 +314,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                 items_skipped += 1
                 continue
 
+            genres = json.dumps(item.get('genres', []))  # Convert genres list to JSON string
+
             for version, enabled in versions.items():
                 if not enabled:
                     continue
@@ -352,11 +357,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                     if item_type == 'movie':
                         conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                            item.get('release_date'), 'Wanted', 'movie', datetime.now(), version
+                            item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres
                         ))
                     else:
                         # For episodes, get the airtime
@@ -377,13 +382,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                         
                         conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, airtime)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, airtime, genres)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Wanted', 'episode',
                             item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), version, airtime
+                            datetime.now(), version, airtime, genres
                         ))
                     logging.debug(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} (Version: {version}, Airtime: {airtime if item_type == 'episode' else 'N/A'})")
                     items_added += 1
@@ -517,6 +522,8 @@ def add_collected_items(media_items_batch, recent=False):
 
             plex_filename = os.path.basename(item.get('location', ''))
 
+            genres = json.dumps(item.get('genres', []))  # Convert genres list to JSON string
+
             item_found = False
             for version in versions:
                 if item_type == 'movie':
@@ -607,24 +614,24 @@ def add_collected_items(media_items_batch, recent=False):
                     if item_type == 'movie':
                         cursor = conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Collected', 'movie',
-                            datetime.now(), datetime.now(), 'unknown', datetime.now()
+                            datetime.now(), datetime.now(), 'unknown', datetime.now(), genres
                         ))
                         logging.info(f"Adding new movie to DB as Collected: {normalized_title}")
                     else:
                         cursor = conn.execute('''
                             INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         ''', (
                             item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Collected', 'episode',
                             item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), datetime.now(), 'unknown', airtime, datetime.now()
+                            datetime.now(), datetime.now(), 'unknown', airtime, datetime.now(), genres
                         ))
                         logging.info(f"Adding new episode to DB as Collected: {normalized_title} S{item['season_number']}E{item['episode_number']} (Airtime: {airtime})")
                 
@@ -1097,7 +1104,7 @@ def bulk_delete_by_imdb_id(imdb_id):
 
 from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
 
-async def get_recently_added_items(movie_limit=5, show_limit=5):
+async def get_recently_added_items(movie_limit=50, show_limit=50):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -1125,7 +1132,11 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         cursor.execute(episode_query)
         episode_results = cursor.fetchall()
         
-        movies = []
+        logging.debug(f"Initial movie results: {len(movie_results)}")
+        for movie in movie_results:
+            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Version: {movie['version']}")
+        
+        consolidated_movies = {}
         shows = {}
         
         async with aiohttp.ClientSession() as session:
@@ -1134,21 +1145,32 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
             # Process movies
             for row in movie_results:
                 item = dict(row)
-                media_type = 'movie'
-                cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
-                if cached_url:
-                    item['poster_url'] = cached_url
+                key = f"{item['title']}-{item['year']}"
+                if key not in consolidated_movies:
+                    consolidated_movies[key] = {
+                        **item,
+                        'versions': [item['version']],
+                        'collected_at': item['collected_at']
+                    }
+                    media_type = 'movie'
+                    cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
+                    if cached_url:
+                        consolidated_movies[key]['poster_url'] = cached_url
+                    else:
+                        poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
+                        poster_tasks.append((consolidated_movies[key], poster_task, media_type))
                 else:
-                    poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
-                    poster_tasks.append((item, poster_task, media_type))
-                movies.append(item)
+                    consolidated_movies[key]['versions'].append(item['version'])
+                    consolidated_movies[key]['collected_at'] = max(consolidated_movies[key]['collected_at'], item['collected_at'])
+                
+                logging.debug(f"Consolidated movie: {key} - Versions: {consolidated_movies[key]['versions']}")
             
             # Process episodes
             for row in episode_results:
                 item = dict(row)
                 media_type = 'tv'
                 
-                if item['title'] not in shows and len(shows) < show_limit:
+                if item['title'] not in shows:
                     show_item = {
                         'title': item['title'],
                         'year': item['year'],
@@ -1167,7 +1189,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                         poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
                         poster_tasks.append((show_item, poster_task, media_type))
                     shows[item['title']] = show_item
-                elif item['title'] in shows:
+                else:
                     show = shows[item['title']]
                     if item['season_number'] not in show['seasons']:
                         show['seasons'].append(item['season_number'])
@@ -1175,6 +1197,8 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     show['latest_episode'] = max(show['latest_episode'], (item['season_number'], item['episode_number']))
                     if item['version'] not in show['versions']:
                         show['versions'].append(item['version'])
+                
+                logging.debug(f"Processed show: {item['title']} - Versions: {shows[item['title']]['versions']}")
             
             # Wait for all poster URL tasks to complete
             poster_results = await asyncio.gather(*[task for _, task, _ in poster_tasks], return_exceptions=True)
@@ -1190,21 +1214,51 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     logging.warning(f"No poster URL found for {media_type} with TMDB ID {item['tmdb_id']}")
 
         
+        # Convert consolidated_movies dict to list and sort
+        movies_list = list(consolidated_movies.values())
+        movies_list.sort(key=lambda x: x['collected_at'], reverse=True)
+        
         # Convert shows dict to list and sort
         shows_list = list(shows.values())
         shows_list.sort(key=lambda x: x['collected_at'], reverse=True)
         
-        # Final processing
-        for item in movies + shows_list:
-            if 'seasons' in item:
-                item['seasons'].sort()
-            if 'versions' in item:
-                item['versions'].sort()
+        logging.debug("Before limit_and_process:")
+        for movie in movies_list:
+            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
+        for show in shows_list:
+            logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
         
+        # Final processing and limiting to 5 unique items based on title
+        def limit_and_process(items, limit=5):
+            unique_items = {}
+            for item in items:
+                if len(unique_items) >= limit:
+                    break
+                if item['title'] not in unique_items:
+                    if 'seasons' in item:
+                        item['seasons'].sort()
+                    item['versions'].sort()
+                    item['versions'] = ', '.join(item['versions'])  # Join versions into a string
+                    unique_items[item['title']] = item
+                logging.debug(f"Processed item: {item['title']} - Versions: {item['versions']}")
+            return list(unique_items.values())
+
+        movies_list = limit_and_process(movies_list)
+        shows_list = limit_and_process(shows_list)
+
+        logging.debug("After limit_and_process:")
+        for movie in movies_list:
+            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
+        for show in shows_list:
+            logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
+
         # Clean expired cache entries
         clean_expired_cache()
 
-        return {'movies': movies, 'shows': shows_list[:show_limit]}
+        return {
+            'movies': movies_list,
+            'shows': shows_list
+        }
     except Exception as e:
         logging.error(f"Error in get_recently_added_items: {str(e)}")
         return {'movies': [], 'shows': []}

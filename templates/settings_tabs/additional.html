@@ -56,3 +56,157 @@
         </div>
     </div>
 </div>
+<style>
+#trakt-auth-btn {
+    background-color: #ed1c24;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.3s;
+}
+
+#trakt-auth-btn:hover {
+    background-color: #c1151b;
+}
+
+#trakt-auth-btn:disabled {
+    background-color: #888;
+    cursor: not-allowed;
+}
+
+#trakt-auth-status {
+    margin-top: 10px;
+    font-weight: bold;
+    color: #f1f1f1;
+}
+
+#trakt-auth-status.authorized {
+    color: #4CAF50;
+}
+
+#trakt-auth-code {
+    margin-top: 15px;
+    padding: 15px;
+    background-color: #2a2a2a;
+    border-radius: 5px;
+    color: #f1f1f1;
+}
+
+#trakt-code {
+    font-size: 1.2em;
+    color: #ed1c24;
+    background-color: #1a1a1a;
+    padding: 5px 10px;
+    border-radius: 3px;
+}
+
+#trakt-activate-link {
+    color: #ed1c24;
+    text-decoration: none;
+}
+
+#trakt-activate-link:hover {
+    text-decoration: underline;
+}
+</style>
+<script>
+    function initializeTraktAuthorization() {
+    const traktAuthBtn = document.getElementById('trakt-auth-btn');
+    const traktAuthStatus = document.getElementById('trakt-auth-status');
+    const traktAuthCode = document.getElementById('trakt-auth-code');
+    const traktCode = document.getElementById('trakt-code');
+    const traktActivateLink = document.getElementById('trakt-activate-link');
+
+    if (traktAuthBtn) {
+        traktAuthBtn.addEventListener('click', function() {
+            traktAuthBtn.disabled = true;
+            traktAuthStatus.textContent = 'Initializing Trakt authorization...';
+            traktAuthCode.style.display = 'none';
+
+            fetch('/trakt_auth', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Trakt auth response:', data);
+                    if (data.user_code) {
+                        traktCode.textContent = data.user_code;
+                        traktActivateLink.href = data.verification_url;
+                        traktAuthCode.style.display = 'block';
+                        traktAuthStatus.textContent = 'Please enter the code on the Trakt website to complete authorization.';
+                        pollTraktAuthStatus(data.device_code);
+                    } else {
+                        traktAuthStatus.textContent = 'Error: ' + (data.error || 'Unable to get authorization code');
+                    }
+                })
+                .catch(error => {
+                    console.error('Trakt auth error:', error);
+                    traktAuthStatus.textContent = 'Error: Unable to start authorization process';
+                })
+                .finally(() => {
+                    traktAuthBtn.disabled = false;
+                });
+        });
+    }
+
+    // Check initial Trakt authorization status
+    checkTraktAuthStatus();
+}
+
+function pollTraktAuthStatus(device_code) {
+    const traktAuthStatus = document.getElementById('trakt-auth-status');
+    const traktAuthCode = document.getElementById('trakt-auth-code');
+    const pollInterval = setInterval(() => {
+        fetch('/trakt_auth_status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ device_code: device_code }),
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'authorized') {
+                    clearInterval(pollInterval);
+                    traktAuthStatus.textContent = 'Trakt authorization successful!';
+                    traktAuthStatus.classList.add('authorized');
+                    traktAuthCode.style.display = 'none';
+                    setTimeout(() => {
+                        traktAuthStatus.textContent = 'Trakt is currently authorized.';
+                    }, 5000);
+                } else if (data.status === 'error') {
+                    clearInterval(pollInterval);
+                    traktAuthStatus.textContent = 'Error: ' + (data.message || 'Unknown error occurred');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                traktAuthStatus.textContent = 'Error checking authorization status. Please try again.';
+            });
+    }, 5000); // Check every 5 seconds
+}
+
+function checkTraktAuthStatus() {
+    const traktAuthStatus = document.getElementById('trakt-auth-status');
+    fetch('/trakt_auth_status', { method: 'GET' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'authorized') {
+                traktAuthStatus.textContent = 'Trakt is currently authorized.';
+                traktAuthStatus.classList.add('authorized');
+            } else {
+                traktAuthStatus.textContent = 'Trakt is not authorized.';
+                traktAuthStatus.classList.remove('authorized');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            traktAuthStatus.textContent = 'Unable to check Trakt authorization status.';
+        });
+}
+
+document.addEventListener('DOMContentLoaded', function() {  
+    initializeTraktAuthorization();
+});
+</script>

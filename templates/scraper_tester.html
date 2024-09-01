@@ -4,11 +4,32 @@
 
 {% block head %}
     {{ super() }}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper_tester.css') }}">
+    <style>
+        .mobile-warning {
+            display: none;
+            background-color: #ff4444;
+            color: white;
+            text-align: center;
+            margin-top: 50px;
+            padding: 20px;
+            font-weight: bold;
+        }
+        @media screen and (max-width: 768px) {
+            .mobile-warning {
+                display: block;
+            }
+            .scraper-tester-container {
+                display: none;
+            }
+        }
+    </style>
 {% endblock %}
 
 {% block content %}
+<div class="mobile-warning">
+    The Scraper Tester cannot be used on mobile devices. Please access it from a desktop computer.
+</div>
 <div class="scraper-tester-container">
     <h1>Scraper Tester</h1>
     <div id="search-section">
