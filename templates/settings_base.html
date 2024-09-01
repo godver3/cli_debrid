@@ -1,33 +1,363 @@
 {% extends "base.html" %}
+
 {% block title %}Settings{% endblock %}
-{% block head %}
-    {{ super() }}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
-    <script>
-        console.log("Setting scraperSettings in head");
-        window.scraperSettings = {{ scraper_settings | tojson | safe }};
-        console.log("window.scraperSettings:", window.scraperSettings);
 
-        // Add content source settings
-        window.contentSourceSettings = {{ content_source_settings | tojson | safe }};
-        console.log("window.contentSourceSettings:", window.contentSourceSettings);
-
-        // Add notification settings
-        window.notificationSettings = {{ notification_settings | default({}) | tojson | safe }};
-        console.log("window.notificationSettings:", window.notificationSettings);
-    </script>
-{% endblock %}
 {% block content %}
+<style>
+    /* Common styles */
+    .settings-container {
+        width: 95%; 
+        max-width: 1200px;
+        margin: 0 auto; 
+        padding: 20px;
+    }
+
+    /* Button styles */
+    .btn {
+        border: none;
+        color: white;
+        padding: 5px 10px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background-color 0.3s;
+    }
+
+    .btn-primary { background-color: #4CAF50; }
+    .btn-primary:hover { background-color: #45a049; }
+    .btn-secondary { background-color: #555; }
+    .btn-secondary:hover { background-color: #777; }
+    .btn-danger { background-color: #f44336; }
+    .btn-danger:hover { background-color: #d32f2f; }
+    .btn-info { background-color: #3498db; }
+    .btn-info:hover { background-color: #2980b9; }
+
+    .btn:disabled {
+        background-color: #cccccc;
+        color: #666666;
+        cursor: not-allowed;
+    }
+
+    /* Tabs */
+    .settings-tabs {
+        display: flex;
+        justify-content: flex-start;
+        background-color: #444;
+        border-radius: 5px;
+        padding: 5px;
+        margin-bottom: 20px;
+    }
+
+    .settings-tab-button {
+        composes: btn btn-secondary;
+        margin-right: 5px;
+        background-color: #555;
+        border: none;
+        color: #fff;
+        padding: 15px 15px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        border-radius: 3px;
+    }
+
+    .settings-tab-button.active { background-color: #777; }
+
+    /* Sections */
+    .settings-section {
+        background-color: #444;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        overflow: hidden;
+    }
+
+    .settings-section-header {
+        background-color: #1a1a1a;
+        padding: 10px 15px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 1.1em;
+    }
+
+    .settings-section-header h4 {
+        margin: 0;
+        color: #fff;
+        text-align: left;
+        flex-grow: 1;
+    }
+
+    /* Button groups */
+    .version-buttons,
+    .source-buttons {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+    }
+
+    /* Specific buttons */
+    .settings-submit-button {
+        composes: btn btn-primary;
+        padding: 15px 32px;
+        font-size: 16px;
+    }
+
+    /* Add buttons */
+    #add-source-btn,
+    #add-notification-btn,
+    .add-scraper-link,
+    .add-version-link {
+        composes: btn btn-primary;
+        display: inline-block;
+        padding: 5px 10px;
+        background-color: #4CAF50;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: background-color 0.3s;
+        margin-bottom: 10px;
+    }
+
+    #add-source-btn:hover,
+    #add-notification-btn:hover,
+    .add-scraper-link:hover,
+    .add-version-link:hover {
+        background-color: #45a049;
+    }
+
+    /* Expand/Collapse buttons */
+    .settings-expand-all,
+    .settings-collapse-all {
+        background-color: #555;
+        border: none;
+        color: white;
+        padding: 15px 10px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        margin-right: 10px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background-color 0.3s;
+        margin-bottom: 10px;
+    }
+
+    .settings-expand-all:hover,
+    .settings-collapse-all:hover {
+        background-color: #777;
+    }
+
+    /* Section content */
+    .settings-section-content {
+        padding: 15px;
+        display: none;
+        background-color: #333;
+    }
+
+    .settings-section-content.active {
+        display: block;
+    }
+
+    .settings-form-group {
+        margin-bottom: 15px;
+    }
+
+    .settings-input-wrapper {
+        display: flex;
+        align-items: center;
+    }
+
+    .settings-title {
+        flex: 0 0 auto;
+        margin-right: 10px;
+        font-weight: bold;
+        color: #fff;
+    }
+
+    .settings-input {
+        width: 100%;
+        padding: 8px;
+        background-color: #444;
+        border: 1px solid #666;
+        color: #fff;
+        border-radius: 3px;
+        box-sizing: border-box;
+        font-family: inherit;
+    }
+
+    .settings-form-group input[type="checkbox"] {
+        margin: 0;
+        padding: 0;
+        position: static;
+        transform: none;
+    }
+
+    .settings-description {
+        margin-top: 5px;
+        font-style: italic;
+        color: #aaa;
+        font-size: 0.9em;
+    }
+
+    .settings-description a {
+        color: #dfdfdf;
+    }
+
+    /* Version, scraper, and source action buttons */
+    .version-buttons button,
+    .delete-scraper-btn,
+    .delete-source-btn,
+    .duplicate-version-btn,
+    .rename-version-btn,
+    .delete-version-btn,
+    .delete-notification-btn {
+        composes: btn btn-primary;
+        display: inline-block;
+        padding: 5px 10px;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: background-color 0.3s;
+    }
+
+    .delete-scraper-btn,
+    .delete-source-btn,
+    .delete-version-btn,
+    .delete-notification-btn {
+        background-color: #f44336;
+    }
+
+    .delete-scraper-btn:hover,
+    .delete-source-btn:hover,
+    .delete-version-btn:hover {
+        background-color: #d32f2f;
+    }
+
+    .rename-version-btn,
+    .duplicate-version-btn {
+        background-color: #3498db;
+    }
+
+    .rename-version-btn:hover,
+    .duplicate-version-btn:hover {
+        background-color: #2980b9;
+    }
+
+    /* Add/remove filter button */
+    .add-filter-btn {
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+        margin-top: 5px;
+        margin-bottom: 10px;
+    }
+
+    .add-filter-btn:hover {
+        background-color: #45a049;
+    }
+
+    .remove-filter {
+        background-color: #f44336;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+
+    .remove-filter:hover {
+        background-color: #d32f2f;
+    }
+
+    .filter-list {
+        margin-bottom: 10px;
+    }
+
+    .filter-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 5px;
+    }
+
+    .filter-term,
+    .filter-weight {
+        flex: 1;
+        padding: 5px;
+        margin-right: 5px;
+        background-color: #444;
+        border: 1px solid #666;
+        color: #fff;
+        border-radius: 3px;
+    }
+
+    .filter-weight {
+        flex: 0 0 60px;
+    }
+
+
+    /* Responsive styles for settings tabs */
+    @media screen and (max-width: 768px) {
+        .settings-tabs {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .settings-tab-button {
+            margin-right: 0;
+            margin-bottom: 5px;
+        }
+
+        .settings-tab-select {
+            display: block;
+            width: 100%;
+            height: 50px;
+            padding: 10px;
+            background-color: #444;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+
+        .settings-tabs-desktop {
+            display: none;
+        }
+    }
+
+    @media screen and (min-width: 769px) {
+        .settings-tab-select {
+            display: none;
+        }
+    }
+</style>
 <div class="settings-container">
     <h2>Settings</h2>
-    <div class="settings-tabs">
-        <button type="button" class="settings-tab-button active" data-tab="required">Required Settings</button>
-        <button type="button" class="settings-tab-button" data-tab="scrapers">Scrapers</button>
-        <button type="button" class="settings-tab-button" data-tab="scraping">Scraping Settings</button>
-        <button type="button" class="settings-tab-button" data-tab="content-sources">Content Sources</button>
-        <button type="button" class="settings-tab-button" data-tab="additional">Additional Settings</button>
-        <button type="button" class="settings-tab-button" data-tab="debug">Debug Settings</button>
-        <button type="button" class="settings-tab-button" data-tab="notifications">Notifications</button>
+    <select class="settings-tab-select">
+        <option value="required">Required Settings</option>
+        <option value="scrapers">Scrapers</option>
+        <option value="scraping">Scraping Settings</option>
+        <option value="content-sources">Content Sources</option>
+        <option value="additional">Additional Settings</option>
+        <option value="debug">Debug Settings</option>
+        <option value="notifications">Notifications</option>
+    </select>
+    <div class="settings-tabs settings-tabs-desktop">
+        <button type="button" class="btn btn-secondary settings-tab-button active" data-tab="required">Required Settings</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="scrapers">Scrapers</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="scraping">Scraping Settings</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="content-sources">Content Sources</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="additional">Additional Settings</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="debug">Debug Settings</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="notifications">Notifications</button>
     </div>
     
     <div id="settingsForm">
@@ -55,13 +385,189 @@
         {% include 'settings_tabs/scrapers.html' %}
     </div>
 
-    <button type="button" id="saveSettingsButton" class="settings-submit-button">Save Settings</button>
+    <button type="button" id="saveSettingsButton" class="btn btn-primary settings-submit-button">Save Settings</button>
     
     <div id="saveStatus"></div>
 </div>
-{% endblock %}
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script>
+    // Define reloadTabContent in the global scope
+    window.reloadTabContent = function(tabName, callback) {
+        return fetch(`/${tabName}/content`)
+            .then(response => {
+                return response.text();
+            })
+            .then(html => {
+                const tabContent = document.getElementById(tabName);
+                if (tabContent) {
+                    console.log('Updating HTML for tab:', tabName);
+                    tabContent.innerHTML = html;
+                    console.log('HTML updated, tab content length:', tabContent.innerHTML.length);
+                    if (tabName === 'scrapers') {
+                        console.log('Dispatching scrapersContentLoaded event');
+                        const event = new CustomEvent('scrapersContentLoaded');
+                        document.dispatchEvent(event);
+                    } else if (tabName === 'scraping') {
+                        console.log('Dispatching scrapingContentLoaded event');
+                        const event = new CustomEvent('scrapingContentLoaded');
+                        document.dispatchEvent(event);
+                    }
+                    initializeExpandCollapse();
+                    if (callback && typeof callback === 'function') {
+                        callback();
+                    }
+                } else {
+                    console.error('Tab content element not found:', tabName);
+                }
+            })
+            .catch(error => {
+                console.error(`Error reloading ${tabName} tab:`, error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: `Error reloading ${tabName} tab: ${error.message}`
+                });
+            });
+    };
 
-{% block scripts %}
-    {{ super() }}
-    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+    window.initializeExpandCollapse = function() {
+        const allTabContents = document.querySelectorAll('.settings-tab-content');
+        
+        allTabContents.forEach(tabContent => {
+            const expandAllButton = tabContent.querySelector('.settings-expand-all');
+            const collapseAllButton = tabContent.querySelector('.settings-collapse-all');
+            const settingsSections = tabContent.querySelectorAll('.settings-section');
+
+            if (expandAllButton) {
+                expandAllButton.addEventListener('click', () => expandAll(tabContent));
+            }
+
+            if (collapseAllButton) {
+                collapseAllButton.addEventListener('click', () => collapseAll(tabContent));
+            }
+
+            settingsSections.forEach(section => {
+                const header = section.querySelector('.settings-section-header');
+                const content = section.querySelector('.settings-section-content');
+                const toggleIcon = header.querySelector('.settings-toggle-icon');
+
+                if (header && content && toggleIcon) {
+                    header.addEventListener('click', toggleSectionHandler);
+                }
+            });
+        });
+    };
+
+    function expandAll(tabContent) {
+        const sections = tabContent.querySelectorAll('.settings-section-content');
+        const toggleIcons = tabContent.querySelectorAll('.settings-toggle-icon');
+        sections.forEach(section => section.style.display = 'block');
+        toggleIcons.forEach(icon => icon.textContent = '-');
+    }
+
+    function collapseAll(tabContent) {
+        const sections = tabContent.querySelectorAll('.settings-section-content');
+        const toggleIcons = tabContent.querySelectorAll('.settings-toggle-icon');
+        sections.forEach(section => section.style.display = 'none');
+        toggleIcons.forEach(icon => icon.textContent = '+');
+    }
+
+    function toggleSectionHandler(e) {
+        if (!e.target.closest('button')) {
+            const header = e.currentTarget;
+            const content = header.nextElementSibling;
+            const icon = header.querySelector('.settings-toggle-icon');
+            
+            if (content.style.display === 'none' || content.style.display === '') {
+                content.style.display = 'block';
+                icon.textContent = '-';
+            } else {
+                content.style.display = 'none';
+                icon.textContent = '+';
+            }
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const tabButtons = document.querySelectorAll('.settings-tab-button');
+        const tabContents = document.querySelectorAll('.settings-tab-content');
+        const tabSelect = document.querySelector('.settings-tab-select');
+        
+        initializeTabSwitching();
+        initializeExpandCollapse();
+
+        function initializeTabSwitching() {
+            tabButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const tabName = this.getAttribute('data-tab');
+                    openTab(tabName);
+                });
+            });
+
+            tabSelect.addEventListener('change', function() {
+                openTab(this.value);
+            });
+        }
+
+        function openTab(tabName) {
+            tabContents.forEach(content => content.style.display = 'none');
+            tabButtons.forEach(button => button.classList.remove('active'));
+            
+            const activeTab = document.getElementById(tabName);
+            activeTab.style.display = 'block';
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+            tabSelect.value = tabName;
+
+            localStorage.setItem('currentTab', tabName);
+        }
+
+        function initializeExpandCollapse() {
+            const allTabContents = document.querySelectorAll('.settings-tab-content');
+            
+            allTabContents.forEach(tabContent => {
+                const expandAllButton = tabContent.querySelector('.settings-expand-all');
+                const collapseAllButton = tabContent.querySelector('.settings-collapse-all');
+                const settingsSections = tabContent.querySelectorAll('.settings-section');
+
+                if (expandAllButton) {
+                    expandAllButton.addEventListener('click', () => expandAll(tabContent));
+                }
+
+                if (collapseAllButton) {
+                    collapseAllButton.addEventListener('click', () => collapseAll(tabContent));
+                }
+
+                settingsSections.forEach(section => {
+                    const header = section.querySelector('.settings-section-header');
+                    const content = section.querySelector('.settings-section-content');
+                    const toggleIcon = header.querySelector('.settings-toggle-icon');
+
+                    if (header && content && toggleIcon) {
+                        header.addEventListener('click', toggleSectionHandler);
+                    }
+                });
+            });
+        }
+
+        // Initialize expand/collapse functionality
+        window.initializeExpandCollapse();
+
+        // Open the last active tab or default to 'required'
+        const lastActiveTab = localStorage.getItem('currentTab') || 'required';
+        openTab(lastActiveTab);
+
+        // Dispatch an event to signal that dashboard initialization is complete
+        document.dispatchEvent(new Event('dashboardInitialized'));
+
+        // Add event listener for the Save Settings button
+        const saveSettingsButton = document.getElementById('saveSettingsButton');
+        saveSettingsButton.addEventListener('click', function() {
+            // Assuming updateSettings is exported from settings.js
+            if (typeof updateSettings === 'function') {
+                updateSettings();
+            } else {
+                console.error('updateSettings function not found. Make sure it is exported from settings.js');
+            }
+        });
+    });
+</script>
 {% endblock %}

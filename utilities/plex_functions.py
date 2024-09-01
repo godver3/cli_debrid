@@ -4,6 +4,7 @@ import logging
 from settings import get_setting
 import time
 from typing import Dict, List, Any
+import ast
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -23,6 +24,11 @@ async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, li
     logger.info(f"Retrieved {len(metadata)} items from library {library_key}")
     return metadata
 
+async def get_detailed_movie_metadata(session: aiohttp.ClientSession, plex_url: str, movie_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
+    url = f"{plex_url}/library/metadata/{movie_key}?includeGuids=1"
+    data = await fetch_data(session, url, headers, semaphore)
+    return data['MediaContainer']['Metadata'][0] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else {}
+
 async def get_show_seasons(session: aiohttp.ClientSession, plex_url: str, show_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
     url = f"{plex_url}/library/metadata/{show_key}/children?includeGuids=1"
     data = await fetch_data(session, url, headers, semaphore)
@@ -33,7 +39,51 @@ async def get_season_episodes(session: aiohttp.ClientSession, plex_url: str, sea
     data = await fetch_data(session, url, headers, semaphore)
     return data['MediaContainer']['Metadata'] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else []
 
-async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str) -> List[Dict[str, Any]]:
+async def get_detailed_show_metadata(session: aiohttp.ClientSession, plex_url: str, show_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
+    url = f"{plex_url}/library/metadata/{show_key}?includeGuids=1"
+    data = await fetch_data(session, url, headers, semaphore)
+    return data['MediaContainer']['Metadata'][0] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else {}
+
+async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, show: Dict[str, Any]) -> List[Dict[str, Any]]:
+    show_key = show['ratingKey']
+    
+    # Get detailed show metadata
+    detailed_show = await get_detailed_show_metadata(session, plex_url, show_key, headers, semaphore)
+    
+    show_title = detailed_show['title']
+    show_genres = []
+    if 'Genre' in detailed_show and isinstance(detailed_show['Genre'], list):
+        show_genres = [genre['tag'] for genre in detailed_show['Genre'] if 'tag' in genre]
+    
+    # Filter genres
+    filtered_show_genres = filter_genres(show_genres)
+    
+    # Extract show IMDB ID and TMDB ID
+    show_imdb_id = None
+    show_tmdb_id = None
+    if 'Guid' in detailed_show:
+        for guid in detailed_show['Guid']:
+            if guid['id'].startswith('imdb://'):
+                show_imdb_id = guid['id'].split('://')[1]
+            elif guid['id'].startswith('tmdb://'):
+                show_tmdb_id = guid['id'].split('://')[1]
+    
+    seasons = await get_show_seasons(session, plex_url, show_key, headers, semaphore)
+    
+    all_episodes = []
+    for season in seasons:
+        season_number = season.get('index')
+        season_key = season['ratingKey']
+        
+        episodes = await get_season_episodes(session, plex_url, season_key, headers, semaphore)
+        
+        for episode in episodes:
+            episode_entries = await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id, filtered_show_genres)
+            all_episodes.extend(episode_entries)
+    
+    return all_episodes
+
+async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str, show_genres: List[str]) -> List[Dict[str, Any]]:
     base_episode_data = {
         'title': show_title,
         'episode_title': episode['title'],
@@ -48,9 +98,12 @@ async def process_episode(episode: Dict[str, Any], show_title: str, season_numbe
         'tmdb_id': show_tmdb_id,
         'episode_imdb_id': None,
         'episode_tmdb_id': None,
-        'type': 'episode'
+        'type': 'episode',
+        'genres': show_genres
     }
-    
+
+    #logger.info(f"Processing episode: {base_episode_data['title']}, genres: {base_episode_data['genres']}")
+           
     if 'Guid' in episode:
         for guid in episode['Guid']:
             if guid['id'].startswith('imdb://'):
@@ -73,42 +126,25 @@ async def process_episode(episode: Dict[str, Any], show_title: str, season_numbe
     
     return episode_entries
 
-async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, show: Dict[str, Any]) -> List[Dict[str, Any]]:
-    show_title = show['title']
-    show_key = show['ratingKey']
-    
-    # Extract show IMDB ID
-    show_imdb_id = None
-    show_tmdb_id = None
-    if 'Guid' in show:
-        for guid in show['Guid']:
-            if guid['id'].startswith('imdb://'):
-                show_imdb_id = guid['id'].split('://')[1]
-            elif guid['id'].startswith('tmdb://'):
-                show_tmdb_id = guid['id'].split('://')[1]
-    
-    seasons = await get_show_seasons(session, plex_url, show_key, headers, semaphore)
-    
-    all_episodes = []
-    for season in seasons:
-        season_number = season.get('index')
-        season_key = season['ratingKey']
-        
-        episodes = await get_season_episodes(session, plex_url, season_key, headers, semaphore)
-        
-        for episode in episodes:
-            episode_entries = await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id)
-            all_episodes.extend(episode_entries)
-    
-    return all_episodes
-
 async def process_shows_chunk(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, shows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     tasks = [process_show(session, plex_url, headers, semaphore, show) for show in shows]
     results = await asyncio.gather(*tasks)
     flattened_results = [episode for show_episodes in results for episode in show_episodes]
     return flattened_results
 
+async def process_movies_chunk(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, movies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    results = []
+    for movie in movies:
+        #detailed_movie = await get_detailed_movie_metadata(session, plex_url, movie['ratingKey'], headers, semaphore)
+        movie_entries = await process_movie(movie)
+        results.extend(movie_entries)
+    return results
+
 async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
+    genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
+    filtered_genres = filter_genres(genres)
+    logging.info(f"Movie: {movie['title']}, All genres: {genres}, Filtered genres: {filtered_genres}")
+
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
@@ -118,8 +154,11 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         'release_date': movie.get('originallyAvailableAt'),
         'imdb_id': None,
         'tmdb_id': None,
-        'type': 'movie'
+        'type': 'movie',
+        'genres': filter_genres(genres) 
     }
+
+    #logger.debug(f"Movie: {movie_data['title']}, All genres: {genres}")
     
     if 'Guid' in movie:
         for guid in movie['Guid']:
@@ -143,13 +182,6 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     
     logger.debug(f"Processed {len(movie_entries)} entries for movie: {movie['title']}")
     return movie_entries
-
-async def process_movies_chunk(movies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    results = []
-    for movie in movies:
-        movie_entries = await process_movie(movie)
-        results.extend(movie_entries)
-    return results
 
 async def get_collected_from_plex(request='all'):
     try:
@@ -192,7 +224,7 @@ async def get_collected_from_plex(request='all'):
 
             logger.info(f"Total shows found: {len(all_shows)}")
             logger.info(f"Total movies found: {len(all_movies)}")
-
+            
             all_episodes = []
             for i in range(0, len(all_shows), CHUNK_SIZE):
                 chunk = all_shows[i:i+CHUNK_SIZE]
@@ -202,14 +234,16 @@ async def get_collected_from_plex(request='all'):
                 logger.info(f"Processed {i+len(chunk)}/{len(all_shows)} shows")
                 logger.debug(f"Total episodes: {len(all_episodes)}")
 
+            
             all_movies_processed = []
             for i in range(0, len(all_movies), CHUNK_SIZE):
                 chunk = all_movies[i:i+CHUNK_SIZE]
                 logger.debug(f"Processing chunk of {len(chunk)} movies")
-                chunk_movies = await process_movies_chunk(chunk)
+                chunk_movies = await process_movies_chunk(session, plex_url, headers, semaphore, chunk)
                 all_movies_processed.extend(chunk_movies)
                 logger.info(f"Processed {i+len(chunk)}/{len(all_movies)} movies")
                 logger.debug(f"Total movies: {len(all_movies_processed)}")
+            
 
         end_time = time.time()
         total_time = end_time - start_time
@@ -278,8 +312,6 @@ async def get_recent_from_plex():
                     logger.info(f"Retrieved {len(recent_items)} recent items from library {library_key}")
                     
                     for item in recent_items:
-                        #logger.info(f"Processing item: {item.get('title', 'Unknown')} (Type: {item.get('type', 'Unknown')})")
-                        
                         if item['type'] == 'movie':
                             metadata_url = f"{plex_url}{item['key']}?includeGuids=1"
                             metadata = await fetch_data(session, metadata_url, headers, semaphore)
@@ -303,7 +335,7 @@ async def get_recent_from_plex():
                             if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
                                 show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
                                 show_imdb_id, show_tmdb_id = extract_show_ids(show_full_metadata)
-                                episode_data = await process_recent_episode(item, show_full_metadata['title'], item['parentIndex'], show_imdb_id, show_tmdb_id)
+                                episode_data = await process_recent_episode(item, show_full_metadata['title'], item['parentIndex'], show_imdb_id, show_tmdb_id, show_full_metadata)
                                 processed_episodes.extend(episode_data)
                             else:
                                 logger.error(f"Failed to fetch show metadata for episode: {item.get('title', 'Unknown')}")
@@ -312,18 +344,56 @@ async def get_recent_from_plex():
 
         end_time = time.time()
         total_time = end_time - start_time
-        logger.info(f"Recent items collection complete. Total time: {total_time:.2f} seconds")
-        logger.info(f"Processed {len(processed_movies)} recent movies and {len(processed_episodes)} recent episodes")
+
+        logger.info(f"Collection complete. Total time: {total_time:.2f} seconds")
+        logger.info(f"Collected: {len(processed_episodes)} episodes and {len(processed_movies)} movies")
+        
+        logger.debug(f"Final episodes list length: {len(processed_episodes)}")
+        logger.debug(f"Final movies list length: {len(processed_movies)}")
+
+        for episode in processed_episodes:
+            genres = episode['genres']
+            logger.debug(f"Processed episode: {genres}")
+        for movie in processed_movies:
+            genres = movie['genres']
+            logger.debug(f"Processed movie: {genres}")
 
         return {
             'movies': processed_movies,
             'episodes': processed_episodes
         }
     except Exception as e:
-        logger.error(f"Error collecting recent content from Plex: {str(e)}", exc_info=True)
+        logger.error(f"Error collecting content from Plex: {str(e)}", exc_info=True)
         return None
 
+def is_anime(item):
+    if 'Genre' in item:
+        return any(genre.get('tag') == 'Anime' for genre in item['Genre'])
+    return False
+
+def filter_genres(genres):
+    # If genres is a string representation of a list, convert it to a list
+    if isinstance(genres, str):
+        try:
+            genres = ast.literal_eval(genres)
+        except (ValueError, SyntaxError):
+            # If it's not a valid list representation, treat it as a single genre
+            genres = [genres]
+    
+    # Ensure genres is a list
+    if not isinstance(genres, list):
+        genres = [genres]
+    
+    logger.debug(f"Filtering genres: {genres}")
+    filtered = ['anime'] if any(str(genre).strip().lower() == 'anime' for genre in genres) else []
+    logger.debug(f"Filtered genres: {filtered}")
+    return filtered
+
 async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
+    genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
+    filtered_genres = filter_genres(genres)
+    logging.info(f"Movie: {movie['title']}")
+
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
@@ -334,8 +404,10 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         'imdb_id': None,
         'tmdb_id': None,
         'type': 'movie',
+        'genres': filter_genres(genres)
     }
     
+
     if 'Guid' in movie:
         for guid in movie['Guid']:
             if guid['id'].startswith('imdb://'):
@@ -353,7 +425,6 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                         movie_entry = movie_data.copy()
                         movie_entry['location'] = file_path
                         movie_entries.append(movie_entry)
-                        logger.info(f"Movie location: {file_path}")
     
     if not movie_entries:
         logger.error(f"No filename found for movie: {movie['title']}")
@@ -361,15 +432,8 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     return movie_entries
 
 async def process_recent_season(season: Dict[str, Any], show: Dict[str, Any], session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
-
-    show_imdb_id = None
-    show_tmdb_id = None
-    if 'Guid' in show:
-        for guid in show['Guid']:
-            if guid['id'].startswith('imdb://'):
-                show_imdb_id = guid['id'].split('://')[1]
-            elif guid['id'].startswith('tmdb://'):
-                show_tmdb_id = guid['id'].split('://')[1]
+    show_imdb_id, show_tmdb_id = extract_show_ids(show)
+    show_genres = filter_genres([genre['tag'] for genre in show.get('Genre', []) if 'tag' in genre])
 
     season_episodes_url = f"{plex_url}/library/metadata/{season['ratingKey']}/children?includeGuids=1"
     season_episodes_data = await fetch_data(session, season_episodes_url, headers, semaphore)
@@ -378,13 +442,15 @@ async def process_recent_season(season: Dict[str, Any], show: Dict[str, Any], se
     if 'MediaContainer' in season_episodes_data and 'Metadata' in season_episodes_data['MediaContainer']:
         episodes = season_episodes_data['MediaContainer']['Metadata']
         for episode in episodes:
-            processed_episode = await process_recent_episode(episode, show['title'], season['index'], show_imdb_id, show_tmdb_id)
+            processed_episode = await process_recent_episode(episode, show['title'], season['index'], show_imdb_id, show_tmdb_id, show)
             processed_episodes.append(processed_episode)
 
     return processed_episodes
 
-async def process_recent_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str) -> List[Dict[str, Any]]:
-    #logger.debug(f"Processing episode: {episode.get('title', 'Unknown')} (Show: {show_title}, Season: {season_number})")
+async def process_recent_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str, show: Dict[str, Any]) -> List[Dict[str, Any]]:
+    show_genres = [genre['tag'] for genre in show.get('Genre', []) if 'tag' in genre]
+    filtered_genres = filter_genres(show_genres)
+    logging.info(f"Episode: {show_title} - {episode['title']}")
 
     episode_data = {
         'title': show_title,
@@ -401,8 +467,10 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
         'episode_imdb_id': None,
         'episode_tmdb_id': None,
         'type': 'episode',
+        'genres': filter_genres(show_genres)
     }
     
+
     if 'Guid' in episode:
         for guid in episode['Guid']:
             if guid['id'].startswith('imdb://'):
@@ -420,7 +488,6 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
                         episode_entry = episode_data.copy()
                         episode_entry['location'] = file_path
                         episode_entries.append(episode_entry)
-                        logger.info(f"Episode location: {file_path}")
     
     if not episode_entries:
         logger.error(f"No filename found for episode: {show_title} - S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - {episode['title']}")

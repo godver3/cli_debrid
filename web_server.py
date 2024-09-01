@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash, Response
+from flask import Flask, render_template, jsonify, redirect, url_for, request, session, send_from_directory, flash, Response, make_response, current_app
 import traceback
 from flask_session import Session
 import threading
@@ -25,7 +25,7 @@ from shared import app, update_stats
 from run_program import ProgramRunner
 from queue_utils import safe_process_queue
 from run_program import process_overseerr_webhook, ProgramRunner
-from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings, update_all_content_sources, clean_notifications
+from config_manager import add_content_source, delete_content_source, update_content_source, add_scraper, load_config, save_config, get_version_settings, update_all_content_sources, clean_notifications, get_content_source_settings
 from settings_schema import SETTINGS_SCHEMA
 from trakt.core import get_device_code, get_device_token
 from scraper.scraper import scrape
@@ -48,6 +48,17 @@ import aiohttp
 import asyncio
 from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
 import shutil
+from utilities.debug_commands import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex, get_and_add_wanted_content, get_all_wanted_from_enabled_sources
+from web_scraper import get_media_details, process_media_selection
+import pickle
+from flask.json import jsonify
+from babelfish import Language
+
+
+
+CACHE_FILE = 'db_content/api_summary_cache.pkl'
+# Add this at the global scope, outside of any function
+app_start_time = time.time()
 
 app = Flask(__name__)
 
@@ -91,6 +102,42 @@ failed_additions = 0
 
 CONFIG_FILE = './config/config.json'
 TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, 'rb') as f:
+                loaded_cache = pickle.load(f)
+                # Ensure the cache has the correct structure
+                if not isinstance(loaded_cache, dict):
+                    raise ValueError("Loaded cache is not a dictionary")
+                for time_frame in ['hour', 'day', 'month']:
+                    if time_frame not in loaded_cache or not isinstance(loaded_cache[time_frame], dict):
+                        loaded_cache[time_frame] = {}
+                if 'last_processed_line' not in loaded_cache:
+                    loaded_cache['last_processed_line'] = 0
+                return loaded_cache
+        except (EOFError, ValueError, pickle.UnpicklingError) as e:
+            logging.warning(f"Error loading cache file: {str(e)}. Creating a new cache.")
+    return {'hour': {}, 'day': {}, 'month': {}, 'last_processed_line': 0}
+
+def save_cache(cache_data):
+    with open(CACHE_FILE, 'wb') as f:
+        pickle.dump(cache_data, f)
+# Initialize the cache when the server starts
+try:
+    cache = load_cache()
+except Exception as e:
+    logging.error(f"Failed to load cache: {str(e)}. Starting with an empty cache.")
+    cache = {'hour': {}, 'day': {}, 'month': {}, 'last_processed_line': 0}
+
+def program_is_running():
+    global program_runner
+    return program_runner.is_running() if program_runner else False
+
+@app.context_processor
+def inject_program_status():
+    return dict(program_is_running=program_is_running)
 
 # Add this after app initialization
 @app.context_processor
@@ -211,6 +258,11 @@ async def get_recent_from_plex(movie_limit=5, show_limit=5):
 def sync_run_get_recent_from_plex():
     return asyncio.run(get_recent_from_plex())
 
+@app.template_filter('isinstance')
+def isinstance_filter(value, class_name):
+    return isinstance(value, getattr(datetime, class_name, type(None)))
+
+
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -291,6 +343,11 @@ def login():
     
     if current_user.is_authenticated:
         return redirect(url_for('statistics'))
+
+    # Clear any existing flash messages when rendering the login page
+    if request.method == 'GET':
+        session.pop('_flashes', None)
+
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -300,10 +357,10 @@ def login():
             if user.is_default:
                 flash('Please set up your admin account.', 'warning')
                 return redirect(url_for('setup_admin'))
-            flash('Logged in successfully.', 'success')
             return redirect(url_for('statistics'))
         else:
             flash('Invalid username or password.', 'error')
+    
     return render_template('login.html')
 
 @app.route('/setup_admin', methods=['GET', 'POST'])
@@ -381,15 +438,13 @@ def add_user():
     
     existing_user = User.query.filter_by(username=username).first()
     if existing_user:
-        flash('Username already exists.', 'error')
+        return jsonify({'success': False, 'error': 'Username already exists.'})
     else:
         hashed_password = generate_password_hash(password)
         new_user = User(username=username, password=hashed_password, role=role)
         db.session.add(new_user)
         db.session.commit()
-        flash('User added successfully.', 'success')
-    
-    return redirect(url_for('manage_users'))
+        return jsonify({'success': True})
 
 @app.route('/delete_user/<int:user_id>', methods=['POST'])
 @admin_required
@@ -469,6 +524,18 @@ def summarize_api_calls(time_frame):
                 summary[key][domain] += 1
     
     return dict(summary)
+
+def get_cached_summary(time_frame):
+    current_time = datetime.now()
+    if time_frame in cache:
+        last_update, data = cache[time_frame]
+        if current_time - last_update < timedelta(hours=1):
+            return data
+    
+    data = summarize_api_calls(time_frame)
+    cache[time_frame] = (current_time, data)
+    save_cache(cache)
+    return data
 
 def get_airing_soon():
     conn = get_db_connection()
@@ -609,7 +676,7 @@ def delete_item():
         logging.error(f"Error deleting item: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/content_sources/content')
+@app.route('/content-sources/content')
 def content_sources_content():
     config = load_config()
     source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
@@ -715,6 +782,14 @@ def get_scrapers():
     scraper_types = scraper_manager.get_scraper_types()
     return render_template('settings_tabs/scrapers.html', settings=config, scraper_types=scraper_types)
 
+@app.route('/get_content_source_types', methods=['GET'])
+def get_content_source_types():
+    content_sources = SETTINGS_SCHEMA['Content Sources']['schema']
+    return jsonify({
+        'source_types': list(content_sources.keys()),
+        'settings': content_sources
+    })
+
 @app.route('/scrapers/delete', methods=['POST'])
 def delete_scraper():
     data = request.json
@@ -765,84 +840,134 @@ def manifest():
 
 @app.route('/database', methods=['GET', 'POST'])
 def database():
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    # Get all column names
-    cursor.execute("PRAGMA table_info(media_items)")
-    all_columns = [column[1] for column in cursor.fetchall()]
+        # Get all column names
+        cursor.execute("PRAGMA table_info(media_items)")
+        all_columns = [column[1] for column in cursor.fetchall()]
 
-    # Get or set selected columns
-    if request.method == 'POST':
-        selected_columns = request.form.getlist('columns')
-        session['selected_columns'] = selected_columns
-    else:
-        selected_columns = session.get('selected_columns', all_columns[:10])  # Default to first 10 columns
+        # Define the default columns
+        default_columns = [
+            'imdb_id', 'title', 'year', 'release_date', 'state', 'type',
+            'season_number', 'episode_number', 'collected_at', 'version'
+        ]
 
-    # Get filter and sort parameters
-    filter_column = request.args.get('filter_column', '')
-    filter_value = request.args.get('filter_value', '')
-    sort_column = request.args.get('sort_column', 'id')  # Default sort by id
-    sort_order = request.args.get('sort_order', 'asc')
-    content_type = request.args.get('content_type', 'movie')  # Default to 'movie'
-    current_letter = request.args.get('letter', 'A')
+        # Get or set selected columns
+        if request.method == 'POST':
+            selected_columns = request.form.getlist('columns')
+            session['selected_columns'] = selected_columns
+        else:
+            selected_columns = session.get('selected_columns')
 
-    # Define alphabet here
-    alphabet = list(string.ascii_uppercase)
+        # If no columns are selected, use the default columns
+        if not selected_columns:
+            selected_columns = [col for col in default_columns if col in all_columns]
+            if not selected_columns:
+                selected_columns = ['id']  # Fallback to ID if none of the default columns exist
 
-    # Construct the SQL query
-    query = f"SELECT {', '.join(selected_columns)} FROM media_items"
-    where_clauses = []
-    params = []
+        # Ensure at least one column is selected
+        if not selected_columns:
+            selected_columns = ['id']
 
-    # Apply custom filter if present, otherwise apply content type and letter filters
-    if filter_column and filter_value:
-        where_clauses.append(f"{filter_column} LIKE ?")
-        params.append(f"%{filter_value}%")
-        # Reset content_type and current_letter when custom filter is applied
-        content_type = 'all'
-        current_letter = ''
-    else:
-        if content_type != 'all':
-            where_clauses.append("type = ?")
-            params.append(content_type)
+        # Get filter and sort parameters
+        filter_column = request.args.get('filter_column', '')
+        filter_value = request.args.get('filter_value', '')
+        sort_column = request.args.get('sort_column', 'id')  # Default sort by id
+        sort_order = request.args.get('sort_order', 'asc')
+        content_type = request.args.get('content_type', 'movie')  # Default to 'movie'
+        current_letter = request.args.get('letter', 'A')
+
+        # Validate sort_column
+        if sort_column not in all_columns:
+            sort_column = 'id'  # Fallback to 'id' if invalid column is provided
+
+        # Validate sort_order
+        if sort_order.lower() not in ['asc', 'desc']:
+            sort_order = 'asc'  # Fallback to 'asc' if invalid order is provided
+
+        # Define alphabet here
+        alphabet = list(string.ascii_uppercase)
+
+        # Construct the SQL query
+        query = f"SELECT {', '.join(selected_columns)} FROM media_items"
+        where_clauses = []
+        params = []
+
+        # Apply custom filter if present, otherwise apply content type and letter filters
+        if filter_column and filter_value:
+            where_clauses.append(f"{filter_column} LIKE ?")
+            params.append(f"%{filter_value}%")
+            # Reset content_type and current_letter when custom filter is applied
+            content_type = 'all'
+            current_letter = ''
+        else:
+            if content_type != 'all':
+                where_clauses.append("type = ?")
+                params.append(content_type)
+            
+            if current_letter:
+                if current_letter == '#':
+                    where_clauses.append("title LIKE '0%' OR title LIKE '1%' OR title LIKE '2%' OR title LIKE '3%' OR title LIKE '4%' OR title LIKE '5%' OR title LIKE '6%' OR title LIKE '7%' OR title LIKE '8%' OR title LIKE '9%' OR title LIKE '[%' OR title LIKE '(%' OR title LIKE '{%'")
+                elif current_letter.isalpha():
+                    where_clauses.append("title LIKE ?")
+                    params.append(f"{current_letter}%")
+
+        # Construct the ORDER BY clause safely
+        order_clause = f"ORDER BY {sort_column} {sort_order}"
+
+        # Ensure 'id' is always included in the query, even if not displayed
+        query_columns = list(set(selected_columns + ['id']))
         
-        if current_letter:
-            if current_letter == '#':
-                where_clauses.append("title LIKE '0%' OR title LIKE '1%' OR title LIKE '2%' OR title LIKE '3%' OR title LIKE '4%' OR title LIKE '5%' OR title LIKE '6%' OR title LIKE '7%' OR title LIKE '8%' OR title LIKE '9%' OR title LIKE '[%' OR title LIKE '(%' OR title LIKE '{%'")
-            elif current_letter.isalpha():
-                where_clauses.append("title LIKE ?")
-                params.append(f"{current_letter}%")
+        # Construct the final query
+        query = f"SELECT {', '.join(query_columns)} FROM media_items"
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        query += f" {order_clause}"
 
-    if where_clauses:
-        query += " WHERE " + " AND ".join(where_clauses)
+        # Log the query and parameters for debugging
+        logging.debug(f"Executing query: {query}")
+        logging.debug(f"Query parameters: {params}")
 
-    query += f" ORDER BY {sort_column} {sort_order}"
+        # Execute the query
+        cursor.execute(query, params)
+        items = cursor.fetchall()
 
-    # Execute the query
-    cursor.execute(query, params)
-    items = cursor.fetchall()
+        # Log the number of items fetched
+        logging.debug(f"Fetched {len(items)} items from the database")
 
-    conn.close()
+        conn.close()
 
-    # Convert items to a list of dictionaries
-    items = [dict(zip(selected_columns, item)) for item in items]
+        # Convert items to a list of dictionaries, always including 'id'
+        items = [dict(zip(query_columns, item)) for item in items]
 
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        return jsonify({
-            'table': render_template('database_table.html', 
-                                     items=items, 
-                                     selected_columns=selected_columns,
-                                     content_type=content_type),
-            'pagination': render_template('database_pagination.html',
-                                          alphabet=alphabet,
-                                          current_letter=current_letter,
-                                          content_type=content_type,
-                                          filter_column=filter_column,
-                                          filter_value=filter_value,
-                                          sort_column=sort_column,
-                                          sort_order=sort_order)
-        })
+
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({
+                'table': render_template('database_table.html', 
+                                        items=items, 
+                                        all_columns=all_columns,
+                                        selected_columns=selected_columns,
+                                        content_type=content_type),
+                'pagination': render_template('database_pagination.html',
+                                            alphabet=alphabet,
+                                            current_letter=current_letter,
+                                            content_type=content_type,
+                                            filter_column=filter_column,
+                                            filter_value=filter_value,
+                                            sort_column=sort_column,
+                                            sort_order=sort_order)
+            })
+        
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in database route: {str(e)}")
+        items = []
+        flash(f"Database error: {str(e)}", "error")
+    except Exception as e:
+        logging.error(f"Unexpected error in database route: {str(e)}")
+        items = []
+        flash("An unexpected error occurred. Please try again later.", "error")
 
     return render_template('database.html', 
                            items=items, 
@@ -855,6 +980,7 @@ def database():
                            alphabet=alphabet,
                            current_letter=current_letter,
                            content_type=content_type)
+
 
 @app.route('/add_to_real_debrid', methods=['POST'])
 def add_torrent_to_real_debrid():
@@ -870,11 +996,14 @@ def add_torrent_to_real_debrid():
             else:
                 return jsonify({'message': 'Cached torrent added to Real-Debrid successfully'})
         else:
-            return jsonify({'error': 'Failed to add torrent to Real-Debrid'}), 500
+            error_message = "No suitable video files found in the torrent."
+            logging.error(f"Failed to add torrent to Real-Debrid: {error_message}")
+            return jsonify({'error': error_message}), 500
 
     except Exception as e:
-        logging.error(f"Error adding torrent to Real-Debrid: {str(e)}")
-        return jsonify({'error': 'An error occurred while adding to Real-Debrid'}), 500
+        error_message = str(e)
+        logging.error(f"Error adding torrent to Real-Debrid: {error_message}")
+        return jsonify({'error': f'An error occurred while adding to Real-Debrid: {error_message}'}), 500
 
 def format_date(date_string):
     if not date_string:
@@ -885,14 +1014,55 @@ def format_date(date_string):
     except ValueError:
         return date_string
 
-def format_time(date_string):
-    if not date_string:
+def format_time(date_input):
+    if not date_input:
         return ''
     try:
-        date = datetime.fromisoformat(date_string)
+        if isinstance(date_input, str):
+            date = datetime.fromisoformat(date_input.rstrip('Z'))  # Remove 'Z' if present
+        elif isinstance(date_input, datetime):
+            date = date_input
+        else:
+            return ''
         return date.strftime('%H:%M:%S')
     except ValueError:
         return ''
+    
+def format_datetime_preference(date_input, use_24hour_format):
+    if not date_input:
+        return ''
+    try:
+        if isinstance(date_input, str):
+            date = datetime.fromisoformat(date_input.rstrip('Z'))  # Remove 'Z' if present
+        elif isinstance(date_input, datetime):
+            date = date_input
+        else:
+            return str(date_input)
+        
+        now = datetime.now()
+        today = now.date()
+        yesterday = today - timedelta(days=1)
+        tomorrow = today + timedelta(days=1)
+
+        if date.date() == today:
+            day_str = "Today"
+        elif date.date() == yesterday:
+            day_str = "Yesterday"
+        elif date.date() == tomorrow:
+            day_str = "Tomorrow"
+        else:
+            day_str = date.strftime("%a, %d %b %Y")
+
+        time_format = "%H:%M" if use_24hour_format else "%I:%M %p"
+        formatted_time = date.strftime(time_format)
+        
+        # Remove leading zero from hour in 12-hour format
+        if not use_24hour_format:
+            formatted_time = formatted_time.lstrip("0")
+        
+        return f"{day_str} {formatted_time}"
+    except ValueError:
+        return str(date_input)  # Return original string if parsing fails
 
 @app.route('/statistics')
 @user_required
@@ -901,7 +1071,8 @@ def statistics():
 
     start_time = time.time()
 
-    uptime = int(time.time() - start_time)
+    uptime = int(time.time() - app_start_time)
+
     collected_counts = get_collected_counts()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
     upcoming_releases = get_upcoming_releases()
@@ -909,9 +1080,33 @@ def statistics():
     
     # Fetch recently added items from the database
     recently_added_start = time.time()
-    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
+    recently_added = asyncio.run(get_recently_added_items(movie_limit=50, show_limit=50))
     recently_added_end = time.time()
     
+    cookie_value = request.cookies.get('use24HourFormat')
+    use_24hour_format = cookie_value == 'true' if cookie_value is not None else True
+    
+    # Format times for recently aired and airing soon
+    for item in recently_aired + airing_soon:
+        item['formatted_time'] = format_datetime_preference(item['air_datetime'], use_24hour_format)
+    
+    # Format times for upcoming releases (if they have time information)
+    for item in upcoming_releases:
+        item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
+
+    # Limit to 5 unique items for movies and shows after consolidation
+    def limit_unique_items(items, limit=5):
+        unique_items = {}
+        for item in items:
+            if len(unique_items) >= limit:
+                break
+            if item['title'] not in unique_items:
+                unique_items[item['title']] = item
+        return list(unique_items.values())
+    
+    recently_added['movies'] = limit_unique_items(recently_added['movies'])
+    recently_added['shows'] = limit_unique_items(recently_added['shows'])
+
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],
@@ -925,6 +1120,10 @@ def statistics():
         'tomorrow': (now + timedelta(days=1)).date(),
         'recently_added_movies': recently_added['movies'],  # Changed this line
         'recently_added_shows': recently_added['shows'],   # Changed this line
+        'use_24hour_format': use_24hour_format,
+        'recently_aired': recently_aired,
+        'airing_soon': airing_soon,
+        'upcoming_releases': upcoming_releases,
         'timezone': time.tzname[0]
     }
 
@@ -934,8 +1133,38 @@ def statistics():
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return jsonify(stats)
     else:
-        return render_template('statistics.html', stats=stats, formatDate=format_date, formatTime=format_time)
+        return render_template('statistics.html', stats=stats)
+        
+@app.route('/set_time_preference', methods=['POST'])
+def set_time_preference():
+    data = request.json
+    use_24hour_format = data.get('use24HourFormat', True)
     
+    # Format times with the new preference
+    recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+    upcoming_releases = get_upcoming_releases()
+    
+    for item in recently_aired + airing_soon:
+        item['formatted_time'] = format_datetime_preference(item['air_datetime'], use_24hour_format)
+    
+    for item in upcoming_releases:
+        item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
+    
+    response = make_response(jsonify({
+        'status': 'OK', 
+        'use24HourFormat': use_24hour_format,
+        'recently_aired': recently_aired,
+        'airing_soon': airing_soon,
+        'upcoming_releases': upcoming_releases
+    }))
+    response.set_cookie('use24HourFormat', 
+                        str(use_24hour_format).lower(), 
+                        max_age=31536000,  # 1 year
+                        path='/',  # Ensure cookie is available for entire site
+                        secure=True,  # Only send over HTTPS
+                        httponly=False)  # Allow JavaScript access
+    return response
+
 @app.route('/movies_trending', methods=['GET', 'POST'])
 def movies_trending():
     versions = get_available_versions()
@@ -1018,6 +1247,16 @@ def select_media():
         multi = request.form.get('multi', 'false').lower() in ['true', '1', 'yes', 'on']
         version = request.form.get('version')
 
+        # Fetch detailed information from Overseerr
+        details = get_media_details(media_id, media_type)
+
+        # Extract keywords and genres
+        genres = details.get('keywords', [])
+
+        logging.info(f"Retrieved genres: {genres}")
+
+        logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}, genres={genres}")
+
         if not version or version == 'undefined':
             version = get_setting('Scraping', 'default_version', '1080p')  # Fallback to a default version
 
@@ -1034,21 +1273,27 @@ def select_media():
 
         logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
 
-        torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version)
+        torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version, genres)
+        
+        if not torrent_results:
+            logging.warning("No torrent results found")
+            return jsonify({'torrent_results': []})
+
         cached_results = []
         for result in torrent_results:
-            if cache_status.get(result.get('hash'), False):
-                result['cached'] = 'RD'
+            result_hash = result.get('hash')
+            if result_hash:
+                is_cached = cache_status.get(result_hash, False)
+                result['cached'] = 'RD' if is_cached else ''
             else:
                 result['cached'] = ''
             cached_results.append(result)
 
+        logging.info(f"Processed {len(cached_results)} results")
         return jsonify({'torrent_results': cached_results})
     except Exception as e:
-        logging.error(f"Error in select_media: {str(e)}")
+        logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while selecting media'}), 500
-
-
 
 @app.route('/add_torrent', methods=['POST'])
 def add_torrent():
@@ -1070,8 +1315,6 @@ def add_torrent():
 def logs():
     logs = get_recent_logs(500)  # Get the 500 most recent log entries
     return render_template('logs.html', logs=logs)
-
-from datetime import datetime
 
 @app.route('/api/logs')
 @admin_required
@@ -1260,7 +1503,21 @@ def settings():
         config = clean_notifications(config)  # Clean notifications before rendering
         scraper_types = list(scraper_manager.scraper_settings.keys())
         source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
-        
+
+        # Fetch content source settings
+        content_source_settings_response = get_content_source_settings_route()
+        if isinstance(content_source_settings_response, Response):
+            content_source_settings = content_source_settings_response.get_json()
+        else:
+            content_source_settings = content_source_settings_response        
+            
+        # Fetch scraping versions
+        scraping_versions_response = get_scraping_versions()
+        if isinstance(scraping_versions_response, Response):
+            scraping_versions = scraping_versions_response.get_json()['versions']
+        else:
+            scraping_versions = scraping_versions_response['versions']
+
         # Ensure 'Scrapers' exists in the config
         if 'Scrapers' not in config:
             config['Scrapers'] = {}
@@ -1314,11 +1571,37 @@ def settings():
                                scraper_types=scraper_types, 
                                scraper_settings=scraper_manager.scraper_settings,
                                source_types=source_types,
-                               content_source_settings=SETTINGS_SCHEMA['Content Sources']['schema'],
+                               content_source_settings=content_source_settings,
+                               scraping_versions=scraping_versions,
                                settings_schema=SETTINGS_SCHEMA)
     except Exception as e:
         app.logger.error(f"Error in settings route: {str(e)}", exc_info=True)
         return render_template('error.html', error_message="An error occurred while loading settings."), 500
+
+@app.route('/api/program_settings', methods=['GET'])
+@admin_required
+def api_program_settings():
+    try:
+        config = load_config()
+        program_settings = {
+            'Scrapers': config.get('Scrapers', {}),
+            'Content Sources': config.get('Content Sources', {}),
+            'Plex': {
+                'url': config.get('Plex', {}).get('url', ''),
+                'token': config.get('Plex', {}).get('token', '')
+            },
+            'Overseerr': {
+                'url': config.get('Overseerr', {}).get('url', ''),
+                'api_key': config.get('Overseerr', {}).get('api_key', '')
+            },
+            'RealDebrid': {
+                'api_key': config.get('RealDebrid', {}).get('api_key', '')
+            }
+        }
+        return jsonify(program_settings)
+    except Exception as e:
+        app.logger.error(f"Error in api_program_settings route: {str(e)}", exc_info=True)
+        return jsonify({"error": "An error occurred while loading program settings."}), 500
 
 @app.route('/scraping/get')
 def get_scraping_settings():
@@ -1464,7 +1747,7 @@ def start_program():
     else:
         return jsonify({"status": "error", "message": "Program is already running"})
 
-@app.route('/api/reset_program', methods=['POST'])
+@app.route('/api/stop_program', methods=['POST'])
 def reset_program():
     global program_runner
     if program_runner is not None:
@@ -1701,6 +1984,28 @@ def scraper_tester():
     return render_template('scraper_tester.html', versions=versions)
 
 @app.route('/get_scraping_versions', methods=['GET'])
+def get_scraping_versions_route():
+    try:
+        config = load_config()
+        versions = config.get('Scraping', {}).get('versions', {}).keys()
+        return jsonify({'versions': list(versions)})
+    except Exception as e:
+        app.logger.error(f"Error getting scraping versions: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    
+@app.route('/get_content_source_settings', methods=['GET'])
+def get_content_source_settings_route():
+    try:
+        content_source_settings = get_content_source_settings()
+        return jsonify(content_source_settings)
+    except Exception as e:
+        app.logger.error(f"Error getting content source settings: {str(e)}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/get_scraping_versions', methods=['GET'])
 def get_scraping_versions():
     try:
         config = load_config()
@@ -1816,6 +2121,7 @@ def run_scrape():
         media_type = data['movie_or_episode']
         version = data['version']
         modified_settings = data.get('modifiedSettings', {})
+        genres = data.get('genres', [])
         
         if media_type == 'episode':
             season = data.get('season')
@@ -1836,7 +2142,7 @@ def run_scrape():
         
         # Run first scrape with current settings
         original_results, _ = scrape(
-            imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi
+            imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres
         )
 
         # Update version settings with modified settings
@@ -1853,7 +2159,7 @@ def run_scrape():
         # Run second scrape with modified settings
         try:
             adjusted_results, _ = scrape(
-                imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi
+                imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres
             )
         finally:
             # Revert settings back to original
@@ -1890,9 +2196,10 @@ def program_status():
     return jsonify({"running": is_running})
 
 @app.route('/debug_functions')
-@admin_required
 def debug_functions():
-    return render_template('debug_functions.html')
+    content_sources = get_all_settings().get('Content Sources', {})
+    enabled_sources = {source: data for source, data in content_sources.items() if data.get('enabled', False)}
+    return render_template('debug_functions.html', content_sources=enabled_sources)
 
 @app.route('/bulk_delete_by_imdb', methods=['POST'])
 def bulk_delete_by_imdb():
@@ -1912,13 +2219,65 @@ def unauthorized():
     flash('You are not authorized to access this page.', 'error')
     return redirect(url_for('login'))
 
+def summarize_api_calls(time_frame):
+    log_path = 'logs/api_calls.log'
+    summary = defaultdict(lambda: defaultdict(int))
+    
+    with open(log_path, 'r') as f:
+        for line in f:
+            match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
+            if match:
+                timestamp, method, url, domain = match.groups()
+                dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S,%f')
+                
+                if time_frame == 'hour':
+                    key = dt.strftime('%Y-%m-%d %H:00')
+                elif time_frame == 'day':
+                    key = dt.strftime('%Y-%m-%d')
+                elif time_frame == 'month':
+                    key = dt.strftime('%Y-%m')
+                
+                summary[key][domain] += 1
+    
+    return dict(summary)
+
+def update_cache_with_new_entries():
+    global cache
+    log_path = 'logs/api_calls.log'
+    last_processed_line = cache['last_processed_line']
+    
+    with open(log_path, 'r') as f:
+        lines = f.readlines()[last_processed_line:]
+        
+    for i, line in enumerate(lines, start=last_processed_line):
+        match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
+        if match:
+            timestamp, method, url, domain = match.groups()
+            dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S,%f')
+            
+            hour_key = dt.strftime('%Y-%m-%d %H:00')
+            day_key = dt.strftime('%Y-%m-%d')
+            month_key = dt.strftime('%Y-%m')
+            
+            for time_frame, key in [('hour', hour_key), ('day', day_key), ('month', month_key)]:
+                if key not in cache[time_frame]:
+                    cache[time_frame][key] = {}
+                if domain not in cache[time_frame][key]:
+                    cache[time_frame][key][domain] = 0
+                cache[time_frame][key][domain] += 1
+    
+    cache['last_processed_line'] = last_processed_line + len(lines)
+    save_cache(cache)
+
 @app.route('/api_call_summary')
 def api_call_summary():
+    update_cache_with_new_entries()
+    
     time_frame = request.args.get('time_frame', 'day')
     if time_frame not in ['hour', 'day', 'month']:
         time_frame = 'day'
     
-    summary = summarize_api_calls(time_frame)
+    summary = cache[time_frame]
     
     # Get a sorted list of all domains
     all_domains = sorted(set(domain for period in summary.values() for domain in period))
@@ -1927,6 +2286,48 @@ def api_call_summary():
                            summary=summary, 
                            time_frame=time_frame,
                            all_domains=all_domains)
+
+@app.route('/clear_api_summary_cache', methods=['POST'])
+@admin_required
+def clear_api_summary_cache():
+    global cache
+    cache = {'hour': {}, 'day': {}, 'month': {}, 'last_processed_line': 0}
+    save_cache(cache)
+    return jsonify({"status": "success", "message": "API summary cache cleared"})
+
+
+@app.route('/api/get_collected_from_plex', methods=['POST'])
+def get_collected_from_plex():
+    collection_type = request.form.get('collection_type')
+    
+    try:
+        if collection_type == 'all':
+            get_and_add_all_collected_from_plex()
+        elif collection_type == 'recent':
+            get_and_add_recent_collected_from_plex()
+        else:
+            return jsonify({'success': False, 'error': 'Invalid collection type'}), 400
+
+        return jsonify({'success': True, 'message': f'Successfully retrieved and added {collection_type} collected items from Plex'}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/get_wanted_content', methods=['POST'])
+def get_wanted_content():
+    source = request.form.get('source')
+    
+    try:
+        if source == 'all':
+            get_all_wanted_from_enabled_sources()
+            message = 'Successfully retrieved and added wanted items from all enabled sources'
+        else:
+            get_and_add_wanted_content(source)
+            message = f'Successfully retrieved and added wanted items from {source}'
+
+        return jsonify({'success': True, 'message': message}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     start_server()

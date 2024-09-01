@@ -8,6 +8,7 @@ from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
 from poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
+from metadata.metadata import get_overseerr_movie_details, get_overseerr_show_details, get_overseerr_cookies
 
 def search_overseerr(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     overseerr_url = get_setting('Overseerr', 'url')
@@ -197,27 +198,45 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
 
     logging.info(f"Found results: {search_results}")
 
-    return {
-        "results": [
-            {
-                "id": result['id'],
-                "title": result.get('title') or result.get('name', ''),
-                "year": result.get('releaseDate', '')[:4] if result.get('mediaType') == 'movie' else result.get('firstAirDate', '')[:4],
-                "media_type": result.get('mediaType', ''),
-                "show_overview": result.get('overview', ''),
-                "poster_path": result.get('posterPath', ''),
-                "genre_ids": overseerr_genre(result.get('genreIds', '')),
-                "vote_average": result.get('voteAverage', ''),
-                "backdrop_path": result.get('backdropPath', ''),
-                "season": season,
-                "episode": episode,
-                "multi": multi
-            }
-            for result in search_results
-            if result['mediaType'] != 'person'
-            if result['posterPath'] is not None
-        ]
-    }
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    cookies = get_overseerr_cookies(overseerr_url)
+
+    detailed_results = []
+    for result in search_results:
+        if result['mediaType'] != 'person' and result['posterPath'] is not None:
+            tmdb_id = result['id']
+            media_type = result['mediaType']
+
+            if media_type == 'movie':
+                details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+            else:  # TV show
+                details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+
+            if details:
+                genres = details.get('keywords', [])
+
+                logging.info(f"Genres: {genres}")   
+
+                detailed_result = {
+                    "id": tmdb_id,
+                    "title": details.get('title') or details.get('name', ''),
+                    "year": details.get('releaseDate', '')[:4] if media_type == 'movie' else details.get('firstAirDate', '')[:4],
+                    "media_type": media_type,
+                    "show_overview": details.get('overview', ''),
+                    "poster_path": details.get('posterPath', ''),
+                    "genre_ids": genres,
+                    "vote_average": details.get('voteAverage', ''),
+                    "backdrop_path": details.get('backdropPath', ''),
+                    "season": season,
+                    "episode": episode,
+                    "multi": multi,
+                    "genres": genres,
+                    "imdb_id": details.get('externalIds', {}).get('imdbId', '')
+                }
+                detailed_results.append(detailed_result)
+
+    return {"results": detailed_results}
 
 def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None) -> Dict[str, Any]:
     logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}")
@@ -388,8 +407,8 @@ def trending_shows():
         logging.error(f"Error retrieving Trakt Trending Shows: {e}")
         return []
 
-def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str) -> List[Dict[str, Any]]:
-    logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
+def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str]) -> List[Dict[str, Any]]:
+    logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}, genres={genres}")
 
     details = get_media_details(media_id, media_type)
     imdb_id = details.get('externalIds', {}).get('imdbId', '')
@@ -402,34 +421,43 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         multi = False
     elif season is not None and episode is None:
         multi = True
-    # If both season and episode are specified, keep the passed multi value
 
     logging.info(f"Adjusted scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
                  f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
 
+    genres = [genre['name'] for genre in genres if 'name' in genre]
+
     # Call the scraper function with the version parameter
-    scrape_results, filtered_out_results = scrape(imdb_id, tmdb_id, title, int(year), movie_or_episode, version, season, episode, multi)
+    scrape_results, filtered_out_results = scrape(imdb_id, tmdb_id, title, int(year), movie_or_episode, version, season, episode, multi, genres)
 
     # Process the results
     processed_results = []
-    hashes=[]
-    cache_status = []
+    hashes = []
     for result in scrape_results:
         if isinstance(result, dict):
             magnet_link = result.get('magnet')
             if magnet_link:
                 if 'magnet:?xt=urn:btih:' in magnet_link:
                     magnet_hash = extract_hash_from_magnet(magnet_link)
-                    torrent_type = 'magnet'
-                    hashes += [magnet_hash]
                     result['hash'] = magnet_hash
+                    hashes.append(magnet_hash)
+                    processed_results.append(result)
                 else:
-                    #adding_queue = AddingQueue()
-                    #magnet_hash = adding_queue.download_and_extract_hash(magnet_link)
-                    torrent_type = 'torrent_file'
-                processed_results.append(result)
-    cache_status = is_cached_on_rd(hashes)
-    
+                    # Handle torrent file case if needed
+                    pass
+
+    # Check cache status for all hashes at once
+    cache_status = is_cached_on_rd(hashes) if hashes else {}
+    logging.info(f"Cache status returned: {cache_status}")
+
+    # Update processed_results with cache status
+    for result in processed_results:
+        result_hash = result.get('hash')
+        if result_hash:
+            is_cached = cache_status.get(result_hash, False)
+            result['cached'] = 'Yes' if is_cached else 'No'
+            logging.info(f"Cache status for {result['title']} (hash: {result_hash}): {result['cached']}")
+
     return processed_results, cache_status
 
 def get_available_versions():

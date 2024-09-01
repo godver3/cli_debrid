@@ -48,7 +48,6 @@ def clean_expired_cache():
     for key in expired_keys:
         del cache[key]
     save_cache(cache)
-    logging.info(f"Cleaned {len(expired_keys)} expired cache entries")
 
 def get_cached_media_meta(tmdb_id, media_type):
     cache = load_cache()

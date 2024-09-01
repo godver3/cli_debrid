@@ -4,31 +4,178 @@
 
 {% block content %}
 <style>
+    /* Main container */
+    .statistics-wrapper {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        align-items: center;
+    }
+
+    .stats-container {
+        width: 70%;
+    }
+
+    /* Row 1: Toggle container */
+    .toggle-container {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding: 0px 15%;
+        margin-bottom: 10px;
+        font-size: 0.9em;
+        justify-content: flex-start;
+    }
+
+    /* Row 2: Collection stats */
+    .stats-box.collection-stats {
+        margin-bottom: 10px;
+    }
+
+    /* Row 3: Recently aired, Airing soon, Upcoming releases */
+    .top-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        margin-bottom: 10px;
+    }
+
+    .stats-box.recently-aired,
+    .stats-box.airing-soon,
+    .stats-box.upcoming-releases {
+        width: 100%;
+    }
+
+    /* Row 4: Recently added */
     .stats-box.recently-added {
-        grid-column: 1 / -1;
+        width: 100%;
         margin-bottom: 20px;
     }
 
-    .stats-box.recently-added ul {
+    /* Common styles for stats boxes */
+    .stats-box {
+        background-color: #444;
+        border-radius: 5px;
+        padding: 15px;
+    }
+
+    .stats-box h3 {
+        margin-top: 0;
+        margin-bottom: 5px;
+    }
+
+    .stats-box ul {
         list-style-type: none;
         padding: 0;
         margin: 0;
     }
 
-    .stats-box.recently-added li {
-        margin-bottom: 10px;
+    /* Content styles */
+    .stats-box.recently-aired li,
+    .stats-box.airing-soon li,
+    .stats-box.upcoming-releases li {
+        margin-bottom: 15px;
         color: #FFA500;
+        display: flex;
+        flex-direction: column;
     }
 
-    .stats-box.recently-added .added-date {
-        display: inline-block;
-        margin-left: 5px;
+    .added-date,
+    .air-date,
+    .air-time,
+    .release-date {
+        display: block;
+        margin-left: 15px;
+        margin-top: 5px;
         font-style: italic;
         color: #f4f4f4;
     }
 
+    /* Collection stats */
+    .collection-stats .stat-items {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .collection-stats .stat-item {
+        flex: 1 1 calc(25% - 10px);
+        min-width: 200px;
+        padding: 10px;
+        background-color: #555;
+        border-radius: 3px;
+    }
+
+    .collection-stats .stat-item p {
+        margin: 0;
+        color: #f4f4f4;
+    }
+
+    .collection-stats .stat-item span {
+        font-weight: bold;
+        color: #4CAF50;
+    }
+
+    /* Toggle styles */
+    .toggle-item {
+        display: flex;
+        align-items: center;
+        margin-right: 15px;
+    }
+
+    .toggle-label {
+        margin-right: 5px;
+    }
+
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 40px;
+        height: 20px;
+    }
+
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: .4s;
+        border-radius: 20px;
+    }
+
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 2px;
+        bottom: 2px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+    }
+
+    input:checked + .toggle-slider {
+        background-color: #2196F3;
+    }
+
+    input:checked + .toggle-slider:before {
+        transform: translateX(20px);
+    }
+
+    /* Card styles */
     .card-container {
         display: flex;
+        justify-content: center;
         flex-wrap: wrap;
         gap: 20px;
     }
@@ -53,28 +200,26 @@
         object-fit: cover;
     }
 
-    .card-content {
+    .card-content,
+    .card-hover-content {
         position: absolute;
-        bottom: 0;
         left: 0;
         right: 0;
-        background: rgba(0, 0, 0, 0.7);
         color: white;
         padding: 10px;
         transition: opacity 0.3s ease;
     }
 
+    .card-content {
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+    }
+
     .card-hover-content {
-        position: absolute;
         top: 0;
-        left: 0;
-        right: 0;
         bottom: 0;
         background: rgba(0, 0, 0, 0.9);
-        color: white;
-        padding: 20px;
         opacity: 0;
-        transition: opacity 0.3s ease;
         overflow-y: auto;
     }
 
@@ -105,101 +250,76 @@
         color: #ddd;
     }
 
-    .timezone-icon {
-        font-size: 0.8em;
-        cursor: help;
-        margin-left: 5px;
+    h4 {
+        margin-bottom: 10px;
+        margin-top: 10px;
     }
 
-    .toggle-container {
+    .stats-box.recently-added h3, h4 {
         display: flex;
-        align-items: center;
-        margin-bottom: 20px;
-        font-size: 0.9em;
-        margin-bottom: 0px;
+        justify-content: center;
     }
 
+    /* Responsive adjustments */
     @media (max-width: 768px) {
+        .stats-container {
+            width: 95%;
+        }
+        
+        .top-stats {
+            grid-template-columns: 1fr;
+        }
+        
         .toggle-container {
-            padding-top: 20px;
+            align-items: flex-start;
+        }
+        
+        .toggle-item {
+            margin-bottom: 10px;
+        }
+
+        /* New styles for iPhone screens */
+        .card-container {
+            gap: 10px;
+        }
+
+        .card {
+            width: calc(50% - 5px);
+        }
+
+        .card h5 {
+            font-size: 0.9em;
+        }
+
+        .card .added-date,
+        .card .info-line {
+            font-size: 0.7em;
         }
     }
 
-    .toggle-item {
-        display: flex;
-        align-items: center;
-        margin-right: 15px;
-    }
-    .toggle-label {
-        margin-right: 5px;
-    }
-    .toggle-switch {
-        position: relative;
-        display: inline-block;
-        width: 40px;
-        height: 20px;
-    }
-    .toggle-switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-    }
-    .toggle-slider {
-        position: absolute;
-        cursor: pointer;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: #ccc;
-        transition: .4s;
-        border-radius: 20px;
-    }
-    .toggle-slider:before {
-        position: absolute;
-        content: "";
-        height: 16px;
-        width: 16px;
-        left: 2px;
-        bottom: 2px;
-        background-color: white;
-        transition: .4s;
-        border-radius: 50%;
-    }
-    input:checked + .toggle-slider {
-        background-color: #2196F3;
-    }
-    input:checked + .toggle-slider:before {
-        transform: translateX(20px);
-    }
-
-    .statistics-wrapper {
-        display: flex;
-        flex-direction: column;
-        width: 100%;
-    }
-
-    .stats-container {
-        width: 100%;
+    /* Additional adjustment for very small screens */
+    @media (max-width: 350px) {
+        .card {
+            width: 100%;
+        }
     }
 </style>
 
 <div class="statistics-wrapper">
     <div class="toggle-container">
         <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-globe"></i> <span id="current-timezone">Loading...</span></span>
+            <span class="toggle-label"><i class="fas fa-globe"></i> <span id="current-timezone">{{ stats.timezone }}</span></span>
         </div>
         <div class="toggle-item">
             <span class="toggle-label">24h</span>
             <label class="toggle-switch">
-                <input type="checkbox" id="time-format-toggle" checked>
+                <input type="checkbox" id="time-format-toggle" {% if stats.use_24hour_format %}checked{% endif %}>
                 <span class="toggle-slider"></span>
             </label>
         </div>
     </div>
 
     <div class="stats-container">
-
         <div class="stats-box collection-stats">
             <div class="stat-items">
                 <div class="stat-item">
@@ -217,52 +337,64 @@
             </div>
         </div>
 
-        <div class="stats-box recently-aired">
-            <h3>Recently Aired</h3>
-            {% if stats.recently_aired %}
-                <ul>
-                {% for item in stats.recently_aired %}
-                    <li style="color: #FFA500;">
-                        {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
-                        <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
-                    </li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p>No shows aired recently.</p>
-            {% endif %}
-        </div>
-
-        <div class="stats-box airing-soon">
-            <h3>Airing Soon</h3>
-            {% if stats.airing_soon %}
-                <ul>
-                {% for item in stats.airing_soon %}
-                    <li style="color: #FFA500;">
-                        {{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }} - 
-                        <span class="air-date" style="color: #f4f4f4;">{{ item.air_datetime }}</span>
-                    </li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p>No shows airing soon.</p>
-            {% endif %}
-        </div>
-
-        <div class="stats-box upcoming-releases">
-            <h3>Upcoming Releases</h3>
-            {% if stats.upcoming_releases %}
-                <ul>
-                {% for item in stats.upcoming_releases %}
-                    <li style="color: #FFA500;">
-                        {{ item.titles|join(', ') }} - 
-                        <span class="release-date" style="color: #f4f4f4;">{{ item.release_date }}</span>
-                    </li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p>No upcoming releases in the next week.</p>
-            {% endif %}
+        <div class="top-stats">
+            <div class="stats-box recently-aired">
+                <h3>Recently Aired</h3>
+                {% if stats.recently_aired %}
+                    <ul>
+                    {% for item in stats.recently_aired %}
+                        <li>
+                            <span>{{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }}</span>
+                            <span class="air-date">{{ item.formatted_time }}</span>
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No shows aired recently.</p>
+                {% endif %}
+            </div>
+            
+            <div class="stats-box airing-soon">
+                <h3>Airing Soon</h3>
+                {% if stats.airing_soon %}
+                    <ul>
+                    {% for item in stats.airing_soon %}
+                        <li>
+                            <span>{{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }}</span>
+                            <span class="air-date" data-original-time="{{ item.air_datetime.strftime('%H:%M') }}">{{ item.formatted_time }}</span>
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No shows airing soon.</p>
+                {% endif %}
+            </div>
+            
+            <div class="stats-box upcoming-releases">
+                <h3>Upcoming Releases</h3>
+                {% if stats.upcoming_releases %}
+                    <ul>
+                    {% for item in stats.upcoming_releases %}
+                        <li>
+                            <span>{{ item.titles|join(', ') }}</span>
+                            <span class="release-date">
+                                {% if item.release_date is not none %}
+                                    {% if item.release_date is string %}
+                                        {{ item.release_date }}
+                                    {% else %}
+                                        {{ item.release_date.strftime('%Y-%m-%d') }}
+                                    {% endif %}
+                                {% else %}
+                                    Date unknown
+                                {% endif %}
+                            </span>
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No upcoming releases in the next week.</p>
+                {% endif %}
+            </div>
         </div>
 
         <div class="stats-box recently-added">
@@ -282,13 +414,11 @@
                             <div class="card-hover-content">
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
                                 <p class="info-line">Added: {{ movie.collected_at }}</p>
-                                <p class="info-line">Versions: {{ movie.version }}</p>
+                                <p class="info-line">Versions: {{ movie.versions }}</p>
                             </div>
                         </div>
                     {% endfor %}
                     </div>
-                {% else %}
-                    <p>No movies added recently.</p>
                 {% endif %}
             </div>
             <div class="recently-added-section">
@@ -306,248 +436,234 @@
                             <div class="card-hover-content">
                                 <h5>{{ show.title }}</h5>
                                 <p class="info-line">Added: {{ show.collected_at }}</p>
-                                <p class="info-line">Versions: {{ show.versions|join(', ') }}</p>
+                                <p class="info-line">Versions: {{ show.versions }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
                             </div>
                         </div>
                     {% endfor %}
                     </div>
-                {% else %}
-                    <p>No TV shows added recently.</p>
                 {% endif %}
             </div>
         </div>
-
-
     </div>
 </div>
 
 <script>
-let initialLoadComplete = false;
-let use24HourFormat = localStorage.getItem('use24HourFormat') !== 'false'; // Default to true if not set
+// Use the server-side preference to set the initial state
+let use24HourFormat = {{ 'true' if stats.use_24hour_format else 'false' }};
+// Immediately set the checkbox state
+document.getElementById('time-format-toggle').checked = use24HourFormat;
 
-function updateAllTimes() {
-    console.log('Updating all times. use24HourFormat:', use24HourFormat);
-    document.querySelectorAll('.air-date, .release-date, .info-line').forEach(elem => {
-        let originalTime = elem.dataset.originalTime;
+function updateAllTimes(data) {
+    // Update recently aired
+    const recentlyAiredList = document.querySelector('.recently-aired ul');
+    if (recentlyAiredList) {
+        recentlyAiredList.innerHTML = data.recently_aired.map(item => `
+            <li>
+                <span>${item.title} S${item.season.toString().padStart(2, '0')}E${item.episode.toString().padStart(2, '0')}</span>
+                <span class="air-date">${item.formatted_time}</span>
+            </li>
+        `).join('');
+    }
+
+    // Update airing soon
+    const airingSoonList = document.querySelector('.airing-soon ul');
+    if (airingSoonList) {
+        airingSoonList.innerHTML = data.airing_soon.map(item => `
+            <li>
+                <span>${item.title} S${item.season.toString().padStart(2, '0')}E${item.episode.toString().padStart(2, '0')}</span>
+                <span class="air-date">${item.formatted_time}</span>
+            </li>
+        `).join('');
+    }
+
+    // Update upcoming releases
+    const upcomingReleasesList = document.querySelector('.upcoming-releases ul');
+    if (upcomingReleasesList) {
+        upcomingReleasesList.innerHTML = data.upcoming_releases.map(item => `
+            <li>
+                <span>${item.titles.join(', ')}</span>
+                <span class="release-date">
+                    ${item.release_date ? new Date(item.release_date).toISOString().split('T')[0] : 'Date unknown'}
+                </span>
+            </li>
+        `).join('');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const timeFormatToggle = document.getElementById('time-format-toggle');
+    
+    timeFormatToggle.addEventListener('change', function() {
+        use24HourFormat = this.checked;
         
-        if (!originalTime) {
-            const originalText = elem.textContent;
-            console.log('Element:', elem, 'Original text:', originalText);
+        fetch('/set_time_preference', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ use24HourFormat: use24HourFormat }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Server response:', data);
+            updateAllTimes(data);
+        })
+        .catch(error => {
+            console.error('Error saving preference:', error);
+        });
+    });
+
+    function updateStatistics() {
+        fetch('/statistics', {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Update the statistics on the page
+            document.getElementById('total-movies').textContent = data.total_movies;
+            document.getElementById('total-shows').textContent = data.total_shows;
+            document.getElementById('total-episodes').textContent = data.total_episodes;
             
-            // Match date and time in various formats, including "Sun, 25 Aug 2024 19:00:00 GMT"
-            const dateTimeMatch = originalText.match(/(\w{3}, \d{1,2} \w{3} \d{4}) (\d{2}:\d{2}(?::\d{2})?)(?: GMT)?/);
+            // Update the uptime
+            const uptimeSeconds = data.uptime;
+            const days = Math.floor(uptimeSeconds / 86400);
+            const hours = Math.floor((uptimeSeconds % 86400) / 3600);
+            const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+            document.getElementById('uptime').textContent = `${days} days, ${hours} hours, ${minutes} minutes`;
+        
+            // Update all sections, including on initial load
+            updateRecentlyAired(data.recently_aired);
+            updateAiringSoon(data.airing_soon);
+            updateUpcomingReleases(data.upcoming_releases);
+            updateRecentlyAdded(data.recently_added_movies, data.recently_added_shows);
             
-            if (dateTimeMatch) {
-                const [, datePart, timePart] = dateTimeMatch;
-                originalTime = timePart;
-                elem.dataset.originalTime = originalTime;
-                elem.dataset.datePart = datePart;
-            } else {
-                console.log('No valid date-time format found for element:', elem);
-                return;
+            // Update timezone information
+            updateTimezone(data.timezone);
+        })
+        .catch(error => console.error('Error updating statistics:', error));
+    }
+
+    function updateTimezone(timezone) {
+        const timezoneElement = document.getElementById('current-timezone');
+        if (timezoneElement) {
+            timezoneElement.textContent = timezone;
+        }
+    }
+
+    function updateRecentlyAired(recentlyAired) {
+        const container = document.querySelector('.stats-box.recently-aired');
+        if (container) {
+            const ul = container.querySelector('ul') || document.createElement('ul');
+            ul.innerHTML = recentlyAired.map(item => `
+                <li style="color: #FFA500;">
+                    <span>${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}</span>
+                    <span class="air-date" style="color: #f4f4f4;">${item.formatted_time}</span>
+                </li>
+            `).join('');
+            if (!container.contains(ul)) container.appendChild(ul);
+        }
+    }
+
+    function updateAiringSoon(airingSoon) {
+        const container = document.querySelector('.stats-box.airing-soon');
+        if (container) {
+            const ul = container.querySelector('ul') || document.createElement('ul');
+            ul.innerHTML = airingSoon.map(item => `
+                <li style="color: #FFA500;">
+                    <span>${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}</span>
+                    <span class="air-date" style="color: #f4f4f4;">${item.formatted_time}</span>
+                </li>
+            `).join('');
+            if (!container.contains(ul)) container.appendChild(ul);
+        }
+    }
+
+    function updateUpcomingReleases(upcomingReleases) {
+        const container = document.querySelector('.stats-box.upcoming-releases');
+        if (container) {
+            const ul = container.querySelector('ul') || document.createElement('ul');
+            ul.innerHTML = upcomingReleases.map(item => `
+                <li style="color: #FFA500;">
+                    <span>${item.titles.join(', ')}</span>
+                    <span class="release-date" style="color: #f4f4f4;">
+                        ${item.release_date ? (typeof item.release_date === 'string' ? item.release_date : new Date(item.release_date).toISOString().split('T')[0]) : 'Date unknown'}
+                    </span>
+                </li>
+            `).join('');
+            if (!container.contains(ul)) container.appendChild(ul);
+        }
+    }
+
+    function updateRecentlyAdded(movies, shows) {
+        console.log('Recently added movies:', movies);
+        console.log('Recently added shows:', shows);
+        updateRecentlyAddedSection('Movies', movies);
+        updateRecentlyAddedSection('TV Shows', shows);
+    }
+
+    function updateRecentlyAddedSection(type, items) {
+        const sections = document.querySelectorAll('.recently-added-section');
+        let section = null;
+        for (let s of sections) {
+            if (s.querySelector('h4').textContent.trim() === type) {
+                section = s;
+                break;
             }
         }
-        
-        const formattedTime = formatTime(originalTime);
-        const formattedDateTime = `${elem.dataset.datePart} ${formattedTime}`;
-        console.log('Updating date/time:', elem.textContent, '->', formattedDateTime);
-        elem.textContent = formattedDateTime;
-    });
-}
-
-function formatTime(timeString) {
-    console.log('Formatting time:', timeString, 'use24HourFormat:', use24HourFormat);
-    
-    const [hours, minutes] = timeString.split(':');
-    const hour = parseInt(hours, 10);
-    
-    if (use24HourFormat) {
-        return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}`;
-    } else {
-        const ampm = hour >= 12 ? 'PM' : 'AM';
-        const hour12 = hour % 12 || 12;
-        return `${hour12}:${minutes.padStart(2, '0')} ${ampm}`;
-    }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const timeFormatToggle = document.getElementById('time-format-toggle');
-    
-    // Set the initial state of the toggle based on the saved preference
-    timeFormatToggle.checked = use24HourFormat;
-    
-    timeFormatToggle.addEventListener('change', function() {
-        use24HourFormat = this.checked;
-        console.log('Toggle changed. use24HourFormat:', use24HourFormat);
-        // Save the preference to localStorage
-        localStorage.setItem('use24HourFormat', use24HourFormat);
-        updateAllTimes();
-    });
-    
-    // Initial time format update
-    updateAllTimes();
-});
-
-function updateStatistics() {
-    fetch('/statistics', {
-        headers: {
-            'X-Requested-With': 'XMLHttpRequest'
+        if (!section) {
+            console.error(`Section for ${type} not found`);
+            return;
         }
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Received statistics data:', data);
-        // Update the statistics on the page
-        document.getElementById('total-movies').textContent = data.total_movies;
-        document.getElementById('total-shows').textContent = data.total_shows;
-        document.getElementById('total-episodes').textContent = data.total_episodes;
-        document.getElementById('uptime').textContent = formatUptime(data.uptime);
-        
-        // Update all sections, including on initial load
-        updateRecentlyAired(data.recently_aired);
-        updateAiringSoon(data.airing_soon);
-        updateUpcomingReleases(data.upcoming_releases);
-        updateRecentlyAdded(data.recently_added_movies, data.recently_added_shows);
-        
-        // Update timezone information
-        updateTimezone(data.timezone);
-        
-        initialLoadComplete = true;
+        const container = section.querySelector('.card-container') || document.createElement('div');
+        container.className = 'card-container';
+        if (Array.isArray(items) && items.length > 0) {
+            container.innerHTML = items.map(item => {
+                // Format the collected_at date
+                const collectedDate = new Date(item.collected_at);
+                const formattedDate = `${collectedDate.toLocaleDateString()} ${collectedDate.getHours().toString().padStart(2, '0')}:${collectedDate.getMinutes().toString().padStart(2, '0')}`;
 
-        // Update times for dynamically added elements
-        updateAllTimes();
-    })
-    .catch(error => console.error('Error updating statistics:', error));
-}
-
-function updateTimezone(timezone) {
-    // Remove this function or leave it empty if you don't want to display the timezone
-}
-
-function formatUptime(seconds) {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    return `${days} days, ${hours} hours, ${minutes} minutes`;
-}
-
-function updateRecentlyAired(recentlyAired) {
-    const container = document.querySelector('.stats-box.recently-aired');
-    if (container) {
-        const ul = container.querySelector('ul') || document.createElement('ul');
-        ul.innerHTML = recentlyAired.map(item => `
-            <li style="color: #FFA500;">
-                ${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} - 
-                <span class="air-date" style="color: #f4f4f4;">${item.air_datetime}</span>
-            </li>
-        `).join('');
-        if (!container.contains(ul)) container.appendChild(ul);
-    }
-}
-
-function updateAiringSoon(airingSoon) {
-    const container = document.querySelector('.stats-box.airing-soon');
-    if (container) {
-        const ul = container.querySelector('ul') || document.createElement('ul');
-        ul.innerHTML = airingSoon.map(item => `
-            <li style="color: #FFA500;">
-                ${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} - 
-                <span class="air-date" style="color: #f4f4f4;">${item.air_datetime}</span>
-            </li>
-        `).join('');
-        if (!container.contains(ul)) container.appendChild(ul);
-    }
-}
-
-function updateUpcomingReleases(upcomingReleases) {
-    const container = document.querySelector('.stats-box.upcoming-releases');
-    if (container) {
-        const ul = container.querySelector('ul') || document.createElement('ul');
-        ul.innerHTML = upcomingReleases.map(item => `
-            <li style="color: #FFA500;">
-                ${item.titles.join(', ')} - 
-                <span class="release-date" style="color: #f4f4f4;">${item.release_date}</span>
-            </li>
-        `).join('');
-        if (!container.contains(ul)) container.appendChild(ul);
-    }
-}
-
-function updateRecentlyAdded(movies, shows) {
-    console.log('Recently added movies:', movies);
-    console.log('Recently added shows:', shows);
-    updateRecentlyAddedSection('Movies', movies);
-    updateRecentlyAddedSection('TV Shows', shows);
-}
-
-function updateRecentlyAddedSection(type, items) {
-    console.log(`Updating ${type} section with:`, items);
-    const sections = document.querySelectorAll('.recently-added-section');
-    let section = null;
-    for (let s of sections) {
-        if (s.querySelector('h4').textContent.trim() === type) {
-            section = s;
-            break;
+                return `
+                    <div class="card">
+                        ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
+                        <div class="card-content">
+                            <h5 class="truncate">${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                        </div>
+                        <div class="card-hover-content">
+                            <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                            <p class="info-line">Added: ${formattedDate}</p>
+                            <p class="info-line">Versions: ${item.versions}</p>
+                            ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
+                                `<p class="info-line">Seasons: ${item.seasons.join(', ')}</p>
+                                <p class="info-line">Latest: S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            container.innerHTML = `<p>No recent additions</p>`;
+        }
+        if (!section.contains(container)) {
+            section.appendChild(container);
         }
     }
-    if (!section) {
-        console.error(`Section for ${type} not found`);
-        return;
-    }
-    const container = section.querySelector('.card-container') || document.createElement('div');
-    container.className = 'card-container';
-    if (Array.isArray(items) && items.length > 0) {
-        container.innerHTML = items.map(item => `
-            <div class="card">
-                ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
-                <div class="card-content">
-                    <h5 class="truncate">${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                </div>
-                <div class="card-hover-content">
-                    <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                    <p class="info-line">Added: ${item.collected_at}</p>
-                    <p class="info-line">Versions: ${item.versions ? item.versions.join(', ') : item.version}</p>
-                    ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
-                        `<p class="info-line">Seasons: ${item.seasons.join(', ')}</p>
-                         <p class="info-line">Latest: S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
-                </div>
-            </div>
-        `).join('');
+
+    // Update statistics every 5 minutes
+    setInterval(updateStatistics, 300000);
+
+    console.log('Timezone from server:', '{{ stats.timezone }}');
+    const timezoneElement = document.getElementById('current-timezone');
+    if (timezoneElement) {
+        console.log('Timezone displayed in HTML:', timezoneElement.textContent);
     } else {
-        console.log(`No items to display for ${type}`);
-        container.innerHTML = `<p>No recent additions</p>`;
+        console.log('Timezone element not found in HTML');
     }
-    if (!section.contains(container)) {
-        section.appendChild(container);
-    }
-}
 
-function isSameDay(date1, date2) {
-    return date1.getUTCFullYear() === date2.getUTCFullYear() &&
-           date1.getUTCMonth() === date2.getUTCMonth() &&
-           date1.getUTCDate() === date2.getUTCDate();
-}
-
-// Update statistics every 5 minutes
-setInterval(updateStatistics, 300000);
-
-// Initial update
-document.addEventListener('DOMContentLoaded', () => {
-    initialLoadComplete = false;
+    // Initial updates
     updateStatistics();
-    
-    const timeFormatToggle = document.getElementById('time-format-toggle');
-    
-    timeFormatToggle.addEventListener('change', function() {
-        use24HourFormat = this.checked;
-        console.log('Toggle changed. use24HourFormat:', use24HourFormat);
-        updateAllTimes();
-    });
-    
-    // Initial time format update
-    updateAllTimes();
 });
 </script>
 {% endblock %}
