@@ -14,18 +14,74 @@
     .login-reminder strong {
         color: #333;
     }
+
+    .auth-form {
+        max-width: 300px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: #2a2a2a;
+        border-radius: 5px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .auth-form h2 {
+        text-align: center;
+        color: #f4f4f4;
+        margin-bottom: 20px;
+    }
+
+    /* Update the input styles to include password fields */
+    .auth-form input[type="text"],
+    .auth-form input[type="password"] {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 15px;
+        border: 1px solid #555;
+        border-radius: 3px;
+        background-color: #333;
+        color: #f4f4f4;
+        font-size: 16px;
+        box-sizing: border-box; /* This ensures padding is included in the width */
+    }
+
+    .auth-form input[type="submit"] {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 3px;
+        background-color: #4CAF50;
+        color: white;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background-color 0.3s;
+    }
+
+    .auth-form input[type="submit"]:hover {
+        background-color: #45a049;
+    }
+
+    .flash-message {
+        max-width: 300px;
+        margin: 50px auto;
+        padding: 10px;
+        margin-bottom: 15px;
+        border-radius: 3px;
+        text-align: center;
+        opacity: 0;
+        transition: opacity 0.5s ease-in-out;
+    }
+
+    .flash-message.error {
+        background-color: #ff6b6b;
+        color: white;
+    }
+
+    .flash-message.show {
+        opacity: 1;
+    }
 </style>
 <div class="auth-form">
     <h2>Login</h2>
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            <ul class="flash-messages">
-            {% for category, message in messages %}
-                <li class="flash-message {{ category }}">{{ message }}</li>
-            {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
     <form method="POST">
         <input type="text" name="username" placeholder="Username" required>
         <input type="password" name="password" placeholder="Password" required>
@@ -33,4 +89,32 @@
     </form>
     <p class="login-reminder">Initial login: username <strong>admin</strong>, password <strong>admin</strong></p>
 </div>
+<div class="flash-messages">
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+    <div class="flash-messages">
+    {% for category, message in messages %}
+        <div class="flash-message {{ category }}" id="flash-message">{{ message }}</div>
+    {% endfor %}
+    </div>
+{% endif %}
+{% endwith %}
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var flashMessage = document.getElementById('flash-message');
+        if (flashMessage) {
+            // Fade in
+            setTimeout(function() {
+                flashMessage.classList.add('show');
+            }, 100);
+
+            // Fade out
+            setTimeout(function() {
+                flashMessage.classList.remove('show');
+            }, 5000);
+        }
+    });
+</script>
+
 {% endblock %}

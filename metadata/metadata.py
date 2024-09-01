@@ -327,6 +327,17 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             if 'release_date' not in item:
                 item['release_date'] = get_release_date_if_missing(item, details)
             
+            # Check if the movie is tagged as anime
+            genres = details.get('keywords', [])
+            is_anime = False
+            if isinstance(genres, list):
+                is_anime = any(genre.get('name', '').lower() == 'anime' for genre in genres)
+            else:
+                logging.warning(f"Unexpected 'genres' format for movie {item['title']}: {genres}")
+            
+            item['genres'] = ['anime'] if is_anime else []
+            logging.debug(f"Movie {item['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {item['genres']}")
+            
             processed_items['movies'].append(item)
 
         else:  # TV show
@@ -340,6 +351,16 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             if 'year' not in item:
                 item['year'] = get_year_if_missing(item, show_details)
 
+            # Check if the show is tagged as anime
+            genres = show_details.get('keywords', [])
+            is_anime = False
+            if isinstance(genres, list):
+                is_anime = any(genre.get('name', '').lower() == 'anime' for genre in genres)
+            else:
+                logging.warning(f"Unexpected 'genres' format for show {item['title']}: {genres}")
+            
+            logging.debug(f"Show {item['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {genres}")
+
             # Get all season-episode counts
             season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
 
@@ -347,27 +368,42 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             existing_episodes = get_all_media_items(tmdb_id=item['tmdb_id'], media_type='episode')
             existing_episode_set = set((ep['season_number'], ep['episode_number']) for ep in existing_episodes)
 
+            logging.debug(f"Processing TV show: {item['title']} (TMDB ID: {item['tmdb_id']})")
+            logging.debug(f"Season-episode counts: {season_episode_counts}")
+
+            absolute_episode_number = 1  # Start from 1
             for season_number, episode_count in season_episode_counts.items():
-                for episode_number in range(1, episode_count + 1):
+                logging.debug(f"Processing season {season_number} with {episode_count} episodes")
+                season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], season_number, cookies)
+                logging.debug(f"Episode details for season {season_number}: {season_details}")
+                
+                available_episodes = season_details.get('episodes', [])
+                for episode in available_episodes:
+                    episode_number = episode['episodeNumber']
+                    logging.debug(f"Processing S{season_number}E{episode_number} (Absolute: {absolute_episode_number})")
+                    
                     if (season_number, episode_number) not in existing_episode_set:
-                        episode_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], season_number, cookies)
-                        episode = next((ep for ep in episode_details.get('episodes', []) if ep['episodeNumber'] == episode_number), None)
+                        logging.debug(f"Episode S{season_number}E{episode_number} not in existing set, processing")
                         
-                        if episode:
-                            episode_item = {
-                                'imdb_id': item['imdb_id'],
-                                'tmdb_id': item['tmdb_id'],
-                                'title': item['title'],
-                                'year': item['year'],
-                                'season_number': season_number,
-                                'episode_number': episode_number,
-                                'episode_title': episode.get('name', 'Unknown Episode Title'),
-                                'release_date': get_release_date(episode, 'tv'),
-                                'media_type': 'episode'
-                            }
-                            processed_items['episodes'].append(episode_item)
-                        else:
-                            logging.warning(f"Could not find episode details for S{season_number}E{episode_number} of show: {item['title']}")
+                        episode_item = {
+                            'imdb_id': item['imdb_id'],
+                            'tmdb_id': item['tmdb_id'],
+                            'title': item['title'],
+                            'year': item['year'],
+                            'season_number': season_number,
+                            'episode_number': episode_number,
+                            'episode_title': episode.get('name', 'Unknown Episode Title'),
+                            'release_date': get_release_date(episode, 'tv'),
+                            'media_type': 'episode',
+                            'genres': ['anime'] if is_anime else []
+                        }
+                        logging.debug(f"Created episode item: {episode_item}")
+                        processed_items['episodes'].append(episode_item)
+                        logging.debug(f"Added episode: S{season_number}E{episode_number}")
+                    else:
+                        logging.debug(f"Episode S{season_number}E{episode_number} already exists in the database")
+                    
+                    absolute_episode_number += 1
 
         logging.debug(f"Processed item: {item}")
 
@@ -514,16 +550,24 @@ def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
         show_data = show_response.json()
         
         # Extract and return the airtime
-        if 'first_aired' in show_data:
-            local_now = datetime.now()
-            utc = datetime.strptime(show_data['first_aired'], "%Y-%m-%dT%H:%M:%S.000Z")
-            utc = utc.replace(tzinfo=timezone.utc)
-            local_time = (utc.astimezone(local_now.tzname())).strftime('%H:%M')
-            return local_time
+        first_aired = show_data.get('first_aired')
+        if first_aired:
+            try:
+                local_now = datetime.now()
+                utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S.000Z")
+                utc = utc.replace(tzinfo=timezone.utc)
+                local_time = (utc.astimezone(local_now.tzname())).strftime('%H:%M')
+                return local_time
+            except ValueError as e:
+                logging.error(f"Error parsing 'first_aired' for show with IMDb ID {imdb_id}: {e}. Using default airtime.")
+                return DEFAULT_AIRTIME
         else:
-            logging.warning(f"No airtime found for show with IMDb ID: {imdb_id}. Using default airtime.")
+            logging.warning(f"No 'first_aired' data found for show with IMDb ID: {imdb_id}. Using default airtime.")
             return DEFAULT_AIRTIME
     
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching show data from Trakt: {e}. Using default airtime.")
+        return DEFAULT_AIRTIME
+    except Exception as e:
+        logging.error(f"Unexpected error in get_show_airtime_by_imdb_id for IMDb ID {imdb_id}: {e}. Using default airtime.")
         return DEFAULT_AIRTIME

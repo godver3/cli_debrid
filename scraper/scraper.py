@@ -2,7 +2,7 @@ import PTN
 import logging
 import re
 from api_tracker import api
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .zilean import scrape_zilean
@@ -18,6 +18,16 @@ from pprint import pformat
 import json
 from fuzzywuzzy import fuzz
 import os
+from unidecode import unidecode
+from utilities.plex_functions import filter_genres
+from guessit import guessit
+import pykakasi
+from babelfish import Language
+
+def romanize_japanese(text):
+    kks = pykakasi.kakasi()
+    result = kks.convert(text)
+    return ' '.join([item['hepburn'] for item in result])
 
 def setup_scraper_logger():
     log_dir = 'logs'
@@ -50,25 +60,30 @@ def log_filter_result(title: str, resolution: str, filter_reason: str = None):
     else:
         logging.debug(f"Release: '{title}' (Resolution: {resolution}) - Passed filters")
 
-def detect_hdr(title: str) -> bool:
-    # Convert title to uppercase for case-insensitive matching
-    upper_title = title.upper()
+def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
+    other = parsed_info.get('other', [])
+    
+    # Convert 'other' to a list if it's not already (sometimes it might be a single string)
+    if isinstance(other, str):
+        other = [other]
     
     # List of HDR-related terms
-    hdr_terms = ['HDR', 'DV', 'DOVI', 'DOLBY VISION', 'DOLBY.VISION', 'HDR10+', 'HDR10PLUS', 'HDR10']
+    hdr_terms = ['HDR', 'DV', 'DOVI', 'DOLBY VISION', 'HDR10+', 'HDR10', 'HLG']
     
-    # Check for HDR terms, ensuring they are not part of other words
+    # Check for HDR terms in the 'other' field
     for term in hdr_terms:
-        # Use word boundaries to ensure we're matching whole words or abbreviations
-        if re.search(r'\b' + re.escape(term) + r'\b', upper_title):
-            # Special case for 'DV' to exclude 'DVDRIP'
-            if term == 'DV' and 'DVDRIP' in upper_title:
-                continue
+        if any(term.lower() in item.lower() for item in other):
             return True
     
-    # Check for HLG (Hybrid Log-Gamma) separately as it doesn't need word boundaries
-    if 'HLG' in upper_title:
-        return True
+    # If not found in 'other', check the title as a fallback
+    title = parsed_info.get('title', '')
+    title_upper = title.upper()
+    for term in hdr_terms:
+        if term in title_upper:
+            # Special case for 'DV' to exclude 'DVDRIP'
+            if term == 'DV' and 'DVDRIP' in title_upper:
+                continue
+            return True
     
     return False
 
@@ -90,30 +105,43 @@ def smart_search(pattern, text):
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-def improved_title_similarity(query_title: str, result_title: str) -> float:
-    # Parse the result title using PTN
-    parsed_result = PTN.parse(result_title)
-    ptn_title = parsed_result.get('title', result_title)
+def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False) -> float:
+    
+    # Normalize titles
+    query_title = normalize_title(query_title)
+    result_title = result.get('title', '')
+    result_title = normalize_title(result_title)
+    
+    parsed_info = result.get('parsed_info', {})
+    guessit_title = parsed_info.get('title', result_title)
+    guessit_title = normalize_title(guessit_title)
+
+    # For anime, consider alternative titles
+    if is_anime:
+        alternative_titles = parsed_info.get('alternative_title', [])
+        if isinstance(alternative_titles, str):
+            alternative_titles = [alternative_titles]
+        alternative_titles = [normalize_title(alt) for alt in alternative_titles]
 
     # Normalize titles
     query_title = query_title.lower()
-    ptn_title = ptn_title.lower()
+    guessit_title = guessit_title.lower()
 
     # Calculate token sort ratio
-    token_sort_ratio = fuzz.token_sort_ratio(query_title, ptn_title)
+    token_sort_ratio = fuzz.token_sort_ratio(query_title, guessit_title)
 
     # Calculate token set ratio
-    token_set_ratio = fuzz.token_set_ratio(query_title, ptn_title)
+    token_set_ratio = fuzz.token_set_ratio(query_title, guessit_title)
 
     # Check if the first word matches
     query_first_word = query_title.split()[0] if query_title else ''
-    ptn_first_word = ptn_title.split()[0] if ptn_title else ''
-    first_word_match = query_first_word == ptn_first_word
+    guessit_first_word = guessit_title.split()[0] if guessit_title else ''
+    first_word_match = query_first_word == guessit_first_word
 
-    # Check for additional words in PTN title
+    # Check for additional words in guessit title
     query_words = set(query_title.split())
-    ptn_words = set(ptn_title.split())
-    additional_words = ptn_words - query_words
+    guessit_words = set(guessit_title.split())
+    additional_words = guessit_words - query_words
 
     # Calculate final similarity score
     similarity = (token_sort_ratio * 0.4) + (token_set_ratio * 0.4)  # 80% weight to fuzzy matching
@@ -122,6 +150,12 @@ def improved_title_similarity(query_title: str, result_title: str) -> float:
 
     # Penalty for additional words
     similarity -= len(additional_words) * 5  # 5% penalty per additional word
+
+    # For anime, check alternative titles
+    if is_anime:
+        for alt_title in alternative_titles:
+            alt_similarity = fuzz.token_set_ratio(query_title, alt_title.lower())
+            similarity = max(similarity, alt_similarity)
 
     # Normalize the score to be between 0 and 100
     similarity = max(0, min(similarity, 100))
@@ -137,8 +171,21 @@ def calculate_bitrate(size_gb, runtime_minutes):
     bitrate_mbps = (size_bits / runtime_seconds) / 1000  # Convert to Mbps
     return round(bitrate_mbps, 2)
 
-def detect_resolution(title: str) -> str:
-    #logging.debug(f"Detecting resolution for title: '{title}'")
+def detect_resolution(parsed_info: Dict[str, Any]) -> str:
+    screen_size = parsed_info.get('screen_size')
+    
+    if screen_size:
+        # Convert guessit's screen_size to our standard format
+        if screen_size in ['4K', '2160p']:
+            return '2160p'
+        elif screen_size in ['1080p', '1080i']:
+            return '1080p'
+        elif screen_size == '720p':
+            return '720p'
+        elif screen_size in ['576p', '480p']:
+            return '480p'
+    
+    # If guessit couldn't detect the resolution, fall back to our existing method
     resolution_patterns = [
         (r'(?:^|\.)2160p(?:\.|$)', '2160p'),
         (r'(?:^|\.)(4k|uhd)(?:\.|$)', '2160p'),
@@ -146,44 +193,61 @@ def detect_resolution(title: str) -> str:
         (r'(?:^|\.)720p(?:\.|$)', '720p'),
         (r'(?:^|\.)480p(?:\.|$)', '480p'),
     ]
-    title_lower = title.lower()
+    title = parsed_info.get('title', '').lower()
 
-    detected_resolutions = []
-
-    # Check for all resolution patterns
     for pattern, res in resolution_patterns:
-        if re.search(pattern, title_lower, re.IGNORECASE):
-            detected_resolutions.append(res)
-            #logging.debug(f"Matched pattern '{pattern}' in title. Detected resolution: {res}")
+        if re.search(pattern, title, re.IGNORECASE):
+            return res
 
-    # Look for numbers followed by 'p' surrounded by periods
-    p_matches = re.findall(r'(?:^|\.)(\d+)p(?:\.|$)', title_lower)
-    for p_value in p_matches:
-        p_value = int(p_value)
-        if p_value >= 2160:
-            detected_resolutions.append('2160p')
-        elif p_value >= 1080:
-            detected_resolutions.append('1080p')
-        elif p_value >= 720:
-            detected_resolutions.append('720p')
-        elif p_value >= 480:
-            detected_resolutions.append('480p')
+    return 'Unknown'
 
-    if detected_resolutions:
-        # Sort resolutions and pick the highest
-        resolution_order = ['480p', '720p', '1080p', '2160p']
-        highest_resolution = max(detected_resolutions, key=lambda x: resolution_order.index(x))
-        #logging.debug(f"Multiple resolutions detected: {detected_resolutions}. Choosing highest: {highest_resolution}")
-        return highest_resolution
-    else:
-        #logging.debug("No resolution detected. Returning 'Unknown'")
-        return 'Unknown'
+def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[str, Any]:
+    try:
+        parsed_info = guessit(title)
+    except Exception as e:
+        logging.error(f"Error parsing title with guessit: {str(e)}")
+        parsed_info = {'title': title}  # Fallback to using the raw title
 
-# Update parse_torrent_info to use our detect_resolution function
-def parse_torrent_info(title: str) -> Dict[str, Any]:
-    parsed_info = PTN.parse(title)
-    detected_resolution = detect_resolution(title)
-    parsed_info['resolution'] = detected_resolution
+    # Convert Language objects to strings and ensure year is always a list
+    for key, value in parsed_info.items():
+        if isinstance(value, Language):
+            parsed_info[key] = str(value)
+        elif key == 'year' and not isinstance(value, list):
+            parsed_info[key] = [value]
+        elif isinstance(value, list):
+            parsed_info[key] = [str(item) if isinstance(item, Language) else item for item in value]
+
+
+    # Handle size
+    if size is not None:
+        parsed_info['size'] = parse_size(size)
+
+    # Convert Language and Size-like objects to strings
+    for key, value in parsed_info.items():
+        if isinstance(value, Language):
+            parsed_info[key] = str(value)
+        elif hasattr(value, 'bytes'):  # Check for Size-like objects
+            parsed_info[key] = str(value.bytes)
+        elif isinstance(value, list):
+            parsed_info[key] = [
+                str(item) if isinstance(item, Language) else
+                str(item.bytes) if hasattr(item, 'bytes') else
+                item
+                for item in value
+            ]
+
+    # Detect resolution and rank
+    resolution = detect_resolution(parsed_info)
+    parsed_info['resolution'] = resolution
+    parsed_info['resolution_rank'] = get_resolution_rank(resolution)
+
+    # Detect HDR
+    parsed_info['is_hdr'] = detect_hdr(parsed_info)
+
+    # Detect season and episode info
+    season_episode_info = detect_season_episode_info(parsed_info)
+    parsed_info['season_episode_info'] = season_episode_info
+
     return parsed_info
 
 def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Optional[Dict[str, Any]]:
@@ -304,70 +368,91 @@ def preprocess_title(title):
         title = re.sub(r'\b' + re.escape(term) + r'\b', '', title, flags=re.IGNORECASE)
     return title.strip()
 
-def detect_season_pack(title: str) -> str:
-    normalized_title = normalize_title(title)
-    parsed = PTN.parse(normalized_title)
-    
-    if 'season' in parsed:
-        seasons = parsed['season']
-        if isinstance(seasons, list):
-            return ','.join(str(s) for s in sorted(set(seasons)))
-        else:
-            return str(seasons)
-    
-    if re.search(r'\b(complete series|all seasons|all episodes)\b', normalized_title, re.IGNORECASE):
-        return 'Complete'
-    
-    range_match = re.search(r'(?:s|season)\.?(\d{1,2})\.?-\.?(?:s|season)?\.?(\d{1,2})', normalized_title, re.IGNORECASE)
-    if range_match:
-        start, end = map(int, range_match.groups())
-        return ','.join(str(s) for s in range(start, end + 1))
-    
-    consecutive_seasons = re.findall(r'(?<!\d)(\d{1,2})(?=[.\s]|$)', normalized_title)
-    if len(consecutive_seasons) > 1:
-        seasons = sorted(set(map(int, consecutive_seasons)))
-        return ','.join(map(str, seasons))
-    
-    return 'Unknown'
+def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[str, Any]:
+    result = {
+        'season_pack': 'Unknown',
+        'multi_episode': False,
+        'seasons': [],
+        'episodes': []
+    }
 
-def get_resolution_rank(quality: str) -> int:
-    quality = quality.lower()
-    parsed = PTN.parse(quality)
-    resolution = parsed.get('resolution', '').lower()
+    if isinstance(parsed_info, str):
+        try:
+            parsed_info = guessit(parsed_info)
+        except Exception as e:
+            logging.error(f"Error parsing title with guessit: {str(e)}")
+            return result
+
+    season_info = parsed_info.get('season')
+    episode_info = parsed_info.get('episode')
     
-    if resolution:
-        if compare_resolutions(resolution, '2160p') >= 0:
-            return 4
-        elif compare_resolutions(resolution, '1080p') >= 0:
-            return 3
-        elif compare_resolutions(resolution, '720p') >= 0:
-            return 2
-        elif compare_resolutions(resolution, 'sd') >= 0:
-            return 1
+    # Handle season information
+    if season_info is not None:
+        if isinstance(season_info, list):
+            result['season_pack'] = ','.join(str(s) for s in sorted(set(season_info)))
+            result['seasons'] = sorted(set(season_info))
+        else:
+            result['season_pack'] = str(season_info)
+            result['seasons'] = [season_info]
+    else:
+        # Assume season 1 if no season is detected but episode is present
+        if episode_info is not None:
+            result['season_pack'] = '1'
+            result['seasons'] = [1]
+    
+    # Handle episode information
+    if episode_info is not None:
+        if isinstance(episode_info, list):
+            result['multi_episode'] = True
+            result['episodes'] = sorted(set(episode_info))
+        else:
+            result['episodes'] = [episode_info]
+            if not result['seasons']:  # If seasons is still empty, assume season 1
+                result['seasons'] = [1]
+            result['season_pack'] = 'N/A'  # Indicate it's a single episode, not a pack
+    
+    return result
+
+def get_resolution_rank(resolution: str) -> int:
+    resolution = resolution.lower()
+    
+    if resolution in ['4k', '2160p']:
+        return 4
+    elif resolution in ['1080p', '1080i']:
+        return 3
+    elif resolution == '720p':
+        return 2
+    elif resolution in ['576p', '480p', 'sd']:
+        return 1
     return 0  # For unknown resolutions
 
-def extract_season_episode(text: str) -> Tuple[int, int]:
-    season_episode_pattern = r'S(\d+)(?:E(\d+))?'
-    match = re.search(season_episode_pattern, text, re.IGNORECASE)
-    if match:
-        season = int(match.group(1))
-        episode = int(match.group(2)) if match.group(2) else None
-        return season, episode
-    return None, None
+def extract_season_episode(parsed_info: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+    season = parsed_info.get('season')
+    episode = parsed_info.get('episode')
+    
+    # Convert to int if present, otherwise keep as None
+    season = int(season) if season is not None else None
+    episode = int(episode) if episode is not None else None
+    
+    return season, episode
 
-def extract_title_and_se(torrent_name: str) -> Tuple[str, int, int]:
-    parsed = PTN.parse(torrent_name)
-    title = parsed.get('title', torrent_name)
-    season = parsed.get('season')
-    episode = parsed.get('episode')
+def extract_title_and_se(parsed_info: Dict[str, Any]) -> Tuple[str, Optional[int], Optional[int]]:
+    title = parsed_info.get('title', '')
+    season = parsed_info.get('season')
+    episode = parsed_info.get('episode')
+    
+    # Convert to int if present, otherwise keep as None
+    season = int(season) if season is not None else None
+    episode = int(episode) if episode is not None else None
+    
     return title, season, episode
 
 def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], query: str, query_year: int, query_season: int, query_episode: int, multi: bool, content_type: str, version_settings: Dict[str, Any]) -> Tuple:
     torrent_title = result.get('title', '')
-    parsed = result.get('parsed_info', {})
-    extracted_title = parsed.get('title', torrent_title)
-    torrent_year = parsed.get('year')
-    torrent_season, torrent_episode = parsed.get('season'), parsed.get('episode')
+    parsed_info = result.get('parsed_info', {})
+    extracted_title = parsed_info.get('title', torrent_title)
+    torrent_year = parsed_info.get('year')
+    torrent_season, torrent_episode = parsed_info.get('season'), parsed_info.get('episode')
 
     # Get user-defined weights
     resolution_weight = int(version_settings.get('resolution_weight', 3))
@@ -378,8 +463,8 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
-    resolution_score = get_resolution_rank(torrent_title)
-    hdr_score = 1 if result.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
+    resolution_score = parsed_info.get('resolution_rank', 0)
+    hdr_score = 1 if parsed_info.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
 
     scraper = result.get('scraper', '').lower()
 
@@ -410,9 +495,12 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     weighted_size = normalized_size * size_weight
     weighted_bitrate = normalized_bitrate * bitrate_weight
 
-    # Existing logic for year, season, and episode matching
-    year_match = 5 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
-    
+    # Handle the case where torrent_year might be a list
+    if isinstance(torrent_year, list):
+        year_match = 5 if query_year in torrent_year else (1 if any(abs(query_year - y) <= 1 for y in torrent_year) else 0)
+    else:
+        year_match = 5 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
+
     # Only apply season and episode matching for TV shows
     if content_type.lower() == 'episode':
         season_match = 5 if query_season == torrent_season else 0
@@ -553,7 +641,6 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 def trim_magnet(magnet: str) -> str:
     return magnet.split('&dn=')[0] if '&dn=' in magnet else magnet
 
-# Make sure to keep the compare_resolutions function as it is used in the resolution_filter
 def compare_resolutions(res1: str, res2: str) -> int:
     resolution_order = {
         '2160p': 6, '4k': 6, 'uhd': 6,
@@ -564,11 +651,8 @@ def compare_resolutions(res1: str, res2: str) -> int:
         '360p': 1
     }
 
-    res1 = res1.lower()
-    res2 = res2.lower()
-
-    val1 = resolution_order.get(res1, 0)
-    val2 = resolution_order.get(res2, 0)
+    val1 = resolution_order.get(res1.lower(), 0)
+    val2 = resolution_order.get(res2.lower(), 0)
 
     return val1 - val2
 
@@ -621,7 +705,7 @@ def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     return list(unique_results.values())
     
-def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str, season: int, episode: int, multi: bool, version_settings: Dict[str, Any], runtime: int, episode_count: int, season_episode_counts: Dict[int, int]) -> List[Dict[str, Any]]:
+def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str, season: int, episode: int, multi: bool, version_settings: Dict[str, Any], runtime: int, episode_count: int, season_episode_counts: Dict[int, int], genres: List[str]) -> List[Dict[str, Any]]:
     filtered_results = []
     resolution_wanted = version_settings.get('resolution_wanted', '<=')
     max_resolution = version_settings.get('max_resolution', '2160p')
@@ -630,7 +714,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     filter_out = version_settings.get('filter_out', [])
     enable_hdr = version_settings.get('enable_hdr', False)
 
-    def resolution_filter(result_resolution):
+    def resolution_filter(result_resolution, max_resolution, resolution_wanted):
         comparison = compare_resolutions(result_resolution, max_resolution)
         if resolution_wanted == '<=':
             return comparison <= 0
@@ -640,41 +724,95 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             return comparison >= 0
         return False
 
+    # Fetch alternate title for anime
+    alternate_title = None
+    original_title = None
+    is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+    if is_anime:
+        logging.info(f"Anime detected for {title}. Fetching original title.")
+        overseerr_url = get_setting('Overseerr', 'url')
+        overseerr_api_key = get_setting('Overseerr', 'api_key')
+        cookies = get_overseerr_cookies(overseerr_url)
+        
+        if content_type.lower() == 'movie':
+            details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+        else:
+            details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+        
+        if details:
+            original_title = details.get('originalName')
+            if original_title:
+                # Split the title into Japanese and non-Japanese parts
+                japanese_part = ''.join([char for char in original_title if '\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u309f' or '\u30a0' <= char <= '\u30ff'])
+                non_japanese_part = ''.join([char for char in original_title if not ('\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u309f' or '\u30a0' <= char <= '\u30ff')])
+                
+                # Romanize only the Japanese part
+                romanized_japanese = romanize_japanese(japanese_part)
+                
+                # Combine romanized Japanese with non-Japanese part
+                alternate_title = (romanized_japanese + ' ' + non_japanese_part).strip()
+                
+                logging.info(f"Original title: {original_title}")
+                logging.info(f"Romanized title: {alternate_title}")
+            else:
+                logging.info("No original title found in Overseerr details.")
+        else:
+            logging.info("No details found in Overseerr.")
+
     for result in results:
+        parsed_info = result.get('parsed_info', {})
+        season_episode_info = parsed_info.get('season_episode_info', {})
+        season_pack = season_episode_info.get('season_pack', 'Unknown')
+
         original_title = result.get('title', '')
-        detected_resolution = detect_resolution(original_title)
-        preprocessed_title = preprocess_title(original_title)
-        parsed_info = parse_torrent_info(preprocessed_title)
-        parsed_info['resolution'] = detected_resolution
+        parsed_info = result.get('parsed_info', {})
+        detected_resolution = parsed_info.get('resolution', 'Unknown')
+        
+        # Check title similarity
+        title_sim = improved_title_similarity(title, result, is_anime)
+        alternate_title_sim = improved_title_similarity(alternate_title, result, is_anime) if alternate_title else 0
+        
+        if "UFC" in result['title'].upper():
+            similarity_threshold = 0.35
+        else:
+            similarity_threshold = 0.6
+        
+        if is_anime:
+            if max(title_sim, alternate_title_sim) < similarity_threshold:
+                result['filter_reason'] = f"Low title similarity: {max(title_sim, alternate_title_sim):.2f}"
+                continue
+        elif title_sim < similarity_threshold:
+            result['filter_reason'] = f"Low title similarity: {title_sim:.2f}"
+            continue
 
         # Apply resolution filter
-        if not resolution_filter(detected_resolution):
+        if not resolution_filter(detected_resolution, max_resolution, resolution_wanted):
             result['filter_reason'] = f"Resolution mismatch (max: {max_resolution}, wanted: {resolution_wanted})"
             continue
 
         # Apply HDR filter
-        is_hdr = detect_hdr(original_title)
+        is_hdr = parsed_info.get('is_hdr', False)
         if not enable_hdr and is_hdr:
             result['filter_reason'] = "HDR content when HDR is disabled"
             continue
-
-        # Check title similarity
-        title_sim = improved_title_similarity(title, original_title)
-        if title_sim < 0.65:
-            result['filter_reason'] = f"Low title similarity: {title_sim:.2f}"
-            continue       
 
         # Content type specific filtering
         if content_type.lower() == 'movie':
             parsed_year = parsed_info.get('year')
             # Check if the title contains "UFC"
             if "UFC" not in original_title.upper():
-                if not parsed_year:
-                    result['filter_reason'] = "Missing year"
-                    continue
-                elif abs(int(parsed_year) - year) > 1:
-                    result['filter_reason'] = f"Year mismatch: {parsed_year} vs {year}"
-                    continue
+                # Handle year filtering
+                if parsed_year:
+                    if isinstance(parsed_year, list):
+                        # If any year in the list is within 1 year of the target year, keep the result
+                        if not any(abs(int(py) - year) <= 1 for py in parsed_year):
+                            result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
+                            continue
+                    else:
+                        # If it's a single year, use the original logic
+                        if abs(int(parsed_year) - year) > 1:
+                            result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
+                            continue
             else:
                 # For UFC titles, we don't filter based on year
                 logging.debug(f"Skipping year filter for UFC title: {original_title}")
@@ -686,21 +824,35 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             else:
                 result_season = parsed_info.get('season')
                 result_episode = parsed_info.get('episode')
-                if result_season != season or result_episode != episode:
-                    result['filter_reason'] = f"Season/episode mismatch: S{result_season}E{result_episode} vs S{season}E{episode}"
+                
+                # If no season is specified, assume it's season 1
+                if result_season is None and result_episode is not None:
+                    result_season = 1
+                
+                # Log the detected and requested season/episode
+                logging.debug(f"Detected: S{result_season}E{result_episode}, Requested: S{season}E{episode}")
+                
+                # Check if the episode matches
+                if result_episode != episode:
+                    result['filter_reason'] = f"Episode mismatch: E{result_episode} vs E{episode}"
+                    continue
+                
+                # Check if the season matches, allowing season 1 if not specified
+                if result_season != season and result_season != 1:
+                    result['filter_reason'] = f"Season mismatch: S{result_season} vs S{season}"
                     continue
 
         size_gb = parse_size(result.get('size', 0))
 
-        season_pack = detect_season_pack(original_title)
+        season_episode_info = result.get('parsed_info', {}).get('season_episode_info', {})
         scraper = result.get('scraper', '').lower()
 
         if scraper in ['jackett', 'zilean']:
-            if season_pack != 'Unknown' and season_pack != 'N/A':
-                if season_pack == 'Complete':
+            if season_episode_info.get('season_pack', 'Unknown') == 'N/A':
+                if season_episode_info['season_pack'] == 'Complete':
                     total_episodes = sum(season_episode_counts.values())
                 else:
-                    season_numbers = [int(s) for s in season_pack.split(',')]
+                    season_numbers = [int(s) for s in season_episode_info['season_pack'].split(',')]
                     total_episodes = sum(season_episode_counts.get(s, 0) for s in season_numbers)
                 
                 if total_episodes > 0:
@@ -729,26 +881,36 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 result['filter_reason'] = f"Matching filter_out pattern(s): {', '.join(matched_patterns)}"
                 continue
 
-        if content_type == "episode":
-            season_pack = detect_season_pack(original_title)
-            if multi:
-                if season_pack == 'Unknown':
-                    result['filter_reason'] = "Non-multi result when searching for multi"
-                    continue
-                if season_pack != 'Complete':
-                    season_numbers = [int(s) for s in season_pack.split(',')]
-                    if len(season_numbers) == 2:
-                        # It's a range
-                        if season not in range(season_numbers[0], season_numbers[1] + 1):
+            if content_type.lower() == 'episode':
+                if multi:
+                    if season_episode_info['season_pack'] == 'N/A':
+                        result['filter_reason'] = "Single episode result when searching for multi"
+                        continue
+                    if not season_episode_info['seasons'] and not season_episode_info['multi_episode']:
+                        result['filter_reason'] = "Non-multi result when searching for multi"
+                        continue
+                    if season_episode_info['season_pack'] != 'Complete':
+                        if season not in season_episode_info['seasons']:
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"
                             continue
-                    elif season not in season_numbers:
-                        result['filter_reason'] = f"Season pack not containing the requested season: {season}"
+                else:
+                    if season_episode_info['season_pack'] != 'Unknown' and season_episode_info['season_pack'] != 'N/A' and season_episode_info['season_pack'] != str(season):
+                        result['filter_reason'] = "Multi-season release when searching for single season"
                         continue
-            else:
-                if season_pack != 'Unknown' and season_pack != str(season):
-                    result['filter_reason'] = "Multi-episode release when searching for single episode"
-                    continue
+                    if season_episode_info['multi_episode'] and episode not in season_episode_info['episodes']:
+                        result['filter_reason'] = "Multi-episode release not containing the requested episode"
+                        continue
+                    
+                    # Check if the detected season and episode match the requested ones
+                    detected_season = season_episode_info['seasons'][0] if season_episode_info['seasons'] else 1  # Assume season 1 if not detected
+                    detected_episode = season_episode_info['episodes'][0] if season_episode_info['episodes'] else None
+                                      
+                    if detected_episode != episode:
+                        result['filter_reason'] = f"Episode mismatch: E{detected_episode} vs E{episode}"
+                        continue
+                    if detected_season != season and detected_season != 1:  # Allow season 1 if it doesn't match the requested season
+                        result['filter_reason'] = f"Season mismatch: S{detected_season} vs S{season}"
+                        continue
 
         # If the result passed all filters, add it to filtered_results
         filtered_results.append(result)
@@ -758,17 +920,26 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 def normalize_title(title: str) -> str:
     """
     Normalize the title by replacing spaces with periods, removing colons,
-    and removing duplicate periods.
+    replacing ".~." with "-", and removing duplicate periods.
     """
     # Replace spaces with periods and remove colons
     normalized = title.replace(' ', '.').replace(':', '')
+    
+    # Replace ".~." with "-"
+    normalized = normalized.replace('.~.', '-')
+    
     # Remove duplicate periods
     normalized = re.sub(r'\.+', '.', normalized)
+    
     # Remove leading and trailing periods
     normalized = normalized.strip('.')
+    
     return normalized.lower()  # Convert to lowercase for case-insensitive comparison
 
-def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+
+    genres = filter_genres(genres)
+
     try:
         start_time = time.time()
         all_results = []
@@ -816,7 +987,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Get all scraper settings
         all_scraper_settings = get_setting('Scrapers')
-        logging.debug(f"Loaded scraper settings: {all_scraper_settings}")
 
         # Define scraper functions
         scraper_functions = {
@@ -841,12 +1011,13 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 
                 # All scrapers now use the same parameter list
                 scraper_results = scraper_func(imdb_id, title, year, content_type, season, episode, multi)
-                
+                                
                 if isinstance(scraper_results, tuple):
                     *_, scraper_results = scraper_results
                 for item in scraper_results:
                     item['scraper'] = scraper_name
-                    item['title'] = normalize_title(item.get('title', ''))  # Add normalized title
+                    item['title'] = normalize_title(item.get('title', ''))
+                    item['parsed_info'] = parse_torrent_info(item['title'])  # Parse info once
                 logging.debug(f"{scraper_name} scraper found {len(scraper_results)} results")
                 logging.debug(f"{scraper_name} scraper took {time.time() - scraper_start:.2f} seconds")
                 return scraper_results
@@ -880,8 +1051,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         logging.debug(f"Total results after deduplication: {len(all_results)}")
 
         # Filter results
-        filtered_results = filter_results(all_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts)
+        filtered_results = filter_results(all_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
         filtered_out_results = [result for result in all_results if result not in filtered_results]
+
         logging.debug(f"Filtering took {time.time() - scraping_start:.2f} seconds")
         logging.debug(f"Total results after filtering: {len(filtered_results)}")
         logging.debug(f"Total filtered out results: {len(filtered_out_results)}")
@@ -889,8 +1061,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Add is_multi_pack information to each result
         for result in filtered_results:
             torrent_title = result.get('title', '')
+            size = result.get('size', 0)
+            result['parsed_info'] = parse_torrent_info(torrent_title, size)
             preprocessed_title = preprocess_title(torrent_title)
-            season_pack = detect_season_pack(preprocessed_title)
+            preprocessed_title = normalize_title(preprocessed_title)
+            season_episode_info = detect_season_episode_info(preprocessed_title)
+            season_pack = season_episode_info['season_pack']
             is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
             result['is_multi_pack'] = is_multi_pack
             result['season_pack'] = season_pack
@@ -899,20 +1075,18 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         sorting_start = time.time()
 
         def stable_rank_key(x):
-            # First, use the rank_result_key function with content_type and version_settings
+            parsed_info = x.get('parsed_info', {})
             primary_key = rank_result_key(x, filtered_results, title, year, season, episode, multi, content_type, version_settings)
-
-            # Then, use a tuple of stable secondary keys
             secondary_keys = (
-                x.get('scraper', ''),  # Scraper name
-                x.get('title', ''),    # Torrent title
-                x.get('size', 0),      # Size
-                x.get('seeders', 0)    # Seeders
+                x.get('scraper', ''),
+                x.get('title', ''),
+                x.get('size', 0),
+                x.get('seeders', 0)
             )
-
             return (primary_key, secondary_keys)
 
         final_results = sorted(filtered_results, key=stable_rank_key)
+
         logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
 
         logging.debug(f"Total results in final output: {len(final_results)}")
@@ -940,8 +1114,29 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             )
             scraper_logger.info(result_info)
 
-        return final_results, filtered_out_results if filtered_out_results else None
+        def sanitize_result(result):
+            def sanitize_value(value):
+                if isinstance(value, (str, int, float, bool, type(None))):
+                    return value
+                elif isinstance(value, dict):
+                    return {k: sanitize_value(v) for k, v in value.items()}
+                elif isinstance(value, list):
+                    return [sanitize_value(item) for item in value]
+                return str(value)
+
+            sanitized = {key: sanitize_value(value) for key, value in result.items()}
+            
+            # Ensure score_breakdown is preserved
+            if 'score_breakdown' in result:
+                sanitized['score_breakdown'] = result['score_breakdown']
+            
+            return sanitized
+
+        final_results = [sanitize_result(result) for result in final_results]
+        filtered_out_results = [sanitize_result(result) for result in filtered_out_results] if filtered_out_results else None
+
+        return final_results, filtered_out_results
 
     except Exception as e:
         logging.error(f"Unexpected error in scrape function for {title} ({year}): {str(e)}", exc_info=True)
-        return []
+        return [], []  # Return empty lists in case of an error

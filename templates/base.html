@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>cli_debrid - {% block title %}{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     
     <!-- Standard favicon -->
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icon-32x32.png') }}">
@@ -37,91 +36,558 @@
     {% endif %}
 </head>
 <style>
+    /* CSS Reset */
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+     /* Scrollbar styles */
+    ::-webkit-scrollbar {
+        width: 16px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: #2c2c2c;
+        border-left: 1px solid #3d3d3d;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: #5a5a5a;
+        border: 3px solid #2c2c2c;
+        border-radius: 8px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: #707070;
+    }
+
+    /* For Firefox */
+    * {
+        scrollbar-width: auto;
+        scrollbar-color: #5a5a5a #2c2c2c;
+    }
+
+
+    body { 
+        font-family: Arial, sans-serif; 
+        line-height: 1.6; 
+        color: #f4f4f4; 
+        background-color: #333;
+        margin: 0;
+        padding-top: 60px;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+    }
+
+    .container { 
+        width: 95%; 
+        max-width: 1200px;
+        margin: 0 auto; 
+        padding: 20px; 
+        flex-grow: 1;
+    }
+
+    /* Header layout */
+    header {
+        background-color: #1a1a1a;
+        color: white;
+        padding: 5px 20px; 
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.7em; 
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+        height: 50px; 
+    }
+
+    .header-content {
+        display: flex;
+        align-items: center;
+    }
+
+    .header-icon {
+        width: 25px; 
+        height: 25px; 
+        margin-right: 5px; 
+    }
+
+    .title-version {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    h1 {
+        font-size: 1.4em;
+        margin: 0;
+    }
+
+    /* Navigation styles */
+    nav {
+        display: flex;
+        align-items: center;
+        position: absolute;
+        transform: translateX(-50%);
+        height: 100%;
+        left: calc(50%); /* Half of the header-content width */
+    }
+
+    nav ul {
+        list-style-type: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+    }
+
+    nav ul li {
+        margin-right: 10px;
+        position: relative;
+    }
+
+    nav ul li a {
+        color: white;
+        text-decoration: none;
+        font-size: 1.3em;
+        padding: 5px 8px; /* Added padding for larger hit area */
+        transition: color 0.3s ease; /* Smooth transition for color change */
+    }
+
+        /* Hover effect for menu items */
+    nav ul li a::after {
+        content: '';
+        position: absolute;
+        width: 100%;
+        height: 2px;
+        bottom: -2px;
+        left: 0;
+        background-color: #FFA500; /* You can change this color as needed */
+        transform: scaleX(0);
+        transition: transform 0.3s ease;
+    }
+
+    nav ul li a:hover {
+        color: #FFA500; /* Change text color on hover */
+    }
+
+    nav ul li a:hover::after {
+        transform: scaleX(1);
+    }
+
+    .controls-group {
+        display: flex;
+        align-items: center;
+    }
+
     .user-controls, .program-controls {
         display: flex;
         align-items: center;
     }
 
-    .user-info {
+    .username {
         display: flex;
         flex-direction: column;
-        align-items: flex-end;
-        margin-right: 10px;
-    }
-
-    .username {
+        align-items: flex-start;
+        margin-right: 5px;
         font-weight: bold;
     }
 
     .version-info {
-        font-size: 0.9em;
+        font-size: 0.8em;
         color: #888;
     }
 
-    .icon-button {
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-size: 1.5rem;
-        color: #007bff;
-        padding: 5px;
+    /* Hamburger menu styles */
+    .hamburger-menu {
+        display: none;
+    }
+
+
+
+    .header-controls {
         display: flex;
         align-items: center;
     }
 
-    .icon-button .button-text {
-        margin-left: 5px;
+    .user-info {
+        /* margin-right: 15px; */
+        margin-left: 10px;
+        margin-bottom: 20px;   
     }
 
-    .auth-controls a,
-    .user-controls a,
-    #programControlButton {
-        display: inline-block;
-        padding: 8px 15px;
+    .action-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .action-controls .icon-button, .start-program {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         background-color: #4CAF50;
         color: white;
         text-decoration: none;
-        border-radius: 3px;
-        transition: background-color 0.3s;
         border: none;
+        border-radius: 3px;
         font-size: 14px;
         cursor: pointer;
-        line-height: 1.5;
+        transition: background-color 0.3s, opacity 0.3s;
+        padding: 8px 12px;
+        min-width: 120px;
         height: 36px;
-        box-sizing: border-box;
-        vertical-align: middle;
     }
 
-    /* Program Control Button Styles */
-    #programControlButton {
-        padding: 10px 15px;
-        border: none;
-        border-radius: 5px;
-        font-size: 16px;
-        cursor: pointer;
-        transition: background-color 0.3s, opacity 0.3s;
+    .action-controls .icon-button i, .start-program i {
+        margin-right: 5px;
     }
 
     #programControlButton.start-program {
         background-color: #4CAF50;
-        color: white;
     }
 
-    #programControlButton.stop-program {
-        background-color: #f44336;
-        color: white;
-    }
-
-    #programControlButton:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
+    #programControlButton.stop-program,
     #programControlButton[data-status="Running"] {
         background-color: #f44336;
     }
 
-    @media (max-width: 768px) {
+    .action-controls .icon-button:hover, .start-program:hover {
+        opacity: 0.9;
+    }
+
+   /* Database table styles */
+   .table-container {
+        overflow-x: auto;
+        margin-top: 20px;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        background-color: #2c2c2c;
+        color: #f4f4f4;
+    }
+
+    th, td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #444;
+    }
+
+    th {
+        background-color: #1a1a1a;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+
+    tr:nth-child(even) {
+        background-color: #333;
+    }
+
+    tr:hover {
+        background-color: #444;
+    }
+
+    /* Responsive table */
+    @media screen and (max-width: 600px) {
+        table {
+            font-size: 14px;
+        }
+
+        th, td {
+            padding: 8px;
+        }
+    }
+
+    /* Column selector styles */
+    #column-selector-wrapper {
+        margin-bottom: 20px;
+    }
+
+    .toggle-button {
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    #column-selector {
+        background-color: #2c2c2c;
+        padding: 15px;
+        border-radius: 4px;
+        margin-top: 10px;
+    }
+
+    #column-selector.hidden {
+        display: none;
+    }
+
+    .column-selector-container {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 15px;
+    }
+
+    .column-list {
+        flex: 1;
+    }
+
+    .column-list select {
+        width: 100%;
+        height: 150px;
+        background-color: #333;
+        color: #f4f4f4;
+        border: 1px solid #444;
+    }
+
+    .column-buttons {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 15px;
+    }
+
+    .column-buttons button {
+        margin: 5px 0;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    #update-columns {
+        background-color: #008CBA;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    /* Filter and sort styles */
+    #filter-sort {
+        margin-bottom: 20px;
+        background-color: #2c2c2c;
+        padding: 15px;
+        border-radius: 4px;
+    }
+
+    #filter-form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+    }
+
+    #filter-form label {
+        margin-right: 5px;
+    }
+
+    #filter-form select,
+    #filter-form input[type="text"] {
+        padding: 5px;
+        border-radius: 4px;
+        border: 1px solid #444;
+        background-color: #333;
+        color: #f4f4f4;
+    }
+
+    #filter-form button {
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    /* Pagination styles */
+    .pagination {
+        margin: 20px 0;
+        text-align: center;
+    }
+
+    .pagination a {
+        color: #f4f4f4;
+        padding: 8px 16px;
+        text-decoration: none;
+        transition: background-color .3s;
+        border: 1px solid #444;
+        margin: 0 4px;
+        border-radius: 4px;
+    }
+
+    .pagination a.active {
+        background-color: #4CAF50;
+        color: white;
+        border: 1px solid #4CAF50;
+    }
+
+    .pagination a:hover:not(.active) {
+        background-color: #444;
+    }
+
+    /* Media Queries */
+    @media (max-width: 1360px) {
+        .user-info {
+            display: none;  /* Hide the welcome message */
+        }
+
+        .action-controls .icon-button, 
+        .action-controls .start-program,
+        .action-controls #programControlButton {
+            width: 36px;
+            height: 36px;
+            min-width: 36px;
+            padding: 0;
+        }
+
+        .button-text {
+            display: none;
+        }
+
+        .action-controls .icon-button i, 
+        .action-controls .start-program i,
+        .action-controls #programControlButton i {
+            margin-right: 0;
+        }
+
+        .header-content {
+            flex: 0 0 auto; /* Prevent header content from shrinking */
+        }
+        
+        nav {
+            flex: 1; /* Allow nav to take remaining space */
+            justify-content: center; /* Center the nav items horizontally */
+        }
+        
+        .header-controls {
+            flex: 0 0 auto; /* Prevent header controls from shrinking */
+        }
+    }
+
+    @media (max-width: 1360px) and (min-width: 777px) {
+        .header-content {
+            flex: 0 0 auto;
+        }
+        
+        nav {
+            left: calc(50%); 
+        }
+        
+        .header-controls {
+            flex: 0 0 auto;
+        }
+    }
+
+    @media (max-width: 776px) {
+        .header-content {
+            position: absolute;
+            left: 10px;
+        }
+
+        .hamburger-menu {
+            flex-direction: column;
+            justify-content: space-between;
+            width: 30px;
+            height: 21px;
+            cursor: pointer;
+            display: flex;
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .hamburger-menu .bar {
+            width: 100%;
+            height: 3px;
+            background-color: rgb(191 191 190);
+            border-radius: 3px;
+            transition: all 0.3s ease-in-out;
+        }
+
+        /* Hamburger menu animation */
+        .hamburger-menu.active .bar:nth-child(1) {
+            transform: translateY(9px) rotate(45deg);
+        }
+
+        .hamburger-menu.active .bar:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger-menu.active .bar:nth-child(3) {
+            transform: translateY(-9px) rotate(-45deg);
+        }
+
+        nav ul {
+            flex-direction: column;
+            position: absolute;
+            top: 50px;
+            left: 0;
+            width: 100%;
+            background-color: #1a1a1a;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+
+        nav ul.show {
+            max-height: 500px; /* Adjust this value based on your menu's height */
+            transition: max-height 0.5s ease-in;
+        }
+
+        nav ul li {
+            opacity: 0;
+            transform: translateY(-20px);
+            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+        }
+
+        nav ul.show li {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.3s ease-out 0.2s, transform 0.3s ease-out 0.2s;
+        }
+
+        .header-controls {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .action-controls {
+            display: flex;
+            gap: 5px;
+        }
+
         .header-controls {
             display: flex;
             flex-direction: column;
@@ -132,79 +598,113 @@
             margin-bottom: 5px;
         }
 
-        .user-info {
+        .icon-button {
+            font-size: 1.2rem;
+        }
+
+        nav ul li {
             margin-right: 0;
             margin-bottom: 5px;
         }
 
-        .button-text {
-            display: none;
+        nav ul li a {
+            display: block;
+            padding: 10px;
         }
 
-        .icon-button {
-            font-size: 1.2rem;
+        nav ul li a::after {
+            bottom: 0;
+        }
+
+        /* Adjust time zone and 24-hour toggle layout */
+        .time-controls {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+        }
+
+        .time-controls .form-group {
+            margin-bottom: 0;
+            margin-right: 10px;
+        }
+
+        nav {
+            position: static;
+            transform: none;
         }
     }
 </style>
-<body>
+<body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
     <header>
         <div class="header-content">
             <img src="{{ url_for('static', filename='icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
-            <h1>cli_debrid</h1>
+            <div class="title-version">
+                <h1>cli_debrid</h1>
+                <span class="version-info">v{{ version }}</span>
+            </div>
+            {% if current_user.is_authenticated %}
+            <div class="user-info">
+                <span class="username">Welcome, {{ current_user.username }}</span>
+            </div>
+            {% endif %}
         </div>
         <nav id="mainNav">
-            <ul id="navMenu">
-                <li><a href="{{ url_for('statistics') }}">Home</a></li>
-                <li><a href="{{ url_for('queues') }}">Queues</a></li>
-                <li><a href="{{ url_for('scraper') }}">Scraper</a></li>
-                <li><a href="{{ url_for('logs') }}">Logs</a></li>
-                <li><a href="{{ url_for('settings') }}">Settings</a></li>
-                <li><a href="{{ url_for('manage_users') }}">Manage Users</a></li>
-                <li><a href="{{ url_for('database') }}">Database</a></li>
-                <li><a href="{{ url_for('scraper_tester') }}">Scraper Tester</a></li>
-                <li><a href="{{ url_for('debug_functions') }}">Debug Functions</a></li>
-            </ul>
             <div class="hamburger-menu">
                 <div class="bar"></div>
                 <div class="bar"></div>
                 <div class="bar"></div>
             </div>
+            <ul id="navMenu">
+                {% set menu_items = [
+                    ('statistics', 'Home'),
+                    ('queues', 'Queues'),
+                    ('scraper', 'Scraper'),
+                    ('logs', 'Logs'),
+                    ('settings', 'Settings'),
+                    ('manage_users', 'Users'),
+                    ('database', 'Database'),
+                    ('scraper_tester', 'Tester'),
+                    ('debug_functions', 'Debug')
+                ] %}
+                
+                {% if is_user_system_enabled() %}
+                    {% if current_user.is_authenticated %}
+                        {% for route, label in menu_items %}
+                            {% if current_user.role == 'admin' or loop.index <= 3 %}
+                                <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                            {% endif %}
+                        {% endfor %}
+                    {% endif %}
+                {% else %}
+                    {% for route, label in menu_items %}
+                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                    {% endfor %}
+                {% endif %}
+            </ul>
         </nav>
         <div class="header-controls">
             {% if is_user_system_enabled() %}
                 {% if current_user.is_authenticated %}
-                    <div class="user-controls">
-                        <div class="user-info">
-                            <span class="username">Welcome, {{ current_user.username }}</span>
-                            <span class="version-info">v{{ version }}</span>
-                        </div>
+                    <div class="action-controls">
                         <a href="{{ url_for('logout') }}" class="icon-button">
                             <i class="fas fa-sign-out-alt"></i>
                             <span class="button-text">Logout</span>
                         </a>
-                    </div>
-                    {% if current_user.role == 'admin' %}
-                        <div class="program-controls">
-                            <button id="programControlButton" class="icon-button">
-                                <i class="fas fa-play"></i>
-                                <span class="button-text">Start Program</span>
+                        {% if current_user.role == 'admin' %}
+                            <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
+                                <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
+                                <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                             </button>
-                        </div>
-                    {% endif %}
-                {% else %}
-                    <div class="auth-controls">
-                        <a href="{{ url_for('login') }}" class="icon-button">
-                            <i class="fas fa-sign-in-alt"></i>
-                            <span class="button-text">Login</span>
-                        </a>
+                        {% endif %}
                     </div>
                 {% endif %}
             {% else %}
-                <div class="version-info">v{{ version }}</div>
-                <div class="program-controls">
-                    <button id="programControlButton" class="icon-button">
-                        <i class="fas fa-play"></i>
-                        <span class="button-text">Start Program</span>
+                <div class="action-controls">
+                    <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
+                        <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
+                        <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                     </button>
                 </div>
             {% endif %}
@@ -213,7 +713,58 @@
     <main>
         {% block content %}{% endblock %}
     </main>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script type="module">
+        import { initializeProgramControls } from "{{ url_for('static', filename='js/program_controls.js') }}";
+        import { showPopup, POPUP_TYPES } from "{{ url_for('static', filename='js/notifications.js') }}";
+
+        document.addEventListener('DOMContentLoaded', function() {
+            if (document.getElementById('programControlButton')) {
+                initializeProgramControls();
+            }
+            
+            // Make showPopup and POPUP_TYPES available globally
+            window.showPopup = showPopup;
+            window.POPUP_TYPES = POPUP_TYPES;
+
+            const userSystemEnabled = document.body.dataset.userSystemEnabled === 'true';
+            const isAuthenticated = {{ 'true' if current_user.is_authenticated else 'false' }};
+
+            initializeHamburgerMenu(userSystemEnabled, isAuthenticated);
+        });
+
+        function initializeHamburgerMenu(userSystemEnabled, isAuthenticated) {
+            const hamburger = document.querySelector('.hamburger-menu');
+            const navMenu = document.querySelector('#navMenu');
+
+            if (hamburger && navMenu) {
+                const navItems = navMenu.querySelectorAll('li');
+
+                // Show hamburger menu only if user system is disabled or user is authenticated
+                if (!userSystemEnabled || isAuthenticated) {
+                    hamburger.style.display = 'flex';
+                } else {
+                    hamburger.style.display = 'none';
+                }
+
+                hamburger.addEventListener('click', function() {
+                    hamburger.classList.toggle('active');
+                    navMenu.classList.toggle('show');
+                    
+                    if (navMenu.classList.contains('show')) {
+                        // Animate menu items when opening
+                        navItems.forEach((item, index) => {
+                            item.style.transitionDelay = `${index * 0.1}s`;
+                        });
+                    } else {
+                        // Remove transition delay when closing
+                        navItems.forEach(item => {
+                            item.style.transitionDelay = '0s';
+                        });
+                    }
+                });
+            }
+        }
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

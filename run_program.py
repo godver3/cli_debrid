@@ -151,8 +151,6 @@ class ProgramRunner:
             # Call the process method and capture any return value
             result = process_method()
             
-            # Log successful processing
-            logging.info(f"Successfully processed {queue_name} queue")
             update_stats(processed=1)
             
             # Return the result if any
@@ -333,7 +331,7 @@ def process_overseerr_webhook(data):
         overseerr_settings = next((data for source, data in ProgramRunner().content_sources.items() if source.startswith('Overseerr')), {})
         versions = overseerr_settings.get('versions', {})
         
-        all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', [])
+        all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
         add_wanted_items(all_items, versions)
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
 
