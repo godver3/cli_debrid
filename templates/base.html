@@ -43,6 +43,33 @@
         box-sizing: border-box;
     }
 
+     /* Scrollbar styles */
+    ::-webkit-scrollbar {
+        width: 16px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: #2c2c2c;
+        border-left: 1px solid #3d3d3d;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: #5a5a5a;
+        border: 3px solid #2c2c2c;
+        border-radius: 8px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: #707070;
+    }
+
+    /* For Firefox */
+    * {
+        scrollbar-width: auto;
+        scrollbar-color: #5a5a5a #2c2c2c;
+    }
+
+
     body { 
         font-family: Arial, sans-serif; 
         line-height: 1.6; 
@@ -478,12 +505,6 @@
         
         .header-controls {
             flex: 0 0 auto;
-        }
-    }
-
-    @media (max-width: 1300px) {
-        nav {
-            top: calc(25%); 
         }
     }
 
