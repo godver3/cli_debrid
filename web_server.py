@@ -35,7 +35,7 @@ import string
 from itertools import groupby
 from operator import itemgetter
 from flask import current_app
-from api_tracker import api
+from api_tracker import api, api_logger
 from urllib.parse import urlparse
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_sqlalchemy import SQLAlchemy
@@ -2580,6 +2580,37 @@ def api_call_summary():
                            time_frame=time_frame,
                            all_domains=all_domains)
 
+@app.route('/realtime_api_calls')
+def realtime_api_calls():
+    filter_domain = request.args.get('filter', '')
+    latest_calls = get_latest_api_calls()
+    
+    if filter_domain:
+        filtered_calls = [call for call in latest_calls if call['domain'] == filter_domain]
+    else:
+        filtered_calls = latest_calls
+    
+    all_domains = sorted(set(call['domain'] for call in latest_calls))
+    
+    return render_template('realtime_api_calls.html', 
+                           calls=filtered_calls, 
+                           filter=filter_domain,
+                           all_domains=all_domains)
+
+@app.route('/api/latest_calls')
+def api_latest_calls():
+    filter_domain = request.args.get('filter', '')
+    latest_calls = get_latest_api_calls()
+    
+    if filter_domain:
+        filtered_calls = [call for call in latest_calls if call['domain'] == filter_domain]
+    else:
+        filtered_calls = latest_calls
+    
+    return jsonify(filtered_calls)
+
+
+
 @app.route('/clear_api_summary_cache', methods=['POST'])
 @admin_required
 def clear_api_summary_cache():
@@ -2588,6 +2619,27 @@ def clear_api_summary_cache():
     save_cache(cache)
     return jsonify({"status": "success", "message": "API summary cache cleared"})
 
+def get_latest_api_calls(limit=100):
+    calls = []
+    with open('logs/api_calls.log', 'r') as log_file:
+        for line in reversed(list(log_file)):
+            parts = line.strip().split(' - ', 1)
+            if len(parts) == 2:
+                timestamp, message = parts
+                call_info = message.split(': ', 1)[1]
+                method, url_and_domain = call_info.split(' ', 1)
+                url, domain = url_and_domain.split(' - Domain: ')
+                calls.append({
+                    'timestamp': timestamp,
+                    'method': method,
+                    'url': url,
+                    'domain': domain,
+                    'endpoint': url.split(domain)[-1],
+                    'status_code': 'N/A'  # Status code is not available in the log
+                })
+                if len(calls) >= limit:
+                    break
+    return calls
 
 @app.route('/api/get_collected_from_plex', methods=['POST'])
 def get_collected_from_plex():
