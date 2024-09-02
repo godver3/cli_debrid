@@ -29,6 +29,16 @@ jobs:
     - name: Get version from version.txt
       run: echo "VERSION=$(cat version.txt)" >> $GITHUB_ENV
 
+    - name: Set Docker tags
+      run: |
+        if [ "${{ github.ref_name }}" = "dev" ]; then
+          echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }}" >> $GITHUB_ENV
+          echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:dev-arm64,godver3/cli_debrid:dev-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
+        else
+          echo "DOCKER_TAGS=godver3/cli_debrid:latest,godver3/cli_debrid:${{ env.VERSION }}" >> $GITHUB_ENV
+          echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:latest-arm64,godver3/cli_debrid:${{ env.VERSION }}-arm64" >> $GITHUB_ENV
+        fi
+
     - name: Build and push amd64 image
       uses: docker/build-push-action@v5
       with:
@@ -36,9 +46,7 @@ jobs:
         file: ./Dockerfile
         platforms: linux/amd64
         push: true
-        tags: |
-          godver3/cli_debrid:${{ env.VERSION }}
-          godver3/cli_debrid:${{ github.ref_name }}
+        tags: ${{ env.DOCKER_TAGS }}
         build-args: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
@@ -49,8 +57,6 @@ jobs:
         file: ./Dockerfile
         platforms: linux/arm64
         push: true
-        tags: |
-          godver3/cli_debrid:${{ env.VERSION }}-arm64
-          godver3/cli_debrid:${{ github.ref_name }}-arm64
+        tags: ${{ env.DOCKER_TAGS_ARM64 }}
         build-args: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
