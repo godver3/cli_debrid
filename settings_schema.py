@@ -128,7 +128,8 @@ SETTINGS_SCHEMA = {
                 "preferred_filter_out": {"type": "list", "default": []},
                 "filter_in": {"type": "list", "default": []},
                 "filter_out": {"type": "list", "default": []},
-                "min_size_gb": {"type": "float", "default": 0.01, "min": 0}
+                "min_size_gb": {"type": "float", "default": 0.01, "min": 0},
+                "max_size_gb": {"type": "float", "default": float('inf'), "min": 0}
             }
         }
     },
