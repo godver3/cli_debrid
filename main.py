@@ -2,6 +2,10 @@ import logging
 logging.getLogger('selector').setLevel(logging.WARNING)
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
+from web_server import start_server
+# Start web server
+start_server()
+
 import os
 import configparser
 import inspect
@@ -9,7 +13,6 @@ from settings import SettingsEditor, get_setting, load_config, save_config, CONF
 from database import verify_database
 import shutil
 from datetime import datetime
-from web_server import start_server
 import signal
 from run_program import run_program, ProgramRunner
 import sys
@@ -49,8 +52,7 @@ else:
 ensure_settings_file()
 verify_database()
 
-# Start web server
-start_server()
+
 
 from questionary import select
 from run_program import run_program
