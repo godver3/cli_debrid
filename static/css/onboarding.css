@@ -1,0 +1,304 @@
+.onboarding-container {
+    max-width: 600px;
+    margin: 0 auto 20px;
+    padding: 20px;
+    background-color: #2c2c2c;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    position: relative;
+}
+
+.onboarding-title {
+    color: #f4f4f4;
+    font-size: 24px;
+    margin-bottom: 20px;
+}
+
+.onboarding-text {
+    color: #d4d4d4;
+    margin-bottom: 20px;
+}
+
+.onboarding-btn {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #4CAF50;
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
+    transition: background-color 0.3s;
+}
+
+.onboarding-btn:hover {
+    background-color: #45a049;
+}
+
+.onboarding-btn:disabled {
+    background-color: #666;
+    cursor: not-allowed;
+}
+
+.onboarding-btn:disabled:hover {
+    background-color: #666;
+}
+
+.onboarding-form {
+    display: flex;
+    flex-direction: column;
+}
+
+.onboarding-label {
+    color: #f4f4f4;
+    margin-bottom: 5px;
+}
+
+.onboarding-input,
+.onboarding-select {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 15px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background-color: #333;
+    color: #f4f4f4;
+}
+
+.onboarding-select[multiple] {
+    height: auto;
+    min-height: 100px;
+}
+
+.onboarding-submit {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.onboarding-submit:hover {
+    background-color: #45a049;
+}
+
+.onboarding-link {
+    color: #4CAF50;
+    text-decoration: none;
+}
+
+.onboarding-link:hover {
+    text-decoration: underline;
+}
+
+.navMenu {
+    display: none;
+}
+
+body[data-is-onboarding="true"] .navMenu {
+    display: none;
+}
+
+.onboarding-btn-delete {
+    background-color: #d9534f;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.onboarding-btn-delete:hover {
+    background-color: #c9302c;
+}
+
+.scraper-item,
+.content-source-item {
+    margin-bottom: 20px;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 16px;
+    background-color: #333;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: box-shadow 0.3s ease;
+}
+
+.scraper-item:hover,
+.content-source-item:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.scraper-header,
+.content-source-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #444;
+}
+
+.scraper-header .onboarding-text,
+.content-source-header .onboarding-text {
+    font-size: 1.2em;
+    font-weight: bold;
+}
+
+.scraper-settings,
+.content-source-settings {
+    background-color: #2c2c2c;
+    padding: 12px;
+    border-radius: 4px;
+}
+
+.scraper-settings pre,
+.content-source-settings pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.setting-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.setting-item label {
+    flex: 0 0 120px;
+    margin-right: 12px;
+    font-size: 0.9em;
+    color: #aaa;
+}
+
+.setting-value {
+    flex: 1;
+    background-color: #444;
+    color: #f4f4f4;
+    border: 1px solid #555;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.onboarding-navigation {
+    max-width: 600px;
+    margin: 20px auto 0;
+    display: flex;
+    justify-content: space-between;
+    padding: 0;
+}
+
+.onboarding-navigation:only-child,
+.onboarding-navigation:first-of-type {
+    justify-content: center;
+}
+
+.onboarding-btn,
+.finish-setup-btn {
+    padding: 10px 20px;
+    background-color: #3498db;  /* Blue color */
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s, opacity 0.3s;
+    font-size: 16px;
+    min-width: 120px;
+}
+
+.onboarding-btn:hover,
+.finish-setup-btn:hover {
+    background-color: #2980b9;  /* Darker blue on hover */
+}
+
+.onboarding-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.prev-step-btn {
+    margin-right: auto;
+}
+
+.next-step-btn,
+.finish-setup-btn {
+    margin-left: auto;
+}
+
+/* Adjustments for single button scenarios */
+.onboarding-navigation:only-child .onboarding-btn,
+.onboarding-navigation:only-child .finish-setup-btn {
+    margin: 0 auto;
+}
+
+#existing-scrapers,
+#existing-content-sources {
+    max-width: 800px;
+    margin: 20px auto;
+    padding: 0 20px;
+}
+
+.delete-content-source-btn {
+    background-color: #d9534f;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.delete-content-source-btn:hover {
+    background-color: #c9302c;
+}
+
+
+.onboarding-list {
+    color: #d4d4d4;
+    margin-bottom: 20px;
+    padding-left: 20px;
+}
+
+.onboarding-list li {
+    margin-bottom: 10px;
+}
+
+#welcome-message {
+    text-align: center;
+}
+
+#start-onboarding {
+    margin-top: 20px;
+}
+
+/* Add these new styles */
+.onboarding-step-container {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+}
+
+.onboarding-step {
+    position: absolute;
+    width: 100%;
+    transition: transform 0.5s ease-in-out;
+}
+
+.slide-in-right {
+    transform: translateX(100%);
+}
+
+.slide-in-left {
+    transform: translateX(-100%);
+}
+
+.slide-out-right {
+    transform: translateX(100%);
+}
+
+.slide-out-left {
+    transform: translateX(-100%);
+}
