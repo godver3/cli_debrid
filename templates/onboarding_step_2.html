@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Onboarding - Step 2{% endblock %}
+{% block content %}
+<div class="onboarding-container">
+    <h2 class="onboarding-title">Step 2: Required Settings</h2>
+    <form id="settings-form" class="onboarding-form">
+        <label for="plex_url" class="onboarding-label">Plex URL:</label>
+        <input type="text" id="plex_url" name="plex_url" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('url', '') }}">
+
+        <label for="plex_token" class="onboarding-label">Plex Token:</label>
+        <input type="text" id="plex_token" name="plex_token" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('token', '') }}">
+
+        <label for="movie_libraries" class="onboarding-label">Movie Libraries:</label>
+        <input type="text" id="movie_libraries" name="movie_libraries" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('movie_libraries', '') }}">
+
+        <label for="shows_libraries" class="onboarding-label">TV Libraries:</label>
+        <input type="text" id="shows_libraries" name="shows_libraries" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}">
+
+        <label for="overseerr_url" class="onboarding-label">Overseerr URL:</label>
+        <input type="text" id="overseerr_url" name="overseerr_url" required class="onboarding-input" value="{{ settings.get('Overseerr', {}).get('url', '') }}">
+
+        <label for="overseerr_api_key" class="onboarding-label">Overseerr API Key:</label>
+        <input type="text" id="overseerr_api_key" name="overseerr_api_key" required class="onboarding-input" value="{{ settings.get('Overseerr', {}).get('api_key', '') }}">
+
+        <label for="realdebrid_api_key" class="onboarding-label">Real Debrid API Key:</label>
+        <input type="text" id="realdebrid_api_key" name="realdebrid_api_key" required class="onboarding-input" value="{{ settings.get('RealDebrid', {}).get('api_key', '') }}">
+
+        <button type="submit" class="onboarding-submit">Save Settings</button>
+    </form>
+</div>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const settingsForm = document.getElementById('settings-form');
+    const nextStepBtn = document.querySelector('.next-step-btn');
+
+    settingsForm.addEventListener('submit', function(event) {
+        event.preventDefault();
+        const formData = new FormData(settingsForm);
+        fetch('{{ url_for("onboarding_step", step=2) }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: 'Settings saved successfully!',
+                    autoClose: 3000  // Close after 3 seconds
+                });
+                nextStepBtn.disabled = !data.can_proceed;
+            } else {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Error: ' + data.error,
+                    autoClose: 5000  // Close after 5 seconds
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'An unexpected error occurred.',
+                autoClose: 5000  // Close after 5 seconds
+            });
+        });
+    });
+});
+</script>
+
+{% include 'onboarding_navigation.html' %}
+{% endblock %}
