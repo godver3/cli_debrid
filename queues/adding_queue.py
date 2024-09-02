@@ -343,14 +343,14 @@ class AddingQueue:
                 matching_files = [file for file in files if self.file_matches_item(file, item)]
                 if matching_files:
                     logging.info(f"Matching file(s) found for movie: {item_identifier}")
-                    filled_by_file = os.path.basename(matching_files[0])  # Get the filename
+                    filled_by_file = os.path.basename(matching_files[0])
                     queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file)
                     logging.debug(f"Moved movie {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
                     return True
                 else:
                     logging.warning(f"No matching file found for movie: {item_identifier}")
                     return False
-            else:
+            else:  # TV show
                 success, message = self.process_multi_pack(queue_manager, item, title, link, files)
                 if success:
                     logging.info(f"Successfully processed TV show item: {item_identifier}. {message}")
@@ -670,24 +670,37 @@ class AddingQueue:
             return False
 
         if item['type'] == 'movie':
-            return self.match_movie(guess, item)
+            return self.match_movie(guess, item, filename)
         elif item['type'] == 'episode':
             return self.match_episode(guess, item)
 
         logging.debug(f"No match found for {filename}")
         return False
 
-    def match_movie(self, guess: Dict[str, Any], item: Dict[str, Any]) -> bool:
-        if guess.get('type') != 'movie':
+    def is_video_file(self, filename: str) -> bool:
+        video_extensions = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm']
+        return any(filename.lower().endswith(ext) for ext in video_extensions)
+
+    def match_movie(self, guess: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
+        if not self.is_video_file(filename):
             return False
 
-        title_match = self.fuzzy_title_match(guess.get('title', ''), item['title'])
+        guessed_title = guess.get('title', '')
+        item_title = item['title']
+
+        # Use fuzzy matching for title
+        title_match = fuzz.ratio(guessed_title.lower(), item_title.lower()) >= 80
+
+        # Year matching is optional
         year_match = str(guess.get('year', '')) == str(item['year'])
 
-        if title_match and year_match:
-            logging.debug(f"Movie match found: {guess.get('title')} ({guess.get('year')})")
+        if title_match:
+            logging.debug(f"Movie match found: {guessed_title} (Year match: {year_match})")
             return True
 
+        # If no match found, log the details for debugging
+        logging.debug(f"No match found. Guessed title: '{guessed_title}', Item title: '{item_title}', "
+                      f"Guessed year: {guess.get('year', '')}, Item year: {item['year']}")
         return False
 
     def match_episode(self, guess: Dict[str, Any], item: Dict[str, Any]) -> bool:

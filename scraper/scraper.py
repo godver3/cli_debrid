@@ -106,59 +106,49 @@ def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False) -> float:
-    
     # Normalize titles
-    query_title = normalize_title(query_title)
-    result_title = result.get('title', '')
-    result_title = normalize_title(result_title)
+    query_title = normalize_title(query_title).lower()
     
     parsed_info = result.get('parsed_info', {})
-    guessit_title = parsed_info.get('title', result_title)
-    guessit_title = normalize_title(guessit_title)
+    guessit_title = parsed_info.get('title', '')
+    guessit_title = normalize_title(guessit_title).lower()
 
-    # For anime, consider alternative titles
+    logging.debug(f"Comparing titles - Query: '{query_title}', Guessit: '{guessit_title}'")
+
+    # Calculate token sort ratio
+    token_sort_similarity = fuzz.token_sort_ratio(query_title, guessit_title)
+    
+    # Check if all words in the query title are in the guessit title
+    query_words = set(query_title.split())
+    guessit_words = set(guessit_title.split())
+    all_words_present = query_words.issubset(guessit_words)
+
+    # Calculate final similarity
+    if all_words_present:
+        similarity = token_sort_similarity
+    else:
+        similarity = token_sort_similarity * 0.5  # Penalize if not all words are present
+
+    logging.debug(f"Token sort ratio: {token_sort_similarity}")
+    logging.debug(f"All query words present: {all_words_present}")
+    logging.debug(f"Final similarity score: {similarity}")
+
+    # For anime, consider alternative titles if available
     if is_anime:
         alternative_titles = parsed_info.get('alternative_title', [])
         if isinstance(alternative_titles, str):
             alternative_titles = [alternative_titles]
-        alternative_titles = [normalize_title(alt) for alt in alternative_titles]
-
-    # Normalize titles
-    query_title = query_title.lower()
-    guessit_title = guessit_title.lower()
-
-    # Calculate token sort ratio
-    token_sort_ratio = fuzz.token_sort_ratio(query_title, guessit_title)
-
-    # Calculate token set ratio
-    token_set_ratio = fuzz.token_set_ratio(query_title, guessit_title)
-
-    # Check if the first word matches
-    query_first_word = query_title.split()[0] if query_title else ''
-    guessit_first_word = guessit_title.split()[0] if guessit_title else ''
-    first_word_match = query_first_word == guessit_first_word
-
-    # Check for additional words in guessit title
-    query_words = set(query_title.split())
-    guessit_words = set(guessit_title.split())
-    additional_words = guessit_words - query_words
-
-    # Calculate final similarity score
-    similarity = (token_sort_ratio * 0.4) + (token_set_ratio * 0.4)  # 80% weight to fuzzy matching
-    if first_word_match:
-        similarity += 10  # 10% bonus for first word match
-
-    # Penalty for additional words
-    similarity -= len(additional_words) * 5  # 5% penalty per additional word
-
-    # For anime, check alternative titles
-    if is_anime:
         for alt_title in alternative_titles:
-            alt_similarity = fuzz.token_set_ratio(query_title, alt_title.lower())
+            alt_title = normalize_title(alt_title).lower()
+            alt_token_sort_similarity = fuzz.token_sort_ratio(query_title, alt_title)
+            alt_words = set(alt_title.split())
+            alt_all_words_present = query_words.issubset(alt_words)
+            
+            alt_similarity = alt_token_sort_similarity if alt_all_words_present else alt_token_sort_similarity * 0.5
+            logging.debug(f"Alternative title '{alt_title}' similarity: {alt_similarity}")
             similarity = max(similarity, alt_similarity)
 
-    # Normalize the score to be between 0 and 100
-    similarity = max(0, min(similarity, 100))
+    logging.debug(f"Final similarity score: {similarity}")
 
     return similarity / 100  # Return as a float between 0 and 1
 
@@ -776,7 +766,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         if "UFC" in result['title'].upper():
             similarity_threshold = 0.35
         else:
-            similarity_threshold = 0.6
+            similarity_threshold = 0.8
         
         if is_anime:
             if max(title_sim, alternate_title_sim) < similarity_threshold:
@@ -848,24 +838,28 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         season_episode_info = result.get('parsed_info', {}).get('season_episode_info', {})
         scraper = result.get('scraper', '').lower()
 
-        if scraper.startswith('jackett') or scraper.startswith('zilean'):
-            if season_episode_info.get('season_pack', 'Unknown') == 'N/A':
-                size_per_episode_gb = size_gb
-            else:
-                if season_episode_info['season_pack'] == 'Complete':
-                    total_episodes = sum(season_episode_counts.values())
-                else:
-                    season_numbers = [int(s) for s in season_episode_info['season_pack'].split(',')]
-                    total_episodes = sum(season_episode_counts.get(s, 0) for s in season_numbers)
-                
-                if total_episodes > 0:
-                    size_per_episode_gb = size_gb / total_episodes
-                else:
+        if content_type.lower() == 'episode':
+            if scraper.startswith('jackett') or scraper.startswith('zilean'):
+                if season_episode_info.get('season_pack', 'Unknown') == 'N/A':
                     size_per_episode_gb = size_gb
+                else:
+                    if season_episode_info['season_pack'] == 'Complete':
+                        total_episodes = sum(season_episode_counts.values())
+                    else:
+                        season_numbers = [int(s) for s in season_episode_info['season_pack'].split(',')]
+                        total_episodes = sum(season_episode_counts.get(s, 0) for s in season_numbers)
+                    
+                    if total_episodes > 0:
+                        size_per_episode_gb = size_gb / total_episodes
+                    else:
+                        size_per_episode_gb = size_gb
 
-            result['size'] = size_per_episode_gb
-            bitrate = calculate_bitrate(size_per_episode_gb, runtime)
-        else:
+                result['size'] = size_per_episode_gb
+                bitrate = calculate_bitrate(size_per_episode_gb, runtime)
+            else:
+                result['size'] = size_gb
+                bitrate = calculate_bitrate(size_gb, runtime)
+        else:  # For movies
             result['size'] = size_gb
             bitrate = calculate_bitrate(size_gb, runtime)
 
