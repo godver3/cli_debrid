@@ -18,9 +18,10 @@ export function showPopup(options) {
         cancelText = 'Cancel',
         inputPlaceholder,
         dropdownOptions,
+        formHtml,  // New option for custom form HTML
         onConfirm,
         onCancel,
-        autoClose = 5000 // Auto close after 5 seconds for non-interactive popups
+        autoClose = 5000
     } = options;
 
     const popup = document.createElement('div');
@@ -33,7 +34,9 @@ export function showPopup(options) {
     `;
 
     if (type === POPUP_TYPES.PROMPT) {
-        if (dropdownOptions) {
+        if (formHtml) {
+            content += formHtml;  // Use custom form HTML if provided
+        } else if (dropdownOptions) {
             content += `
                 <select id="popupDropdown">
                     ${dropdownOptions.map(option => `<option value="${option.value}">${option.text}</option>`).join('')}
@@ -141,6 +144,44 @@ export function showPopup(options) {
             color: #f4f4f4;
             border-radius: 4px;
         }
+        .universal-popup form {
+            width: 100%;
+        }
+        .universal-popup form input[type="text"],
+        .universal-popup form input[type="email"],
+        .universal-popup form input[type="number"],
+        .universal-popup form input[type="password"],
+        .universal-popup form textarea,
+        .universal-popup form select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            background-color: #333;
+            border: 1px solid #555;
+            color: #f4f4f4;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .universal-popup form label {
+            display: block;
+            margin-bottom: 5px;
+            color: #f4f4f4;
+            font-size: 14px;
+        }
+        .universal-popup form input[type="checkbox"],
+        .universal-popup form input[type="radio"] {
+            margin-right: 5px;
+        }
+        .universal-popup form fieldset {
+            border: 1px solid #555;
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+        .universal-popup form legend {
+            padding: 0 5px;
+            color: #f4f4f4;
+        }
     `;
     document.head.appendChild(style);
 
@@ -157,7 +198,11 @@ export function showPopup(options) {
             confirmButton.addEventListener('click', () => {
                 let inputValue;
                 if (type === POPUP_TYPES.PROMPT) {
-                    if (dropdownOptions) {
+                    if (formHtml) {
+                        // If custom form, collect all input values
+                        const form = popup.querySelector('form');
+                        inputValue = Object.fromEntries(new FormData(form));
+                    } else if (dropdownOptions) {
                         inputValue = popup.querySelector('#popupDropdown').value;
                     } else {
                         inputValue = popup.querySelector('#popupInput').value;
@@ -189,5 +234,3 @@ export function showPopup(options) {
 function capitalizeFirstLetter(string) {
     return string.charAt(0).toUpperCase() + string.slice(1);
 }
-
-// No need to export showPopup and POPUP_TYPES again, they're already exported above

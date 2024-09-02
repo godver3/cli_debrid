@@ -81,7 +81,6 @@ def parse_bool(value):
         return value.lower() in ('true', 'yes', '1', 'on')
     return bool(value)
 
-# Update the get_setting function to use parse_bool for boolean values
 def get_setting(section, key=None, default=None):
     config = load_config()
     
@@ -100,6 +99,10 @@ def get_setting(section, key=None, default=None):
     # Handle boolean values
     if isinstance(value, str) and value.lower() in ('true', 'false'):
         return parse_bool(value)
+    
+    # Validate URL if the key ends with 'url'
+    if key.lower().endswith('url'):
+        return validate_url(value)
     
     return value
 
@@ -150,13 +153,19 @@ def to_bool(value):
 
 def validate_url(url):
     if not url:
+        logging.debug(f"Empty URL provided")
         return ''
     if not url.startswith(('http://', 'https://')):
         url = f'http://{url}'
     try:
         result = urlparse(url)
-        return url if all([result.scheme, result.netloc]) else ''
-    except:
+        if all([result.scheme, result.netloc]):
+            return url
+        else:
+            logging.warning(f"Invalid URL structure: {url}")
+            return ''
+    except Exception as e:
+        logging.error(f"Error parsing URL {url}: {str(e)}")
         return ''
 
 def get_all_settings():
@@ -246,7 +255,8 @@ def ensure_settings_file():
                     'preferred_filter_out': '',
                     'filter_in': '',
                     'filter_out': '',
-                    'min_size_gb': '0.01'
+                    'min_size_gb': '0.01',
+                    'max_size_gb': ''
                 },
             },
             'uncached_content_handling': ''

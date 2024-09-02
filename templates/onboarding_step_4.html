@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}Onboarding - Step 4{% endblock %}
+{% block content %}
+<div class="onboarding-container">
+    <h2 class="onboarding-title">Step 4: Add Content Sources</h2>
+    <button id="add-content-source-btn" class="onboarding-btn">Add Content Source</button>
+</div>
+
+<div id="existing-content-sources">
+    {% if settings['Content Sources'] %}
+        <h3 class="onboarding-title">Content Sources</h3>
+        {% for source, config in settings['Content Sources'].items() %}
+        <div class="content-source-item">
+            <div class="content-source-header">
+                <span class="onboarding-text">{{ source }}</span>
+                <button class="delete-content-source-btn onboarding-btn-delete" data-source-id="{{ source }}">Delete</button>
+            </div>
+            <div class="content-source-settings">
+                {% for key, value in config.items() %}
+                    {% if key != 'enabled' and key != 'versions' %}
+                        <div class="setting-item">
+                            <label class="onboarding-text">{{ key|capitalize }}:</label>
+                            <input type="text" value="{{ value }}" readonly class="setting-value">
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    {% endif %}
+</div>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const SETTINGS_SCHEMA = {{ SETTINGS_SCHEMA | tojson | safe }};
+    
+    initializeAddContentSourceButton();
+    initializeDeleteButtons();
+    refreshContentSourcesList();
+
+    function initializeAddContentSourceButton() {
+        const addButton = document.querySelector('#add-content-source-btn');
+        if (addButton) {
+            addButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                showAddContentSourcePopup();
+            });
+        } else {
+            console.error('Add content source button not found');
+        }
+    }
+
+    function showAddContentSourcePopup() {
+        const sourceTypes = Object.keys(SETTINGS_SCHEMA['Content Sources'].schema);
+        
+        showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Content Source',
+            message: 'Select the type of content source you want to add:',
+            dropdownOptions: sourceTypes.map(type => ({ value: type, text: type })),
+            confirmText: 'Next',
+            cancelText: 'Cancel',
+            onConfirm: (selectedType) => {
+                if (selectedType) {
+                    showContentSourceSettingsPopup(selectedType);
+                } else {
+                    console.error('No content source type selected');
+                }
+            }
+        });
+    }
+
+    function showContentSourceSettingsPopup(sourceType) {
+        const sourceSchema = SETTINGS_SCHEMA['Content Sources'].schema[sourceType];
+        let formHtml = '<form id="contentSourceSettingsForm">';
+
+        for (const [key, value] of Object.entries(sourceSchema)) {
+            if (key === 'enabled' || key === 'versions') continue; // Skip 'enabled' and 'versions' fields
+
+            let inputHtml = '';
+            if (value.type === 'boolean') {
+                inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${value.default ? 'checked' : ''}>`;
+            } else if (value.type === 'string') {
+                inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''}>`;
+            }
+
+            formHtml += `
+                <div class="form-group">
+                    <label for="${key}">${key}:</label>
+                    ${inputHtml}
+                </div>
+            `;
+        }
+
+        formHtml += '</form>';
+
+        showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: `Configure ${sourceType} Content Source`,
+            message: 'Please configure the content source settings:',
+            formHtml: formHtml,
+            confirmText: 'Add Content Source',
+            cancelText: 'Cancel',
+            onConfirm: (formData) => {
+                formData.enabled = true; // Always set enabled to true for new content sources
+                formData.versions = ['Default']; // Automatically set 'Default' version
+                addContentSource(sourceType, formData);
+            }
+        });
+    }
+
+    function addContentSource(sourceType, sourceConfig) {
+        fetch('/onboarding/content_sources/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ type: sourceType, config: sourceConfig })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                refreshContentSourcesList();
+                updateCanProceed(true);  // Enable the Next Step button immediately
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    message: `Content source ${data.source_id} added successfully.`,
+                    autoClose: 3000
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding content source:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding content source: ' + error.message,
+                autoClose: 5000
+            });
+        });
+    }
+
+    function initializeDeleteButtons() {
+        const deleteButtons = document.querySelectorAll('.delete-content-source-btn');
+        deleteButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const sourceId = this.getAttribute('data-source-id');
+                deleteContentSource(sourceId);
+            });
+        });
+    }
+
+    function deleteContentSource(sourceId) {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Content Source',
+            message: 'Are you sure you want to delete this content source?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/content_sources/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ source_id: sourceId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        refreshContentSourcesList();
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            message: 'Content source deleted successfully.',
+                            autoClose: 3000
+                        });
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting content source:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error deleting content source: ' + error.message,
+                        autoClose: 5000
+                    });
+                });
+            }
+        });
+    }
+
+    function refreshContentSourcesList() {
+        fetch('/onboarding/content_sources/get')
+            .then(response => response.json())
+            .then(data => {
+                const sourcesList = document.getElementById('existing-content-sources');
+                sourcesList.innerHTML = '';
+                if (data.content_sources && Object.keys(data.content_sources).length > 0) {
+                    const header = document.createElement('h3');
+                    header.className = 'onboarding-title';
+                    header.textContent = 'Content Sources';
+                    sourcesList.appendChild(header);
+                    for (const [id, source] of Object.entries(data.content_sources)) {
+                        const sourceItem = document.createElement('div');
+                        sourceItem.className = 'content-source-item';
+                        let settingsHtml = '';
+                        for (const [key, value] of Object.entries(source)) {
+                            if (key !== 'enabled' && key !== 'type' && key !== 'versions') {
+                                settingsHtml += `
+                                    <div class="setting-item">
+                                        <label class="onboarding-text">${key.charAt(0).toUpperCase() + key.slice(1)}:</label>
+                                        <input type="text" value="${Array.isArray(value) ? value.join(', ') : value}" readonly class="setting-value">
+                                    </div>
+                                `;
+                            }
+                        }
+                        sourceItem.innerHTML = `
+                            <div class="content-source-header">
+                                <span class="onboarding-text">${source.type}</span>
+                                <button class="delete-content-source-btn onboarding-btn-delete" data-source-id="${id}">Delete</button>
+                            </div>
+                            <div class="content-source-settings">
+                                ${settingsHtml}
+                            </div>
+                        `;
+                        sourcesList.appendChild(sourceItem);
+                    }
+                    initializeDeleteButtons();
+                }
+                updateCanProceed(Object.keys(data.content_sources || {}).length > 0);
+            })
+            .catch(error => {
+                console.error('Error fetching content sources:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Error fetching content sources: ' + error.message,
+                    autoClose: 5000
+                });
+            });
+    }
+
+    function updateCanProceed(canProceed) {
+        fetch('/onboarding/update_can_proceed', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ step: {{ current_step }}, can_proceed: canProceed })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const nextStepBtn = document.querySelector('.next-step-btn');
+                if (nextStepBtn) {
+                    nextStepBtn.disabled = !canProceed;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error updating can_proceed status:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error updating progress status: ' + error.message,
+                autoClose: 5000
+            });
+        });
+    }
+});
+</script>
+
+{% include 'onboarding_navigation.html' %}
+{% endblock %}

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time API Calls</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #f4f4f4;
+            background-color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #f4f4f4;
+            margin-bottom: 20px;
+        }
+
+        form {
+            margin-bottom: 20px;
+        }
+
+        select, input[type="submit"] {
+            padding: 8px 12px;
+            margin-right: 10px;
+            background-color: #2c2c2c;
+            color: #f4f4f4;
+            border: 1px solid #444;
+            border-radius: 4px;
+        }
+
+        input[type="submit"] {
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        input[type="submit"]:hover {
+            background-color: #45a049;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background-color: #2c2c2c;
+        }
+
+        th, td {
+            border: 1px solid #444;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #1a1a1a;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        tr:nth-child(even) {
+            background-color: #333;
+        }
+
+        tr:hover {
+            background-color: #444;
+        }
+
+        @media screen and (max-width: 600px) {
+            table {
+                font-size: 14px;
+            }
+
+            th, td {
+                padding: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Real-time API Calls</h1>
+    <form id="filterForm">
+        <select name="filter" id="filterSelect">
+            <option value="">All Domains</option>
+            {% for domain in all_domains %}
+            <option value="{{ domain }}" {% if filter == domain %}selected{% endif %}>{{ domain }}</option>
+            {% endfor %}
+        </select>
+        <input type="submit" value="Filter">
+    </form>
+    
+    <table id="apiCallsTable">
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Domain</th>
+                <th>Endpoint</th>
+                <th>Method</th>
+                <th>Status Code</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for call in calls %}
+            <tr>
+                <td>{{ call.timestamp }}</td>
+                <td>{{ call.domain }}</td>
+                <td>{{ call.endpoint }}</td>
+                <td>{{ call.method }}</td>
+                <td>{{ call.status_code }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <script>
+        function updateTable() {
+            const filter = document.getElementById('filterSelect').value;
+            fetch(`/api/latest_calls?filter=${filter}`)
+                .then(response => response.json())
+                .then(data => {
+                    const tableBody = document.querySelector('#apiCallsTable tbody');
+                    tableBody.innerHTML = '';
+                    data.forEach(call => {
+                        const row = `
+                            <tr>
+                                <td>${call.timestamp}</td>
+                                <td>${call.domain}</td>
+                                <td>${call.endpoint}</td>
+                                <td>${call.method}</td>
+                                <td>${call.status_code}</td>
+                            </tr>
+                        `;
+                        tableBody.innerHTML += row;
+                    });
+                });
+        }
+
+        document.getElementById('filterForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            updateTable();
+        });
+
+        // Update the table every 5 seconds
+        setInterval(updateTable, 5000);
+    </script>
+</body>
+</html>
