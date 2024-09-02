@@ -289,6 +289,13 @@ def save_version_settings(version, settings):
     if 'versions' not in config['Scraping']:
         config['Scraping']['versions'] = {}
     
+    # Ensure max_size_gb is properly handled
+    if 'max_size_gb' in settings:
+        if settings['max_size_gb'] == '' or settings['max_size_gb'] is None:
+            settings['max_size_gb'] = float('inf')
+        else:
+            settings['max_size_gb'] = float(settings['max_size_gb'])
+    
     config['Scraping']['versions'][version] = settings
     save_config(config)
 
@@ -297,6 +304,10 @@ def get_version_settings(version):
     scraping_config = config.get('Scraping', {})
     versions = scraping_config.get('versions', {})
     settings = versions.get(version, {})
+    
+    # Convert max_size_gb back to empty string if it's infinity
+    if 'max_size_gb' in settings and settings['max_size_gb'] == float('inf'):
+        settings['max_size_gb'] = ''
     
     logging.debug(f"Fetched settings for version '{version}': {settings}")
     
