@@ -30,18 +30,28 @@
         margin-bottom: 20px;
     }
 
-    /* Update the input styles to include password fields */
+
+
+    /* Update the input styles to include password fields and override autofill styles */
     .auth-form input[type="text"],
-    .auth-form input[type="password"] {
+    .auth-form input[type="password"],
+    .auth-form input:-webkit-autofill,
+    .auth-form input:-webkit-autofill:hover,
+    .auth-form input:-webkit-autofill:focus,
+    .auth-form input:-webkit-autofill:active {
+        font-family: Arial, sans-serif !important; 
         width: 100%;
         padding: 10px;
         margin-bottom: 15px;
         border: 1px solid #555;
         border-radius: 3px;
-        background-color: #333;
-        color: #f4f4f4;
+        background-color: #333 !important;
+        color: #f4f4f4 !important;
         font-size: 16px;
-        box-sizing: border-box; /* This ensures padding is included in the width */
+        box-sizing: border-box;
+        -webkit-text-fill-color: #f4f4f4 !important;
+        -webkit-box-shadow: 0 0 0px 1000px #333 inset;
+        transition: background-color 5000s ease-in-out 0s;
     }
 
     .auth-form input[type="submit"] {

@@ -2,7 +2,7 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "dev" ]
+    branches: [ "dev", "main" ]
   workflow_dispatch:  # This enables manual triggering
 
 jobs:
@@ -26,6 +26,9 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
+    - name: Get version from version.txt
+      run: echo "VERSION=$(cat version.txt)" >> $GITHUB_ENV
+
     - name: Build and push amd64 image
       uses: docker/build-push-action@v5
       with:
@@ -33,7 +36,9 @@ jobs:
         file: ./Dockerfile
         platforms: linux/amd64
         push: true
-        tags: godver3/cli_debrid:dev
+        tags: |
+          godver3/cli_debrid:${{ env.VERSION }}
+          godver3/cli_debrid:${{ github.ref_name }}
         build-args: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
@@ -44,6 +49,8 @@ jobs:
         file: ./Dockerfile
         platforms: linux/arm64
         push: true
-        tags: godver3/cli_debrid:dev-arm64
+        tags: |
+          godver3/cli_debrid:${{ env.VERSION }}-arm64
+          godver3/cli_debrid:${{ github.ref_name }}-arm64
         build-args: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
