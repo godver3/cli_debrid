@@ -54,8 +54,6 @@ import pickle
 from flask.json import jsonify
 from babelfish import Language
 
-
-
 CACHE_FILE = 'db_content/api_summary_cache.pkl'
 # Add this at the global scope, outside of any function
 app_start_time = time.time()
@@ -262,6 +260,9 @@ def sync_run_get_recent_from_plex():
 def isinstance_filter(value, class_name):
     return isinstance(value, getattr(datetime, class_name, type(None)))
 
+@app.template_filter('is_infinite')
+def is_infinite(value):
+    return value == float('inf')
 
 def admin_required(f):
     @wraps(f)
@@ -1783,7 +1784,8 @@ def add_version():
         'preferred_filter_out': [],
         'filter_in': [],
         'filter_out': [],
-        'min_size_gb': 0.01
+        'min_size_gb': 0.01,
+        'max_size_gb': ''
     }
 
     save_config(config)
