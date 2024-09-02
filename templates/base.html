@@ -23,6 +23,7 @@
     <link rel="mask-icon" href="{{ url_for('static', filename='safari-pinned-tab.svg') }}" color="#007bff">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
 
     <!-- Theme Color for Mobile Browsers -->
     <meta name="theme-color" content="#007bff">
@@ -635,8 +636,12 @@
             transform: none;
         }
     }
+
+    body[data-is-onboarding="true"] .navMenu {
+        display: none;
+    }
 </style>
-<body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
+<body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}" data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}">
     <header>
         <div class="header-content">
             <img src="{{ url_for('static', filename='icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
@@ -644,12 +649,13 @@
                 <h1>cli_debrid</h1>
                 <span class="version-info">v{{ version }}</span>
             </div>
-            {% if current_user.is_authenticated %}
+            {% if current_user.is_authenticated and not is_onboarding %}
             <div class="user-info">
                 <span class="username">Welcome, {{ current_user.username }}</span>
             </div>
             {% endif %}
         </div>
+        {% if not is_onboarding %}
         <nav id="mainNav">
             <div class="hamburger-menu">
                 <div class="bar"></div>
@@ -709,6 +715,7 @@
                 </div>
             {% endif %}
         </div>
+        {% endif %}
     </header>
     <main>
         {% block content %}{% endblock %}

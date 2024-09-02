@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Welcome to cli_debrid Onboarding{% endblock %}
+{% block content %}
+<div id="welcome-message" class="onboarding-container" {% if admin_created %}style="display: none;"{% endif %}>
+    <h2 class="onboarding-title">Welcome to cli_debrid!</h2>
+    <p class="onboarding-text">This onboarding process will guide you through the steps required to get started.</p>
+    <button id="start-onboarding" class="onboarding-btn">Start Onboarding</button>
+</div>
+
+<div id="step-1-content" class="onboarding-container" {% if not admin_created %}style="display: none;"{% endif %}>
+    <h2 class="onboarding-title">Step 1: Setup Admin Account</h2>
+    {% if not admin_created %}
+        <form id="admin-form" class="onboarding-form">
+            <div>
+                <label for="new_username" class="onboarding-label">New Username:</label>
+                <input type="text" id="new_username" name="new_username" required class="onboarding-input">
+            </div>
+            <div>
+                <label for="new_password" class="onboarding-label">New Password:</label>
+                <input type="password" id="new_password" name="new_password" required class="onboarding-input">
+            </div>
+            <div>
+                <label for="confirm_password" class="onboarding-label">Confirm Password:</label>
+                <input type="password" id="confirm_password" name="confirm_password" required class="onboarding-input">
+            </div>
+            <div>
+                <button type="submit" class="onboarding-submit">Set Up Admin Account</button>
+            </div>
+        </form>
+    {% else %}
+        <p class="onboarding-text">The admin account has been successfully created. You can proceed to the next step.</p>
+    {% endif %}
+</div>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const welcomeMessage = document.getElementById('welcome-message');
+    const step1Content = document.getElementById('step-1-content');
+    const startOnboardingBtn = document.getElementById('start-onboarding');
+    const adminForm = document.getElementById('admin-form');
+    const nextStepBtn = document.querySelector('.next-step-btn');
+
+    if (startOnboardingBtn) {
+        startOnboardingBtn.addEventListener('click', function() {
+            welcomeMessage.style.display = 'none';
+            step1Content.style.display = 'block';
+        });
+    }
+
+    if (adminForm) {
+        adminForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            const formData = new FormData(adminForm);
+            fetch('{{ url_for("onboarding_step", step=1) }}', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    updateUIAfterAdminCreation();
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Success',
+                        message: 'Admin account created successfully!',
+                        autoClose: 3000
+                    });
+                } else {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error',
+                        message: 'Error: ' + data.error,
+                        autoClose: 5000
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'An unexpected error occurred.',
+                    autoClose: 5000
+                });
+            });
+        });
+    }
+
+    function updateUIAfterAdminCreation() {
+        // Update the content of step-1-content
+        step1Content.innerHTML = '<h2 class="onboarding-title">Step 1: Setup Admin Account</h2><p class="onboarding-text">The admin account has been successfully created. You can proceed to the next step.</p>';
+        
+        // Enable the Next Step button
+        if (nextStepBtn) {
+            nextStepBtn.disabled = false;
+        }
+
+        // Update the server-side can_proceed status
+        fetch('/onboarding/update_can_proceed', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ step: 1, can_proceed: true })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                console.error('Failed to update can_proceed status');
+            }
+        })
+        .catch(error => {
+            console.error('Error updating can_proceed status:', error);
+        });
+    }
+
+    // Initialize the Next Step button state
+    if (nextStepBtn) {
+        nextStepBtn.disabled = !{{ can_proceed|tojson }};
+    }
+});
+</script>
+
+{% include 'onboarding_navigation.html' %}
+{% endblock %}

@@ -1,0 +1,51 @@
+<div class="onboarding-container">
+    <div class="onboarding-navigation">
+        {% if current_step > 1 %}
+            <button class="onboarding-btn prev-step-btn">Previous Step</button>
+        {% endif %}
+        {% if current_step < 5 %}
+            <button class="onboarding-btn next-step-btn" {% if not can_proceed %}disabled{% endif %}>Next Step</button>
+        {% endif %}
+        {% if current_step == 5 %}
+            <button id="finish-setup" class="onboarding-btn finish-setup-btn">Finish Setup</button>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const prevStepBtn = document.querySelector('.prev-step-btn');
+    const nextStepBtn = document.querySelector('.next-step-btn');
+    const finishSetupBtn = document.getElementById('finish-setup');
+
+    if (prevStepBtn) {
+        prevStepBtn.addEventListener('click', function() {
+            window.location.href = '{{ url_for("onboarding_step", step=current_step-1) }}';
+        });
+    }
+
+    if (nextStepBtn) {
+        nextStepBtn.addEventListener('click', function() {
+            if (!this.disabled) {
+                window.location.href = '{{ url_for("onboarding_step", step=current_step+1) }}';
+            }
+        });
+    }
+
+    if (finishSetupBtn) {
+        finishSetupBtn.addEventListener('click', function() {
+            fetch('{{ url_for("complete_onboarding") }}', {
+                method: 'POST',
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    window.location.href = '{{ url_for("statistics") }}';
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            });
+        });
+    }
+});
+</script>

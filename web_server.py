@@ -41,7 +41,7 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from pathlib import Path
 from utilities.plex_functions import sync_run_get_recent_from_plex
 import aiohttp
@@ -133,6 +133,50 @@ def program_is_running():
     global program_runner
     return program_runner.is_running() if program_runner else False
 
+def onboarding_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not is_user_system_enabled():
+            return f(*args, **kwargs)
+        if current_user.is_authenticated and not current_user.onboarding_complete:
+            next_step = get_next_onboarding_step()
+            if next_step <= 5:  # Assuming 5 is the last step
+                return redirect(url_for('onboarding_step', step=next_step))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def get_next_onboarding_step():
+    # Load the current configuration
+    config = load_config()
+    
+    # Step 1: Check if the admin user is set up
+    if current_user.is_default:
+        return 1
+    
+    # Step 2: Check if required settings are configured
+    required_settings = [
+        ('Plex', 'url'),
+        ('Plex', 'token'),
+        ('Overseerr', 'url'),
+        ('Overseerr', 'api_key'),
+        ('RealDebrid', 'api_key')
+    ]
+    
+    for category, key in required_settings:
+        if not get_setting(category, key):
+            return 2
+    
+    # Step 3: Check if at least one scraper is configured
+    if 'Scrapers' not in config or not config['Scrapers']:
+        return 3
+    
+    # Step 4: Check if at least one content source is configured
+    if 'Content Sources' not in config or not config['Content Sources']:
+        return 4
+    
+    # If all steps are completed, return the final step (5)
+    return 5
+
 @app.context_processor
 def inject_program_status():
     return dict(program_is_running=program_is_running)
@@ -157,10 +201,18 @@ def create_default_admin():
         default_admin = User.query.filter_by(username='admin').first()
         if not default_admin:
             hashed_password = generate_password_hash('admin')
-            default_admin = User(username='admin', password=hashed_password, role='admin', is_default=True)
+            default_admin = User(
+                username='admin', 
+                password=hashed_password, 
+                role='admin', 
+                is_default=True,
+                onboarding_complete=False  # Set onboarding_complete to False
+            )
             db.session.add(default_admin)
             db.session.commit()
-            logging.info("Default admin account created.")
+            logging.info("Default admin account created with onboarding incomplete.")
+        else:
+            logging.info("Default admin already exists.")
     else:
         logging.info("Users already exist. Skipping default admin creation.")
 
@@ -168,8 +220,29 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password = db.Column(db.String(120), nullable=False)
-    role = db.Column(db.String(10), nullable=False, default='user')
+    role = db.Column(db.String(20), nullable=False)
     is_default = db.Column(db.Boolean, default=False)
+    onboarding_complete = db.Column(db.Boolean, default=False)
+
+def perform_database_migration():
+
+    logging.info("Performing database migration...")
+    with app.app_context():
+        inspector = inspect(db.engine)
+        if not inspector.has_table("user"):
+            # If the user table doesn't exist, create all tables
+            db.create_all()
+        else:
+            # Check if onboarding_complete column exists
+            columns = [c['name'] for c in inspector.get_columns('user')]
+            if 'onboarding_complete' not in columns:
+                # Add onboarding_complete column
+                with db.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE user ADD COLUMN onboarding_complete BOOLEAN DEFAULT FALSE"))
+                    conn.commit()
+        
+        # Commit the changes
+        db.session.commit()
 
 async def get_recent_from_plex(movie_limit=5, show_limit=5):
     plex_url = get_setting('Plex', 'url', '').rstrip('/')
@@ -303,8 +376,6 @@ def initialize_app():
                     conn.commit()
         create_default_admin()
 
-initialize_app()
-
 @app.route('/api/check_program_conditions')
 @login_required
 @admin_required
@@ -337,17 +408,22 @@ def check_program_conditions():
         'missingFields': missing_fields
     })
 
+@app.route('/onboarding')
+@login_required
+def onboarding():
+    return render_template('onboarding.html', is_onboarding=True)
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if not is_user_system_enabled():
         return redirect(url_for('statistics'))
     
     if current_user.is_authenticated:
+        if not current_user.onboarding_complete:
+            next_step = get_next_onboarding_step()
+            if next_step <= 5:  # Assuming 5 is the last step
+                return redirect(url_for('onboarding_step', step=next_step))
         return redirect(url_for('statistics'))
-
-    # Clear any existing flash messages when rendering the login page
-    if request.method == 'GET':
-        session.pop('_flashes', None)
 
     if request.method == 'POST':
         username = request.form['username']
@@ -355,20 +431,172 @@ def login():
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password, password):
             login_user(user)
+            logging.info(f"User {user.username} logged in. Onboarding complete: {user.onboarding_complete}")
             if user.is_default:
-                flash('Please set up your admin account.', 'warning')
-                return redirect(url_for('setup_admin'))
+                return redirect(url_for('onboarding_step', step=1))
+            if not user.onboarding_complete:
+                logging.info(f"Redirecting user {user.username} to onboarding")
+                return redirect(url_for('onboarding_step', step=1))
             return redirect(url_for('statistics'))
         else:
             flash('Invalid username or password.', 'error')
     
     return render_template('login.html')
 
+@app.route('/onboarding/step/<int:step>', methods=['GET', 'POST'])
+@login_required
+def onboarding_step(step):
+    if step < 1 or step > 5:
+        abort(404)
+    
+    config = load_config()
+    can_proceed = False
+
+    if step == 1:
+        admin_created = not current_user.is_default
+        can_proceed = admin_created
+
+        if request.method == 'POST':
+            new_username = request.form['new_username']
+            new_password = request.form['new_password']
+            confirm_password = request.form['confirm_password']
+            if new_password == confirm_password:
+                try:
+                    current_user.username = new_username
+                    current_user.password = generate_password_hash(new_password)
+                    current_user.is_default = False
+                    db.session.commit()
+                    return jsonify({'success': True})
+                except Exception as e:
+                    return jsonify({'success': False, 'error': str(e)})
+            else:
+                return jsonify({'success': False, 'error': 'Passwords do not match'})
+
+        return render_template('onboarding_step_1.html', current_step=step, can_proceed=can_proceed, admin_created=admin_created, is_onboarding=True)
+       
+    if step == 2:
+        required_settings = [
+            ('Plex', 'url'),
+            ('Plex', 'token'),
+            ('Plex', 'shows_libraries'),
+            ('Plex', 'movie_libraries'),
+            ('Overseerr', 'url'),
+            ('Overseerr', 'api_key'),
+            ('RealDebrid', 'api_key')
+        ]
+
+        if request.method == 'POST':
+            try:
+                config = load_config()
+                config['Plex'] = {
+                    'url': request.form['plex_url'],
+                    'token': request.form['plex_token'],
+                    'shows_libraries': request.form['shows_libraries'],
+                    'movie_libraries': request.form['movie_libraries']
+                }
+                config['Overseerr'] = {
+                    'url': request.form['overseerr_url'],
+                    'api_key': request.form['overseerr_api_key']
+                }
+                config['RealDebrid'] = {
+                    'api_key': request.form['realdebrid_api_key']
+                }
+                save_config(config)
+                
+                # Check if all required settings are now present
+                can_proceed = all(get_setting(category, key) for category, key in required_settings)
+                
+                return jsonify({'success': True, 'can_proceed': can_proceed})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)})
+        
+        # For GET requests, load existing settings if any
+        config = load_config()
+        can_proceed = all(get_setting(category, key) for category, key in required_settings)
+        
+        return render_template('onboarding_step_2.html', 
+                               current_step=step, 
+                               can_proceed=can_proceed,
+                               settings=config, is_onboarding=True)
+    if step == 3:
+        config = load_config()
+        can_proceed = 'Scrapers' in config and bool(config['Scrapers'])
+        return render_template('onboarding_step_3.html', 
+                               current_step=step, 
+                               can_proceed=can_proceed, 
+                               settings=config, 
+                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
+
+    if step == 4:
+        config = load_config()
+        can_proceed = 'Content Sources' in config and bool(config['Content Sources'])
+        return render_template('onboarding_step_4.html', 
+                               current_step=step, 
+                               can_proceed=can_proceed, 
+                               settings=config, 
+                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
+
+    elif step == 5:
+        can_proceed = True  # Always allow finishing the onboarding process
+        return render_template('onboarding_step_5.html', current_step=step, can_proceed=can_proceed, is_onboarding=True)
+
+
+@app.route('/onboarding/complete', methods=['POST'])
+@login_required
+def complete_onboarding():
+    try:
+        current_user.onboarding_complete = True
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        app.logger.error(f"Error completing onboarding: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
+@app.route('/onboarding/update_can_proceed', methods=['POST'])
+@login_required
+def update_can_proceed():
+    data = request.json
+    step = data.get('step')
+    can_proceed = data.get('can_proceed')
+    
+    if step in [1, 2, 3, 4]:
+        session[f'onboarding_step_{step}_can_proceed'] = can_proceed
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False, 'error': 'Invalid step'}), 400
+
+def update_required_settings(form_data):
+    config = load_config()
+    config['Plex']['url'] = form_data.get('plex_url')
+    config['Plex']['token'] = form_data.get('plex_token')
+    config['Plex']['shows_libraries'] = form_data.get('shows_libraries')
+    config['Plex']['movies_libraries'] = form_data.get('movies_libraries')
+    config['Overseerr']['url'] = form_data.get('overseerr_url')
+    config['Overseerr']['api_key'] = form_data.get('overseerr_api_key')
+    config['RealDebrid']['api_key'] = form_data.get('realdebrid_api_key')
+    save_config(config)
+
+def add_scraper_onboarding(form_data):
+    scraper_type = form_data.get('scraper_type')
+    scraper_config = {
+        'enabled': True,
+    }
+    add_scraper(scraper_type, scraper_config)
+
+def add_content_source_onboarding(form_data):
+    source_type = form_data.get('source_type')
+    source_config = {
+        'enabled': True,
+        'display_name': form_data.get('source_display_name'),
+        'versions': form_data.getlist('source_versions')
+    }
+    add_content_source(source_type, source_config)
+
 @app.route('/setup_admin', methods=['GET', 'POST'])
 @login_required
 def setup_admin():
     if not current_user.is_default:
-        return redirect(url_for('statistics'))
+        return redirect(url_for('onboarding_step', step=1))
     if request.method == 'POST':
         new_username = request.form['new_username']
         new_password = request.form['new_password']
@@ -388,7 +616,8 @@ def setup_admin():
                     new_admin = User(username=new_username, 
                                      password=generate_password_hash(new_password),
                                      role='admin',
-                                     is_default=False)
+                                     is_default=False,
+                                     onboarding_complete=False)  # Set onboarding_complete to False
                     db.session.add(new_admin)
                     db.session.commit()
                     
@@ -396,13 +625,13 @@ def setup_admin():
                     logout_user()
                     login_user(new_admin)
                     
-                    flash('Admin account set up successfully.', 'success')
-                    return redirect(url_for('statistics'))
+                    # Redirect to the first onboarding step
+                    return redirect(url_for('onboarding_step', step=1))
                 except Exception as e:
                     db.session.rollback()
                     flash(f'An error occurred: {str(e)}', 'error')
                     app.logger.error(f"Error in setup_admin: {str(e)}", exc_info=True)
-    return render_template('setup_admin.html')
+    return render_template('setup_admin.html', is_onboarding=True)
 
 @app.route('/change_password', methods=['GET', 'POST'])
 @login_required
@@ -423,6 +652,7 @@ def change_password():
 # Modify the manage_users route
 @app.route('/manage_users')
 @admin_required
+@onboarding_required
 def manage_users():
     if not is_user_system_enabled():
         flash('User management is disabled.', 'error')
@@ -712,6 +942,40 @@ def add_content_source_route():
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/onboarding/content_sources/add', methods=['POST'])
+def add_onboarding_content_source():
+    data = request.json
+    source_type = data.get('type')
+    source_config = data.get('config')
+    
+    if not source_type or not source_config:
+        return jsonify({'success': False, 'error': 'Invalid content source data'}), 400
+
+    try:
+        new_source_id = add_content_source(source_type, source_config)
+        
+        # Mark onboarding as complete
+        current_user.onboarding_complete = True
+        db.session.commit()
+
+        # Log the addition of the new content source
+        app.logger.info(f"Added new content source during onboarding: {new_source_id}")
+
+        return jsonify({'success': True, 'source_id': new_source_id})
+    except Exception as e:
+        app.logger.error(f"Error adding content source during onboarding: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/onboarding/content_sources/get', methods=['GET'])
+def get_onboarding_content_sources():
+    config = load_config()
+    content_source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+    return jsonify({
+        'content_sources': config.get('Content Sources', {}),
+        'source_types': content_source_types,
+        'settings': SETTINGS_SCHEMA['Content Sources']['schema']
+    })
+
 @app.route('/content_sources/delete', methods=['POST'])
 def delete_content_source_route():
     source_id = request.json.get('source_id')
@@ -765,6 +1029,30 @@ def add_scraper_route():
         logging.error(f"Error adding scraper: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/onboarding/scrapers/add', methods=['POST'])
+def add_onboarding_scraper():
+    data = request.json
+    scraper_type = data.get('type')
+    scraper_config = data.get('config')
+    
+    if not scraper_type or not scraper_config:
+        return jsonify({'success': False, 'error': 'Invalid scraper data'}), 400
+
+    config = load_config()
+    scrapers = config.get('Scrapers', {})
+    
+    # Generate a unique ID for the new scraper
+    scraper_id = f"{scraper_type}_{len([s for s in scrapers if s.startswith(scraper_type)]) + 1}"
+    
+    scrapers[scraper_id] = scraper_config
+    config['Scrapers'] = scrapers
+    save_config(config)
+
+    # Log the addition of the new scraper
+    app.logger.info(f"Added new scraper during onboarding: {scraper_id}")
+
+    return jsonify({'success': True, 'scraper_id': scraper_id})
+
 @app.route('/scrapers/content')
 def scrapers_content():
     try:
@@ -782,6 +1070,15 @@ def get_scrapers():
     config = load_config()
     scraper_types = scraper_manager.get_scraper_types()
     return render_template('settings_tabs/scrapers.html', settings=config, scraper_types=scraper_types)
+
+@app.route('/onboarding/scrapers/get', methods=['GET'])
+def get_onboarding_scrapers():
+    config = load_config()
+    scraper_types = scraper_manager.get_scraper_types()
+    return jsonify({
+        'scrapers': config.get('Scrapers', {}),
+        'scraper_types': scraper_types
+    })
 
 @app.route('/get_content_source_types', methods=['GET'])
 def get_content_source_types():
@@ -1067,6 +1364,7 @@ def format_datetime_preference(date_input, use_24hour_format):
 
 @app.route('/statistics')
 @user_required
+@onboarding_required
 def statistics():
     os.makedirs('db_content', exist_ok=True)
 
@@ -1176,6 +1474,7 @@ def shows_trending():
 
 @app.route('/scraper', methods=['GET', 'POST'])
 @user_required
+@onboarding_required
 def scraper():
     versions = get_available_versions()
     if request.method == 'POST':
@@ -1299,6 +1598,7 @@ def add_torrent():
 
 @app.route('/logs')
 @admin_required
+@onboarding_required
 def logs():
     logs = get_recent_logs(500)  # Get the 500 most recent log entries
     return render_template('logs.html', logs=logs)
@@ -1484,6 +1784,7 @@ def notifications_content():
 
 @app.route('/settings', methods=['GET'])
 @admin_required
+@onboarding_required
 def settings():
     try:
         config = load_config()
@@ -1669,6 +1970,7 @@ def update_nested_settings(current, new):
 
 @app.route('/queues')
 @user_required
+@onboarding_required
 def queues():
     queue_contents = queue_manager.get_queue_contents()
     for queue_name, items in queue_contents.items():
@@ -1701,6 +2003,8 @@ def run_server():
     app.run(debug=True, use_reloader=False, host='0.0.0.0')
 
 def start_server():
+    perform_database_migration()
+    initialize_app()
     server_thread = threading.Thread(target=run_server)
     server_thread.daemon = True
     server_thread.start()
@@ -1931,6 +2235,7 @@ def check_trakt_auth_status():
 
 @app.route('/scraper_tester', methods=['GET', 'POST'])
 @admin_required
+@onboarding_required
 def scraper_tester():
     if request.method == 'POST':
         if request.is_json:

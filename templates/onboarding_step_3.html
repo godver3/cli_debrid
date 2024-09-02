@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}Onboarding - Step 3{% endblock %}
+{% block content %}
+<div class="onboarding-container">
+    <h2 class="onboarding-title">Step 3: Add a Scraper</h2>
+    <button id="add-scraper-btn" class="onboarding-btn">Add Scraper</button>
+</div>
+
+<div id="existing-scrapers">
+    {% if settings.Scrapers %}
+        <h3 class="onboarding-title">Scrapers</h3>
+        {% for scraper, config in settings.Scrapers.items() %}
+        <div class="scraper-item">
+            <div class="scraper-header">
+                <span class="onboarding-text">{{ scraper }}</span>
+                <button class="delete-scraper-btn onboarding-btn-delete" data-scraper-id="{{ scraper }}">Delete</button>
+            </div>
+            <div class="scraper-settings">
+                {% for key, value in config.items() %}
+                    {% if key != 'enabled' %}
+                        <div class="setting-item">
+                            <label class="onboarding-text">{{ key|capitalize }}:</label>
+                            <input type="text" value="{{ value }}" readonly class="setting-value">
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    {% endif %}
+</div>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const SETTINGS_SCHEMA = {{ SETTINGS_SCHEMA | tojson | safe }};
+    
+    initializeAddScraperButton();
+    initializeDeleteButtons();
+    refreshScraperList();
+
+    function initializeAddScraperButton() {
+        const addButton = document.querySelector('#add-scraper-btn');
+        if (addButton) {
+            addButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                showAddScraperPopup();
+            });
+        } else {
+            console.error('Add scraper button not found');
+        }
+    }
+
+    function showAddScraperPopup() {
+        const scraperTypes = Object.keys(SETTINGS_SCHEMA.Scrapers.schema);
+        
+        showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Scraper',
+            message: 'Select the type of scraper you want to add:',
+            dropdownOptions: scraperTypes.map(type => ({ value: type, text: type })),
+            confirmText: 'Next',
+            cancelText: 'Cancel',
+            onConfirm: (selectedType) => {
+                if (selectedType) {
+                    showScraperSettingsPopup(selectedType);
+                } else {
+                    console.error('No scraper type selected');
+                }
+            }
+        });
+    }
+
+    function showScraperSettingsPopup(scraperType) {
+        const scraperSchema = SETTINGS_SCHEMA.Scrapers.schema[scraperType];
+        let formHtml = '<form id="scraperSettingsForm">';
+
+        for (const [key, value] of Object.entries(scraperSchema)) {
+            if (key === 'enabled') continue; // Skip the 'enabled' field as it's always true when adding a new scraper
+
+            let inputHtml = '';
+            if (value.type === 'boolean') {
+                inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${value.default ? 'checked' : ''}>`;
+            } else if (value.type === 'string') {
+                inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''}>`;
+            }
+
+            formHtml += `
+                <div class="form-group">
+                    <label for="${key}">${key}:</label>
+                    ${inputHtml}
+                </div>
+            `;
+        }
+
+        formHtml += '</form>';
+
+        showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: `Configure ${scraperType} Scraper`,
+            message: 'Please configure the scraper settings:',
+            formHtml: formHtml,
+            confirmText: 'Add Scraper',
+            cancelText: 'Cancel',
+            onConfirm: (formData) => {
+                formData.enabled = true; // Always set enabled to true for new scrapers
+                addScraper(scraperType, formData);
+            }
+        });
+    }
+
+    function addScraper(scraperType, scraperConfig) {
+        fetch('/onboarding/scrapers/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ type: scraperType, config: scraperConfig })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                refreshScraperList();
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    message: `Scraper ${data.scraper_id} added successfully.`,
+                    autoClose: 3000
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding scraper:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding scraper: ' + error.message,
+                autoClose: 5000
+            });
+        });
+    }
+
+    function initializeDeleteButtons() {
+        const deleteButtons = document.querySelectorAll('.delete-scraper-btn');
+        deleteButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const scraperId = this.getAttribute('data-scraper-id');
+                deleteScraper(scraperId);
+            });
+        });
+    }
+
+    function deleteScraper(scraperId) {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Scraper',
+            message: 'Are you sure you want to delete this scraper?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/scrapers/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ scraper_id: scraperId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        refreshScraperList();
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            message: 'Scraper deleted successfully.',
+                            autoClose: 3000
+                        });
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting scraper:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error deleting scraper: ' + error.message,
+                        autoClose: 5000
+                    });
+                });
+            }
+        });
+    }
+
+    function refreshScraperList() {
+        fetch('/onboarding/scrapers/get')
+            .then(response => response.json())
+            .then(data => {
+                const scraperList = document.getElementById('existing-scrapers');
+                scraperList.innerHTML = '';
+                if (data.scrapers && Object.keys(data.scrapers).length > 0) {
+                    const header = document.createElement('h3');
+                    header.className = 'onboarding-title';
+                    header.textContent = 'Scrapers';
+                    scraperList.appendChild(header);
+                    for (const [scraper, config] of Object.entries(data.scrapers)) {
+                        const scraperItem = document.createElement('div');
+                        scraperItem.className = 'scraper-item';
+                        let settingsHtml = '';
+                        for (const [key, value] of Object.entries(config)) {
+                            if (key !== 'enabled') {
+                                settingsHtml += `
+                                    <div class="setting-item">
+                                        <label class="onboarding-text">${key.charAt(0).toUpperCase() + key.slice(1)}:</label>
+                                        <input type="text" value="${value}" readonly class="setting-value">
+                                    </div>
+                                `;
+                            }
+                        }
+                        scraperItem.innerHTML = `
+                            <div class="scraper-header">
+                                <span class="onboarding-text">${scraper}</span>
+                                <button class="delete-scraper-btn onboarding-btn-delete" data-scraper-id="${scraper}">Delete</button>
+                            </div>
+                            <div class="scraper-settings">
+                                ${settingsHtml}
+                            </div>
+                        `;
+                        scraperList.appendChild(scraperItem);
+                    }
+                    initializeDeleteButtons();
+                }
+                updateCanProceed(Object.keys(data.scrapers || {}).length > 0);
+            })
+            .catch(error => {
+                console.error('Error fetching scrapers:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Error fetching scrapers: ' + error.message,
+                    autoClose: 5000
+                });
+            });
+    }
+
+    function updateCanProceed(canProceed) {
+        fetch('/onboarding/update_can_proceed', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ step: 3, can_proceed: canProceed })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const nextStepBtn = document.querySelector('.next-step-btn');
+                if (nextStepBtn) {
+                    nextStepBtn.disabled = !canProceed;
+                }
+            }
+        })
+        .catch(error => console.error('Error updating can_proceed status:', error));
+    }
+});
+</script>
+
+{% include 'onboarding_navigation.html' %}
+{% endblock %}
