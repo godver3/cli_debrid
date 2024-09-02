@@ -710,7 +710,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     resolution_wanted = version_settings.get('resolution_wanted', '<=')
     max_resolution = version_settings.get('max_resolution', '2160p')
     min_size_gb = float(version_settings.get('min_size_gb', 0.01))
-    max_size_gb = float(version_settings.get('max_size_gb', float('inf')))
+    max_size_gb = float(version_settings.get('max_size_gb', float('inf')) or float('inf'))
     filter_in = version_settings.get('filter_in', [])
     filter_out = version_settings.get('filter_out', [])
     enable_hdr = version_settings.get('enable_hdr', False)
