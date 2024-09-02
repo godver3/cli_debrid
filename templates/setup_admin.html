@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Setup Admin Account{% endblock %}
+{% block content %}
+<div class="onboarding-container">
+    <h2 class="onboarding-title">Setup Admin Account</h2>
+    <form method="POST" class="onboarding-form">
+        <div>
+            <label for="new_username" class="onboarding-label">New Username:</label>
+            <input type="text" id="new_username" name="new_username" required class="onboarding-input">
+        </div>
+        <div>
+            <label for="new_password" class="onboarding-label">New Password:</label>
+            <input type="password" id="new_password" name="new_password" required class="onboarding-input">
+        </div>
+        <div>
+            <label for="confirm_password" class="onboarding-label">Confirm Password:</label>
+            <input type="password" id="confirm_password" name="confirm_password" required class="onboarding-input">
+        </div>
+        <div>
+            <input type="submit" value="Set Up Admin Account" class="onboarding-submit">
+        </div>
+    </form>
+</div>
+{% endblock %}
