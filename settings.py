@@ -246,7 +246,8 @@ def ensure_settings_file():
                     'preferred_filter_out': '',
                     'filter_in': '',
                     'filter_out': '',
-                    'min_size_gb': '0.01'
+                    'min_size_gb': '0.01',
+                    'max_size_gb': ''
                 },
             },
             'uncached_content_handling': ''

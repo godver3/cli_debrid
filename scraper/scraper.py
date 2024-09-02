@@ -710,6 +710,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     resolution_wanted = version_settings.get('resolution_wanted', '<=')
     max_resolution = version_settings.get('max_resolution', '2160p')
     min_size_gb = float(version_settings.get('min_size_gb', 0.01))
+    max_size_gb = float(version_settings.get('max_size_gb', float('inf')))
     filter_in = version_settings.get('filter_in', [])
     filter_out = version_settings.get('filter_out', [])
     enable_hdr = version_settings.get('enable_hdr', False)
@@ -843,33 +844,52 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     continue
 
         size_gb = parse_size(result.get('size', 0))
+        logging.info(f"Original size for '{result.get('title')}': {size_gb:.2f} GB")
 
         season_episode_info = result.get('parsed_info', {}).get('season_episode_info', {})
         scraper = result.get('scraper', '').lower()
 
-        if scraper in ['jackett', 'zilean']:
+        logging.info(f"Scraper: {scraper}, Season pack info: {season_episode_info.get('season_pack', 'Unknown')}")
+
+        if scraper.startswith('jackett') or scraper.startswith('zilean'):
             if season_episode_info.get('season_pack', 'Unknown') == 'N/A':
+                logging.info("Single episode detected")
+                size_per_episode_gb = size_gb
+            else:
                 if season_episode_info['season_pack'] == 'Complete':
                     total_episodes = sum(season_episode_counts.values())
+                    logging.info(f"Complete series pack detected. Total episodes: {total_episodes}")
                 else:
                     season_numbers = [int(s) for s in season_episode_info['season_pack'].split(',')]
                     total_episodes = sum(season_episode_counts.get(s, 0) for s in season_numbers)
+                    logging.info(f"Season pack detected. Seasons: {season_numbers}, Total episodes: {total_episodes}")
                 
                 if total_episodes > 0:
                     size_per_episode_gb = size_gb / total_episodes
+                    logging.info(f"Calculated size per episode: {size_per_episode_gb:.2f} GB")
                 else:
                     size_per_episode_gb = size_gb
-            else:
-                size_per_episode_gb = size_gb
+                    logging.info(f"Could not determine episode count. Using original size: {size_per_episode_gb:.2f} GB")
 
             result['size'] = size_per_episode_gb
             bitrate = calculate_bitrate(size_per_episode_gb, runtime)
-
         else:
+            logging.info(f"Using original size for non-Jackett/Zilean scraper: {size_gb:.2f} GB")
             result['size'] = size_gb
             bitrate = calculate_bitrate(size_gb, runtime)
 
-        result['bitrate'] = bitrate          
+        result['bitrate'] = bitrate
+        logging.info(f"Calculated bitrate: {bitrate:.2f} Mbps")
+
+        # Apply size filter after per-file size calculation
+        if result['size'] < min_size_gb:
+            result['filter_reason'] = f"Size too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
+            logging.info(f"Filtered out: {result['filter_reason']}")
+            continue
+        if result['size'] > max_size_gb:
+            result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
+            logging.info(f"Filtered out: {result['filter_reason']}")
+            continue
 
         # Apply custom filters with smart matching
         if filter_in and not any(smart_search(pattern, original_title) for pattern in filter_in):

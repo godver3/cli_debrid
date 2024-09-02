@@ -237,12 +237,21 @@ function updateSettings() {
                 if (input.type === 'checkbox') {
                     versionData[key] = input.checked;
                 } else if (input.type === 'number') {
-                    versionData[key] = parseFloat(input.value) || 0;
+                    if (key === 'max_size_gb') {
+                        versionData[key] = input.value === '' ? Infinity : parseFloat(input.value) || 0;
+                    } else {
+                        versionData[key] = parseFloat(input.value) || 0;
+                    }
                 } else {
                     versionData[key] = input.value;
                 }
             }
         });
+
+        // Add max_size_gb with default Infinity if it doesn't exist
+        if (!('max_size_gb' in versionData)) {
+            versionData['max_size_gb'] = Infinity;
+        }
 
         // Handle filter lists
         ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
