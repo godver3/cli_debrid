@@ -261,6 +261,9 @@ def add_scraper(scraper_type, scraper_config):
             validated_config[key] = value['default']
     logging.debug(f"[{process_id}] Validated config for {new_scraper_id}: {validated_config}")
     
+    # Add this line
+    validated_config['type'] = scraper_type
+    
     # Add the new scraper to the 'Scrapers' section
     config['Scrapers'][new_scraper_id] = validated_config
     
