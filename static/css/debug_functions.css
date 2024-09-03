@@ -40,7 +40,7 @@ select#collection_type,
 select#wanted_source,
 select#queue_select,
 select#action_select,
-select#target_queue {
+select#target_queue, .debug-container a {
     padding: 10px;
     background-color: #3a3a3a;
     border: 1px solid #555;
@@ -57,7 +57,7 @@ input[type="number"]:focus {
     outline: none;
 }
 
-button {
+button, .debug-container a {
     background-color: #007bff;
     color: white;
     border: none;
@@ -70,6 +70,15 @@ button {
     cursor: pointer;
     border-radius: 4px;
     transition: background-color 0.3s;
+}
+
+.debug-container a {
+    width: 100%;
+    background-color: #4CAF50;
+}
+
+.debug-container a:hover {
+    background-color: #45a049;
 }
 
 button:hover {
