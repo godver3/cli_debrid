@@ -971,8 +971,10 @@ def add_onboarding_content_source():
 def get_onboarding_content_sources():
     config = load_config()
     content_source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+    content_sources = config.get('Content Sources', {})
+    logging.debug(f"Retrieved content sources: {content_sources}")
     return jsonify({
-        'content_sources': config.get('Content Sources', {}),
+        'content_sources': content_sources,
         'source_types': content_source_types,
         'settings': SETTINGS_SCHEMA['Content Sources']['schema']
     })
