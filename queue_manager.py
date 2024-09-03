@@ -135,7 +135,7 @@ class QueueManager:
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
-    def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str):
+    def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Checking: {item_identifier}")
         
@@ -143,7 +143,7 @@ class QueueManager:
         if 'hybrid_flag' in item:
             del item['hybrid_flag']
         
-        update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file)
+        update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
             self.queues["Checking"].add_item(updated_item)
