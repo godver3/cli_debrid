@@ -75,10 +75,12 @@ document.addEventListener('DOMContentLoaded', function() {
     function showScraperSettingsPopup(scraperType) {
         const scraperSchema = SETTINGS_SCHEMA.Scrapers.schema[scraperType];
         let formHtml = '<form id="scraperSettingsForm">';
+        let hasSettings = false;
 
         for (const [key, value] of Object.entries(scraperSchema)) {
-            if (key === 'enabled') continue; // Skip the 'enabled' field as it's always true when adding a new scraper
+            if (key === 'enabled') continue;
 
+            hasSettings = true;
             let inputHtml = '';
             if (value.type === 'boolean') {
                 inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${value.default ? 'checked' : ''}>`;
@@ -96,18 +98,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
         formHtml += '</form>';
 
-        showPopup({
-            type: POPUP_TYPES.PROMPT,
-            title: `Configure ${scraperType} Scraper`,
-            message: 'Please configure the scraper settings:',
-            formHtml: formHtml,
-            confirmText: 'Add Scraper',
-            cancelText: 'Cancel',
-            onConfirm: (formData) => {
-                formData.enabled = true; // Always set enabled to true for new scrapers
-                addScraper(scraperType, formData);
-            }
-        });
+        if (hasSettings) {
+            showPopup({
+                type: POPUP_TYPES.PROMPT,
+                title: `Configure ${scraperType} Scraper`,
+                message: 'Please configure the scraper settings:',
+                formHtml: formHtml,
+                confirmText: 'Add Scraper',
+                cancelText: 'Cancel',
+                onConfirm: (formData) => {
+                    formData.enabled = true;
+                    addScraper(scraperType, formData);
+                }
+            });
+        } else {
+            // If there are no settings, add the scraper directly
+            addScraper(scraperType, { enabled: true });
+        }
     }
 
     function addScraper(scraperType, scraperConfig) {
@@ -206,8 +213,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         const scraperItem = document.createElement('div');
                         scraperItem.className = 'scraper-item';
                         let settingsHtml = '';
+                        let hasSettings = false;
                         for (const [key, value] of Object.entries(config)) {
-                            if (key !== 'enabled') {
+                            if (key !== 'enabled' && key !== 'type') {
+                                hasSettings = true;
                                 settingsHtml += `
                                     <div class="setting-item">
                                         <label class="onboarding-text">${key.charAt(0).toUpperCase() + key.slice(1)}:</label>
@@ -215,6 +224,9 @@ document.addEventListener('DOMContentLoaded', function() {
                                     </div>
                                 `;
                             }
+                        }
+                        if (!hasSettings) {
+                            settingsHtml = '<div class="setting-item"><span class="onboarding-text-no-config">No configuration</span></div>';
                         }
                         scraperItem.innerHTML = `
                             <div class="scraper-header">
