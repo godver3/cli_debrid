@@ -178,8 +178,57 @@ document.addEventListener('DOMContentLoaded', function() {
             console.warn('imdbId element not found in the DOM');
         }
     
+        // Show/hide TV controls
+        const tvControls = document.getElementById('tv-controls');
+        if (tvControls) {
+            tvControls.style.display = item.mediaType === 'tv' ? 'block' : 'none';
+            if (item.mediaType === 'tv') {
+                populateSeasonEpisodeSelects(item);
+            }
+        }
+    
         // Load versions for the selected item
         loadVersions();
+    }
+
+    function populateSeasonEpisodeSelects(item) {
+        const seasonSelect = document.getElementById('season-select');
+        const episodeSelect = document.getElementById('episode-select');
+    
+        // Clear existing options
+        seasonSelect.innerHTML = '';
+        episodeSelect.innerHTML = '';
+    
+        if (item.seasonEpisodeCounts) {
+            // Populate seasons
+            Object.keys(item.seasonEpisodeCounts).forEach(season => {
+                const option = document.createElement('option');
+                option.value = season;
+                option.textContent = `Season ${season}`;
+                seasonSelect.appendChild(option);
+            });
+    
+            // Add event listener to season select to update episodes
+            seasonSelect.addEventListener('change', () => updateEpisodeSelect(item, seasonSelect.value));
+    
+            // Initially populate episodes for the first season
+            updateEpisodeSelect(item, Object.keys(item.seasonEpisodeCounts)[0]);
+        }
+    }
+
+    function updateEpisodeSelect(item, selectedSeason) {
+        const episodeSelect = document.getElementById('episode-select');
+        episodeSelect.innerHTML = '';
+    
+        if (item.seasonEpisodeCounts && item.seasonEpisodeCounts[selectedSeason]) {
+            const episodeCount = item.seasonEpisodeCounts[selectedSeason];
+            for (let i = 1; i <= episodeCount; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `Episode ${i}`;
+                episodeSelect.appendChild(option);
+            }
+        }
     }
 
     function loadVersions() {
@@ -493,6 +542,13 @@ document.addEventListener('DOMContentLoaded', function() {
             version: version,
             modifiedSettings: modifiedSettings
         };
+    
+        // Add TV show specific information
+        if (currentItem.mediaType === 'tv') {
+            scrapeData.season = document.getElementById('season-select').value;
+            scrapeData.episode = document.getElementById('episode-select').value;
+            scrapeData.multi = document.getElementById('multi-checkbox').checked;
+        }
     
         console.log('Scrape data:', scrapeData);
     
