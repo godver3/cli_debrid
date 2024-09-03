@@ -11,42 +11,12 @@ from urllib.parse import quote, urlencode
 from bs4 import BeautifulSoup
 import re
 
-def scrape_nyaa(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
-    nyaa_results = []
+def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     nyaa_instances = [
         "https://nyaa.land/",
-        "https://nyaa.si/",
-        "https://nyaa.iss.ink/",
         "https://nyaa.unblockninja.com/",
-    ]
-    
-    nyaa_settings = {
-        "categories": "1_0",
-        "filter": "0",
-        "sort": "seeders",
-        "order": "desc"
-    }
-    
-    for instance_url in nyaa_instances:
-        try:
-            instance_results = scrape_nyaa_instance(instance_url, nyaa_settings, imdb_id, title, year, content_type, season, episode, multi)
-            if instance_results:
-                nyaa_results.extend(instance_results)
-                break  # Stop trying other instances if we get results
-        except Exception as e:
-            logging.error(f"Error scraping Nyaa instance {instance_url}: {str(e)}", exc_info=True)
-    
-    if not nyaa_results:
-        logging.warning("Failed to scrape results from all Nyaa instances")
-    
-    return nyaa_results
-
-def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
-    nyaa_urls = [
-        "https://nyaa.land/",
         "https://nyaa.si/",
-        "https://nyaa.iss.ink/",
-        "https://nyaa.unblockninja.com/",
+        "https://nyaa.iss.ink/"
     ]
     
     categories = settings.get('categories', '1_0')
@@ -69,7 +39,7 @@ def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, 
     
     encoded_query = quote(query)
     
-    for base_url in nyaa_urls:
+    for base_url in nyaa_instances:
         full_url = f"{base_url}?f=0{params}&q={encoded_query}"
         
         try:
@@ -77,13 +47,14 @@ def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, 
             if response.status_code == 200:
                 results = parse_nyaa_results(response.content)
                 if results:
+                    logging.info(f"Successfully scraped {len(results)} results from {base_url}")
                     return results
             else:
                 logging.warning(f"Nyaa API error for {base_url}: Status code {response.status_code}")
         except Exception as e:
             logging.error(f"Error scraping Nyaa instance {base_url}: {str(e)}", exc_info=True)
     
-    logging.error("Failed to scrape results from all Nyaa instances")
+    logging.warning("Failed to scrape results from all Nyaa instances")
     return []
 
 def parse_nyaa_results(content: bytes) -> List[Dict[str, Any]]:
@@ -164,7 +135,7 @@ def test_nyaa_scraper(title: str, year: int, content_type: str, season: int = No
     imdb_id = "tt0000000"
     
     try:
-        results = scrape_nyaa(imdb_id, title, year, content_type, season, episode, multi)
+        results = scrape_nyaa_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi)
         print(f"Scraped {len(results)} results from Nyaa:")
         for result in results:
             print(f"- {result['title']} ({result['size']:.2f} GB, {result['seeders']} seeders)")

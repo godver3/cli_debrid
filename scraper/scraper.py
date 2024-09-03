@@ -1015,7 +1015,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Use ScraperManager to handle scraping
         scraper_manager = ScraperManager(load_config())
-        all_results = scraper_manager.scrape_all(imdb_id, title, year, content_type, season, episode, multi)
+        all_results = scraper_manager.scrape_all(imdb_id, title, year, content_type, season, episode, multi, genres)
 
         logging.debug(f"Total scraping time: {time.time() - start_time:.2f} seconds")
         logging.debug(f"Total results before filtering: {len(all_results)}")
