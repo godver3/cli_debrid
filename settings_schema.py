@@ -197,28 +197,7 @@ SETTINGS_SCHEMA = {
                 "opts": {"type": "string", "default": ""}
             },
             "Nyaa": {
-                "enabled": {"type": "boolean", "default": False},
-                "url": {"type": "string", "default": "https://nyaa.si", "validate": "url"},
-                "categories": {
-                    "type": "string",
-                    "default": "1_0",
-                    "description": "Comma-separated list of Nyaa categories (e.g., '1_0,1_2')"
-                },
-                "filter": {
-                    "type": "string",
-                    "default": "0",
-                    "description": "Nyaa filter (0: No filter, 1: No remakes, 2: Trusted only)"
-                },
-                "sort": {
-                    "type": "string",
-                    "default": "seeders",
-                    "description": "Sort order (seeders, leechers, size, downloads, date)"
-                },
-                "order": {
-                    "type": "string",
-                    "default": "desc",
-                    "description": "Sort direction (asc, desc)"
-                }
+                "enabled": {"type": "boolean", "default": False}
             }
         }
     },
