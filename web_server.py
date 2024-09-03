@@ -1992,16 +1992,6 @@ def queues():
     upgrading_queue = queue_contents.get('Upgrading', [])
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
 
-@app.route('/api/queue_contents')
-def api_queue_contents():
-    contents = queue_manager.get_queue_contents()
-    # Ensure wake counts are included for Sleeping queue items
-    if 'Sleeping' in contents:
-        for item in contents['Sleeping']:
-            item['wake_count'] = queue_manager.get_wake_count(item['id'])
-    #logging.info(f"Queue contents: {contents}")  # Add this line
-    return jsonify(contents)
-
 def run_server():
     app.run(debug=True, use_reloader=False, host='0.0.0.0')
 
@@ -2516,6 +2506,90 @@ def bulk_delete_by_imdb():
         return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with IMDB ID: {imdb_id}'})
     else:
         return jsonify({'success': False, 'error': f'No items found with IMDB ID: {imdb_id}'})
+
+@app.route('/bulk_queue_action', methods=['POST'])
+def bulk_queue_action():
+    action = request.form.get('action')
+    target_queue = request.form.get('target_queue')
+    selected_items = request.form.getlist('selected_items')
+
+    if not action or not selected_items:
+        return jsonify({'success': False, 'error': 'Action and selected items are required'})
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        if action == 'delete':
+            cursor.execute('DELETE FROM media_items WHERE id IN ({})'.format(','.join('?' * len(selected_items))), selected_items)
+            logging.debug(f"Successfully deleted {cursor.rowcount} items")
+        elif action == 'move' and target_queue:
+            cursor.execute('UPDATE media_items SET state = ? WHERE id IN ({})'.format(','.join('?' * len(selected_items))), [target_queue] + selected_items)
+            logging.debug(f"Successfully moved {cursor.rowcount} items to {target_queue} queue")
+        else:
+            return jsonify({'success': False, 'error': 'Invalid action or missing target queue'})
+
+        conn.commit()
+        return jsonify({'success': True, 'message': message})
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"Error performing bulk action: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+    finally:
+        conn.close()
+
+def move_item_to_queue(item_id, target_queue):
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE media_items SET state = ? WHERE id = ?', (target_queue, item_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+@app.route('/api/bulk_queue_contents', methods=['GET'])
+def get_queue_contents():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, title, state, type, season_number, episode_number, year
+            FROM media_items
+            WHERE state IN ('Adding', 'Blacklisted', 'Checking', 'Scraping', 'Sleeping', 'Unreleased', 'Wanted')
+        ''')
+        items = cursor.fetchall()
+
+        queue_contents = {
+            'Adding': [], 'Blacklisted': [], 'Checking': [], 'Scraping': [],
+            'Sleeping': [], 'Unreleased': [], 'Wanted': []
+        }
+        
+        for item in items:
+            item_dict = dict(item)
+            if item_dict['type'] == 'episode':
+                item_dict['title'] = f"{item_dict['title']} S{item_dict['season_number']:02d}E{item_dict['episode_number']:02d}"
+            elif item_dict['type'] == 'movie':
+                item_dict['title'] = f"{item_dict['title']} ({item_dict['year']})"
+            queue_contents[item_dict['state']].append(item_dict)
+        
+        return jsonify(queue_contents)
+    except Exception as e:
+        logging.error(f"Error fetching queue contents: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/api/queue_contents')
+def api_queue_contents():
+    contents = queue_manager.get_queue_contents()
+    # Ensure wake counts are included for Sleeping queue items
+    if 'Sleeping' in contents:
+        for item in contents['Sleeping']:
+            item['wake_count'] = queue_manager.get_wake_count(item['id'])
+    #logging.info(f"Queue contents: {contents}")  # Add this line
+    return jsonify(contents)
 
 # Add this route to handle unauthorized access
 @app.route('/unauthorized')
