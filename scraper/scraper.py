@@ -5,12 +5,6 @@ from api_tracker import api
 from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from .zilean import scrape_zilean
-from .torrentio import scrape_torrentio
-from .knightcrawler import scrape_knightcrawler
-from .comet import scrape_comet
-from .prowlarr import scrape_prowlarr
-from .jackett import scrape_jackett
 from settings import get_setting
 import time
 from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes, get_episode_count_for_seasons, get_all_season_episode_counts
@@ -23,6 +17,8 @@ from utilities.plex_functions import filter_genres
 from guessit import guessit
 import pykakasi
 from babelfish import Language
+from .scraper_manager import ScraperManager
+from config_manager import load_config
 
 def romanize_japanese(text):
     kks = pykakasi.kakasi()
@@ -751,6 +747,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             logging.info("No details found in Overseerr.")
 
     for result in results:
+        result['filter_reason'] = "Passed all filters"  # Default reason
+
         parsed_info = result.get('parsed_info', {})
         season_episode_info = parsed_info.get('season_episode_info', {})
         season_pack = season_episode_info.get('season_pack', 'Unknown')
@@ -915,17 +913,25 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                         continue
 
         # If the result passed all filters, add it to filtered_results
-        filtered_results.append(result)
+        if result['filter_reason'] == "Passed all filters":
+            filtered_results.append(result)
+        else:
+            # If it didn't pass, make sure we have a reason
+            if result['filter_reason'] == "Passed all filters":
+                result['filter_reason'] = "Failed to meet all criteria"
 
     return filtered_results
 
 def normalize_title(title: str) -> str:
     """
-    Normalize the title by replacing spaces with periods, removing colons,
+    Normalize the title by replacing spaces with periods, removing colons and apostrophes,
     replacing ".~." with "-", and removing duplicate periods.
     """
-    # Replace spaces with periods and remove colons
-    normalized = title.replace(' ', '.').replace(':', '')
+    # Remove apostrophes and colons
+    normalized = re.sub(r"[':]", "", title)
+    
+    # Replace spaces with periods
+    normalized = normalized.replace(' ', '.')
     
     # Replace ".~." with "-"
     normalized = normalized.replace('.~.', '-')
@@ -987,76 +993,30 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             version_settings = {}
         logging.debug(f"Using version settings: {version_settings}")
 
-        # Get all scraper settings
-        all_scraper_settings = get_setting('Scrapers')
+        # Use ScraperManager to handle scraping
+        scraper_manager = ScraperManager(load_config())
+        all_results = scraper_manager.scrape_all(imdb_id, title, year, content_type, season, episode, multi)
 
-        # Define scraper functions
-        scraper_functions = {
-            'Zilean': scrape_zilean,
-            'Torrentio': scrape_torrentio,
-            'Comet': scrape_comet,
-            'Jackett': scrape_jackett,
-            'Prowlarr': scrape_prowlarr
-        }
-
-        def run_scraper(scraper_name, scraper_settings):
-            scraper_start = time.time()
-            try:
-                logging.debug(f"Starting {scraper_name} scraper")
-                #logging.debug(f"Scraper settings: {scraper_settings}")
-                
-                scraper_type = scraper_name.split('_')[0]
-                scraper_func = scraper_functions.get(scraper_type)
-                if not scraper_func:
-                    logging.warning(f"No scraper function found for {scraper_name}")
-                    return []
-                
-                # All scrapers now use the same parameter list
-                scraper_results = scraper_func(imdb_id, title, year, content_type, season, episode, multi)
-                                
-                if isinstance(scraper_results, tuple):
-                    *_, scraper_results = scraper_results
-                for item in scraper_results:
-                    item['scraper'] = scraper_name
-                    item['title'] = normalize_title(item.get('title', ''))
-                    item['parsed_info'] = parse_torrent_info(item['title'])  # Parse info once
-                logging.debug(f"{scraper_name} scraper found {len(scraper_results)} results")
-                logging.debug(f"{scraper_name} scraper took {time.time() - scraper_start:.2f} seconds")
-                return scraper_results
-            except Exception as e:
-                logging.error(f"Error in {scraper_name} scraper: {str(e)}", exc_info=True)
-                return []
-
-        scraping_start = time.time()
-        with ThreadPoolExecutor(max_workers=len(all_scraper_settings)) as executor:
-            future_to_scraper = {}
-            for scraper_name, scraper_settings in all_scraper_settings.items():
-                if scraper_settings.get('enabled', False):
-                    future = executor.submit(run_scraper, scraper_name, scraper_settings)
-                    future_to_scraper[future] = scraper_name
-                else:
-                    logging.debug(f"Scraper {scraper_name} is disabled, skipping")
-
-            for future in as_completed(future_to_scraper):
-                scraper_name = future_to_scraper[future]
-                try:
-                    results = future.result()
-                    all_results.extend(results)
-                except Exception as e:
-                    logging.error(f"Scraper {scraper_name} generated an exception: {str(e)}")
-
-        logging.debug(f"Total scraping time: {time.time() - scraping_start:.2f} seconds")
+        logging.debug(f"Total scraping time: {time.time() - start_time:.2f} seconds")
         logging.debug(f"Total results before filtering: {len(all_results)}")
 
         # Deduplicate results before filtering
         all_results = deduplicate_results(all_results)
         logging.debug(f"Total results after deduplication: {len(all_results)}")
 
-        # Filter results
-        filtered_results = filter_results(all_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
-        filtered_out_results = [result for result in all_results if result not in filtered_results]
+        # Normalize and parse results
+        normalized_results = []
+        for result in all_results:
+            normalized_result = result.copy()
+            normalized_result['title'] = normalize_title(result.get('title', ''))
+            normalized_result['parsed_info'] = parse_torrent_info(normalized_result['title'])
+            normalized_results.append(normalized_result)
 
-        logging.debug(f"Filtering took {time.time() - scraping_start:.2f} seconds")
+        # Filter results
+        filtered_results = filter_results(normalized_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
+        filtered_out_results = [result for result in normalized_results if result not in filtered_results]
+
+        logging.debug(f"Filtering took {time.time() - start_time:.2f} seconds")
         logging.debug(f"Total results after filtering: {len(filtered_results)}")
         logging.debug(f"Total filtered out results: {len(filtered_out_results)}")
 
@@ -1099,6 +1059,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         scraper_logger.info("All result titles:")
         for result in all_results:
             scraper_logger.info(f"- {result.get('title', '')}")
+
+        scraper_logger.info("Filtered out results:")
+        for result in filtered_out_results:
+            filter_reason = result.get('filter_reason', 'Unknown reason')
+            scraper_logger.info(f"- {result.get('title', '')}: {filter_reason}")
 
         scraper_logger.info("Filtered out results:")
         for result in filtered_out_results:

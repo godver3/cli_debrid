@@ -1,44 +1,20 @@
 import logging
 from api_tracker import api
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
 from settings import load_config, get_setting
 
 DEFAULT_OPTS = "sort=qualitysize|qualityfilter=480p,scr,cam"
 TORRENTIO_BASE_URL = "https://torrentio.strem.fun"
 
-def scrape_torrentio(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
-    all_results = []
-    config = load_config()
-    torrentio_instances = config.get('Scrapers', {})
-    
-    #logging.debug(f"Torrentio settings: {torrentio_instances}")
-
-    for instance, settings in torrentio_instances.items():
-        if instance.startswith('Torrentio'):
-            if not settings.get('enabled', False):
-                logging.debug(f"Torrentio instance '{instance}' is disabled, skipping")
-                continue
-
-            logging.info(f"Scraping Torrentio instance: {instance}")
-            
-            try:
-                instance_results = scrape_torrentio_instance(instance, settings, imdb_id, content_type, season, episode)
-                all_results.extend(instance_results)
-            except Exception as e:
-                logging.error(f"Error scraping Torrentio instance '{instance}': {str(e)}", exc_info=True)
-
-    return all_results
-
-def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
-    logging.info(f"Scraping Torrentio instance: {instance}")
-    opts = get_setting(instance, 'opts', DEFAULT_OPTS)
-    logging.info(f"Opts: {opts}")
+def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+    opts = settings.get('opts', '').strip()
+    if not opts:
+        opts = DEFAULT_OPTS
     
     try:
         url = construct_url(imdb_id, content_type, season, episode, opts)
-        #logging.debug(f"Fetching Torrentio data for {instance} from URL: {url}")
         response = fetch_data(url)
         if not response or 'streams' not in response:
             logging.warning(f"No streams found for IMDb ID: {imdb_id} in instance {instance}")
@@ -46,7 +22,7 @@ def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: 
         parsed_results = parse_results(response['streams'], instance)
         return parsed_results
     except Exception as e:
-        logging.error(f"Error in scrape_torrentio_instance for {instance}: {str(e)}")
+        logging.error(f"Error in scrape_torrentio_instance for {instance}: {str(e)}", exc_info=True)
         return []
 
 def construct_url(imdb_id: str, content_type: str, season: int = None, episode: int = None, opts: str = DEFAULT_OPTS) -> str:
