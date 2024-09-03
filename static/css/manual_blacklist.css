@@ -1,0 +1,37 @@
+select#media_type,
+input#imdb_id {
+    padding: 10px;
+    background-color: #3a3a3a;
+    border: 1px solid #555;
+    color: #f4f4f4;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    margin-bottom: 10px;
+}
+
+button.btn.btn-danger.btn-sm {
+    background-color: #d9534f;
+    margin-bottom: 0px;
+}
+
+button.btn.btn-danger.btn-sm:hover {
+    background-color: #c9302c;
+    margin-bottom: 0px;
+}
+
+button.btn.btn-primary, button.btn.btn-danger {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    margin-bottom: 10px;
+}
+
+button.btn.btn-primary, button.btn.btn-danger:hover {
+    background-color: #45a049;
+}
+

@@ -53,7 +53,8 @@ from web_scraper import get_media_details, process_media_selection
 import pickle
 from flask.json import jsonify
 from babelfish import Language
-from metadata.metadata import get_overseerr_show_details, get_all_season_episode_counts, get_overseerr_cookies
+from metadata.metadata import get_overseerr_show_details, get_all_season_episode_counts, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_movie_details, get_tmdb_id_and_media_type
+from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
 
 CACHE_FILE = 'db_content/api_summary_cache.pkl'
 # Add this at the global scope, outside of any function
@@ -2580,6 +2581,77 @@ def get_queue_contents():
         return jsonify({'error': str(e)}), 500
     finally:
         conn.close()
+
+@app.route('/manual_blacklist', methods=['GET', 'POST'])
+@admin_required
+def manual_blacklist():
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    
+    if not overseerr_url or not overseerr_api_key:
+        flash('Overseerr URL or API key not set. Please configure in settings.', 'error')
+        return redirect(url_for('settings'))
+
+    cookies = get_overseerr_cookies(overseerr_url)
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        imdb_id = request.form.get('imdb_id')
+
+        if action == 'add':
+            tmdb_id, media_type = get_tmdb_id_and_media_type(overseerr_url, overseerr_api_key, imdb_id)
+            
+            if tmdb_id and media_type:
+                # Fetch details based on media type
+                if media_type == 'movie':
+                    details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+                else:  # TV show
+                    details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+                
+                if details:
+                    title = details.get('title') if media_type == 'movie' else details.get('name')
+                    year = details.get('releaseDate', '')[:4] if media_type == 'movie' else details.get('firstAirDate', '')[:4]
+                    
+                    add_to_manual_blacklist(imdb_id, media_type, title, year)
+                    flash(f'Added {imdb_id}: {title} ({year}) to manual blacklist as {media_type}', 'success')
+                else:
+                    flash(f'Could not fetch details for {imdb_id}', 'error')
+            else:
+                flash(f'Could not determine TMDB ID and media type for IMDb ID {imdb_id}', 'error')
+        
+        elif action == 'remove':
+            remove_from_manual_blacklist(imdb_id)
+            flash(f'Removed {imdb_id} from manual blacklist', 'success')
+
+    blacklist = get_manual_blacklist()
+    return render_template('manual_blacklist.html', blacklist=blacklist)
+
+@app.route('/api/get_title_year', methods=['GET'])
+def get_title_year():
+    imdb_id = request.args.get('imdb_id')
+    
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    
+    if not overseerr_url or not overseerr_api_key:
+        return jsonify({'error': 'Overseerr URL or API key not set'}), 400
+
+    cookies = get_overseerr_cookies(overseerr_url)
+    tmdb_id, media_type = get_tmdb_id_and_media_type(overseerr_url, overseerr_api_key, imdb_id)
+    
+    if tmdb_id and media_type:
+        if media_type == 'movie':
+            details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+        else:  # TV show
+            details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+        
+        if details:
+            title = details.get('title') if media_type == 'movie' else details.get('name')
+            year = details.get('releaseDate', '')[:4] if media_type == 'movie' else details.get('firstAirDate', '')[:4]
+            return jsonify({'title': title, 'year': year, 'media_type': media_type})
+
+    return jsonify({'error': 'Could not fetch title and year'}), 404
+
 
 @app.route('/api/queue_contents')
 def api_queue_contents():
