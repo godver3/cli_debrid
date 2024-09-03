@@ -31,7 +31,7 @@ def rename_special_characters(text: str) -> str:
         (" - ", " "),
         ("'", ""),
         ("*", ""),
-        (" ", "."),
+        (".", " "),
     ]
     
     for old, new in replacements:
