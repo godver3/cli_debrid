@@ -20,6 +20,7 @@ def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: 
             logging.warning(f"No streams found for IMDb ID: {imdb_id} in instance {instance}")
             return []
         parsed_results = parse_results(response['streams'], instance)
+
         return parsed_results
     except Exception as e:
         logging.error(f"Error in scrape_torrentio_instance for {instance}: {str(e)}", exc_info=True)
@@ -50,19 +51,21 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
     for stream in streams:
         try:
             title = stream.get('title', '')
+            logging.debug(f"Raw title: {title}")
             title_parts = title.split('\n')
-            if len(title_parts) >= 3:  # TV Show format
-                name = title_parts[0].strip()
-                #seeder_info = title_parts[1].strip()
-                size_info = title_parts[2].strip()
-            elif len(title_parts) == 2:  # Movie format
-                name = title_parts[0].strip()
-                #seeder_info = title_parts[2].strip()
-                size_info = title_parts[1].strip()
-            else:
-                continue  # Skip if the format is unexpected
-            size = parse_size(size_info)
-            seeders = parse_seeder(size_info)
+            name = title_parts[0].strip()
+            size = 0.0
+            seeders = 0
+            
+            # Look for size and seeder info in all parts
+            for part in title_parts:
+                size_info = parse_size(part)
+                if size_info > 0:
+                    size = size_info
+                seeder_info = parse_seeder(part)
+                if seeder_info > 0:
+                    seeders = seeder_info
+
             info_hash = stream.get("infoHash", "")
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
             if stream.get('fileIdx') is not None:
@@ -74,25 +77,34 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 'magnet': magnet_link,
                 'seeders': seeders
             })
+            logging.debug(f"Parsed result: title={name}, size={size}, seeders={seeders}")
         except Exception as e:
-            logging.error(f"Error parsing result: {str(e)}")
             continue
     return results
 
 def parse_size(size_info: str) -> float:
+    # Try the original pattern first
     size_match = re.search(r'💾\s*([\d.]+)\s*(\w+)', size_info)
+    if not size_match:
+        # If the original pattern fails, try a more lenient pattern
+        size_match = re.search(r'([\d.]+)\s*(\w+)', size_info)
+    
     if size_match:
         size, unit = size_match.groups()
         size = float(size)
         if unit.lower() == 'gb':
             return size
         elif unit.lower() == 'mb':
-            return size / 1024
+            converted_size = size / 1024
+            return converted_size
+        else:
+            return size
+    
+    logging.debug("Returning 0.0 as fallback")
     return 0.0
 
-def parse_seeder(seeder_info: str) -> float:
-    seeder_match = re.search(r'👤.+?([\d]+).+?💾', seeder_info)
+def parse_seeder(seeder_info: str) -> int:
+    seeder_match = re.search(r'👤\s*(\d+)', seeder_info)
     if seeder_match:
-        seeders = seeder_match.groups()
-        return int(seeders[0])
+        return int(seeder_match.group(1))
     return 0
