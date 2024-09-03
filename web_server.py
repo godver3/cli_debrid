@@ -53,6 +53,7 @@ from web_scraper import get_media_details, process_media_selection
 import pickle
 from flask.json import jsonify
 from babelfish import Language
+from metadata.metadata import get_overseerr_show_details, get_all_season_episode_counts, get_overseerr_cookies
 
 CACHE_FILE = 'db_content/api_summary_cache.pkl'
 # Add this at the global scope, outside of any function
@@ -2248,7 +2249,7 @@ def scraper_tester():
             search_results = search_overseerr(search_term)
             app.logger.debug(f"Search results: {search_results}")
             
-            # Fetch IMDB IDs for each result
+            # Fetch IMDB IDs and season/episode counts for each result
             for result in search_results:
                 app.logger.debug(f"Processing result: {result}")
                 details = get_details(result)
@@ -2258,11 +2259,19 @@ def scraper_tester():
                     imdb_id = details.get('externalIds', {}).get('imdbId', 'N/A')
                     result['imdbId'] = imdb_id
                     app.logger.debug(f"IMDB ID found: {imdb_id}")
+                    
+                    if result['mediaType'] == 'tv':
+                        overseerr_url = get_setting('Overseerr', 'url')
+                        overseerr_api_key = get_setting('Overseerr', 'api_key')
+                        cookies = get_overseerr_cookies(overseerr_url)
+                        season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, result['id'], cookies)
+                        result['seasonEpisodeCounts'] = season_episode_counts
+                        app.logger.debug(f"Season/Episode counts: {season_episode_counts}")
                 else:
                     result['imdbId'] = 'N/A'
                     app.logger.debug("No details found for this result")
             
-            app.logger.debug(f"Final search results with IMDB IDs: {search_results}")
+            app.logger.debug(f"Final search results with IMDB IDs and season/episode counts: {search_results}")
             return jsonify(search_results)
         else:
             return jsonify({'error': 'No search term provided'}), 400
@@ -2417,8 +2426,8 @@ def run_scrape():
         genres = data.get('genres', [])
         
         if media_type == 'episode':
-            season = data.get('season')
-            episode = data.get('episode')
+            season = int(data.get('season', 1))  # Convert to int, default to 1
+            episode = int(data.get('episode', 1))  # Convert to int, default to 1
             multi = data.get('multi', False)
         else:
             season = None
