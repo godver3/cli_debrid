@@ -464,7 +464,8 @@ class AddingQueue:
                 if matching_files:
                     logging.info(f"Matching file(s) found for movie: {item_identifier}")
                     filled_by_file = os.path.basename(matching_files[0])
-                    queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file)
+                    torrent_id = add_result.get('torrent_id')  # Get the torrent_id from add_result
+                    queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file, torrent_id)
                     logging.debug(f"Moved movie {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
                     return True
                 else:
@@ -704,7 +705,8 @@ class AddingQueue:
         for file, matched_item in matches:
             filled_by_file = os.path.basename(file)
             current_queue = queue_manager.get_item_queue(matched_item)
-            queue_manager.move_to_checking(matched_item, current_queue, title, link, filled_by_file)
+            torrent_id = matched_item.get('torrent_id')
+            queue_manager.move_to_checking(matched_item, current_queue, title, link, filled_by_file, torrent_id)
             logging.info(f"Moved item {queue_manager.generate_identifier(matched_item)} to Checking queue with filled_by_file: {filled_by_file}")
 
         if matches:
