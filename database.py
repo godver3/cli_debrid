@@ -75,6 +75,7 @@ def migrate_media_items_table():
                 episode_number INTEGER,
                 filled_by_title TEXT,
                 filled_by_magnet TEXT,
+                filled_by_torrent_id TEXT,
                 last_updated TIMESTAMP,
                 metadata_updated TIMESTAMP,
                 sleep_cycles INTEGER DEFAULT 0,
@@ -675,7 +676,7 @@ def update_media_item_state(item_id, state, **kwargs):
         params = [state, datetime.now()]
 
         # Add optional fields to the query if they are provided
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'scrape_results', 'hybrid_flag']
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'hybrid_flag']
         for field in optional_fields:
             if field in kwargs:
                 query += f", {field} = ?"
@@ -808,7 +809,8 @@ def migrate_schema():
             ('filled_by_file', 'TEXT'),
             ('airtime', 'TEXT'),
             ('collected_at', 'TIMESTAMP'),
-            ('genres', 'TEXT')
+            ('genres', 'TEXT'),
+            ('filled_by_torrent_id', 'TEXT')
         ]
         
         for column_name, data_type in columns:
