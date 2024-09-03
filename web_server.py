@@ -2626,19 +2626,22 @@ def get_latest_api_calls(limit=100):
             parts = line.strip().split(' - ', 1)
             if len(parts) == 2:
                 timestamp, message = parts
-                call_info = message.split(': ', 1)[1]
-                method, url_and_domain = call_info.split(' ', 1)
-                url, domain = url_and_domain.split(' - Domain: ')
-                calls.append({
-                    'timestamp': timestamp,
-                    'method': method,
-                    'url': url,
-                    'domain': domain,
-                    'endpoint': url.split(domain)[-1],
-                    'status_code': 'N/A'  # Status code is not available in the log
-                })
-                if len(calls) >= limit:
-                    break
+                call_info = message.split(': ', 1)
+                if len(call_info) == 2:
+                    method_and_url = call_info[1].split(' ', 1)
+                    if len(method_and_url) == 2:
+                        method, url = method_and_url
+                        domain = url.split('/')[2] if url.startswith('http') else 'unknown'
+                        calls.append({
+                            'timestamp': timestamp,
+                            'method': method,
+                            'url': url,
+                            'domain': domain,
+                            'endpoint': '/'.join(url.split('/')[3:]) if url.startswith('http') else url,
+                            'status_code': 'N/A'
+                        })
+                        if len(calls) >= limit:
+                            break
     return calls
 
 @app.route('/api/get_collected_from_plex', methods=['POST'])
