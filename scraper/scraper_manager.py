@@ -19,8 +19,10 @@ class ScraperManager:
             'Nyaa': scrape_nyaa_instance
         }
 
-    def scrape_all(self, imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+    def scrape_all(self, imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> List[Dict[str, Any]]:
         all_results = []
+        is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+
         for instance, settings in self.config.get('Scrapers', {}).items():
             if not settings.get('enabled', False):
                 logging.info(f"Scraper {instance} is disabled. Skipping.")
@@ -31,6 +33,11 @@ class ScraperManager:
                 logging.warning(f"Unknown scraper type '{scraper_type}' for instance '{instance}'. Skipping.")
                 continue
             
+            # Skip Nyaa if the content is not anime
+            if scraper_type == 'Nyaa' and not is_anime:
+                logging.info(f"Skipping Nyaa scraper for non-anime content: {title}")
+                continue
+
             scrape_func = self.scrapers[scraper_type]
             try:
                 logging.info(f"Scraping with {instance} ({scraper_type})")
