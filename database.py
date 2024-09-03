@@ -800,15 +800,28 @@ def create_database():
     create_upgrading_table()
     #logging.info("Database created and tables initialized.")
 
-def add_collected_at_column():
+def migrate_schema():
     conn = get_db_connection()
     try:
-        conn.execute('ALTER TABLE media_items ADD COLUMN collected_at TIMESTAMP')
+        columns = [
+            ('hybrid_flag', 'TEXT'),
+            ('filled_by_file', 'TEXT'),
+            ('airtime', 'TEXT'),
+            ('collected_at', 'TIMESTAMP'),
+            ('genres', 'TEXT')
+        ]
+        
+        for column_name, data_type in columns:
+            try:
+                conn.execute(f'ALTER TABLE media_items ADD COLUMN {column_name} {data_type}')
+                logging.info(f"Successfully added {column_name} column to media_items table.")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e):
+                    logging.error(f"Error adding {column_name} column: {str(e)}")
+        
         conn.commit()
-        logging.info("Successfully added collected_at column to media_items table.")
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" not in str(e):
-            logging.error(f"Error adding collected_at column: {str(e)}")
+    except Exception as e:
+        logging.error(f"Unexpected error during schema migration: {str(e)}")
     finally:
         conn.close()
 
@@ -825,10 +838,7 @@ def verify_database():
         logging.error("media_items table does not exist!")
     conn.close()
     
-    add_hybrid_flag_column()
-    add_filled_by_file_column()
-    add_airtime_column()
-    add_collected_at_column()  # Add this line
+    migrate_schema()
 
     logging.info("Database verification complete.")
 
@@ -1011,42 +1021,7 @@ def update_year(item_id: int, year: int):
     finally:
         conn.close()
 
-def add_hybrid_flag_column():
-    conn = get_db_connection()
-    try:
-        conn.execute('ALTER TABLE media_items ADD COLUMN hybrid_flag TEXT')
-        conn.commit()
-        logging.info("Successfully added hybrid_flag column to media_items table.")
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" not in str(e):
-            logging.error(f"Error adding hybrid_flag column: {str(e)}")
-    except Exception as e:
-        logging.error(f"Unexpected error adding hybrid_flag column: {str(e)}")
-    finally:
-        conn.close()
 
-def add_filled_by_file_column():
-    conn = get_db_connection()
-    try:
-        conn.execute('ALTER TABLE media_items ADD COLUMN filled_by_file TEXT')
-        conn.commit()
-        logging.info("Successfully added filled_by_file column to media_items table.")
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" not in str(e):
-            logging.info("filled_by_file column already exists in media_items table.")
-    finally:
-        conn.close()
-
-def add_airtime_column():
-    conn = get_db_connection()
-    try:
-        conn.execute('ALTER TABLE media_items ADD COLUMN airtime TEXT')
-        conn.commit()
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" not in str(e):
-            logging.error(f"Error adding airtime column: {str(e)}")
-    finally:
-        conn.close()
 
 def get_collected_counts():
     conn = get_db_connection()
