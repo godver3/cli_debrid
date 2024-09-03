@@ -16,7 +16,8 @@ class ScraperManager:
             'Comet': ['enabled', 'url'],
             'Jackett': ['enabled', 'url', 'api', 'enabled_indexers'],
             'Prowlarr': ['enabled', 'url', 'api'],
-            'Torrentio': ['enabled', 'opts']
+            'Torrentio': ['enabled', 'opts'],
+            'Nyaa': ['enabled', 'url', 'categories', 'filter']
         }
         self.back_callback = None
 

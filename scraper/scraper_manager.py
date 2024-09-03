@@ -5,6 +5,7 @@ from .comet import scrape_comet_instance
 from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
+from .nyaa import scrape_nyaa_instance
 
 class ScraperManager:
     def __init__(self, config):
@@ -14,7 +15,8 @@ class ScraperManager:
             'Comet': scrape_comet_instance,
             'Prowlarr': scrape_prowlarr_instance,
             'Torrentio': scrape_torrentio_instance,
-            'Zilean': scrape_zilean_instance
+            'Zilean': scrape_zilean_instance,
+            'Nyaa': scrape_nyaa_instance
         }
 
     def scrape_all(self, imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
