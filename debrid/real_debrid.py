@@ -23,7 +23,9 @@ VIDEO_EXTENSIONS = [
 ]
 
 def is_video_file(filename):
-    return any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)
+    result = any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)
+    logging.debug(f"is_video_file check for {filename}: {result}")
+    return result
 
 def is_unwanted_file(filename):
     return 'sample' in filename.lower()
@@ -81,11 +83,18 @@ def add_to_real_debrid(magnet_link):
         info_response.raise_for_status()
         torrent_info = info_response.json()
 
+        # Add debug logging for all files in the torrent
+        logging.debug(f"All files in torrent: {[f['path'] for f in torrent_info['files']]}")
+
         # Step 3: Select files based on video extensions and exclude samples
         files_to_select = [
             str(f['id']) for f in torrent_info['files']
             if is_video_file(f['path']) and not is_unwanted_file(f['path'])
         ]
+
+        # Add debug logging for selected files
+        logging.debug(f"Files selected as video files: {files_to_select}")
+        logging.debug(f"Video files paths: {[f['path'] for f in torrent_info['files'] if str(f['id']) in files_to_select]}")
 
         if not files_to_select:
             logging.warning("No suitable video files found in the torrent.")

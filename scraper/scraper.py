@@ -1075,7 +1075,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
 
         # Log to scraper.log
-        scraper_logger.info(f"Scraping results for: {title} ({year})")
+        if content_type.lower() == 'episode':
+            scraper_logger.info(f"Scraping results for: {title} ({year}) Season: {season} Episode: {episode} Multi: {multi} Version: {version}")
+        else:
+            scraper_logger.info(f"Scraping results for: {title} ({year}) Multi: {multi} Version: {version}")
+
         scraper_logger.info("All result titles:")
         for result in all_results:
             scraper_logger.info(f"- {result.get('title', '')}")
