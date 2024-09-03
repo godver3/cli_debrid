@@ -13,17 +13,42 @@ import re
 
 def scrape_nyaa(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     nyaa_results = []
+    nyaa_instances = [
+        "https://nyaa.land/",
+        "https://nyaa.si/",
+        "https://nyaa.iss.ink/",
+        "https://nyaa.unblockninja.com/",
+    ]
     
-    try:
-        instance_results = scrape_nyaa_instance(imdb_id, title, year, content_type, season, episode, multi)
-        nyaa_results.extend(instance_results)
-    except Exception as e:
-        logging.error(f"Error scraping Nyaa: {str(e)}", exc_info=True)
+    nyaa_settings = {
+        "categories": "1_0",
+        "filter": "0",
+        "sort": "seeders",
+        "order": "desc"
+    }
+    
+    for instance_url in nyaa_instances:
+        try:
+            instance_results = scrape_nyaa_instance(instance_url, nyaa_settings, imdb_id, title, year, content_type, season, episode, multi)
+            if instance_results:
+                nyaa_results.extend(instance_results)
+                break  # Stop trying other instances if we get results
+        except Exception as e:
+            logging.error(f"Error scraping Nyaa instance {instance_url}: {str(e)}", exc_info=True)
+    
+    if not nyaa_results:
+        logging.warning("Failed to scrape results from all Nyaa instances")
     
     return nyaa_results
 
 def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
-    base_url = settings.get('url', 'https://nyaa.si')
+    nyaa_urls = [
+        "https://nyaa.land/",
+        "https://nyaa.si/",
+        "https://nyaa.iss.ink/",
+        "https://nyaa.unblockninja.com/",
+    ]
+    
     categories = settings.get('categories', '1_0')
     filter_option = settings.get('filter', '0')
     sort = settings.get('sort', 'seeders')
@@ -43,20 +68,23 @@ def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, 
             query += f" {year}"  # Add year for general series search
     
     encoded_query = quote(query)
-    full_url = f"{base_url}/?f=0{params}&q={encoded_query}"
     
-    logging.info(f"Searching Nyaa with URL: {full_url}")
+    for base_url in nyaa_urls:
+        full_url = f"{base_url}?f=0{params}&q={encoded_query}"
+        
+        try:
+            response = api.get(full_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'})
+            if response.status_code == 200:
+                results = parse_nyaa_results(response.content)
+                if results:
+                    return results
+            else:
+                logging.warning(f"Nyaa API error for {base_url}: Status code {response.status_code}")
+        except Exception as e:
+            logging.error(f"Error scraping Nyaa instance {base_url}: {str(e)}", exc_info=True)
     
-    try:
-        response = api.get(full_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'})
-        if response.status_code == 200:
-            return parse_nyaa_results(response.content)
-        else:
-            logging.error(f"Nyaa API error: Status code {response.status_code}")
-            return []
-    except Exception as e:
-        logging.error(f"Error in scrape_nyaa_instance: {str(e)}", exc_info=True)
-        return []
+    logging.error("Failed to scrape results from all Nyaa instances")
+    return []
 
 def parse_nyaa_results(content: bytes) -> List[Dict[str, Any]]:
     results = []
@@ -136,7 +164,7 @@ def test_nyaa_scraper(title: str, year: int, content_type: str, season: int = No
     imdb_id = "tt0000000"
     
     try:
-        results = scrape_nyaa_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi)
+        results = scrape_nyaa(imdb_id, title, year, content_type, season, episode, multi)
         print(f"Scraped {len(results)} results from Nyaa:")
         for result in results:
             print(f"- {result['title']} ({result['size']:.2f} GB, {result['seeders']} seeders)")
