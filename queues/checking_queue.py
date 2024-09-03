@@ -45,6 +45,12 @@ class CheckingQueue:
         # Create an instance of AddingQueue to use its remove_unwanted_torrent method
         adding_queue = AddingQueue()
 
+        # Debug log: Print torrent IDs for all items in the checking queue
+        for item in self.items:
+            item_identifier = queue_manager.generate_identifier(item)
+            torrent_id = item.get('filled_by_torrent_id')  # Change this line
+            logging.debug(f"Item: {item_identifier}, Torrent ID: {torrent_id}")
+
         # Process items in the Checking queue
         items_to_remove = []
         for item in self.items:
@@ -59,8 +65,7 @@ class CheckingQueue:
                     add_to_not_wanted(magnet)
                     logging.info(f"Marked magnet as unwanted for item: {item_identifier}")
 
-                    # Remove the unwanted torrent from Real-Debrid
-                    torrent_id = item.get('torrent_id')
+                    torrent_id = item.get('filled_by_torrent_id')  # Change this line
                     if torrent_id:
                         adding_queue.remove_unwanted_torrent(torrent_id)
                         logging.info(f"Removed unwanted torrent from Real-Debrid for item: {item_identifier}")
