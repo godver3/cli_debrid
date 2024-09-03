@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Manual Blacklist{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manual_blacklist.css') }}">
+<div class="container">
+    <h2>Manual Blacklist</h2>
+
+    <form action="{{ url_for('manual_blacklist') }}" method="POST" class="mb-4" id="blacklistForm">
+        <div class="form-group">
+            <label for="imdb_id">IMDb ID:</label>
+            <input type="text" id="imdb_id" name="imdb_id" required class="form-control">
+        </div>
+        <input type="hidden" name="action" value="add">
+        <button type="submit" class="btn btn-primary">Add to Blacklist</button>
+    </form>
+
+    <h3>Current Blacklist</h3>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>IMDb ID</th>
+                <th>Title</th>
+                <th>Year</th>
+                <th>Media Type</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for imdb_id, item in blacklist.items() %}
+            <tr>
+                <td>{{ imdb_id }}</td>
+                <td>{{ item.title }}</td>
+                <td>{{ item.year }}</td>
+                <td>{{ item.media_type|capitalize }}</td>
+                <td>
+                    <form action="{{ url_for('manual_blacklist') }}" method="POST" style="display: inline;">
+                        <input type="hidden" name="action" value="remove">
+                        <input type="hidden" name="imdb_id" value="{{ imdb_id }}">
+                        <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5">No items in the blacklist</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
