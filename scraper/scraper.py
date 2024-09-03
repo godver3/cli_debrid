@@ -111,42 +111,58 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
 
     logging.debug(f"Comparing titles - Query: '{query_title}', Guessit: '{guessit_title}'")
 
-    # Calculate token sort ratio
-    token_sort_similarity = fuzz.token_sort_ratio(query_title, guessit_title)
-    
-    # Check if all words in the query title are in the guessit title
-    query_words = set(query_title.split())
-    guessit_words = set(guessit_title.split())
-    all_words_present = query_words.issubset(guessit_words)
-
-    # Calculate final similarity
-    if all_words_present:
-        similarity = token_sort_similarity
-    else:
-        similarity = token_sort_similarity * 0.5  # Penalize if not all words are present
-
-    logging.debug(f"Token sort ratio: {token_sort_similarity}")
-    logging.debug(f"All query words present: {all_words_present}")
-    logging.debug(f"Final similarity score: {similarity}")
-
-    # For anime, consider alternative titles if available
     if is_anime:
+        # For anime, use match_any_title function
+        official_titles = [query_title]
+        
+        # Add alternative titles
         alternative_titles = parsed_info.get('alternative_title', [])
         if isinstance(alternative_titles, str):
             alternative_titles = [alternative_titles]
-        for alt_title in alternative_titles:
-            alt_title = normalize_title(alt_title).lower()
-            alt_token_sort_similarity = fuzz.token_sort_ratio(query_title, alt_title)
-            alt_words = set(alt_title.split())
-            alt_all_words_present = query_words.issubset(alt_words)
-            
-            alt_similarity = alt_token_sort_similarity if alt_all_words_present else alt_token_sort_similarity * 0.5
-            logging.debug(f"Alternative title '{alt_title}' similarity: {alt_similarity}")
-            similarity = max(similarity, alt_similarity)
+        official_titles.extend(alternative_titles)
+        
+        similarity = match_any_title(guessit_title, official_titles)
+        
+        logging.debug(f"Anime title similarity: {similarity}")
+
+    else:
+        # For non-anime, use the existing logic
+        token_sort_similarity = fuzz.token_sort_ratio(query_title, guessit_title) / 100
+        
+        query_words = set(query_title.split())
+        guessit_words = set(guessit_title.split())
+        all_words_present = query_words.issubset(guessit_words)
+
+        if all_words_present:
+            similarity = token_sort_similarity
+        else:
+            similarity = token_sort_similarity * 0.5  # Penalize if not all words are present
+
+        logging.debug(f"Token sort ratio: {token_sort_similarity}")
+        logging.debug(f"All query words present: {all_words_present}")
 
     logging.debug(f"Final similarity score: {similarity}")
 
-    return similarity / 100  # Return as a float between 0 and 1
+    return similarity  # Already a float between 0 and 1
+
+def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
+    max_similarity = 0
+    for title in official_titles:
+        partial_score = partial_title_match(release_title, title)
+        fuzzy_score = fuzzy_title_match(release_title, title) / 100
+        similarity = max(partial_score, fuzzy_score)
+        max_similarity = max(max_similarity, similarity)
+        logging.debug(f"Matching '{release_title}' with '{title}': Partial: {partial_score:.2f}, Fuzzy: {fuzzy_score:.2f}, Max: {similarity:.2f}")
+    return max_similarity
+
+def partial_title_match(title1: str, title2: str) -> float:
+    words1 = set(title1.lower().split())
+    words2 = set(title2.lower().split())
+    common_words = words1.intersection(words2)
+    return len(common_words) / max(len(words1), len(words2))
+
+def fuzzy_title_match(title1: str, title2: str) -> float:
+    return fuzz.partial_ratio(title1.lower(), title2.lower())
 
 
 def calculate_bitrate(size_gb, runtime_minutes):
@@ -767,6 +783,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             similarity_threshold = 0.8
         
         if is_anime:
+            similarity_threshold = 0.35
             if max(title_sim, alternate_title_sim) < similarity_threshold:
                 result['filter_reason'] = f"Low title similarity: {max(title_sim, alternate_title_sim):.2f}"
                 continue
@@ -864,9 +881,12 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         result['bitrate'] = bitrate
 
         # Apply size filter after per-file size calculation
-        if result['size'] < min_size_gb:
+        if result['size'] > 0 and result['size'] < min_size_gb:
             result['filter_reason'] = f"Size too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
             continue
+        elif result['size'] == 0:
+            logging.warning(f"Size is 0 for result: {result.get('title', 'Unknown')}. Skipping size filter.")
+            
         if result['size'] > max_size_gb:
             result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
             continue
