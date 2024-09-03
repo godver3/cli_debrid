@@ -275,6 +275,7 @@ function initialLoad() {
         scrollToBottom(logEntries);
     });
     loadSavedLogLevel();
+    document.body.classList.add('logs-page'); // Add this line
 }
 
 window.addEventListener('load', initialLoad);
