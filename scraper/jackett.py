@@ -1,7 +1,6 @@
 from api_tracker import api
 import logging
 from typing import List, Dict, Any, Tuple
-from database import get_title_by_imdb_id
 from metadata.metadata import get_year_from_imdb_id
 from settings import get_setting, load_config as get_jackett_settings
 from urllib.parse import quote, urlencode
