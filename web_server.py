@@ -1366,6 +1366,18 @@ def format_datetime_preference(date_input, use_24hour_format):
     except ValueError:
         return str(date_input)  # Return original string if parsing fails
 
+@app.route('/set_compact_preference', methods=['POST'])
+def set_compact_preference():
+    data = request.json
+    compact_view = data.get('compactView', False)
+    
+    # Save the preference to the user's session
+    session['compact_view'] = compact_view
+    
+    # If you want to persist this preference for the user, you might save it to a database here
+    
+    return jsonify({'success': True, 'compactView': compact_view})
+
 @app.route('/statistics')
 @user_required
 @onboarding_required
@@ -1416,6 +1428,8 @@ def statistics():
         'upcoming_releases': upcoming_releases,
         'timezone': time.tzname[0]
     }
+    
+    compact_view = session.get('compact_view', False)
 
     end_time = time.time()
     total_time = end_time - start_time
@@ -1423,7 +1437,7 @@ def statistics():
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return jsonify(stats)
     else:
-        return render_template('statistics.html', stats=stats)
+        return render_template('statistics.html', stats=stats, compact_view=compact_view)
         
 @app.route('/set_time_preference', methods=['POST'])
 def set_time_preference():
