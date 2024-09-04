@@ -51,14 +51,7 @@ else:
 ensure_settings_file()
 verify_database()
 
-
-
-from questionary import select
-from run_program import run_program
-from utilities.debug_commands import debug_commands
-from utilities.manual_scrape import run_manual_scrape
 import logging_config
-from scraper_tester import run_tester
 
 logging_config.setup_logging()
 

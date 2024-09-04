@@ -7,7 +7,7 @@
 <div class="container">
     <h2>Manual Blacklist</h2>
 
-    <form action="{{ url_for('manual_blacklist') }}" method="POST" class="mb-4" id="blacklistForm">
+    <form action="{{ url_for('debug.manual_blacklist') }}" method="POST" class="mb-4" id="blacklistForm">
         <div class="form-group">
             <label for="imdb_id">IMDb ID:</label>
             <input type="text" id="imdb_id" name="imdb_id" required class="form-control">
@@ -35,7 +35,7 @@
                 <td>{{ item.year }}</td>
                 <td>{{ item.media_type|capitalize }}</td>
                 <td>
-                    <form action="{{ url_for('manual_blacklist') }}" method="POST" style="display: inline;">
+                    <form action="{{ url_for('debug.manual_blacklist') }}" method="POST" style="display: inline;">
                         <input type="hidden" name="action" value="remove">
                         <input type="hidden" name="imdb_id" value="{{ imdb_id }}">
                         <button type="submit" class="btn btn-danger btn-sm">Remove</button>
