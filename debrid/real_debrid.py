@@ -98,6 +98,9 @@ def add_to_real_debrid(magnet_link):
 
         if not files_to_select:
             logging.warning("No suitable video files found in the torrent.")
+            delete_response = api.delete(f"{API_BASE_URL}/torrents/delete/{torrent_id}",headers=headers, timeout=60)
+            if delete_response.status_code == 204:
+                logging.debug(f"Removed torrent: {torrent_id}")
             return None
 
         rate_limited()
