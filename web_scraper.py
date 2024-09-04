@@ -443,8 +443,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                     hashes.append(magnet_hash)
                     processed_results.append(result)
                 else:
-                    # Handle torrent file case if needed
-                    pass
+                    processed_results.append(result)
 
     # Check cache status for all hashes at once
     cache_status = is_cached_on_rd(hashes) if hashes else {}
