@@ -53,6 +53,8 @@ from web_scraper import get_media_details, process_media_selection
 import pickle
 from flask.json import jsonify
 from babelfish import Language
+from metadata.metadata import get_overseerr_show_details, get_all_season_episode_counts, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_movie_details, get_tmdb_id_and_media_type
+from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
 
 CACHE_FILE = 'db_content/api_summary_cache.pkl'
 # Add this at the global scope, outside of any function
@@ -970,8 +972,10 @@ def add_onboarding_content_source():
 def get_onboarding_content_sources():
     config = load_config()
     content_source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+    content_sources = config.get('Content Sources', {})
+    logging.debug(f"Retrieved content sources: {content_sources}")
     return jsonify({
-        'content_sources': config.get('Content Sources', {}),
+        'content_sources': content_sources,
         'source_types': content_source_types,
         'settings': SETTINGS_SCHEMA['Content Sources']['schema']
     })
@@ -1362,6 +1366,18 @@ def format_datetime_preference(date_input, use_24hour_format):
     except ValueError:
         return str(date_input)  # Return original string if parsing fails
 
+@app.route('/set_compact_preference', methods=['POST'])
+def set_compact_preference():
+    data = request.json
+    compact_view = data.get('compactView', False)
+    
+    # Save the preference to the user's session
+    session['compact_view'] = compact_view
+    
+    # If you want to persist this preference for the user, you might save it to a database here
+    
+    return jsonify({'success': True, 'compactView': compact_view})
+
 @app.route('/statistics')
 @user_required
 @onboarding_required
@@ -1412,6 +1428,8 @@ def statistics():
         'upcoming_releases': upcoming_releases,
         'timezone': time.tzname[0]
     }
+    
+    compact_view = session.get('compact_view', False)
 
     end_time = time.time()
     total_time = end_time - start_time
@@ -1419,7 +1437,7 @@ def statistics():
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return jsonify(stats)
     else:
-        return render_template('statistics.html', stats=stats)
+        return render_template('statistics.html', stats=stats, compact_view=compact_view)
         
 @app.route('/set_time_preference', methods=['POST'])
 def set_time_preference():
@@ -1989,16 +2007,6 @@ def queues():
     upgrading_queue = queue_contents.get('Upgrading', [])
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
 
-@app.route('/api/queue_contents')
-def api_queue_contents():
-    contents = queue_manager.get_queue_contents()
-    # Ensure wake counts are included for Sleeping queue items
-    if 'Sleeping' in contents:
-        for item in contents['Sleeping']:
-            item['wake_count'] = queue_manager.get_wake_count(item['id'])
-    #logging.info(f"Queue contents: {contents}")  # Add this line
-    return jsonify(contents)
-
 def run_server():
     app.run(debug=True, use_reloader=False, host='0.0.0.0')
 
@@ -2248,7 +2256,7 @@ def scraper_tester():
             search_results = search_overseerr(search_term)
             app.logger.debug(f"Search results: {search_results}")
             
-            # Fetch IMDB IDs for each result
+            # Fetch IMDB IDs and season/episode counts for each result
             for result in search_results:
                 app.logger.debug(f"Processing result: {result}")
                 details = get_details(result)
@@ -2258,11 +2266,19 @@ def scraper_tester():
                     imdb_id = details.get('externalIds', {}).get('imdbId', 'N/A')
                     result['imdbId'] = imdb_id
                     app.logger.debug(f"IMDB ID found: {imdb_id}")
+                    
+                    if result['mediaType'] == 'tv':
+                        overseerr_url = get_setting('Overseerr', 'url')
+                        overseerr_api_key = get_setting('Overseerr', 'api_key')
+                        cookies = get_overseerr_cookies(overseerr_url)
+                        season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, result['id'], cookies)
+                        result['seasonEpisodeCounts'] = season_episode_counts
+                        app.logger.debug(f"Season/Episode counts: {season_episode_counts}")
                 else:
                     result['imdbId'] = 'N/A'
                     app.logger.debug("No details found for this result")
             
-            app.logger.debug(f"Final search results with IMDB IDs: {search_results}")
+            app.logger.debug(f"Final search results with IMDB IDs and season/episode counts: {search_results}")
             return jsonify(search_results)
         else:
             return jsonify({'error': 'No search term provided'}), 400
@@ -2417,8 +2433,8 @@ def run_scrape():
         genres = data.get('genres', [])
         
         if media_type == 'episode':
-            season = data.get('season')
-            episode = data.get('episode')
+            season = int(data.get('season', 1))  # Convert to int, default to 1
+            episode = int(data.get('episode', 1))  # Convert to int, default to 1
             multi = data.get('multi', False)
         else:
             season = None
@@ -2505,6 +2521,161 @@ def bulk_delete_by_imdb():
         return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with IMDB ID: {imdb_id}'})
     else:
         return jsonify({'success': False, 'error': f'No items found with IMDB ID: {imdb_id}'})
+
+@app.route('/bulk_queue_action', methods=['POST'])
+def bulk_queue_action():
+    action = request.form.get('action')
+    target_queue = request.form.get('target_queue')
+    selected_items = request.form.getlist('selected_items')
+
+    if not action or not selected_items:
+        return jsonify({'success': False, 'error': 'Action and selected items are required'})
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        if action == 'delete':
+            cursor.execute('DELETE FROM media_items WHERE id IN ({})'.format(','.join('?' * len(selected_items))), selected_items)
+            logging.debug(f"Successfully deleted {cursor.rowcount} items")
+        elif action == 'move' and target_queue:
+            cursor.execute('UPDATE media_items SET state = ? WHERE id IN ({})'.format(','.join('?' * len(selected_items))), [target_queue] + selected_items)
+            logging.debug(f"Successfully moved {cursor.rowcount} items to {target_queue} queue")
+        else:
+            return jsonify({'success': False, 'error': 'Invalid action or missing target queue'})
+
+        conn.commit()
+        return jsonify({'success': True, 'message': message})
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"Error performing bulk action: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+    finally:
+        conn.close()
+
+def move_item_to_queue(item_id, target_queue):
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE media_items SET state = ? WHERE id = ?', (target_queue, item_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+@app.route('/api/bulk_queue_contents', methods=['GET'])
+def get_queue_contents():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, title, state, type, season_number, episode_number, year
+            FROM media_items
+            WHERE state IN ('Adding', 'Blacklisted', 'Checking', 'Scraping', 'Sleeping', 'Unreleased', 'Wanted')
+        ''')
+        items = cursor.fetchall()
+
+        queue_contents = {
+            'Adding': [], 'Blacklisted': [], 'Checking': [], 'Scraping': [],
+            'Sleeping': [], 'Unreleased': [], 'Wanted': []
+        }
+        
+        for item in items:
+            item_dict = dict(item)
+            if item_dict['type'] == 'episode':
+                item_dict['title'] = f"{item_dict['title']} S{item_dict['season_number']:02d}E{item_dict['episode_number']:02d}"
+            elif item_dict['type'] == 'movie':
+                item_dict['title'] = f"{item_dict['title']} ({item_dict['year']})"
+            queue_contents[item_dict['state']].append(item_dict)
+        
+        return jsonify(queue_contents)
+    except Exception as e:
+        logging.error(f"Error fetching queue contents: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/manual_blacklist', methods=['GET', 'POST'])
+@admin_required
+def manual_blacklist():
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    
+    if not overseerr_url or not overseerr_api_key:
+        flash('Overseerr URL or API key not set. Please configure in settings.', 'error')
+        return redirect(url_for('settings'))
+
+    cookies = get_overseerr_cookies(overseerr_url)
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        imdb_id = request.form.get('imdb_id')
+
+        if action == 'add':
+            tmdb_id, media_type = get_tmdb_id_and_media_type(overseerr_url, overseerr_api_key, imdb_id)
+            
+            if tmdb_id and media_type:
+                # Fetch details based on media type
+                if media_type == 'movie':
+                    details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+                else:  # TV show
+                    details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+                
+                if details:
+                    title = details.get('title') if media_type == 'movie' else details.get('name')
+                    year = details.get('releaseDate', '')[:4] if media_type == 'movie' else details.get('firstAirDate', '')[:4]
+                    
+                    add_to_manual_blacklist(imdb_id, media_type, title, year)
+                    flash(f'Added {imdb_id}: {title} ({year}) to manual blacklist as {media_type}', 'success')
+                else:
+                    flash(f'Could not fetch details for {imdb_id}', 'error')
+            else:
+                flash(f'Could not determine TMDB ID and media type for IMDb ID {imdb_id}', 'error')
+        
+        elif action == 'remove':
+            remove_from_manual_blacklist(imdb_id)
+            flash(f'Removed {imdb_id} from manual blacklist', 'success')
+
+    blacklist = get_manual_blacklist()
+    return render_template('manual_blacklist.html', blacklist=blacklist)
+
+@app.route('/api/get_title_year', methods=['GET'])
+def get_title_year():
+    imdb_id = request.args.get('imdb_id')
+    
+    overseerr_url = get_setting('Overseerr', 'url')
+    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    
+    if not overseerr_url or not overseerr_api_key:
+        return jsonify({'error': 'Overseerr URL or API key not set'}), 400
+
+    cookies = get_overseerr_cookies(overseerr_url)
+    tmdb_id, media_type = get_tmdb_id_and_media_type(overseerr_url, overseerr_api_key, imdb_id)
+    
+    if tmdb_id and media_type:
+        if media_type == 'movie':
+            details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+        else:  # TV show
+            details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+        
+        if details:
+            title = details.get('title') if media_type == 'movie' else details.get('name')
+            year = details.get('releaseDate', '')[:4] if media_type == 'movie' else details.get('firstAirDate', '')[:4]
+            return jsonify({'title': title, 'year': year, 'media_type': media_type})
+
+    return jsonify({'error': 'Could not fetch title and year'}), 404
+
+
+@app.route('/api/queue_contents')
+def api_queue_contents():
+    contents = queue_manager.get_queue_contents()
+    # Ensure wake counts are included for Sleeping queue items
+    if 'Sleeping' in contents:
+        for item in contents['Sleeping']:
+            item['wake_count'] = queue_manager.get_wake_count(item['id'])
+    #logging.info(f"Queue contents: {contents}")  # Add this line
+    return jsonify(contents)
 
 # Add this route to handle unauthorized access
 @app.route('/unauthorized')
@@ -2626,19 +2797,22 @@ def get_latest_api_calls(limit=100):
             parts = line.strip().split(' - ', 1)
             if len(parts) == 2:
                 timestamp, message = parts
-                call_info = message.split(': ', 1)[1]
-                method, url_and_domain = call_info.split(' ', 1)
-                url, domain = url_and_domain.split(' - Domain: ')
-                calls.append({
-                    'timestamp': timestamp,
-                    'method': method,
-                    'url': url,
-                    'domain': domain,
-                    'endpoint': url.split(domain)[-1],
-                    'status_code': 'N/A'  # Status code is not available in the log
-                })
-                if len(calls) >= limit:
-                    break
+                call_info = message.split(': ', 1)
+                if len(call_info) == 2:
+                    method_and_url = call_info[1].split(' ', 1)
+                    if len(method_and_url) == 2:
+                        method, url = method_and_url
+                        domain = url.split('/')[2] if url.startswith('http') else 'unknown'
+                        calls.append({
+                            'timestamp': timestamp,
+                            'method': method,
+                            'url': url,
+                            'domain': domain,
+                            'endpoint': '/'.join(url.split('/')[3:]) if url.startswith('http') else url,
+                            'status_code': 'N/A'
+                        })
+                        if len(calls) >= limit:
+                            break
     return calls
 
 @app.route('/api/get_collected_from_plex', methods=['POST'])

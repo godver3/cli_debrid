@@ -145,6 +145,11 @@ body[data-is-onboarding="true"] .navMenu {
     font-weight: bold;
 }
 
+.onboarding-text-no-config {
+    color: #aaa;
+    font-style: italic;
+}
+
 .scraper-settings,
 .content-source-settings {
     background-color: #2c2c2c;
