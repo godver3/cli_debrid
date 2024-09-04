@@ -35,7 +35,7 @@ export function initializeProgramControls() {
             }
         }
 
-        fetch(`/api/${action}_program`, { method: 'POST' })
+        fetch(`/program_operation/api/${action}_program`, { method: 'POST' })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
