@@ -38,6 +38,7 @@
     border: none;
     border-radius: 0 4px 4px 0;
     cursor: pointer;
+    margin-left: 15px;
 }
 
 #search-button:hover {
@@ -554,4 +555,16 @@ input[type="checkbox"].settings-input {
     background-color: #444;
     padding: 15px;
     border-radius: 4px;
+}
+
+button#new-search-button {
+    margin-top: 20px;
+    padding: 10px 20px;
+    font-size: 16px;
+    background-color: #0056b3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
 }

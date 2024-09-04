@@ -5,7 +5,7 @@
     @import url('{{ url_for('static', filename='css/scraper.css') }}');
 </style>
     <div id="scraper-container">
-        <form id="search-form" action="{{ url_for('scraper') }}" method="post">
+        <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">
             <input type="text" name="search_term" placeholder="Enter search term" required>
             <select name="version" id="version-select">
                 {% for version in versions %}

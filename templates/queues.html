@@ -158,7 +158,7 @@
     }
 
     function updateQueueContents() {
-        fetch('/api/queue_contents')
+        fetch('/queues/api/queue_contents')
             .then(response => response.json())
             .then(data => {
                 let queueContents = document.getElementById('queue-contents');
