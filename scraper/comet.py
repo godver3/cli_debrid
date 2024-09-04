@@ -1,45 +1,18 @@
 from api_tracker import api
 import logging
 import re
-from typing import List, Dict, Any
-from settings import load_config
+from typing import Dict, Any, List
 
-def scrape_comet(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
-    all_results = []
-    config = load_config()
-    comet_instances = config.get('Scrapers', {})
-    
-    #logging.debug(f"Comet settings: {comet_instances}")
-
-    for instance, settings in comet_instances.items():
-        if instance.startswith('Comet'):
-            if not settings.get('enabled', False):
-                logging.debug(f"Comet instance '{instance}' is disabled, skipping")
-                continue
-
-            logging.info(f"Scraping Comet instance: {instance}")
-            
-            try:
-                instance_results = scrape_comet_instance(instance, settings, imdb_id, content_type, season, episode)
-                all_results.extend(instance_results)
-            except Exception as e:
-                logging.error(f"Error scraping Comet instance '{instance}': {str(e)}", exc_info=True)
-
-    return all_results
-
-def scrape_comet_instance(instance: str, settings: Dict[str, Any], imdb_id: str, content_type: str, season: int = None, episode: int = None) -> List[Dict[str, Any]]:
+def scrape_comet_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     comet_base_url = settings.get('url', '').rstrip('manifest.json')
     
     try:
         url = construct_url(comet_base_url, imdb_id, content_type, season, episode)
-        #logging.debug(f"Constructed URL for {instance}: {url}")
         response = fetch_data(url)
-        #logging.debug(f"Response from URL for {instance}: {response}")
         if not response or 'streams' not in response:
             logging.warning(f"No valid response received for IMDb ID: {imdb_id} from {instance}")
             return []
         parsed_results = parse_results(response['streams'], instance)
-        #logging.debug(f"Parsed results from {instance}: {parsed_results}")
         return parsed_results
     except Exception as e:
         logging.error(f"Error in scrape_comet_instance for {instance}: {str(e)}", exc_info=True)
