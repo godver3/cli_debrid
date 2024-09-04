@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function performSearch() {
         const searchTerm = searchInput.value;
-        fetch('/scraper_tester', {
+        fetch('/scraper/scraper_tester', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -233,7 +233,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function loadVersions() {
         console.log("Loading versions...");
-        fetch('/get_scraping_versions')
+        fetch('/settings/get_scraping_versions')
             .then(response => {
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -267,7 +267,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function loadVersionSettings(version) {
         console.log(`Loading settings for version: ${version}`);
-        fetch(`/get_version_settings?version=${version}`)
+        fetch(`/settings/get_version_settings?version=${version}`)
             .then(response => {
                 if (!response.ok) {
                     return response.json().then(errorData => {
@@ -552,7 +552,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
         console.log('Scrape data:', scrapeData);
     
-        fetch('/run_scrape', {
+        fetch('/scraper/run_scrape', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -715,7 +715,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const version = versionSelect.value;
         const settings = getModifiedVersionSettings();
     
-        fetch('/save_version_settings', {
+        fetch('/settings/save_version_settings', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

@@ -126,7 +126,7 @@
             traktAuthStatus.textContent = 'Initializing Trakt authorization...';
             traktAuthCode.style.display = 'none';
 
-            fetch('/trakt_auth', { method: 'POST' })
+            fetch('/trakt/trakt_auth', { method: 'POST' })
                 .then(response => response.json())
                 .then(data => {
                     console.log('Trakt auth response:', data);
@@ -158,7 +158,7 @@ function pollTraktAuthStatus(device_code) {
     const traktAuthStatus = document.getElementById('trakt-auth-status');
     const traktAuthCode = document.getElementById('trakt-auth-code');
     const pollInterval = setInterval(() => {
-        fetch('/trakt_auth_status', {
+        fetch('/trakt/trakt_auth_status', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -189,7 +189,7 @@ function pollTraktAuthStatus(device_code) {
 
 function checkTraktAuthStatus() {
     const traktAuthStatus = document.getElementById('trakt-auth-status');
-    fetch('/trakt_auth_status', { method: 'GET' })
+    fetch('/trakt/trakt_auth_status', { method: 'GET' })
         .then(response => response.json())
         .then(data => {
             if (data.status === 'authorized') {

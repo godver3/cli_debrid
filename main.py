@@ -19,8 +19,7 @@ import sys
 import time
 from flask import Flask, current_app
 from api_tracker import api
-
-app = Flask(__name__)
+from web_server import app
 
 program_runner = None
 
@@ -110,101 +109,6 @@ def check_required_settings():
 
     return errors
 
-def prompt_for_required_settings():
-    required_settings = [
-        ('Plex', 'url', 'Enter Plex URL (i.e. 192.168.1.51:32400): '),
-        ('Plex', 'token', 'Enter Plex Token: '),
-        ('Plex', 'movie_libraries', 'List of movie libraries, separated by commas: '),
-        ('Plex', 'shows_libraries', 'List of shows libraries, separated by commas: '),
-        ('Overseerr', 'url', 'Enter Overseerr URL (i.e. 192.168.1.51:5055): '),
-        ('Overseerr', 'api_key', 'Enter Overseerr API Key: '),
-        ('RealDebrid', 'api_key', 'Enter Real-Debrid API Key: '),
-    ]
-
-    print("Welcome to the initial setup! Press enter to edit required settings:")
-    while True:
-        key_press = input()
-        if key_press == '':
-            break
-        else:
-            os.system('clear')
-            print("Welcome to the initial setup! Press enter to edit required settings:")
-    
-    for section, key, prompt in required_settings:
-        value = get_setting(section, key)
-        if not value:
-            value = input(prompt)
-            set_setting(section, key, value)
-
-    set_setting('Torrentio', 'enabled', True)
-
-    print("Initial setup complete!")
-
-
-def main_menu():
-    #logging.debug("Main menu started")
-    logging.debug("Debug logging started")
-    os.system('clear')
-
-    global program_runner
-
-    version = get_version()
-    while True:
-        print(f"""
-          (            (             )           (     
-          )\ (         )\ )   (   ( /(  (   (    )\ )  
-      (  ((_))\       (()/(  ))\  )\()) )(  )\  (()/(  
-      )\  _ ((_)       ((_))/((_)((_)\ (()\((_)  ((_)) 
-     ((_)| | (_)       _| |(_))  | |(_) ((_)(_)  _| |  
-    / _| | | | |     / _` |/ -_) | '_ \| '_|| |/ _` |  
-    \__| |_| |_|_____\__,_|\___| |_.__/|_|  |_|\__,_|  
-               |_____|                                 
-               Version: {version}
-        """)
-        action = select(
-            "Select an action:",
-            choices=[
-                "Run Program",
-                "Edit Settings",
-                "Manual Scrape",
-                "Scraper Tester",
-                "Debug Commands",
-                "Exit"
-            ]
-        ).ask()
-
-        os.system('clear')
-
-        if action == "Run Program":
-            errors = check_required_settings()
-            if errors:
-                for error in errors:
-                    logging.error(error)
-                print("Launch failed due to the following errors:")
-                for error in errors:
-                    print(f"- {error}")
-            else:
-                program_runner = run_program()
-                print("Program is running. Press Ctrl+C to stop and return to the menu.")
-                try:
-                    program_runner.start()
-                except KeyboardInterrupt:
-                    pass  # The signal handler will take care of this
-                finally:
-                    program_runner = None
-                print("Returned to main menu.")
-        elif action == "Edit Settings":
-            SettingsEditor()
-        elif action == "Manual Scrape":
-            run_manual_scrape()
-        elif action == "Scraper Tester":
-            run_tester()
-        elif action == "Debug Commands":
-            debug_commands()
-        elif action == "Exit":
-            logging.debug("Exiting program.")
-            break
-        logging.debug("Returned to main menu.")
 
 def signal_handler(signum, frame):
     global program_runner

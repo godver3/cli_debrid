@@ -664,15 +664,15 @@
             </div>
             <ul id="navMenu">
                 {% set menu_items = [
-                    ('statistics', 'Home'),
-                    ('queues', 'Queues'),
-                    ('scraper', 'Scraper'),
-                    ('logs', 'Logs'),
-                    ('settings', 'Settings'),
-                    ('manage_users', 'Users'),
-                    ('database', 'Database'),
-                    ('scraper_tester', 'Tester'),
-                    ('debug_functions', 'Debug')
+                    ('statistics.index', 'Home'),
+                    ('queues.index', 'Queues'),
+                    ('scraper.index', 'Scraper'),
+                    ('logs.logs', 'Logs'),
+                    ('settings.index', 'Settings'),
+                    ('user_management.manage_users', 'Users'),
+                    ('database.index', 'Database'),
+                    ('scraper.scraper_tester', 'Tester'),
+                    ('debug.debug_functions', 'Debug')
                 ] %}
                 
                 {% if is_user_system_enabled() %}
@@ -694,7 +694,7 @@
             {% if is_user_system_enabled() %}
                 {% if current_user.is_authenticated %}
                     <div class="action-controls">
-                        <a href="{{ url_for('logout') }}" class="icon-button">
+                        <a href="{{ url_for('auth.logout') }}" class="icon-button">
                             <i class="fas fa-sign-out-alt"></i>
                             <span class="button-text">Logout</span>
                         </a>

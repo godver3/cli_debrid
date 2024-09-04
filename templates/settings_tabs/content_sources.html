@@ -15,8 +15,8 @@
 
     function loadSettings() {
         Promise.all([
-            fetch('/get_content_source_settings').then(response => response.json()),
-            fetch('/get_scraping_versions').then(response => response.json())
+            fetch('/settings/get_content_source_settings').then(response => response.json()),
+            fetch('/settings/get_scraping_versions').then(response => response.json())
         ]).then(([contentSourceSettings, scrapingVersions]) => {
             window.contentSourceSettings = contentSourceSettings;
             window.scrapingVersions = scrapingVersions.versions;
@@ -54,7 +54,7 @@
     }
 
     function showAddSourcePopup() {
-        fetch('/get_content_source_types')
+        fetch('/settings/content-sources/content')
             .then(response => response.json())
             .then(data => {
                 const sourceTypes = data.source_types;
@@ -85,7 +85,7 @@
     }
 
     function addContentSource(sourceData) {
-        fetch('/content_sources/add', {
+        fetch('/settings/content_sources/add', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -134,7 +134,7 @@
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/content_sources/delete', {
+                fetch('/settings/content_sources/delete', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
