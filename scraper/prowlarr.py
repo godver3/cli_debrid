@@ -1,35 +1,23 @@
 from api_tracker import api
 import logging
-from typing import List, Dict, Any
-from database import get_title_by_imdb_id
-from metadata.metadata import get_year_from_imdb_id
+from typing import List, Dict, Any, Tuple
 from settings import load_config
 from urllib.parse import quote
 
-def scrape_prowlarr(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+def scrape_prowlarr_instances(instances: List[Tuple[str, Dict[str, Any]]], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     all_results = []
-    config = load_config()
-    prowlarr_instances = config.get('Scrapers', {})
     
-    logging.debug(f"Prowlarr settings: {prowlarr_instances}")
-
-    for instance, settings in prowlarr_instances.items():
-        if instance.startswith('Prowlarr'):
-            if not settings.get('enabled', False):
-                logging.debug(f"Prowlarr instance '{instance}' is disabled, skipping")
-                continue
-
-            logging.info(f"Scraping Prowlarr instance: {instance}")
-            
-            try:
-                instance_results = scrape_prowlarr_instance(instance, settings, title, year, content_type, season, episode, multi)
-                all_results.extend(instance_results)
-            except Exception as e:
-                logging.error(f"Error scraping Prowlarr instance '{instance}': {str(e)}", exc_info=True)
+    for instance, settings in instances:
+        
+        try:
+            instance_results = scrape_prowlarr_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi)
+            all_results.extend(instance_results)
+        except Exception as e:
+            logging.error(f"Error scraping Prowlarr instance '{instance}': {str(e)}", exc_info=True)
 
     return all_results
 
-def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], title: str, year: str, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+def scrape_prowlarr_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     prowlarr_url = settings.get('url', '')
     prowlarr_api = settings.get('api', '')
 

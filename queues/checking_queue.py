@@ -9,6 +9,7 @@ from utilities.plex_functions import get_collected_from_plex
 from utilities.debug_commands import get_and_add_recent_collected_from_plex
 from database import add_collected_items
 from not_wanted_magnets import add_to_not_wanted
+from queues.adding_queue import AddingQueue  # Add this import at the top of the file
 
 class CheckingQueue:
     def __init__(self):
@@ -41,6 +42,15 @@ class CheckingQueue:
         # Process collected content from Plex
         get_and_add_recent_collected_from_plex()
 
+        # Create an instance of AddingQueue to use its remove_unwanted_torrent method
+        adding_queue = AddingQueue()
+
+        # Debug log: Print torrent IDs for all items in the checking queue
+        for item in self.items:
+            item_identifier = queue_manager.generate_identifier(item)
+            torrent_id = item.get('filled_by_torrent_id')  # Change this line
+            logging.debug(f"Item: {item_identifier}, Torrent ID: {torrent_id}")
+
         # Process items in the Checking queue
         items_to_remove = []
         for item in self.items:
@@ -54,6 +64,11 @@ class CheckingQueue:
                 if magnet:
                     add_to_not_wanted(magnet)
                     logging.info(f"Marked magnet as unwanted for item: {item_identifier}")
+
+                    torrent_id = item.get('filled_by_torrent_id')  # Change this line
+                    if torrent_id:
+                        adding_queue.remove_unwanted_torrent(torrent_id)
+                        logging.info(f"Removed unwanted torrent from Real-Debrid for item: {item_identifier}")
 
                 queue_manager.move_to_wanted(item, "Checking")
                 items_to_remove.append(item)

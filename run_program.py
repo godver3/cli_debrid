@@ -18,6 +18,8 @@ from shared import app
 import threading
 from queue_utils import safe_process_queue
 import signal
+from datetime import datetime, timedelta
+from database import get_db_connection
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -51,6 +53,7 @@ class ProgramRunner:
             'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
             'task_purge_not_wanted_magnets_file': 604800,
+            'task_generate_airtime_report': 3600,
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -66,6 +69,7 @@ class ProgramRunner:
             'task_plex_full_scan', 
             'task_debug_log', 
             'task_refresh_release_dates',
+            'task_generate_airtime_report'
         }
         
         self.content_sources = self.load_content_sources()
@@ -262,6 +266,9 @@ class ProgramRunner:
     def task_refresh_release_dates(self):
         task_purge_not_wanted_magnets_file()
 
+    def task_generate_airtime_report(self):
+        generate_airtime_report()
+
     def task_debug_log(self):
         current_time = time.time()
         debug_info = []
@@ -335,9 +342,67 @@ def process_overseerr_webhook(data):
         add_wanted_items(all_items, versions)
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
 
+def generate_airtime_report():
+    logging.info("Generating airtime report for wanted and unreleased items...")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Fetch all wanted and unreleased items
+    cursor.execute("""
+        SELECT id, title, type, release_date, airtime, state
+        FROM media_items
+        WHERE state IN ('Wanted', 'Unreleased')
+        ORDER BY release_date, airtime
+    """)
+    items = cursor.fetchall()
+
+    current_datetime = datetime.now()
+    report = []
+
+    logging.info(f"Movie airtime offset: {get_setting('Queue', 'movie_airtime_offset', '19')}")
+    logging.info(f"Episode airtime offset: {get_setting('Queue', 'episode_airtime_offset', '0')}")
+
+    for item in items:
+        item_id, title, item_type, release_date, airtime, state = item
+        
+        if not release_date or release_date.lower() == "unknown":
+            report.append(f"{title} ({item_type}): Unknown release date")
+            continue
+
+        try:
+            release_date = datetime.strptime(release_date, '%Y-%m-%d').date()
+        except ValueError:
+            report.append(f"{title} ({item_type}): Invalid release date format")
+            continue
+
+        if item_type == 'movie':
+            airtime_offset = (float(get_setting("Queue", "movie_airtime_offset", "19"))*60)
+            airtime = datetime.strptime("00:00", '%H:%M').time()
+        elif item_type == 'episode':
+            airtime_offset = (float(get_setting("Queue", "episode_airtime_offset", "0"))*60)
+            airtime = datetime.strptime(airtime or "00:00", '%H:%M').time()
+        else:
+            airtime_offset = 0
+            airtime = datetime.now().time()
+
+        release_datetime = datetime.combine(release_date, airtime)
+        scrape_datetime = release_datetime + timedelta(minutes=airtime_offset)
+        time_until_scrape = scrape_datetime - current_datetime
+
+        if time_until_scrape > timedelta(0):
+            report.append(f"{title} ({item_type}): Start scraping at {scrape_datetime}, in {time_until_scrape}")
+        else:
+            report.append(f"{title} ({item_type}): Ready to scrape (Release date: {release_date}, Current state: {state})")
+
+    conn.close()
+
+    # Log the report
+    logging.info("Airtime Report:\n" + "\n".join(report))
+
 def run_program():
     global program_runner
     logging.info("Program started")
+
     if program_runner is None or not program_runner.is_running():
         program_runner = ProgramRunner()
         #program_runner.start()  # This will now run the main loop directly
