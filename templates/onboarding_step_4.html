@@ -112,6 +112,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function addContentSource(sourceType, sourceConfig) {
+        sourceConfig.type = sourceType; // Ensure the type is set in the config
         fetch('/onboarding/content_sources/add', {
             method: 'POST',
             headers: {
@@ -123,7 +124,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.success) {
                 refreshContentSourcesList();
-                updateCanProceed(true);  // Enable the Next Step button immediately
+                updateCanProceed(true);
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     message: `Content source ${data.source_id} added successfully.`,
@@ -197,6 +198,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/onboarding/content_sources/get')
             .then(response => response.json())
             .then(data => {
+                console.log('Received content sources data:', data);
                 const sourcesList = document.getElementById('existing-content-sources');
                 sourcesList.innerHTML = '';
                 if (data.content_sources && Object.keys(data.content_sources).length > 0) {
@@ -220,7 +222,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                         sourceItem.innerHTML = `
                             <div class="content-source-header">
-                                <span class="onboarding-text">${source.type}</span>
+                                <span class="onboarding-text">${id}</span>
                                 <button class="delete-content-source-btn onboarding-btn-delete" data-source-id="${id}">Delete</button>
                             </div>
                             <div class="content-source-settings">
@@ -230,6 +232,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         sourcesList.appendChild(sourceItem);
                     }
                     initializeDeleteButtons();
+                } else {
+                    console.log('No content sources found or content_sources is empty');
                 }
                 updateCanProceed(Object.keys(data.content_sources || {}).length > 0);
             })
@@ -269,6 +273,18 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     }
+
+    // Add this function to periodically refresh the content sources list
+    function startContentSourcesRefresh() {
+        refreshContentSourcesList();
+        setInterval(refreshContentSourcesList, 5000); // Refresh every 5 seconds
+    }
+
+    // Call this function when the page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        startContentSourcesRefresh();
+        // ... other initialization code ...
+    });
 });
 </script>
 

@@ -5,12 +5,6 @@ from api_tracker import api
 from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from .zilean import scrape_zilean
-from .torrentio import scrape_torrentio
-from .knightcrawler import scrape_knightcrawler
-from .comet import scrape_comet
-from .prowlarr import scrape_prowlarr
-from .jackett import scrape_jackett
 from settings import get_setting
 import time
 from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes, get_episode_count_for_seasons, get_all_season_episode_counts
@@ -23,6 +17,8 @@ from utilities.plex_functions import filter_genres
 from guessit import guessit
 import pykakasi
 from babelfish import Language
+from .scraper_manager import ScraperManager
+from config_manager import load_config
 
 def romanize_japanese(text):
     kks = pykakasi.kakasi()
@@ -115,42 +111,58 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
 
     logging.debug(f"Comparing titles - Query: '{query_title}', Guessit: '{guessit_title}'")
 
-    # Calculate token sort ratio
-    token_sort_similarity = fuzz.token_sort_ratio(query_title, guessit_title)
-    
-    # Check if all words in the query title are in the guessit title
-    query_words = set(query_title.split())
-    guessit_words = set(guessit_title.split())
-    all_words_present = query_words.issubset(guessit_words)
-
-    # Calculate final similarity
-    if all_words_present:
-        similarity = token_sort_similarity
-    else:
-        similarity = token_sort_similarity * 0.5  # Penalize if not all words are present
-
-    logging.debug(f"Token sort ratio: {token_sort_similarity}")
-    logging.debug(f"All query words present: {all_words_present}")
-    logging.debug(f"Final similarity score: {similarity}")
-
-    # For anime, consider alternative titles if available
     if is_anime:
+        # For anime, use match_any_title function
+        official_titles = [query_title]
+        
+        # Add alternative titles
         alternative_titles = parsed_info.get('alternative_title', [])
         if isinstance(alternative_titles, str):
             alternative_titles = [alternative_titles]
-        for alt_title in alternative_titles:
-            alt_title = normalize_title(alt_title).lower()
-            alt_token_sort_similarity = fuzz.token_sort_ratio(query_title, alt_title)
-            alt_words = set(alt_title.split())
-            alt_all_words_present = query_words.issubset(alt_words)
-            
-            alt_similarity = alt_token_sort_similarity if alt_all_words_present else alt_token_sort_similarity * 0.5
-            logging.debug(f"Alternative title '{alt_title}' similarity: {alt_similarity}")
-            similarity = max(similarity, alt_similarity)
+        official_titles.extend(alternative_titles)
+        
+        similarity = match_any_title(guessit_title, official_titles)
+        
+        logging.debug(f"Anime title similarity: {similarity}")
+
+    else:
+        # For non-anime, use the existing logic
+        token_sort_similarity = fuzz.token_sort_ratio(query_title, guessit_title) / 100
+        
+        query_words = set(query_title.split())
+        guessit_words = set(guessit_title.split())
+        all_words_present = query_words.issubset(guessit_words)
+
+        if all_words_present:
+            similarity = token_sort_similarity
+        else:
+            similarity = token_sort_similarity * 0.5  # Penalize if not all words are present
+
+        logging.debug(f"Token sort ratio: {token_sort_similarity}")
+        logging.debug(f"All query words present: {all_words_present}")
 
     logging.debug(f"Final similarity score: {similarity}")
 
-    return similarity / 100  # Return as a float between 0 and 1
+    return similarity  # Already a float between 0 and 1
+
+def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
+    max_similarity = 0
+    for title in official_titles:
+        partial_score = partial_title_match(release_title, title)
+        fuzzy_score = fuzzy_title_match(release_title, title) / 100
+        similarity = max(partial_score, fuzzy_score)
+        max_similarity = max(max_similarity, similarity)
+        logging.debug(f"Matching '{release_title}' with '{title}': Partial: {partial_score:.2f}, Fuzzy: {fuzzy_score:.2f}, Max: {similarity:.2f}")
+    return max_similarity
+
+def partial_title_match(title1: str, title2: str) -> float:
+    words1 = set(title1.lower().split())
+    words2 = set(title2.lower().split())
+    common_words = words1.intersection(words2)
+    return len(common_words) / max(len(words1), len(words2))
+
+def fuzzy_title_match(title1: str, title2: str) -> float:
+    return fuzz.partial_ratio(title1.lower(), title2.lower())
 
 
 def calculate_bitrate(size_gb, runtime_minutes):
@@ -751,6 +763,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             logging.info("No details found in Overseerr.")
 
     for result in results:
+        result['filter_reason'] = "Passed all filters"  # Default reason
+
         parsed_info = result.get('parsed_info', {})
         season_episode_info = parsed_info.get('season_episode_info', {})
         season_pack = season_episode_info.get('season_pack', 'Unknown')
@@ -769,6 +783,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             similarity_threshold = 0.8
         
         if is_anime:
+            similarity_threshold = 0.35
             if max(title_sim, alternate_title_sim) < similarity_threshold:
                 result['filter_reason'] = f"Low title similarity: {max(title_sim, alternate_title_sim):.2f}"
                 continue
@@ -866,9 +881,12 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         result['bitrate'] = bitrate
 
         # Apply size filter after per-file size calculation
-        if result['size'] < min_size_gb:
+        if result['size'] > 0 and result['size'] < min_size_gb:
             result['filter_reason'] = f"Size too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
             continue
+        elif result['size'] == 0:
+            logging.warning(f"Size is 0 for result: {result.get('title', 'Unknown')}. Skipping size filter.")
+            
         if result['size'] > max_size_gb:
             result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
             continue
@@ -915,17 +933,25 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                         continue
 
         # If the result passed all filters, add it to filtered_results
-        filtered_results.append(result)
+        if result['filter_reason'] == "Passed all filters":
+            filtered_results.append(result)
+        else:
+            # If it didn't pass, make sure we have a reason
+            if result['filter_reason'] == "Passed all filters":
+                result['filter_reason'] = "Failed to meet all criteria"
 
     return filtered_results
 
 def normalize_title(title: str) -> str:
     """
-    Normalize the title by replacing spaces with periods, removing colons,
+    Normalize the title by replacing spaces with periods, removing colons and apostrophes,
     replacing ".~." with "-", and removing duplicate periods.
     """
-    # Replace spaces with periods and remove colons
-    normalized = title.replace(' ', '.').replace(':', '')
+    # Remove apostrophes and colons
+    normalized = re.sub(r"[':]", "", title)
+    
+    # Replace spaces with periods
+    normalized = normalized.replace(' ', '.')
     
     # Replace ".~." with "-"
     normalized = normalized.replace('.~.', '-')
@@ -987,76 +1013,30 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             version_settings = {}
         logging.debug(f"Using version settings: {version_settings}")
 
-        # Get all scraper settings
-        all_scraper_settings = get_setting('Scrapers')
+        # Use ScraperManager to handle scraping
+        scraper_manager = ScraperManager(load_config())
+        all_results = scraper_manager.scrape_all(imdb_id, title, year, content_type, season, episode, multi, genres)
 
-        # Define scraper functions
-        scraper_functions = {
-            'Zilean': scrape_zilean,
-            'Torrentio': scrape_torrentio,
-            'Comet': scrape_comet,
-            'Jackett': scrape_jackett,
-            'Prowlarr': scrape_prowlarr
-        }
-
-        def run_scraper(scraper_name, scraper_settings):
-            scraper_start = time.time()
-            try:
-                logging.debug(f"Starting {scraper_name} scraper")
-                #logging.debug(f"Scraper settings: {scraper_settings}")
-                
-                scraper_type = scraper_name.split('_')[0]
-                scraper_func = scraper_functions.get(scraper_type)
-                if not scraper_func:
-                    logging.warning(f"No scraper function found for {scraper_name}")
-                    return []
-                
-                # All scrapers now use the same parameter list
-                scraper_results = scraper_func(imdb_id, title, year, content_type, season, episode, multi)
-                                
-                if isinstance(scraper_results, tuple):
-                    *_, scraper_results = scraper_results
-                for item in scraper_results:
-                    item['scraper'] = scraper_name
-                    item['title'] = normalize_title(item.get('title', ''))
-                    item['parsed_info'] = parse_torrent_info(item['title'])  # Parse info once
-                logging.debug(f"{scraper_name} scraper found {len(scraper_results)} results")
-                logging.debug(f"{scraper_name} scraper took {time.time() - scraper_start:.2f} seconds")
-                return scraper_results
-            except Exception as e:
-                logging.error(f"Error in {scraper_name} scraper: {str(e)}", exc_info=True)
-                return []
-
-        scraping_start = time.time()
-        with ThreadPoolExecutor(max_workers=len(all_scraper_settings)) as executor:
-            future_to_scraper = {}
-            for scraper_name, scraper_settings in all_scraper_settings.items():
-                if scraper_settings.get('enabled', False):
-                    future = executor.submit(run_scraper, scraper_name, scraper_settings)
-                    future_to_scraper[future] = scraper_name
-                else:
-                    logging.debug(f"Scraper {scraper_name} is disabled, skipping")
-
-            for future in as_completed(future_to_scraper):
-                scraper_name = future_to_scraper[future]
-                try:
-                    results = future.result()
-                    all_results.extend(results)
-                except Exception as e:
-                    logging.error(f"Scraper {scraper_name} generated an exception: {str(e)}")
-
-        logging.debug(f"Total scraping time: {time.time() - scraping_start:.2f} seconds")
+        logging.debug(f"Total scraping time: {time.time() - start_time:.2f} seconds")
         logging.debug(f"Total results before filtering: {len(all_results)}")
 
         # Deduplicate results before filtering
         all_results = deduplicate_results(all_results)
         logging.debug(f"Total results after deduplication: {len(all_results)}")
 
-        # Filter results
-        filtered_results = filter_results(all_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
-        filtered_out_results = [result for result in all_results if result not in filtered_results]
+        # Normalize and parse results
+        normalized_results = []
+        for result in all_results:
+            normalized_result = result.copy()
+            normalized_result['title'] = normalize_title(result.get('title', ''))
+            normalized_result['parsed_info'] = parse_torrent_info(normalized_result['title'])
+            normalized_results.append(normalized_result)
 
-        logging.debug(f"Filtering took {time.time() - scraping_start:.2f} seconds")
+        # Filter results
+        filtered_results = filter_results(normalized_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
+        filtered_out_results = [result for result in normalized_results if result not in filtered_results]
+
+        logging.debug(f"Filtering took {time.time() - start_time:.2f} seconds")
         logging.debug(f"Total results after filtering: {len(filtered_results)}")
         logging.debug(f"Total filtered out results: {len(filtered_out_results)}")
 
@@ -1095,10 +1075,19 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
 
         # Log to scraper.log
-        scraper_logger.info(f"Scraping results for: {title} ({year})")
+        if content_type.lower() == 'episode':
+            scraper_logger.info(f"Scraping results for: {title} ({year}) Season: {season} Episode: {episode} Multi: {multi} Version: {version}")
+        else:
+            scraper_logger.info(f"Scraping results for: {title} ({year}) Multi: {multi} Version: {version}")
+
         scraper_logger.info("All result titles:")
         for result in all_results:
             scraper_logger.info(f"- {result.get('title', '')}")
+
+        scraper_logger.info("Filtered out results:")
+        for result in filtered_out_results:
+            filter_reason = result.get('filter_reason', 'Unknown reason')
+            scraper_logger.info(f"- {result.get('title', '')}: {filter_reason}")
 
         scraper_logger.info("Filtered out results:")
         for result in filtered_out_results:

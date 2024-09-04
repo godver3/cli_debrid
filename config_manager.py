@@ -26,7 +26,7 @@ def release_lock(lock_file):
 def load_config():
     try:
         if not os.path.exists(CONFIG_FILE):
-            return {'Scraping': {'versions': {}}, 'Notifications': {}}
+            return {'Scraping': {'versions': {}}, 'Notifications': {}, 'Content Sources': {}}
         with open(CONFIG_FILE, 'r') as config_file:
             config = json.load(config_file)
         
@@ -41,10 +41,14 @@ def load_config():
             config['Notifications'] = {}
         config['Notifications'] = {k: v for k, v in config['Notifications'].items() if v is not None}
         
+        # Ensure 'Content Sources' exists
+        if 'Content Sources' not in config:
+            config['Content Sources'] = {}
+        
         return config
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}")
-        return {'Scraping': {'versions': {}}, 'Notifications': {}}
+        return {'Scraping': {'versions': {}}, 'Notifications': {}, 'Content Sources': {}}
 
 def save_config(config):
     process_id = str(uuid.uuid4())[:8]
@@ -260,6 +264,9 @@ def add_scraper(scraper_type, scraper_config):
         elif 'default' in value:
             validated_config[key] = value['default']
     logging.debug(f"[{process_id}] Validated config for {new_scraper_id}: {validated_config}")
+    
+    # Add this line
+    validated_config['type'] = scraper_type
     
     # Add the new scraper to the 'Scrapers' section
     config['Scrapers'][new_scraper_id] = validated_config

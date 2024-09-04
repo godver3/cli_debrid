@@ -3,124 +3,7 @@
 {% block title %}Debug Functions{% endblock %}
 
 {% block content %}
-<style>
-    .debug-container {
-        width: 100%;
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 30px;
-        background-color: #2c2c2c;
-        border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-
-    h2, h3 {
-        color: #f4f4f4;
-        margin-bottom: 16px;
-        border-bottom: 2px solid #444;
-        padding-bottom: 10px;
-    }
-
-    form {
-        display: flex;
-        flex-direction: column;
-        max-width: 100%;
-        margin: 0;
-    }
-
-    .form-group {
-        display: flex;
-        flex-direction: column;
-        margin-bottom: 20px;
-    }
-
-    label {
-        color: #f4f4f4;
-        margin-bottom: 8px;
-        font-weight: bold;
-    }
-
-    input[type="text"],
-    input[type="number"], 
-    select#collection_type, 
-    select#wanted_source {
-        padding: 10px;
-        background-color: #3a3a3a;
-        border: 1px solid #555;
-        color: #f4f4f4;
-        border-radius: 4px;
-        font-size: 14px;
-        transition: border-color 0.3s, box-shadow 0.3s;
-    }
-
-    input[type="text"]:focus,
-    input[type="number"]:focus {
-        border-color: #007bff;
-        box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
-        outline: none;
-    }
-
-    button {
-        background-color: #007bff;
-        color: white;
-        border: none;
-        padding: 12px 20px;
-        text-align: center;
-        text-decoration: none;
-        display: inline-block;
-        font-size: 16px;
-        margin: 4px 2px;
-        cursor: pointer;
-        border-radius: 4px;
-        transition: background-color 0.3s;
-    }
-
-    button:hover {
-        background-color: #0056b3;
-    }
-
-    .debug-section {
-        margin-bottom: 40px;
-        padding: 20px;
-        background-color: #333;
-        border-radius: 6px;
-    }
-
-    .loading {
-        display: none;
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0, 0, 0, 0.5);
-        z-index: 9999;
-        justify-content: center;
-        align-items: center;
-    }
-
-    .loading-content {
-        background-color: #333;
-        padding: 20px;
-        border-radius: 5px;
-        text-align: center;
-    }
-
-    .spinner {
-        border: 4px solid #f3f3f3;
-        border-top: 4px solid #3498db;
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        animation: spin 1s linear infinite;
-        margin: 0 auto 10px;
-    }
-
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/debug_functions.css') }}">
 
 <div class="debug-container">
     <h2>Debug Functions</h2>
@@ -175,6 +58,54 @@
         </div>
         <button type="submit">Get Wanted</button>
     </form>
+
+    <h3>Bulk Queue Actions</h3>
+    <form id="bulk-queue-action-form">
+        <div class="form-group">
+            <label for="queue_select">Select Queue:</label>
+            <select id="queue_select" name="queue_select">
+                <option value="Adding">Adding</option>
+                <option value="Blacklisted">Blacklisted</option>
+                <option value="Checking">Checking</option>
+                <option value="Scraping">Scraping</option>
+                <option value="Sleeping">Sleeping</option>
+                <option value="Unreleased">Unreleased</option>
+                <option value="Wanted">Wanted</option>
+            </select>
+        </div>
+        <div id="queue_items_container" class="queue-items-container">
+            <h4>Select Items:</h4>
+            <div class="select-all-container">
+                <button type="button" id="select_all_btn">Select All</button>
+                <button type="button" id="unselect_all_btn">Unselect All</button>
+            </div>
+            <div id="queue_items">Loading...</div>
+        </div>
+        <div class="form-group">
+            <label for="action_select">Action:</label>
+            <select id="action_select" name="action">
+                <option value="delete">Delete</option>
+                <option value="move">Move to...</option>
+            </select>
+        </div>
+        <div id="target_queue_container" style="display: none;">
+            <label for="target_queue">Target Queue:</label>
+            <select id="target_queue" name="target_queue">
+                <option value="Adding">Adding</option>
+                <option value="Blacklisted">Blacklisted</option>
+                <option value="Checking">Checking</option>
+                <option value="Scraping">Scraping</option>
+                <option value="Sleeping">Sleeping</option>
+                <option value="Unreleased">Unreleased</option>
+                <option value="Wanted">Wanted</option>
+            </select>
+        </div>
+        <button type="submit">Apply Action</button>
+    </form>
+    
+    <h3>Manual Blacklist</h3>
+    <a href="{{ url_for('manual_blacklist') }}" class="btn btn-primary">Manage Manual Blacklist</a>
+
 </div>
 
 <div id="loading" class="loading">
@@ -186,8 +117,9 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        const forms = document.querySelectorAll('form');
+        const forms = document.querySelectorAll('form:not(#bulk-queue-action-form)');
         const loading = document.getElementById('loading');
+        const bulkActionForm = document.getElementById('bulk-queue-action-form');
         
         forms.forEach(form => {
             form.addEventListener('submit', function(e) {
@@ -229,6 +161,14 @@
                 });
             });
         });
+
+        // Keep only this listener for the bulk action form
+        if (bulkActionForm) {
+            bulkActionForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                performBulkAction();
+            });
+        }
 
         function submitForm(url, method, formData) {
             fetch(url, {
@@ -332,6 +272,164 @@
 
         checkProgramStatus();
         setInterval(checkProgramStatus, 5000);
+
+        const queueSelect = document.getElementById('queue_select');
+        const queueItemsContainer = document.getElementById('queue_items_container');
+        const queueItems = document.getElementById('queue_items');
+        const actionSelect = document.getElementById('action_select');
+        const targetQueueContainer = document.getElementById('target_queue_container');
+        const selectAllBtn = document.getElementById('select_all_btn');
+        const unselectAllBtn = document.getElementById('unselect_all_btn');
+
+        let lastChecked = null;
+
+        queueSelect.addEventListener('change', function() {
+            console.log('Queue selected:', this.value);
+            fetchQueueItems(this.value);
+        });
+
+        actionSelect.addEventListener('change', function() {
+            targetQueueContainer.style.display = this.value === 'move' ? 'block' : 'none';
+        });
+
+        selectAllBtn.addEventListener('click', function() {
+            toggleAllCheckboxes(true);
+        });
+
+        unselectAllBtn.addEventListener('click', function() {
+            toggleAllCheckboxes(false);
+        });
+
+        function toggleAllCheckboxes(checked) {
+            const checkboxes = queueItems.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = checked;
+            });
+        }
+
+        function fetchQueueItems(queue) {
+            console.log('Fetching queue items for:', queue);
+            queueItemsContainer.style.display = 'block';
+            queueItems.innerHTML = 'Loading...';
+
+            fetch(`/api/bulk_queue_contents`)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Received data:', data);
+                    const items = data[queue] || [];
+                    console.log('Items for queue:', items);
+                    
+                    if (items.length === 0) {
+                        queueItems.innerHTML = '<p>No items in this queue.</p>';
+                    } else {
+                        queueItems.innerHTML = items.map(item => `
+                            <div class="queue-item">
+                                <input type="checkbox" name="selected_items" value="${item.id}" id="item_${item.id}">
+                                <label for="item_${item.id}">${item.title} (ID: ${item.id})</label>
+                            </div>
+                        `).join('');
+                        addCheckboxListeners();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching queue items:', error);
+                    queueItems.innerHTML = '<p>Error loading queue items. Please try again.</p>';
+                });
+        }
+
+        function addCheckboxListeners() {
+            const checkboxes = queueItems.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.addEventListener('click', handleCheckboxClick);
+            });
+        }
+
+        function handleCheckboxClick(e) {
+            if (!lastChecked) {
+                lastChecked = e.target;
+                return;
+            }
+
+            if (e.shiftKey) {
+                const start = Array.from(queueItems.querySelectorAll('input[type="checkbox"]')).indexOf(e.target);
+                const end = Array.from(queueItems.querySelectorAll('input[type="checkbox"]')).indexOf(lastChecked);
+                const checkboxes = queueItems.querySelectorAll('input[type="checkbox"]');
+
+                checkboxes.forEach((checkbox, i) => {
+                    if (i >= Math.min(start, end) && i <= Math.max(start, end)) {
+                        checkbox.checked = lastChecked.checked;
+                    }
+                });
+            }
+
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                e.target.checked = !e.target.checked;
+            }
+
+            lastChecked = e.target;
+        }
+
+        function performBulkAction() {
+            const selectedItems = document.querySelectorAll('input[name="selected_items"]:checked');
+            if (selectedItems.length === 0) {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Please select at least one item to perform the action.',
+                    title: 'No Items Selected'
+                });
+                return;
+            }
+
+            const action = document.getElementById('action_select').value;
+            const actionText = action === 'delete' ? 'delete' : 'move';
+            const confirmMessage = `Are you sure you want to ${actionText} ${selectedItems.length} item(s)?`;
+
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: confirmMessage,
+                title: 'Confirm Bulk Action',
+                onConfirm: () => {
+                    const formData = new FormData(bulkActionForm);
+                    loading.style.display = 'flex';
+                    fetch('/bulk_queue_action', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        loading.style.display = 'none';
+                        if (data.success) {
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: data.message,
+                                title: 'Success'
+                            });
+                            fetchQueueItems(queueSelect.value);
+                        } else {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: data.error,
+                                title: 'Error'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        loading.style.display = 'none';
+                        console.error('Error performing bulk action:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'An unexpected error occurred while performing the bulk action.',
+                            title: 'Error'
+                        });
+                    });
+                }
+            });
+        }
+
+        // Initial fetch of queue items
+        console.log('Initial queue fetch');
+        fetchQueueItems(queueSelect.value);
     });
 </script>
 {% endblock %}
