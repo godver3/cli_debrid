@@ -9,7 +9,7 @@
     <h2>Debug Functions</h2>
 
     <h3>Bulk Delete from Database</h3>
-    <form action="{{ url_for('bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
+    <form action="{{ url_for('debug.bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
         <div class="form-group">
             <label for="imdb_id">IMDB ID:</label>
             <input type="text" id="imdb_id" name="imdb_id" required>
@@ -25,7 +25,7 @@
         <button type="submit">Download Logs</button>
     </form>
     <h3>Delete Database</h3>
-    <form action="{{ url_for('delete_database') }}" method="POST" id="delete-database-form">
+    <form action="{{ url_for('debug.delete_database') }}" method="POST" id="delete-database-form">
         <div class="form-group">
             <label for="confirm_delete">Type 'DELETE' to confirm:</label>
             <input type="text" id="confirm_delete" name="confirm_delete" required>
@@ -33,7 +33,7 @@
         <button type="submit">Delete Database</button>
     </form>
     <h3>Get Collected from Plex</h3>
-    <form action="{{ url_for('get_collected_from_plex') }}" method="POST" id="get-collected-form">
+    <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
         <div class="form-group">
             <label for="collection_type">Collection Type:</label>
             <select id="collection_type" name="collection_type" required>
@@ -44,7 +44,7 @@
         <button type="submit">Get Collected</button>
     </form>
     <h3>Get Wanted Content</h3>
-    <form action="{{ url_for('get_wanted_content') }}" method="POST" id="get-wanted-form">
+    <form action="{{ url_for('debug.get_wanted_content') }}" method="POST" id="get-wanted-form">
         <div class="form-group">
             <label for="wanted_source">Source:</label>
             <select id="wanted_source" name="source" required>
@@ -104,7 +104,7 @@
     </form>
     
     <h3>Manual Blacklist</h3>
-    <a href="{{ url_for('manual_blacklist') }}" class="btn btn-primary">Manage Manual Blacklist</a>
+    <a href="{{ url_for('debug.manual_blacklist') }}" class="btn btn-primary">Manage Manual Blacklist</a>
 
 </div>
 
@@ -211,7 +211,7 @@
 
         function downloadLogs() {
             const lines = document.getElementById('log_lines').value;
-            const url = `/api/logs?lines=${lines}&download=true`;
+            const url = `/logs/api/logs?lines=${lines}&download=true`;
             
             fetch(url)
                 .then(response => {
@@ -242,7 +242,7 @@
 
 
         function checkProgramStatus() {
-            fetch('/api/program_status')
+            fetch('/program_operation/api/program_status')
                 .then(response => response.json())
                 .then(data => {
                     const isRunning = data.running;
@@ -312,7 +312,7 @@
             queueItemsContainer.style.display = 'block';
             queueItems.innerHTML = 'Loading...';
 
-            fetch(`/api/bulk_queue_contents`)
+            fetch(`/debug/api/bulk_queue_contents`)
                 .then(response => response.json())
                 .then(data => {
                     console.log('Received data:', data);

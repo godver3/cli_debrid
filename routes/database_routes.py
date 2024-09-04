@@ -155,49 +155,8 @@ def index():
                            current_letter=current_letter,
                            content_type=content_type)
 
-@database_bp.route('/delete_database', methods=['POST'])
-@admin_required
-def delete_database():
-    confirm_delete = request.form.get('confirm_delete')
-    if confirm_delete != 'DELETE':
-        return jsonify({'success': False, 'error': 'Invalid confirmation'})
 
-    conn = get_db_connection()
- 
-    try:
-        # Close any open database connections
-        conn.close()
-        conn.engine.dispose()
-
-        # Delete the media_items.db file
-        db_path = os.path.join(current_app.root_path, 'db_content', 'media_items.db')
-        if os.path.exists(db_path):
-            os.remove(db_path)
-            logging.info(f"Deleted media_items.db file: {db_path}")
-        else:
-            logging.info(f"media_items.db file not found: {db_path}")
-
-        # Recreate the tables
-        create_tables()
-        verify_database()
-
-        return jsonify({'success': True, 'message': 'Database deleted and tables recreated successfully'})
-    except Exception as e:
-        logging.error(f"Error deleting database: {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'})
     
-@database_bp.route('/bulk_delete_by_imdb', methods=['POST'])
-def bulk_delete_by_imdb():
-    imdb_id = request.form.get('imdb_id')
-    if not imdb_id:
-        return jsonify({'success': False, 'error': 'IMDB ID is required'})
-
-    deleted_count = bulk_delete_by_imdb_id(imdb_id)
-    if deleted_count > 0:
-        return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with IMDB ID: {imdb_id}'})
-    else:
-        return jsonify({'success': False, 'error': f'No items found with IMDB ID: {imdb_id}'})
-
 @database_bp.route('/bulk_queue_action', methods=['POST'])
 def bulk_queue_action():
     action = request.form.get('action')
