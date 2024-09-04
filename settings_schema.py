@@ -62,7 +62,7 @@ SETTINGS_SCHEMA = {
         "tab": "Additional Settings",
         "api_key": {
             "type": "string",
-            "description": "TMDB API key",
+            "description": "TMDB Read Access Token",
             "default": "",
             "sensitive": True
         }
