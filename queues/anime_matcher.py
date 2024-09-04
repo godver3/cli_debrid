@@ -8,6 +8,8 @@ class AnimeMatcher:
         logging.info("AnimeMatcher initialized")
 
     def match_anime_files(self, files: List[str], items: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
+        matches = []
+        
         logging.info(f"Matching anime files. Files count: {len(files)}, Items count: {len(items)}")
         file_format = self.detect_anime_file_format(files)
         logging.info(f"Detected file format: {file_format}")
