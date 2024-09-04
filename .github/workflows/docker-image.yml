@@ -2,7 +2,7 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "dev", "main" ]
+    branches: [ "rate_limiting" ]
   workflow_dispatch:  # This enables manual triggering
 
 jobs:
@@ -31,13 +31,8 @@ jobs:
 
     - name: Set Docker tags
       run: |
-        if [ "${{ github.ref_name }}" = "dev" ]; then
-          echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }}" >> $GITHUB_ENV
-          echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:dev-arm64,godver3/cli_debrid:dev-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
-        else
-          echo "DOCKER_TAGS=godver3/cli_debrid:main,godver3/cli_debrid:main-${{ env.VERSION }}" >> $GITHUB_ENV
-          echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:main-arm64,godver3/cli_debrid:main-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
-        fi
+        if [ "${{ github.ref_name }}" = "rate_limiting" ]; then
+          echo "DOCKER_TAGS=godver3/cli_debrid:rate_limiting" >> $GITHUB_ENV
 
     - name: Build and push amd64 image
       uses: docker/build-push-action@v5
@@ -47,16 +42,5 @@ jobs:
         platforms: linux/amd64
         push: true
         tags: ${{ env.DOCKER_TAGS }}
-        build-args: |
-          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-
-    - name: Build and push arm64 image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        platforms: linux/arm64
-        push: true
-        tags: ${{ env.DOCKER_TAGS_ARM64 }}
         build-args: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
