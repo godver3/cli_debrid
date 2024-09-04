@@ -1,0 +1,6 @@
+--2024-09-04 11:51:43--  https://jackett.godver3.xyz/dl/therarbg/?jackett_apikey=5hg85otk8hisu4e7rum7ti1gj3c3rqww
+Resolving jackett.godver3.xyz (jackett.godver3.xyz)... 50.99.113.233
+Connecting to jackett.godver3.xyz (jackett.godver3.xyz)|50.99.113.233|:443... connected.
+HTTP request sent, awaiting response... 500 Internal Server Error
+2024-09-04 11:51:43 ERROR 500: Internal Server Error.
+

@@ -13,8 +13,7 @@ from database import add_collected_items, add_wanted_items
 from flask import request, jsonify
 from not_wanted_magnets import task_purge_not_wanted_magnets_file
 import traceback
-from shared import update_stats
-from shared import app
+from extensions import update_stats
 import threading
 from queue_utils import safe_process_queue
 import signal
