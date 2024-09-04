@@ -327,12 +327,51 @@ class AddingQueue:
         self.handle_failed_item(queue_manager, item, "Adding")
         return False
 
+    def process_torrent(self, queue_manager, item, title, link, add_result):
+        item_identifier = queue_manager.generate_identifier(item)
+        logging.debug(f"Processing torrent for item: {item_identifier}")
+        logging.debug(f"Add result: {json.dumps(add_result, indent=2)}")
+
+        files = add_result.get('files', [])
+        if not files and 'links' in add_result:
+            files = add_result['links'].get('files', [])
+
+        torrent_id = add_result.get('torrent_id')
+        logging.debug(f"Torrent ID: {torrent_id}")
+
+        if files:
+            logging.info(f"Files in torrent for {item_identifier}: {json.dumps(files, indent=2)}")
+
+            if item['type'] == 'movie':
+                matching_files = [file for file in files if self.file_matches_item(file, item)]
+                if matching_files:
+                    logging.info(f"Matching file(s) found for movie: {item_identifier}")
+                    filled_by_file = os.path.basename(matching_files[0])
+                    queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file, torrent_id)
+                    logging.debug(f"Moved movie {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
+                    return True, torrent_id
+                else:
+                    logging.warning(f"No matching file found for movie: {item_identifier}")
+                    return False, torrent_id
+            else:  # TV show
+                success, message = self.process_multi_pack(queue_manager, item, title, link, files, torrent_id)
+                if success:
+                    logging.info(f"Successfully processed TV show item: {item_identifier}. {message}")
+                    return True, torrent_id
+                else:
+                    logging.warning(f"Failed to process TV show item: {item_identifier}. {message}")
+                    return False, torrent_id
+        else:
+            logging.warning(f"No file information available for torrent: {item_identifier}")
+            return False, torrent_id
+
     def process_result(self, queue_manager, item, result, current_hash, is_cached):
         item_identifier = queue_manager.generate_identifier(item)
         title = result.get('title', '')
         link = result.get('magnet', '')
 
-        logging.debug(f"Processing result for {item_identifier}. Is cached: {is_cached}")
+        torrent_id = result.get('torrent_id')
+        logging.debug(f"Torrent ID: {torrent_id}")
 
         if not link:
             logging.error(f"No magnet link found for {item_identifier}")
@@ -345,11 +384,14 @@ class AddingQueue:
                 if status == 'downloaded' or (status in ['downloading', 'queued'] and 'files' in add_result):
                     logging.info(f"Torrent added to Real-Debrid successfully for {item_identifier}. Status: {status}")
                     self.add_to_not_wanted(current_hash, item_identifier)
-                    if self.process_torrent(queue_manager, item, title, link, add_result):
+                    success, torrent_id = self.process_torrent(queue_manager, item, title, link, add_result)
+                    if success:
                         return True
                     else:
                         logging.warning(f"Failed to process torrent for {item_identifier}")
-                        self.remove_unwanted_torrent(add_result.get('id'))
+                        logging.debug(f"Torrent ID: {torrent_id}")
+                        logging.debug(f"ID: {add_result.get('id')}")
+                        self.remove_unwanted_torrent(torrent_id or add_result.get('id'))
                         return False
                 else:
                     logging.warning(f"Unexpected result from Real-Debrid for {item_identifier}: {add_result}")
@@ -357,15 +399,16 @@ class AddingQueue:
             elif add_result in ['downloading', 'queued']:
                 logging.info(f"Uncached torrent added to Real-Debrid successfully for {item_identifier}")
                 self.add_to_not_wanted(current_hash, item_identifier)
-                if self.process_torrent(queue_manager, item, title, link, {'status': 'uncached', 'files': []}):
+                success, torrent_id = self.process_torrent(queue_manager, item, title, link, {'status': 'uncached', 'files': [], 'torrent_id': None})
+                if success:
                     return True
                 else:
                     logging.warning(f"Failed to process uncached torrent for {item_identifier}")
-                    self.remove_unwanted_torrent(add_result.get('id'))
+                    self.remove_unwanted_torrent(torrent_id)  # This will be None for uncached torrents
                     return False
             else:
                 logging.warning(f"Unexpected result from Real-Debrid for {item_identifier}: {add_result}")
-                self.remove_unwanted_torrent(add_result.get('id'))
+                self.remove_unwanted_torrent(None)
         else:
             logging.error(f"Failed to add torrent to Real-Debrid for {item_identifier}")
 
@@ -446,43 +489,7 @@ class AddingQueue:
         queue_manager.queues['Blacklisted'].add_item(item)
 
         logging.info(f"Moved item {item_identifier} to Blacklisted state")
-
-    def process_torrent(self, queue_manager, item, title, link, add_result):
-        item_identifier = queue_manager.generate_identifier(item)
-        logging.debug(f"Processing torrent for item: {item_identifier}")
-        logging.debug(f"Add result: {json.dumps(add_result, indent=2)}")
-
-        files = add_result.get('files', [])
-        if not files and 'links' in add_result:
-            files = add_result['links'].get('files', [])
-
-        if files:
-            logging.info(f"Files in torrent for {item_identifier}: {json.dumps(files, indent=2)}")
-
-            if item['type'] == 'movie':
-                matching_files = [file for file in files if self.file_matches_item(file, item)]
-                if matching_files:
-                    logging.info(f"Matching file(s) found for movie: {item_identifier}")
-                    filled_by_file = os.path.basename(matching_files[0])
-                    torrent_id = add_result.get('torrent_id')  # Get the torrent_id from add_result
-                    queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file, torrent_id)
-                    logging.debug(f"Moved movie {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
-                    return True
-                else:
-                    logging.warning(f"No matching file found for movie: {item_identifier}")
-                    return False
-            else:  # TV show
-                success, message = self.process_multi_pack(queue_manager, item, title, link, files)
-                if success:
-                    logging.info(f"Successfully processed TV show item: {item_identifier}. {message}")
-                    return True
-                else:
-                    logging.warning(f"Failed to process TV show item: {item_identifier}. {message}")
-                    return False
-        else:
-            logging.warning(f"No file information available for torrent: {item_identifier}")
-            return False
-        
+      
     def download_and_extract_hash(self, url: str) -> str:
         def obfuscate_url(url: str) -> str:
             parts = url.split('/')
@@ -680,7 +687,7 @@ class AddingQueue:
             return False
 
 
-    def process_multi_pack(self, queue_manager, item, title, link, files):
+    def process_multi_pack(self, queue_manager, item, title, link, files, torrent_id):
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Processing multi-pack for item: {item_identifier}")
 
@@ -701,11 +708,14 @@ class AddingQueue:
             logging.info("Using regular matching for non-anime TV show")
             matches = self.match_regular_tv_show(files, matching_items)
 
+        if matches is None:
+            logging.warning("No matches found")
+            return False, "No matching episodes found"
+
         # Process matches
         for file, matched_item in matches:
             filled_by_file = os.path.basename(file)
             current_queue = queue_manager.get_item_queue(matched_item)
-            torrent_id = matched_item.get('torrent_id')
             queue_manager.move_to_checking(matched_item, current_queue, title, link, filled_by_file, torrent_id)
             logging.info(f"Moved item {queue_manager.generate_identifier(matched_item)} to Checking queue with filled_by_file: {filled_by_file}")
 
@@ -804,52 +814,26 @@ class AddingQueue:
         return any(filename.lower().endswith(ext) for ext in video_extensions)
 
     def match_movie(self, guess: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
-        if not self.is_video_file(filename):
-            return False
-
-        guessed_title = guess.get('title', '')
-        item_title = item['title']
-
-        # Use fuzzy matching for title
-        title_match = fuzz.ratio(guessed_title.lower(), item_title.lower()) >= 80
-
-        # Year matching is optional
-        year_match = str(guess.get('year', '')) == str(item['year'])
-
-        if title_match:
-            logging.debug(f"Movie match found: {guessed_title} (Year match: {year_match})")
+        if self.is_video_file(filename):
+            logging.debug(f"Video file match found: {filename}")
             return True
-
-        # If no match found, log the details for debugging
-        logging.debug(f"No match found. Guessed title: '{guessed_title}', Item title: '{item_title}', "
-                      f"Guessed year: {guess.get('year', '')}, Item year: {item['year']}")
+        
+        logging.debug(f"Not a video file: {filename}")
         return False
 
     def match_episode(self, guess: Dict[str, Any], item: Dict[str, Any]) -> bool:
         if guess.get('type') != 'episode':
             return False
 
-        title_match = self.fuzzy_title_match(guess.get('title', ''), item['title'])
         season_match = guess.get('season') == int(item['season_number'])
         episode_match = guess.get('episode') == int(item['episode_number'])
 
-        if title_match and season_match and episode_match:
+        if season_match and episode_match:
             logging.debug(f"Episode match found: {guess.get('title')} S{guess.get('season', '')}E{guess.get('episode', '')}")
             return True
 
-        # Check for absolute episode number (mainly for anime)
-        if 'anime' in item.get('genres', []) and 'absolute_episode' in guess:
-            absolute_episode = self.calculate_absolute_episode(item)
-            if guess['absolute_episode'] == absolute_episode:
-                logging.debug(f"Anime absolute episode match found: {guess.get('title')} - {guess.get('absolute_episode')}")
-                return True
-
         return False
 
-    def fuzzy_title_match(self, guess_title: str, item_title: str) -> bool:
-        # Perform a simple ratio match with a threshold of 80%
-        ratio = fuzz.ratio(guess_title.lower(), item_title.lower())
-        return ratio >= 80
 
     def remove_unwanted_torrent(self, torrent_id):
         try:

@@ -384,9 +384,7 @@ def filter_genres(genres):
     if not isinstance(genres, list):
         genres = [genres]
     
-    logger.debug(f"Filtering genres: {genres}")
     filtered = ['anime'] if any(str(genre).strip().lower() == 'anime' for genre in genres) else []
-    logger.debug(f"Filtered genres: {filtered}")
     return filtered
 
 async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
