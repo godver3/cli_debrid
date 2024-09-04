@@ -83,7 +83,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     formData.append('multi', multi);
     formData.append('version', version);
 
-    fetch('/select_season', {
+    fetch('/scraper/select_season', {
         method: 'POST',
         body: formData
     })
@@ -140,7 +140,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) 
     formData.append('multi', multi);
     formData.append('version', version);
 
-    fetch('/select_episode', {
+    fetch('/scraper/select_episode', {
         method: 'POST',
         body: formData
     })
@@ -170,7 +170,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     if (episode !== null) formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
-    fetch('/select_media', {
+    fetch('/scraper/select_media', {
         method: 'POST',
         body: formData
     })
@@ -185,7 +185,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
 
 function addToRealDebrid(magnetLink) {
     showLoadingState();
-    fetch('/add_to_real_debrid', {
+    fetch('/scraper/add_to_real_debrid', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -316,7 +316,7 @@ function displayEpisodeResults(episodeResults, title, year) {
         var date  = new Date(item.air_date);
         episodeDiv.innerHTML = `        
             <button><span class="episode-rating">${(item.vote_average).toFixed(1)}</span>
-            <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : `static/noimage-cli.png`}" alt="${item.episode_title}" style="width: 100%; height: auto;">
+            <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : `/static/noimage-cli.png`}" alt="${item.episode_title}" style="width: 100%; height: auto;">
             <div class="episode-info">
                 <h2 class="episode-title">${item.episode_num}. ${item.episode_title}</h2>
                 <p class="episode-sub">${date.toLocaleDateString("en-US", options)}</p>
@@ -594,7 +594,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function get_trendingMovies() {
         toggleResultsVisibility('get_trendingMovies');
-        fetch('/movies_trending', {
+        fetch('/scraper/movies_trending', {
             method: 'GET'
         })
         .then(response => response.json())
@@ -618,7 +618,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function get_trendingShows() {
         toggleResultsVisibility('get_trendingMovies');
-        fetch('/shows_trending', {
+        fetch('/scraper/shows_trending', {
             method: 'GET'
         })
         .then(response => response.json())
@@ -643,7 +643,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Add event listener for search form
     const searchForm = document.getElementById('search-form');
     if (searchForm) {
-        fetch('/trakt_auth_status')
+        fetch('/trakt/trakt_auth_status')
             .then(response => response.json())
             .then(status => {
                 if (status.status == 'authorized') {

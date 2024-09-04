@@ -709,13 +709,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateStatistics() {
+        console.log('Attempting to fetch statistics...');
         fetch('/statistics', {
             headers: {
                 'X-Requested-With': 'XMLHttpRequest'
             }
         })
-        .then(response => response.json())
+        .then(response => {
+            console.log('Response received:', response);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
+            console.log('Data received:', data);
             // Update the statistics on the page
             document.getElementById('total-movies').textContent = data.total_movies;
             document.getElementById('total-shows').textContent = data.total_shows;
@@ -737,7 +745,15 @@ document.addEventListener('DOMContentLoaded', () => {
             // Update timezone information
             updateTimezone(data.timezone);
         })
-        .catch(error => console.error('Error updating statistics:', error));
+        .catch(error => {
+            console.error('Error updating statistics:', error);
+            console.error('Error details:', error.message);
+            // Display an error message to the user
+            const errorElement = document.createElement('div');
+            errorElement.textContent = 'Failed to update statistics. Please refresh the page or try again later.';
+            errorElement.style.color = 'red';
+            document.querySelector('.statistics-wrapper').prepend(errorElement);
+        });
     }
 
     function updateTimezone(timezone) {

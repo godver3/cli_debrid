@@ -335,7 +335,7 @@ function updateSettings() {
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
-    return fetch('/api/settings', {
+    return fetch('/settings/api/settings', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
