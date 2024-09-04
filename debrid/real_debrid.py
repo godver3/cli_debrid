@@ -30,20 +30,25 @@ def is_video_file(filename):
 def is_unwanted_file(filename):
     return 'sample' in filename.lower()
 
-def rate_limited(max_per_second=1):
-    min_interval = 1.0 / max_per_second
-    def decorate(func):
-        last_time_called = [0.0]
-        def rate_limited_function(*args, **kwargs):
-            elapsed = time.time() - last_time_called[0]
-            left_to_wait = min_interval - elapsed
-            if left_to_wait > 0:
-                time.sleep(left_to_wait)
-            ret = func(*args, **kwargs)
-            last_time_called[0] = time.time()
-            return ret
-        return rate_limited_function
-    return decorate
+class RateLimiter:
+    def __init__(self, calls_per_second=1):
+        self.calls_per_second = calls_per_second
+        self.last_call = 0
+
+    def wait(self):
+        current_time = time.time()
+        time_since_last_call = current_time - self.last_call
+        if time_since_last_call < 1 / self.calls_per_second:
+            time.sleep((1 / self.calls_per_second) - time_since_last_call)
+        self.last_call = time.time()
+
+rate_limiter = RateLimiter(calls_per_second=0.5)  # Adjust this value as needed
+
+def rate_limited_request(func):
+    def wrapper(*args, **kwargs):
+        rate_limiter.wait()
+        return func(*args, **kwargs)
+    return wrapper
 
 def add_to_real_debrid(magnet_link):
     if not api_key:
@@ -55,7 +60,7 @@ def add_to_real_debrid(magnet_link):
         'Content-Type': 'application/x-www-form-urlencoded'
     }
     try:
-        rate_limited()
+        rate_limited_request()
         # Step 1: Add magnet or torrent file
         if magnet_link.startswith('magnet:'):
             magnet_data = {'magnet': magnet_link}
@@ -77,7 +82,7 @@ def add_to_real_debrid(magnet_link):
         torrent_response.raise_for_status()
         torrent_id = torrent_response.json()['id']
 
-        rate_limited()
+        rate_limited_request()
         # Step 2: Get torrent info
         info_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
         info_response.raise_for_status()
@@ -103,13 +108,13 @@ def add_to_real_debrid(magnet_link):
                 logging.debug(f"Removed torrent: {torrent_id}")
             return None
 
-        rate_limited()
+        rate_limited_request()
         select_data = {'files': ','.join(files_to_select)}
         select_response = api.post(f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}", headers=headers, data=select_data, timeout=60)
         select_response.raise_for_status()
 
         # Step 4: Wait for the torrent to be processed
-        rate_limited()
+        rate_limited_request()
         links_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
         links_response.raise_for_status()
         links_info = links_response.json()
@@ -151,13 +156,9 @@ def namespace_to_dict(obj):
     else:
         return obj
 
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import requests
-import logging
-
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=4, max=60),
     retry=retry_if_exception_type((requests.exceptions.RequestException, Exception))
 )
 def is_cached_on_rd(hashes):
@@ -238,18 +239,21 @@ def get(url):
         'Authorization': f'Bearer {api_key}'
     }
     try:
-        response = api.get(url, headers=headers, timeout=10)  # Add a timeout
-        response.raise_for_status()  # Raise an exception for bad status codes
+        response = api.get(url, headers=headers, timeout=10)
+        if response.status_code == 429:
+            retry_after = int(response.headers.get('Retry-After', 5))
+            logging.warning(f"Rate limited. Waiting for {retry_after} seconds.")
+            time.sleep(retry_after)
+            return get(url)  # Retry the request
+        response.raise_for_status()
         return json.loads(json.dumps(response.json()), object_hook=lambda d: SimpleNamespace(**d))
     except requests.exceptions.Timeout:
         logging.error(f"Timeout error accessing {url}")
-        return None
     except requests.exceptions.ConnectionError:
         logging.error(f"Connection error accessing {url}")
-        return None
     except Exception as e:
         logging.error(f"[realdebrid] error: {e}")
-        return None
+    return None
 
 def get_magnet_files(magnet_link):
     torrent_id = add_to_real_debrid(magnet_link)
@@ -262,7 +266,7 @@ def get_magnet_files(magnet_link):
     }
 
     try:
-        rate_limited()
+        rate_limited_request()
         info_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
         info_response.raise_for_status()
         torrent_info = info_response.json()
@@ -277,14 +281,16 @@ def get_magnet_files(magnet_link):
         logging.error(f"Unexpected error in get_magnet_files: {str(e)}")
         return None
 
-def process_hashes(hashes):
-    cache_status = is_cached_on_rd(hashes)
+def process_hashes(hashes, batch_size=100):
     results = {}
-    for hash_ in hashes:
-        if cache_status.get(hash_, False):
-            results[hash_] = get_cached_files(hash_)
-        else:
-            results[hash_] = None
+    for i in range(0, len(hashes), batch_size):
+        batch = hashes[i:i+batch_size]
+        cache_status = is_cached_on_rd(batch)
+        for hash_ in batch:
+            if cache_status.get(hash_, False):
+                results[hash_] = get_cached_files(hash_)
+            else:
+                results[hash_] = None
     return results
 
 def file_matches_item(filename, item):
