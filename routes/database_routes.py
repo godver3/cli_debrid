@@ -154,8 +154,6 @@ def index():
                            alphabet=alphabet,
                            current_letter=current_letter,
                            content_type=content_type)
-
-
     
 @database_bp.route('/bulk_queue_action', methods=['POST'])
 def bulk_queue_action():
