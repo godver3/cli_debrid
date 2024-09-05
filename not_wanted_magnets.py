@@ -1,5 +1,4 @@
 import pickle
-import os
 
 def load_not_wanted_magnets():
     try:

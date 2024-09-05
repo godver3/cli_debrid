@@ -34,6 +34,6 @@ def onboarding_required(f):
         if current_user.is_authenticated and not current_user.onboarding_complete:
             next_step = get_next_onboarding_step()
             if next_step <= 5:  # Assuming 5 is the last step
-                return redirect(url_for('onboarding.step', step=next_step))  # Changed 'onboarding_step' to 'onboarding.step'
+                return redirect(url_for('onboarding.onboarding_step', step=next_step))  # Changed 'onboarding_step' to 'onboarding.step'
         return f(*args, **kwargs)
     return decorated_function

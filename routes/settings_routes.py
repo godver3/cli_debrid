@@ -4,13 +4,11 @@ from settings_schema import SETTINGS_SCHEMA
 import logging
 from config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config
 from routes.models import admin_required, onboarding_required
-from scraper_manager import ScraperManager
 import traceback
 import json
 
 settings_bp = Blueprint('settings', __name__)
 
-scraper_manager = ScraperManager()
 
 def is_user_system_enabled():
     config = load_config()
@@ -107,10 +105,9 @@ def add_scraper_route():
 @settings_bp.route('/scrapers/content')
 def scrapers_content():
     try:
-        scrapers = scraper_manager.load_scrapers()
         settings = load_config()
-        scraper_types = list(scraper_manager.scraper_settings.keys())
-        scraper_settings = scraper_manager.scraper_settings or {}
+        scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())        
+        scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
         return render_template('settings_tabs/scrapers.html', settings=settings, scraper_types=scraper_types, scraper_settings=scraper_settings)
     except Exception as e:
         return jsonify({'error': 'An error occurred while loading scraper settings'}), 500
@@ -118,7 +115,7 @@ def scrapers_content():
 @settings_bp.route('/scrapers/get', methods=['GET'])
 def get_scrapers():
     config = load_config()
-    scraper_types = scraper_manager.get_scraper_types()
+    scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())        
     return render_template('settings_tabs/scrapers.html', settings=config, scraper_types=scraper_types)
 
 @settings_bp.route('/get_content_source_types', methods=['GET'])
@@ -255,8 +252,9 @@ def index():
     try:
         config = load_config()
         config = clean_notifications(config)  # Clean notifications before rendering
-        scraper_types = list(scraper_manager.scraper_settings.keys())
-        source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+        scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())        
+        source_types = list(SETTINGS_SCHEMA["Content Sources"]["schema"].keys())        
+        scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
 
         # Fetch content source settings
         content_source_settings_response = get_content_source_settings_route()
@@ -280,7 +278,7 @@ def index():
         configured_scrapers = {}
         for scraper, scraper_config in config['Scrapers'].items():
             scraper_type = scraper.split('_')[0]  # Assuming format like 'Zilean_1'
-            if scraper_type in scraper_manager.scraper_settings:
+            if scraper_type in scraper_settings:
                 configured_scrapers[scraper] = scraper_config
         
         config['Scrapers'] = configured_scrapers
@@ -323,7 +321,7 @@ def index():
                                settings=config, 
                                notification_settings=config['Notifications'],
                                scraper_types=scraper_types, 
-                               scraper_settings=scraper_manager.scraper_settings,
+                               scraper_settings=scraper_settings,
                                source_types=source_types,
                                content_source_settings=content_source_settings,
                                scraping_versions=scraping_versions,
