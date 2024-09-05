@@ -44,7 +44,7 @@
     }
 
     function addVersion(versionName) {
-        fetch('/versions/add', {
+        fetch('/settings/versions/add', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -76,27 +76,25 @@
     }
 
     function initializeVersionButtons() {
-        document.querySelectorAll('.rename-version-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const versionId = this.getAttribute('data-version-id');
-                renameVersion(versionId);
-            });
-        });
+        const buttons = {
+            '.rename-version-btn': renameVersion,
+            '.duplicate-version-btn': duplicateVersion,
+            '.delete-version-btn': deleteVersion
+        };
 
-        document.querySelectorAll('.duplicate-version-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const versionId = this.getAttribute('data-version-id');
-                duplicateVersion(versionId);
+        for (const [selector, handler] of Object.entries(buttons)) {
+            document.querySelectorAll(selector).forEach(btn => {
+                // Remove existing event listeners
+                btn.removeEventListener('click', handler);
+                // Add new event listener
+                btn.addEventListener('click', function() {
+                    const versionId = this.getAttribute('data-version-id');
+                    handler(versionId);
+                });
             });
-        });
-
-        document.querySelectorAll('.delete-version-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const versionId = this.getAttribute('data-version-id');
-                deleteVersion(versionId);
-            });
-        });
+        }
     }
+
 
     function renameVersion(versionId) {
         window.showPopup({
@@ -108,7 +106,7 @@
             cancelText: 'Cancel',
             onConfirm: (newName) => {
                 if (newName) {
-                    fetch('/versions/rename', {
+                    fetch('/settings/versions/rename', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -149,7 +147,7 @@
             confirmText: 'Duplicate',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/versions/duplicate', {
+                fetch('/settings/versions/duplicate', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -190,7 +188,7 @@
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/versions/delete', {
+                fetch('/settings/versions/delete', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

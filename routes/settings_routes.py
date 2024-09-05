@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, render_template, Response, current_app
-from settings import load_config
+from settings import load_config, validate_url
 from settings_schema import SETTINGS_SCHEMA
 import logging
 from config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config
@@ -365,51 +365,22 @@ def get_scraping_settings():
 def update_settings():
     try:
         new_settings = request.json
-        #logging.debug(f"Received new settings: {json.dumps(new_settings, indent=2)}")
-        
         config = load_config()
-        #logging.debug(f"Current config before update: {json.dumps(config, indent=2)}")
-        
-        if 'UI Settings' in new_settings:
-            if 'enable_user_system' in new_settings['UI Settings']:
-                # Handle enabling/disabling user system
-                pass  # You may want to add logic here to handle user data when disabling the system
 
-        # Update the config with new settings
-        for section, settings in new_settings.items():
-            if section not in config:
-                config[section] = {}
-            if section == 'Content Sources':
-                # Update the Content Sources in the config dictionary
-                config['Content Sources'] = settings
-            elif section == 'Scraping':
-                # Ensure 'Scraping' section exists
-                if 'Scraping' not in config:
-                    config['Scraping'] = {}
-                # Update Scraping settings, including uncached_content_handling
-                config['Scraping'].update(settings)
-            else:
-                config[section].update(settings)
+        def update_nested_dict(current, new):
+            for key, value in new.items():
+                if isinstance(value, dict):
+                    if key not in current or not isinstance(current[key], dict):
+                        current[key] = {}
+                    update_nested_dict(current[key], value)
+                else:
+                    if key.lower().endswith('url'):
+                        value = validate_url(value)
+                    current[key] = value
+
+        update_nested_dict(config, new_settings)
         
-        #logging.debug(f"Config just before saving: {json.dumps(config, indent=2)}")
-        
-        # Save the updated config
         save_config(config)
-        
-        # Verify the saved config
-        saved_config = load_config()
-        #logging.debug(f"Saved config after update: {json.dumps(saved_config, indent=2)}")
-        
-        if saved_config != config:
-            logging.warning("Saved config does not match updated config")
-            # Add detailed comparison
-            for section in config:
-                if section not in saved_config:
-                    logging.warning(f"Section {section} is missing in saved config")
-                elif config[section] != saved_config[section]:
-                    logging.warning(f"Section {section} differs in saved config")
-                    logging.warning(f"Expected: {json.dumps(config[section], indent=2)}")
-                    logging.warning(f"Actual: {json.dumps(saved_config[section], indent=2)}")
         
         return jsonify({"status": "success", "message": "Settings updated successfully"})
     except Exception as e:
