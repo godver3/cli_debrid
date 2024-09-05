@@ -35,7 +35,7 @@ export function initializeProgramControls() {
             }
         }
 
-        fetch(`/api/${action}_program`, { method: 'POST' })
+        fetch(`/program_operation/api/${action}_program`, { method: 'POST' })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
@@ -138,7 +138,7 @@ export function initializeProgramControls() {
     }
 
     function fetchSettings() {
-        fetch('/api/program_settings')
+        fetch('/settings/api/program_settings')
             .then(response => response.json())
             .then(data => {
                 currentSettings = data;
@@ -155,7 +155,7 @@ export function initializeProgramControls() {
 
     // Fetch program status every 30 seconds
     setInterval(() => {
-        fetch('/api/program_status')
+        fetch('/program_operation/api/program_status')
             .then(response => response.json())
             .then(data => {
                 updateButtonState(data.running);

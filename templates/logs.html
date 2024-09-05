@@ -196,7 +196,7 @@ function updateLogs() {
 
     const logEntries = document.getElementById('log-entries');
 
-    return fetch('/api/logs?lines=' + MAX_LOGS + (lastLogTimestamp ? `&since=${encodeURIComponent(lastLogTimestamp)}` : ''))
+    return fetch('/logs/api/logs?lines=' + MAX_LOGS + (lastLogTimestamp ? `&since=${encodeURIComponent(lastLogTimestamp)}` : ''))
         .then(response => response.json())
         .then(data => {
             if (Array.isArray(data) && data.length > 0) {

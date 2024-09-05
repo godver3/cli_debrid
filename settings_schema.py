@@ -103,6 +103,17 @@ SETTINGS_SCHEMA = {
             "description": "Return only results with seeders in Jackett",
             "default": False
         },
+        "ultimate_sort_order": {
+            "type": "dropdown",
+            "description": "Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic",
+            "default": "None",
+            "choices": ["None", "Size: large to small", "Size: small to large"]
+        },
+        "soft_max_size_gb": {
+            "type": "boolean",
+            "description": "If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available",
+            "default": False
+        },
         "versions": {
             "type": "dict",
             "description": "Scraping versions configuration",

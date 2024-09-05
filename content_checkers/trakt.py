@@ -140,26 +140,41 @@ def ensure_trakt_auth():
     logging.info("Starting Trakt authentication check")
     
     trakt.core.CONFIG_PATH = './config/.pytrakt.json'
+    
+    logging.info("Loading Trakt configuration")
     trakt.core.load_config()
+    
+    logging.info(f"OAUTH_TOKEN: {trakt.core.OAUTH_TOKEN}")
+    logging.info(f"OAUTH_EXPIRES_AT: {trakt.core.OAUTH_EXPIRES_AT}")
+    
+    # Manually load the config file if OAUTH_EXPIRES_AT is None
+    if trakt.core.OAUTH_EXPIRES_AT is None:
+        try:
+            with open(trakt.core.CONFIG_PATH, 'r') as config_file:
+                config_data = json.load(config_file)
+                trakt.core.OAUTH_EXPIRES_AT = config_data.get('OAUTH_EXPIRES_AT')
+            logging.info(f"Manually loaded OAUTH_EXPIRES_AT: {trakt.core.OAUTH_EXPIRES_AT}")
+        except Exception as e:
+            logging.error(f"Error manually loading config: {str(e)}")
+    
+    if trakt.core.OAUTH_TOKEN is None or trakt.core.OAUTH_EXPIRES_AT is None:
+        logging.error("Trakt authentication not properly configured")
+        return None
     
     current_time = int(time.time())
     
-    if trakt.core.OAUTH_EXPIRES_AT is None:
-        logging.warning("OAUTH_EXPIRES_AT is None, token may have never been set")
-    elif current_time > trakt.core.OAUTH_EXPIRES_AT:
+    if current_time > trakt.core.OAUTH_EXPIRES_AT:
         logging.info("Token has expired, attempting to refresh")
+        try:
+            trakt.core._validate_token(trakt.core.CORE)
+            logging.info(f"Token successfully refreshed. New expiration: {trakt.core.OAUTH_EXPIRES_AT}")
+        except Exception as e:
+            logging.error(f"Failed to refresh Trakt token: {str(e)}", exc_info=True)
+            return None
     else:
-        logging.info("Token is still valid. Expires in %s seconds", trakt.core.OAUTH_EXPIRES_AT - current_time)
-        return trakt.core.OAUTH_TOKEN
+        logging.info(f"Token is still valid. Expires in {trakt.core.OAUTH_EXPIRES_AT - current_time} seconds")
     
-    try:
-        logging.info("Validating/refreshing token")
-        trakt.core._validate_token(trakt.core.CORE)
-        logging.info("Token successfully refreshed. New expiration: %s", trakt.core.OAUTH_EXPIRES_AT)
-        return trakt.core.OAUTH_TOKEN
-    except Exception as e:
-        logging.error("Failed to refresh Trakt token: %s", str(e), exc_info=True)
-        return None
+    return trakt.core.OAUTH_TOKEN
 
 def load_last_activity_cache() -> Dict[str, Any]:
     if os.path.exists(CACHE_FILE):

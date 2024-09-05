@@ -1,15 +1,10 @@
 import logging
 import time
-from typing import Dict, Any, List
-from datetime import datetime
-
-from database import get_all_media_items, get_media_item_by_id
-from settings import get_setting
-from utilities.plex_functions import get_collected_from_plex
-from utilities.debug_commands import get_and_add_recent_collected_from_plex
-from database import add_collected_items
+from typing import Dict, Any
+from database import get_all_media_items
+from run_program import get_and_add_recent_collected_from_plex
 from not_wanted_magnets import add_to_not_wanted
-from queues.adding_queue import AddingQueue  # Add this import at the top of the file
+from queues.adding_queue import AddingQueue  
 
 class CheckingQueue:
     def __init__(self):
