@@ -129,6 +129,7 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
             }
             results.append(result)
     return results
+
 def construct_url(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, jackett_filter: str = "!status:failing,test:passed", multi: bool = False) -> str:
     jackett_url = settings['url']
     jackett_api = settings['api']

@@ -316,6 +316,9 @@ function updateSettings() {
     // Handle the Jackett Seeders Only checkbox
     const jackettSeedersOnly = document.getElementById('scraping-jackett_seeders_only');
     console.log("Jackett Seeders Only element:", jackettSeedersOnly);
+
+    const softMaxSize = document.getElementById('scraping-soft_max_size_gb');
+    console.log("Soft Max Size element:", softMaxSize);
     
     if (jackettSeedersOnly) {
         console.log("Jackett Seeders Only found. Checked:", jackettSeedersOnly.checked);
@@ -331,6 +334,27 @@ function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Jackett Seeders Only checkbox element not found!");
+    }
+
+    if (softMaxSize) {
+        console.log("Soft Max Size found. Checked:", softMaxSize.checked);
+
+        settingsData['Scraping']['soft_max_size_gb'] = softMaxSize.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Soft Max Size checkbox element not found!");
+    }
+
+    const ultimateSortOrder = document.getElementById('scraping-ultimate_sort_order');
+    console.log("Ultimate Sort Order element:", ultimateSortOrder);
+    
+    if (ultimateSortOrder) {
+        settingsData['Scraping']['ultimate_sort_order'] = ultimateSortOrder.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Ultimate Sort Order select element not found!");
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
