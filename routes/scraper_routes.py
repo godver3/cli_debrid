@@ -19,9 +19,17 @@ def add_torrent_to_real_debrid():
             return jsonify({'error': 'No magnet link provided'}), 400
 
         result = add_to_real_debrid(magnet_link)
+        logging.info(f"Torrent result: {result}")
+        logging.info(f"Magnet link: {magnet_link}")
         if result:
-            if result == 'downloading' or result == 'queued':
-                return jsonify({'message': 'Uncached torrent added to Real-Debrid successfully'})
+            if isinstance(result, dict):
+                status = result.get('status', '').lower()
+                if status in ['downloading', 'queued']:
+                    return jsonify({'message': f'Uncached torrent added to Real-Debrid successfully. Status: {status.capitalize()}'})
+                elif status == 'magnet_error':
+                    return jsonify({'error': 'Error processing magnet link'}), 400
+                else:
+                    return jsonify({'message': f'Torrent added to Real-Debrid successfully. Status: {status.capitalize()}'})
             else:
                 return jsonify({'message': 'Cached torrent added to Real-Debrid successfully'})
         else:

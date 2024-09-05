@@ -357,6 +357,21 @@ function updateSettings() {
         console.warn("Ultimate Sort Order select element not found!");
     }
 
+    const metadataBatteryUrl = document.getElementById('metadata battery-url');
+    console.log("Metadata Battery URL element:", metadataBatteryUrl);
+    
+    if (metadataBatteryUrl) {
+        // Ensure 'Metadata Battery' object exists in settingsData
+        if (!settingsData['Metadata Battery']) {
+            settingsData['Metadata Battery'] = {};
+        }
+        settingsData['Metadata Battery']['url'] = metadataBatteryUrl.value;
+    
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Metadata Battery URL input element not found!");
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {
