@@ -20,7 +20,7 @@ def register_blueprints(app):
         (auth_bp, '/auth'),
         (scraper_bp, '/scraper'),
         (queues_bp, '/queues'),
-        (api_summary_bp, '/api_summary'),
+        (api_summary_bp, '/api_call_summary'),
         (onboarding_bp, '/onboarding'),
         (user_management_bp, '/user_management'),
         (database_bp, '/database'),
@@ -31,7 +31,7 @@ def register_blueprints(app):
         (logs_bp, '/logs'),
         (settings_bp, '/settings'),
         (program_operation_bp, '/program_operation'),
-        (real_time_api_bp, '/real_time_api'),
+        (real_time_api_bp, '/realtime_api_calls'),
     ]
     
     for blueprint, url_prefix in blueprints:

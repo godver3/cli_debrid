@@ -83,7 +83,7 @@
 </head>
 <body>
     <h1>API Call Summary ({{ time_frame }})</h1>
-    <form action="{{ url_for('api_call_summary') }}" method="get">
+    <form action="{{ url_for('api_summary.index') }}" method="get">
         <select name="time_frame">
             <option value="hour" {% if time_frame == 'hour' %}selected{% endif %}>Hourly</option>
             <option value="day" {% if time_frame == 'day' %}selected{% endif %}>Daily</option>
@@ -93,7 +93,7 @@
     </form>
     
     <!-- Add this button for clearing the cache -->
-    <form action="{{ url_for('clear_api_summary_cache') }}" method="post">
+    <form action="{{ url_for('api_summary.clear_api_summary_cache') }}" method="post">
         <input type="submit" value="Clear Cache">
     </form>
     
