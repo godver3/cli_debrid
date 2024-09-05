@@ -52,7 +52,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         
         # Query for movies
         movie_query = """
-        SELECT title, year, type, collected_at, imdb_id, tmdb_id, version
+        SELECT title, year, type, collected_at, imdb_id, tmdb_id, version, filled_by_title
         FROM media_items
         WHERE type = 'movie' AND collected_at IS NOT NULL
         GROUP BY title, year
@@ -62,7 +62,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         
         # Query for episodes
         episode_query = """
-        SELECT title, year, type, season_number, episode_number, collected_at, imdb_id, tmdb_id, version
+        SELECT title, year, type, season_number, episode_number, collected_at, imdb_id, tmdb_id, version, filled_by_title
         FROM media_items
         WHERE type = 'episode' AND collected_at IS NOT NULL
         GROUP BY title
@@ -94,6 +94,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     consolidated_movies[key] = {
                         **item,
                         'versions': [item['version']],
+                        'filled_by_title': [item['filled_by_title']],
                         'collected_at': item['collected_at']
                     }
                     media_type = 'movie'
@@ -105,6 +106,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                         poster_tasks.append((consolidated_movies[key], poster_task, media_type))
                 else:
                     consolidated_movies[key]['versions'].append(item['version'])
+                    consolidated_movies[key]['filled_by_title'].append(item['filled_by_title'])
                     consolidated_movies[key]['collected_at'] = max(consolidated_movies[key]['collected_at'], item['collected_at'])
                 
                 logging.debug(f"Consolidated movie: {key} - Versions: {consolidated_movies[key]['versions']}")
@@ -124,6 +126,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                         'tmdb_id': item['tmdb_id'],
                         'seasons': [item['season_number']],
                         'latest_episode': (item['season_number'], item['episode_number']),
+                        'filled_by_title': [item['filled_by_title']],
                         'versions': [item['version']]
                     }
                     cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
@@ -138,6 +141,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     if item['season_number'] not in show['seasons']:
                         show['seasons'].append(item['season_number'])
                     show['collected_at'] = max(show['collected_at'], item['collected_at'])
+                    show['filled_by_title'].append(item['filled_by_title'])
                     show['latest_episode'] = max(show['latest_episode'], (item['season_number'], item['episode_number']))
                     if item['version'] not in show['versions']:
                         show['versions'].append(item['version'])
