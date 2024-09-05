@@ -53,7 +53,7 @@ document.addEventListener('DOMContentLoaded', function() {
         adminForm.addEventListener('submit', function(event) {
             event.preventDefault();
             const formData = new FormData(adminForm);
-            fetch('{{ url_for("onboarding_step", step=1) }}', {
+            fetch('{{ url_for("onboarding.onboarding_step", step=1) }}', {
                 method: 'POST',
                 body: formData
             })
