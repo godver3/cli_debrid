@@ -171,7 +171,7 @@ def imdb_id_to_title_and_year(imdb_id: str, movie_or_episode: str) -> Tuple[str,
     else:
         media_type = "tv"
 
-    tmdb_id = imdb_to_tmdb(overseerr_url, overseerr_api_key, imdb_id, media_type)
+    tmdb_id = imdb_to_tmdb(imdb_id)
     if not tmdb_id:
         return "", 0
 

@@ -127,7 +127,7 @@ def manual_blacklist():
         imdb_id = request.form.get('imdb_id')
 
         if action == 'add':
-            tmdb_id, media_type = get_tmdb_id_and_media_type(overseerr_url, overseerr_api_key, imdb_id)
+            tmdb_id, media_type = get_tmdb_id_and_media_type(imdb_id)
             
             if tmdb_id and media_type:
                 # Fetch details based on media type
@@ -165,7 +165,7 @@ def get_title_year():
         return jsonify({'error': 'Overseerr URL or API key not set'}), 400
 
     cookies = get_overseerr_cookies(overseerr_url)
-    tmdb_id, media_type = get_tmdb_id_and_media_type(overseerr_url, overseerr_api_key, imdb_id)
+    tmdb_id, media_type = get_tmdb_id_and_media_type(imdb_id)
     
     if tmdb_id and media_type:
         if media_type == 'movie':
