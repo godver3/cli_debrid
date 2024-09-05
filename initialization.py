@@ -14,7 +14,7 @@ def reset_queued_item_status():
             logging.info(f"Reset item {format_item_log(item)} (ID: {item['id']}) from {state} to Wanted")
 
 def plex_collection_update(skip_initial_plex_update):
-    from run_program import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex, get_and_add_wanted_content
+    from run_program import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex
 
     logging.info("Updating Plex collection...")
 
@@ -32,6 +32,8 @@ def format_item_log(item):
         return item['title']
 
 def get_all_wanted_from_enabled_sources():
+    from routes.debug_routes import get_and_add_wanted_content
+
     content_sources = get_all_settings().get('Content Sources', {})
     
     for source_id, source_data in content_sources.items():

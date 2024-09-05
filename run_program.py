@@ -10,7 +10,6 @@ from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
 from not_wanted_magnets import task_purge_not_wanted_magnets_file
 import traceback
-from extensions import update_stats
 from datetime import datetime, timedelta
 from database import get_db_connection
 import asyncio
@@ -151,9 +150,7 @@ class ProgramRunner:
             
             # Call the process method and capture any return value
             result = process_method()
-            
-            update_stats(processed=1)
-            
+                     
             # Return the result if any
             return result
         
@@ -162,7 +159,6 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error processing {queue_name} queue: {str(e)}")
             logging.error(f"Traceback: {traceback.format_exc()}")
-            update_stats(failed=1)
         
         return None
 

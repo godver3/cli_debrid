@@ -15,12 +15,6 @@ login_manager.login_view = 'login'
 
 app_start_time = time.time()
 
-def update_stats(processed=0, successful=0, failed=0):
-    global total_processed, successful_additions, failed_additions
-    total_processed += processed
-    successful_additions += successful
-    failed_additions += failed
-
 def initialize_app():
     from routes.auth_routes import create_default_admin
 
@@ -36,13 +30,23 @@ def initialize_app():
                     conn.commit()
         create_default_admin()
 
+def is_behind_proxy():
+    return request.headers.get('X-Forwarded-Proto') is not None
+
 @app.before_request
-def force_https():
-    if request.headers.get('X-Forwarded-Proto') == 'http':
-        url = request.url.replace('http://', 'https://', 1)
-        return redirect(url, code=301)
+def handle_https():
+    if is_behind_proxy():
+        if request.headers.get('X-Forwarded-Proto') == 'http':
+            url = request.url.replace('http://', 'https://', 1)
+            return redirect(url, code=301)
+    else:
+        # Remove HTTPS forcing for direct IP access
+        if request.url.startswith('https://'):
+            url = request.url.replace('https://', 'http://', 1)
+            return redirect(url, code=301)
 
 @app.after_request
 def add_security_headers(response):
-    response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
+    if is_behind_proxy():
+        response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
     return response
