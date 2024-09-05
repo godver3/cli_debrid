@@ -48,19 +48,29 @@ function initializeNotificationsFunctionality() {
     const addNotificationBtn = document.getElementById('add-notification-btn');
 
     if (addNotificationBtn) {
-        addNotificationBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            showAddNotificationPopup();
-        });
+        // Remove existing listener before adding a new one
+        addNotificationBtn.removeEventListener('click', addNotificationHandler);
+        addNotificationBtn.addEventListener('click', addNotificationHandler);
     }
 
     document.querySelectorAll('.delete-notification-btn').forEach(button => {
-        button.addEventListener('click', function(e) {
-            e.stopPropagation();
-            const notificationId = this.getAttribute('data-notification-id');
-            deleteNotification(notificationId);
-        });
+        // Remove existing listeners before adding new ones
+        button.removeEventListener('click', deleteNotificationHandler);
+        button.addEventListener('click', deleteNotificationHandler);
     });
+}
+
+// Separate handler function for add button
+function addNotificationHandler(e) {
+    e.preventDefault();
+    showAddNotificationPopup();
+}
+
+// Separate handler function for delete button
+function deleteNotificationHandler(e) {
+    e.stopPropagation();
+    const notificationId = this.getAttribute('data-notification-id');
+    deleteNotification(notificationId);
 }
 
 function showAddNotificationPopup() {
@@ -87,7 +97,7 @@ function showAddNotificationPopup() {
 }
 
 function addNotification(notificationType) {
-    fetch('/notifications/add', {
+    fetch('/settings/notifications/add', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -134,7 +144,7 @@ function deleteNotification(notificationId) {
 }
 
 function performDeleteNotification(notificationId) {
-    fetch('/notifications/delete', {
+    fetch('/settings/notifications/delete', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

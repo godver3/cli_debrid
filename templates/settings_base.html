@@ -393,7 +393,7 @@
 <script>
     // Define reloadTabContent in the global scope
     window.reloadTabContent = function(tabName, callback) {
-        return fetch(`/${tabName}/content`)
+        return fetch(`/settings/${tabName}/content`)
             .then(response => {
                 return response.text();
             })

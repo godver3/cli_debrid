@@ -1,18 +1,13 @@
-import PTN
 import logging
 import re
 from api_tracker import api
 from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from settings import get_setting
 import time
-from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, imdb_to_tmdb, get_overseerr_show_details, get_overseerr_show_episodes, get_episode_count_for_seasons, get_all_season_episode_counts
-from pprint import pformat
-import json
+from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, get_overseerr_show_details, get_overseerr_show_episodes, get_all_season_episode_counts
 from fuzzywuzzy import fuzz
 import os
-from unidecode import unidecode
 from utilities.plex_functions import filter_genres
 from guessit import guessit
 import pykakasi
@@ -376,12 +371,15 @@ def parse_size(size):
             return float(size.replace('KB', '').strip()) / (1024 * 1024)
     return 0  # Default to 0 if unable to parse
 
-# Update preprocess_title function to not remove resolution information
 def preprocess_title(title):
     # Remove only non-resolution quality terms
     terms_to_remove = ['web-dl', 'webrip', 'bluray', 'dvdrip']
     for term in terms_to_remove:
         title = re.sub(r'\b' + re.escape(term) + r'\b', '', title, flags=re.IGNORECASE)
+    # Remove any resulting double periods
+    title = re.sub(r'\.{2,}', '.', title)
+    # Remove any resulting double spaces
+    title = re.sub(r'\s+', ' ', title)
     return title.strip()
 
 def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[str, Any]:
@@ -962,24 +960,19 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
 def normalize_title(title: str) -> str:
     """
-    Normalize the title by replacing spaces with periods, removing colons and apostrophes,
-    replacing ".~." with "-", and removing duplicate periods.
+    Normalize the title by removing non-alphanumeric characters, years, and quality information.
     """
-    normalized = re.sub(r'[^\w\s]', '', title)
+    # Remove year and quality information
+    title = re.sub(r'\b(19|20)\d{2}\b', '', title)
+    title = re.sub(r'\b\d{3,4}p\b', '', title)
+    title = re.sub(r'\bWEB-DL\b', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'\bH264\b', '', title, flags=re.IGNORECASE)
 
-    # Remove apostrophes and colons
-    normalized = re.sub(r"[':]", "", title)
-    
-    # Replace ".~." with "-"
-    normalized = normalized.replace('.~.', '-')
-    
-    # Remove duplicate periods
-    normalized = re.sub(r'\.+', '.', normalized)
-    
-    # Remove leading and trailing periods
-    normalized = normalized.strip('.')
-    
-    return normalized.lower()  # Convert to lowercase for case-insensitive comparison
+    # Remove non-alphanumeric characters and extra spaces
+    title = re.sub(r'[^\w\s]', ' ', title)
+    title = re.sub(r'\s+', ' ', title).strip()
+
+    return title.lower()  # Convert to lowercase for case-insensitive comparison
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
 

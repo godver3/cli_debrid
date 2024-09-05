@@ -177,68 +177,55 @@ def get_jackett_settings():
         
     return jackett_settings
 
+from settings_schema import SETTINGS_SCHEMA
+
+from settings_schema import SETTINGS_SCHEMA
+
+from settings_schema import SETTINGS_SCHEMA
+
 def ensure_settings_file():
     config = load_config()
-    default_settings = {
-        'Plex': {
-            'url': '',
-            'token': '',
-            'movie_libraries': '',
-            'shows_libraries': ''
-        },
-        'Overseerr': {
-            'url': '',
-            'api_key': ''
-        },
-        'RealDebrid': {
-            'api_key': ''
-        },
-        'Debug': {
-            'skip_menu': False,
-            'logging_level': 'INFO'
-        },
-        'Scrapers': {},
-        'Scraping': {
-            'versions': {
-                'Default': {
-                    'enable_hdr': False,
-                    'max_resolution': '1080p',
-                    'resolution_wanted': '<=',
-                    'resolution_weight': '3',
-                    'hdr_weight': '3',
-                    'similarity_weight': '3',
-                    'size_weight': '3',
-                    'bitrate_weight': '3',
-                    'preferred_filter_in': '',
-                    'preferred_filter_out': '',
-                    'filter_in': '',
-                    'filter_out': '',
-                    'min_size_gb': '0.01',
-                    'max_size_gb': ''
-                },
-            },
-            'uncached_content_handling': ''
-        },
-        'Content Sources': {},
-        'TMDB': {
-            'api_key': ''
-        },
-        'Queue': {
-            'wake_limit': '',
-            'movie_airtime_offset': '',
-            'episode_airtime_offset': ''
-        },
-        'Trakt': {
-            'client_id': '',
-            'client_secret': ''
-        }
-    }
-
-    for section, settings in default_settings.items():
+    is_new_file = not config  # Check if the config is empty (new file)
+    
+    for section, section_data in SETTINGS_SCHEMA.items():
         if section not in config:
             config[section] = {}
-        for key, default_value in settings.items():
-            if key not in config[section] or not config[section][key]:
-                config[section][key] = default_value
+        
+        # Skip adding defaults for Scrapers, Content Sources, and Notifications
+        if section in ['Scrapers', 'Content Sources', 'Notifications']:
+            continue
+        
+        if isinstance(section_data, dict) and 'schema' in section_data:
+            # Handle nested schemas
+            for key, value in section_data['schema'].items():
+                if key not in config[section]:
+                    config[section][key] = value.get('default', {})
+        else:
+            for key, value in section_data.items():
+                if key != 'tab' and key not in config[section]:
+                    config[section][key] = value.get('default', '')
+
+    # Ensure default scraping version only if there are no versions or it's a new file
+    if 'Scraping' not in config:
+        config['Scraping'] = {}
+    if 'versions' not in config['Scraping'] or not config['Scraping']['versions'] or is_new_file:
+        config['Scraping']['versions'] = {
+            'Default': {
+                'enable_hdr': False,
+                'max_resolution': '1080p',
+                'resolution_wanted': '<=',
+                'resolution_weight': '3',
+                'hdr_weight': '3',
+                'similarity_weight': '3',
+                'size_weight': '3',
+                'bitrate_weight': '3',
+                'preferred_filter_in': '',
+                'preferred_filter_out': '',
+                'filter_in': '',
+                'filter_out': '',
+                'min_size_gb': '0.01',
+                'max_size_gb': ''
+            }
+        }
 
     save_config(config)
