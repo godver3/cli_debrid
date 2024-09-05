@@ -404,6 +404,10 @@
     }
 
     /* Compact view styles for recently added section */
+    .compact-view .recently-added-section{
+        display:  inline-block;
+    }
+
     .compact-view .recently-added-section .card-container {
         display: table;
         width: 100%;
@@ -577,6 +581,9 @@
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
                                 <p class="info-line">Added: {{ movie.collected_at }}</p>
                                 <p class="info-line">Versions: {{ movie.versions }}</p>
+                                {% if movie.filled_by_title %}
+                                    <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${movie.filled_by_title}</span></p>
+                                {% endif %}
                             </div>
                         </div>
                     {% endfor %}
@@ -601,6 +608,9 @@
                                 <p class="info-line">Versions: {{ show.versions }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
+                                {% if show.filled_by_title %}
+                                    <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${show.filled_by_title}</span></p>
+                                {% endif %}
                             </div>
                         </div>
                     {% endfor %}
@@ -848,11 +858,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <div class="card-hover-content">
                             <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                            <p class="info-line">Added: ${formattedDate}</p>
-                            <p class="info-line">Versions: ${item.versions}</p>
+                            <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${formattedDate}</p>
+                            <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
                             ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
-                                `<p class="info-line">Seasons: ${item.seasons.join(', ')}</p>
-                                <p class="info-line">Latest: S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
+                                `<p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
+                                <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
+                            <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
                         </div>
                     </div>
                 `;
