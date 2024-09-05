@@ -1,15 +1,10 @@
 from flask import Blueprint, jsonify, request, render_template, redirect, url_for, flash, abort, session
 from flask_login import login_required, current_user, login_user, logout_user
 from werkzeug.security import generate_password_hash
-from routes.settings_routes import is_user_system_enabled
 from settings import load_config, get_setting, save_config
-from functools import wraps
 from settings_schema import SETTINGS_SCHEMA
 from config_manager import add_scraper, add_content_source
 import logging
-from scraper_manager import ScraperManager
-
-scraper_manager = ScraperManager()
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
@@ -294,7 +289,7 @@ def add_onboarding_scraper():
 @onboarding_bp.route('/scrapers/get', methods=['GET'])
 def get_onboarding_scrapers():
     config = load_config()
-    scraper_types = scraper_manager.get_scraper_types()
+    scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
     return jsonify({
         'scrapers': config.get('Scrapers', {}),
         'scraper_types': scraper_types

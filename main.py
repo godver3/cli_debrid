@@ -7,19 +7,14 @@ from web_server import start_server
 start_server()
 
 import os
-import configparser
-import inspect
-from settings import SettingsEditor, get_setting, load_config, save_config, CONFIG_FILE, ensure_settings_file, set_setting
+from settings import get_setting, ensure_settings_file
 from database import verify_database
 import shutil
 from datetime import datetime
 import signal
-from run_program import run_program, ProgramRunner
 import sys
 import time
-from flask import Flask, current_app
 from api_tracker import api
-from web_server import app
 
 program_runner = None
 

@@ -12,7 +12,6 @@ def migrate_schema():
     conn = get_db_connection()
     try:
         columns = [
-            ('hybrid_flag', 'TEXT'),
             ('filled_by_file', 'TEXT'),
             ('airtime', 'TEXT'),
             ('collected_at', 'TIMESTAMP'),
@@ -148,7 +147,6 @@ def migrate_media_items_table():
                 last_checked TIMESTAMP,
                 scrape_results TEXT,
                 version TEXT,
-                hybrid_flag TEXT,
                 collected_at TIMESTAMP,
                 genres TEXT,
                 UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
@@ -161,13 +159,12 @@ def migrate_media_items_table():
             (imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
              season_number, episode_number, filled_by_title, filled_by_magnet, 
              last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, version,
-             hybrid_flag, collected_at, genres)
+             collected_at, genres)
             SELECT 
                 imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
                 season_number, episode_number, filled_by_title, filled_by_magnet, 
                 last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, 
                 COALESCE(version, 'default'),
-                hybrid_flag,
                 CASE WHEN state = 'Collected' THEN last_updated ELSE NULL END,
                 genres
             FROM media_items
