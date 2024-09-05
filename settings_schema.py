@@ -67,6 +67,14 @@ SETTINGS_SCHEMA = {
             "sensitive": True
         }
     },
+    "Metadata Battery": {
+        "tab": "Required Settings",
+        "url": {
+            "type": "string",
+            "description": "Metadata Battery URL",
+            "default": ""
+        }
+    },
     "Queue": {
         "tab": "Additional Settings",
         "wake_limit": {
