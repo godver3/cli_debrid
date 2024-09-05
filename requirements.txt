@@ -24,5 +24,3 @@ jaconv==0.4.0
 pykakasi==2.3.0
 tenacity==9.0.0
 beautifulsoup4==4.12.3
-cryptography==43.0.1 
-pyOpenSSL==24.2.1
