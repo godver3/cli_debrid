@@ -362,9 +362,3 @@ def format_datetime_preference(date_input, use_24hour_format):
     except ValueError:
         return str(date_input)  # Return original string if parsing fails
     
-# Function to update statistics
-def update_stats(processed=0, successful=0, failed=0):
-    global total_processed, successful_additions, failed_additions
-    total_processed += processed
-    successful_additions += successful
-    failed_additions += failed

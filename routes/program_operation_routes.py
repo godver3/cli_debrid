@@ -14,6 +14,7 @@ program_runner = None
 
 def run_server():
     from extensions import app
+   
     app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)
 
 def start_server():
