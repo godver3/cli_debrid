@@ -8,6 +8,7 @@ import re
 from routes import admin_required
 
 api_summary_bp = Blueprint('api_summary', __name__)
+real_time_api_bp = Blueprint('real_time_api', __name__)
 
 CACHE_FILE = 'db_content/api_summary_cache.pkl'
 
@@ -124,8 +125,8 @@ def update_cache_with_new_entries():
     cache['last_processed_line'] = last_processed_line + len(lines)
     save_cache(cache)
 
-@api_summary_bp.route('/api_call_summary')
-def api_call_summary():
+@api_summary_bp.route('/')
+def index():
     update_cache_with_new_entries()
     
     time_frame = request.args.get('time_frame', 'day')
@@ -142,8 +143,8 @@ def api_call_summary():
                            time_frame=time_frame,
                            all_domains=all_domains)
 
-@api_summary_bp.route('/realtime_api_calls')
-def realtime_api_calls():
+@real_time_api_bp.route('/')
+def index():
     filter_domain = request.args.get('filter', '')
     latest_calls = get_latest_api_calls()
     

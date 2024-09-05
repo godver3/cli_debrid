@@ -662,7 +662,7 @@ document.addEventListener('DOMContentLoaded', () => {
     timeFormatToggle.addEventListener('change', function() {
         use24HourFormat = this.checked;
         
-        fetch('/set_time_preference', {
+        fetch('/statistics/set_time_preference', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -687,7 +687,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         // Save the compact view preference
-        fetch('/set_compact_preference', {
+        fetch('/statistics/set_compact_preference', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
