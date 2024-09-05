@@ -1,11 +1,24 @@
 .debug-container {
     width: 100%;
-    max-width: 800px;
+    max-width: 1200px;
     margin: 0 auto;
     padding: 30px;
     background-color: #2c2c2c;
     border-radius: 8px;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.debug_items {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.debug_item {
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    padding: 15px;
+    margin: 5px;
+    width: 370px;
 }
 
 h2, h3 {
