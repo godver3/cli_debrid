@@ -73,7 +73,6 @@ def get_media_item_by_id(item_id):
         item = cursor.fetchone()
         if item:
             item_dict = dict(item)
-            item_dict['hybrid_flag'] = item_dict.get('hybrid_flag', None)  # Ensure hybrid_flag is included
             return item_dict
         return None
     except Exception as e:

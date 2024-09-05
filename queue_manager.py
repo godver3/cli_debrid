@@ -138,11 +138,7 @@ class QueueManager:
     def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Checking: {item_identifier}")
-        
-        # Remove hybrid_flag if it exists
-        if 'hybrid_flag' in item:
-            del item['hybrid_flag']
-        
+               
         update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
@@ -151,19 +147,6 @@ class QueueManager:
             logging.info(f"Moved item {item_identifier} to Checking queue")
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
-
-    def get_hybrid_flag(self, item: Dict[str, Any]) -> str:
-        """
-        Retrieve the hybrid flag for an item.
-        """
-        return item.get('hybrid_flag', '')
-
-    def set_hybrid_flag(self, item: Dict[str, Any], flag: str):
-        """
-        Set the hybrid flag for an item and update it in the database.
-        """
-        item['hybrid_flag'] = flag
-        update_media_item_state(item['id'], item['state'], hybrid_flag=flag)
 
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)

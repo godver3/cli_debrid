@@ -11,12 +11,11 @@ import os
 
 from database import get_all_media_items, get_media_item_by_id, update_media_item_state
 from settings import get_setting
-from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, get, API_BASE_URL
+from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, API_BASE_URL
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted
 from scraper.scraper import scrape
 from metadata.metadata import get_all_season_episode_counts, get_overseerr_cookies
 from guessit import guessit
-from fuzzywuzzy import fuzz
 import functools
 from .anime_matcher import AnimeMatcher
 import functools
@@ -63,24 +62,17 @@ class AddingQueue:
 
                     uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None')
 
-                    if uncached_handling == 'Full':
-                        self.process_full_mode(queue_manager, item, scrape_results)
-                    elif uncached_handling == 'None':
-                        self.process_none_mode(queue_manager, item, scrape_results)
-                    elif uncached_handling == 'Hybrid':
-                        self.process_hybrid_mode(queue_manager, item, scrape_results)
-                    else:
-                        logging.error(f"Unknown uncached_handling setting: {uncached_handling}")
-                        queue_manager.move_to_sleeping(item, "Adding")
+                    self.process_item(queue_manager, item, scrape_results, uncached_handling)
+
                 else:
                     logging.error(f"No scrape results found for {item_identifier}")
                     queue_manager.move_to_sleeping(item, "Adding")
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
-    def process_full_mode(self, queue_manager, item, scrape_results):
+    def process_item(self, queue_manager, item, scrape_results, mode):
         item_identifier = queue_manager.generate_identifier(item)
-        logging.debug(f"Processing full mode for item: {item_identifier}")
+        logging.debug(f"Processing {mode} mode for item: {item_identifier}")
         logging.debug(f"Total scrape results: {len(scrape_results)}")
 
         processed_results = []
@@ -92,10 +84,7 @@ class AddingQueue:
             link = result.get('magnet', '')
             logging.debug(f"Processing result {index + 1}: Title: {title}")
 
-            if link.startswith('magnet:'):
-                current_hash = extract_hash_from_magnet(link)
-            else:
-                current_hash = self.download_and_extract_hash(link)
+            current_hash = extract_hash_from_magnet(link) if link.startswith('magnet:') else self.download_and_extract_hash(link)
 
             if not current_hash:
                 logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
@@ -116,116 +105,29 @@ class AddingQueue:
         cache_status = is_cached_on_rd(hashes) if hashes else {}
         logging.info(f"Cache status returned: {cache_status}")
 
-        # Second pass: process results based on cache status
+        # Process results based on mode
         for processed_result in processed_results:
             current_hash = processed_result['hash']
             result = processed_result['result']
-            title = processed_result['title']
-            link = processed_result['link']
             original_index = processed_result['original_index']
-
             is_cached = cache_status.get(current_hash, False)
-            logging.info(f"Processing result {original_index + 1} for {item_identifier}. Cached: {is_cached}")
 
+            if mode == 'none' and not is_cached:
+                logging.debug(f"Skipping uncached result {original_index + 1} for {item_identifier}")
+                continue
+
+            if mode == 'hybrid' and not is_cached and any(cache_status.values()):
+                logging.debug(f"Skipping uncached result {original_index + 1} for {item_identifier} in hybrid mode")
+                continue
+
+            logging.info(f"Processing result {original_index + 1} for {item_identifier}. Cached: {is_cached}")
             success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached)
+            
             if success:
                 logging.info(f"Successfully processed result {original_index + 1} for {item_identifier}")
                 return True
             else:
                 logging.warning(f"Failed to process result {original_index + 1} for {item_identifier}. Continuing to next result.")
-
-        # If we're here, no results were successfully processed.
-        logging.info(f"No results successfully processed for {item_identifier}.")
-
-        # For episodes, try individual episode scraping
-        if item['type'] == 'episode':
-            logging.info(f"Attempting individual episode scraping for {item_identifier}")
-            individual_results = self.scrape_individual_episode(item)
-            logging.debug(f"Individual episode scraping returned {len(individual_results)} results")
-            for index, result in enumerate(individual_results):
-                logging.debug(f"Processing individual result {index + 1}")
-                if self.process_single_result(queue_manager, item, result):
-                    logging.info(f"Successfully processed individual result {index + 1} for {item_identifier}")
-                    return True
-                else:
-                    logging.debug(f"Failed to process individual result {index + 1} for {item_identifier}")
-
-        logging.warning(f"No results successfully processed for {item_identifier}")
-        self.handle_failed_item(queue_manager, item, "Adding")
-        return False
-
-    def process_hybrid_mode(self, queue_manager, item, scrape_results):
-        item_identifier = queue_manager.generate_identifier(item)
-        logging.debug(f"Processing hybrid mode for item: {item_identifier}")
-        logging.debug(f"Total scrape results: {len(scrape_results)}")
-
-        processed_results = []
-        hashes = []
-
-        # First pass: extract hashes and prepare results
-        for index, result in enumerate(scrape_results):
-            title = result.get('title', '')
-            link = result.get('magnet', '')
-            logging.debug(f"Processing result {index + 1}: Title: {title}")
-
-            if link.startswith('magnet:'):
-                current_hash = extract_hash_from_magnet(link)
-            else:
-                current_hash = self.download_and_extract_hash(link)
-
-            if not current_hash:
-                logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
-                continue
-
-            hashes.append(current_hash)
-            processed_results.append({
-                'result': result,
-                'hash': current_hash,
-                'title': title,
-                'link': link,
-                'original_index': index
-            })
-
-        logging.debug(f"Processed results: {len(processed_results)}")
-
-        # Check cache status for all hashes at once
-        cache_status = is_cached_on_rd(hashes) if hashes else {}
-        logging.info(f"Cache status returned: {cache_status}")
-
-        # Second pass: process cached results
-        for processed_result in processed_results:
-            current_hash = processed_result['hash']
-            result = processed_result['result']
-            title = processed_result['title']
-            link = processed_result['link']
-            original_index = processed_result['original_index']
-
-            if cache_status.get(current_hash, False):
-                logging.info(f"Processing cached result {original_index + 1} for {item_identifier}")
-                success = self.process_result(queue_manager, item, result, current_hash, is_cached=True)
-                if success:
-                    logging.info(f"Successfully processed cached result {original_index + 1} for {item_identifier}")
-                    return True
-                else:
-                    logging.warning(f"Failed to process cached result {original_index + 1} for {item_identifier}. Continuing to next result.")
-
-        # Third pass: process first uncached result
-        for processed_result in processed_results:
-            current_hash = processed_result['hash']
-            result = processed_result['result']
-            title = processed_result['title']
-            link = processed_result['link']
-            original_index = processed_result['original_index']
-
-            if not cache_status.get(current_hash, False):
-                logging.info(f"Processing first uncached result {original_index + 1} for {item_identifier}")
-                success = self.process_result(queue_manager, item, result, current_hash, is_cached=False)
-                if success:
-                    logging.info(f"Successfully processed uncached result {original_index + 1} for {item_identifier}")
-                    return True
-                else:
-                    logging.warning(f"Failed to process uncached result {original_index + 1} for {item_identifier}.")
-                    break  # Only try the first uncached result
 
         # If we're here, no results were successfully processed.
         logging.info(f"No results successfully processed for {item_identifier}")
@@ -237,93 +139,13 @@ class AddingQueue:
             logging.debug(f"Individual episode scraping returned {len(individual_results)} results")
             for index, result in enumerate(individual_results):
                 logging.debug(f"Processing individual result {index + 1}")
-                if self.process_single_result(queue_manager, item, result):
+                if self.process_single_result(queue_manager, item, result, cached_only=(mode == 'none')):
                     logging.info(f"Successfully processed individual result {index + 1} for {item_identifier}")
                     return True
                 else:
                     logging.debug(f"Failed to process individual result {index + 1} for {item_identifier}")
 
         logging.warning(f"No results successfully processed for {item_identifier}")
-        self.handle_failed_item(queue_manager, item, "Adding")
-        return False
-
-    def process_none_mode(self, queue_manager, item, scrape_results):
-        item_identifier = queue_manager.generate_identifier(item)
-        logging.debug(f"Processing none mode for item: {item_identifier}")
-        logging.debug(f"Total scrape results: {len(scrape_results)}")
-
-        processed_results = []
-        hashes = []
-
-        # First pass: extract hashes and prepare results
-        for index, result in enumerate(scrape_results):
-            title = result.get('title', '')
-            link = result.get('magnet', '')
-            logging.debug(f"Processing result {index + 1}: Title: {title}")
-
-            if link.startswith('magnet:'):
-                current_hash = extract_hash_from_magnet(link)
-            else:
-                current_hash = self.download_and_extract_hash(link)
-
-            if not current_hash:
-                logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
-                continue
-
-            hashes.append(current_hash)
-            processed_results.append({
-                'result': result,
-                'hash': current_hash,
-                'title': title,
-                'link': link,
-                'original_index': index
-            })
-
-        logging.debug(f"Processed results: {len(processed_results)}")
-
-        # Check cache status for all hashes at once
-        cache_status = is_cached_on_rd(hashes) if hashes else {}
-        logging.info(f"Cache status returned: {cache_status}")
-
-        # Second pass: process only cached results
-        for processed_result in processed_results:
-            current_hash = processed_result['hash']
-            result = processed_result['result']
-            title = processed_result['title']
-            link = processed_result['link']
-            original_index = processed_result['original_index']
-
-            is_cached = cache_status.get(current_hash, False)
-            logging.debug(f"Checking result {original_index + 1}: Title: {title}, Cached: {is_cached}")
-
-            if is_cached:
-                logging.info(f"Processing cached result {original_index + 1} for {item_identifier}")
-                success = self.process_result(queue_manager, item, result, current_hash, is_cached=True)
-                if success:
-                    logging.info(f"Successfully processed cached result {original_index + 1} for {item_identifier}")
-                    return True
-                else:
-                    logging.warning(f"Failed to process cached result {original_index + 1} for {item_identifier}. Continuing to next result.")
-            else:
-                logging.debug(f"Skipping uncached result {original_index + 1} for {item_identifier}")
-
-        # If we're here, no cached results were successfully processed.
-        logging.info(f"No cached results successfully processed for {item_identifier}")
-
-        # For episodes, try individual episode scraping with cached-only results
-        if item['type'] == 'episode':
-            logging.info(f"Attempting individual episode scraping for {item_identifier}")
-            individual_results = self.scrape_individual_episode(item)
-            logging.debug(f"Individual episode scraping returned {len(individual_results)} results")
-            for index, result in enumerate(individual_results):
-                logging.debug(f"Processing individual result {index + 1}")
-                if self.process_single_result(queue_manager, item, result, cached_only=True):
-                    logging.info(f"Successfully processed individual result {index + 1} for {item_identifier}")
-                    return True
-                else:
-                    logging.debug(f"Failed to process individual result {index + 1} for {item_identifier}")
-
-        logging.warning(f"No cached results successfully processed for {item_identifier}")
         self.handle_failed_item(queue_manager, item, "Adding")
         return False
 
@@ -620,73 +442,6 @@ class AddingQueue:
         except Exception as e:
             logging.error(f"Error adding hash {hash_value} to not_wanted_magnets for {item_identifier}: {str(e)}")
 
-    def process_cached_torrent(self, queue_manager, item, title, link, files, hybrid_flag=None):
-        try:
-            item_identifier = queue_manager.generate_identifier(item)
-            logging.debug(f"Entered process_cached_torrent for item: {item_identifier}")
-            logging.debug(f"Title: {title}")
-            logging.debug(f"Link: {link}")
-            logging.debug(f"Hybrid flag: {hybrid_flag}")
-            logging.debug(f"Number of files: {len(files)}")
-
-            if not files:
-                logging.warning(f"No files found in cached torrent for {item_identifier}")
-                return False
-
-            logging.debug(f"Files in cached torrent: {json.dumps(files[:5], indent=2)}...")  # Log first 5 files
-
-            if item['type'] == 'movie':
-                logging.debug(f"Processing movie item: {item_identifier}")
-                matching_files = [file for file in files if self.file_matches_item(file, item)]
-                logging.debug(f"Matching files for movie: {matching_files}")
-                if matching_files:
-                    logging.info(f"Matching file(s) found for movie: {item_identifier}")
-                    queue_manager.move_to_checking(item, "Adding", title, link)
-                    logging.debug(f"Moved movie {item_identifier} to Checking queue")
-                    return True
-                else:
-                    logging.warning(f"No matching file found for movie: {item_identifier}")
-                    return False
-            else:
-                logging.debug(f"Processing TV show item: {item_identifier}")
-                result = self.process_multi_pack(queue_manager, item, title, link, files, hybrid_flag)
-                logging.debug(f"process_multi_pack result for {item_identifier}: {result}")
-                return result
-        except Exception as e:
-            logging.error(f"Exception in process_cached_torrent for {item_identifier}: {str(e)}")
-            logging.exception("Traceback:")
-            return False
-
-    def process_uncached_torrent(self, queue_manager, item, title, link, add_result, hybrid_flag=None):
-        item_identifier = queue_manager.generate_identifier(item)
-        logging.debug(f"Processing uncached torrent for item: {item_identifier}")
-        logging.debug(f"Add result: {json.dumps(add_result, indent=2)}")
-
-        if 'files' in add_result:
-            files = [file for file in add_result['files'] if not file.endswith('.txt')]  # Exclude .txt files
-            logging.info(f"Files in uncached torrent for {item_identifier}: {json.dumps(files, indent=2)}")
-            
-            if item['type'] == 'movie':
-                matching_files = [file for file in files if self.file_matches_item(file, item)]
-                if matching_files:
-                    logging.info(f"Matching file(s) found for movie: {item_identifier}")
-                    if hybrid_flag:
-                        queue_manager.move_to_wanted(item, "Adding", hybrid_flag=hybrid_flag)
-                        logging.debug(f"Moved movie {item_identifier} to Wanted queue with hybrid_flag={hybrid_flag}")
-                    else:
-                        queue_manager.move_to_checking(item, "Adding", title, link)
-                        logging.debug(f"Moved movie {item_identifier} to Checking queue")
-                    return True
-                else:
-                    logging.warning(f"No matching file found for movie: {item_identifier}")
-                    return False
-            else:
-                return self.process_multi_pack(queue_manager, item, title, link, files, hybrid_flag)
-        else:
-            logging.warning(f"No file information available for uncached torrent: {item_identifier}")
-            return False
-
-
     def process_multi_pack(self, queue_manager, item, title, link, files, torrent_id):
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Processing multi-pack for item: {item_identifier}")
@@ -843,19 +598,6 @@ class AddingQueue:
             logging.info(f"Successfully removed unwanted torrent with ID: {torrent_id}")
         except api.exceptions.RequestException as e:
             logging.error(f"Error removing unwanted torrent with ID {torrent_id}: {str(e)}")
-
-    def move_to_blacklist_if_older_than_7_days(self, queue_manager, item, from_queue: str):
-        item_identifier = queue_manager.generate_identifier(item)
-        release_date_str = item.get('release_date')
-        
-        if release_date_str:
-            release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
-            if release_date < datetime.now() - timedelta(days=7):
-                logging.info(f"Item {item_identifier} is older than 7 days. Moving to blacklist.")
-                queue_manager.move_to_blacklisted(item, from_queue)
-                return True
-        
-        return False
 
     def process_single_result(self, queue_manager, item, result, cached_only=False):
         item_identifier = queue_manager.generate_identifier(item)
