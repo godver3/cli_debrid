@@ -71,6 +71,22 @@ def add_collected_items(media_items_batch, recent=False):
                                     WHERE id = ?
                                 ''', ('Collected', datetime.now(), datetime.now(), item_id))
                                 logging.debug(f"Updating item in DB to Collected: {normalized_title} (Version: {version})")
+
+                                # Check for other episodes with the same filled_by_file
+                                cursor = conn.execute('''
+                                    SELECT id, state FROM media_items
+                                    WHERE filled_by_file = ? AND state = 'Checking'
+                                ''', (filled_by_file,))
+                                related_episodes = cursor.fetchall()
+
+                                for related_id, related_state in related_episodes:
+                                    conn.execute('''
+                                        UPDATE media_items
+                                        SET state = ?, last_updated = ?, collected_at = ?
+                                        WHERE id = ?
+                                    ''', ('Collected', datetime.now(), datetime.now(), related_id))
+                                    logging.debug(f"Updating related item in DB to Collected: ID {related_id} (Same filled_by_file)")
+
                         else:
                             logging.debug(f"  No match: DB Filled By File does not match Plex Filename (Fuzzy match: {match_ratio}%)")
                     elif current_state == 'Collected':
