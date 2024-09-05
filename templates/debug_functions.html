@@ -5,107 +5,119 @@
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/debug_functions.css') }}">
 
-<div class="debug-container">
+<div class="debug-container">    
     <h2>Debug Functions</h2>
-
-    <h3>Bulk Delete from Database</h3>
-    <form action="{{ url_for('debug.bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
-        <div class="form-group">
-            <label for="imdb_id">IMDB ID:</label>
-            <input type="text" id="imdb_id" name="imdb_id" required>
+    <div class="debug_items">
+        <div class="debug_item">
+            <h3>Bulk Delete from Database</h3>
+            <form action="{{ url_for('debug.bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
+                <div class="form-group">
+                    <label for="imdb_id">IMDB ID:</label>
+                    <input type="text" id="imdb_id" name="imdb_id" required>
+                </div>
+                <button type="submit">Delete</button>
+            </form>
         </div>
-        <button type="submit">Delete</button>
-    </form>
-    <h3>Download Logs</h3>
-    <form id="download-logs-form">
-        <div class="form-group">
-            <label for="log_lines">Number of log lines:</label>
-            <input type="number" id="log_lines" name="lines" value="250" min="1" max="1000">
+        <div class="debug_item">
+            <h3>Download Logs</h3>
+            <form id="download-logs-form">
+                <div class="form-group">
+                    <label for="log_lines">Number of log lines:</label>
+                    <input type="number" id="log_lines" name="lines" value="250" min="1" max="1000">
+                </div>
+                <button type="submit">Download Logs</button>
+            </form>
         </div>
-        <button type="submit">Download Logs</button>
-    </form>
-    <h3>Delete Database</h3>
-    <form action="{{ url_for('debug.delete_database') }}" method="POST" id="delete-database-form">
-        <div class="form-group">
-            <label for="confirm_delete">Type 'DELETE' to confirm:</label>
-            <input type="text" id="confirm_delete" name="confirm_delete" required>
+        <div class="debug_item">
+            <h3>Delete Database</h3>
+            <form action="{{ url_for('debug.delete_database') }}" method="POST" id="delete-database-form">
+                <div class="form-group">
+                    <label for="confirm_delete">Type 'DELETE' to confirm:</label>
+                    <input type="text" id="confirm_delete" name="confirm_delete" required>
+                </div>
+                <button type="submit">Delete Database</button>
+            </form>
         </div>
-        <button type="submit">Delete Database</button>
-    </form>
-    <h3>Get Collected from Plex</h3>
-    <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
-        <div class="form-group">
-            <label for="collection_type">Collection Type:</label>
-            <select id="collection_type" name="collection_type" required>
-                <option value="all">All</option>
-                <option value="recent">Recent</option>
-            </select>
+        <div class="debug_item">
+            <h3>Get Collected from Plex</h3>
+            <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
+                <div class="form-group">
+                    <label for="collection_type">Collection Type:</label>
+                    <select id="collection_type" name="collection_type" required>
+                        <option value="all">All</option>
+                        <option value="recent">Recent</option>
+                    </select>
+                </div>
+                <button type="submit">Get Collected</button>
+            </form>
         </div>
-        <button type="submit">Get Collected</button>
-    </form>
-    <h3>Get Wanted Content</h3>
-    <form action="{{ url_for('debug.get_wanted_content') }}" method="POST" id="get-wanted-form">
-        <div class="form-group">
-            <label for="wanted_source">Source:</label>
-            <select id="wanted_source" name="source" required>
-                <option value="all">All Enabled Sources</option>
-                {% for source in content_sources %}
-                    {% if content_sources[source].enabled %}
-                        <option value="{{ source }}">{{ source }}</option>
-                    {% endif %}
-                {% endfor %}
-            </select>
+        <div class="debug_item">
+            <h3>Get Wanted Content</h3>
+            <form action="{{ url_for('debug.get_wanted_content') }}" method="POST" id="get-wanted-form">
+                <div class="form-group">
+                    <label for="wanted_source">Source:</label>
+                    <select id="wanted_source" name="source" required>
+                        <option value="all">All Enabled Sources</option>
+                        {% for source in content_sources %}
+                            {% if content_sources[source].enabled %}
+                                <option value="{{ source }}">{{ source }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit">Get Wanted</button>
+            </form>
         </div>
-        <button type="submit">Get Wanted</button>
-    </form>
-
-    <h3>Bulk Queue Actions</h3>
-    <form id="bulk-queue-action-form">
-        <div class="form-group">
-            <label for="queue_select">Select Queue:</label>
-            <select id="queue_select" name="queue_select">
-                <option value="Adding">Adding</option>
-                <option value="Blacklisted">Blacklisted</option>
-                <option value="Checking">Checking</option>
-                <option value="Scraping">Scraping</option>
-                <option value="Sleeping">Sleeping</option>
-                <option value="Unreleased">Unreleased</option>
-                <option value="Wanted">Wanted</option>
-            </select>
+        <div class="debug_item">
+            <h3>Manual Blacklist</h3>
+            <a href="{{ url_for('debug.manual_blacklist') }}" class="btn btn-primary">Manage Manual Blacklist</a>
         </div>
-        <div id="queue_items_container" class="queue-items-container">
-            <h4>Select Items:</h4>
-            <div class="select-all-container">
-                <button type="button" id="select_all_btn">Select All</button>
-                <button type="button" id="unselect_all_btn">Unselect All</button>
-            </div>
-            <div id="queue_items">Loading...</div>
+        <div class="debug_item">
+            <h3>Bulk Queue Actions</h3>
+            <form id="bulk-queue-action-form">
+                <div class="form-group">
+                    <label for="queue_select">Select Queue:</label>
+                    <select id="queue_select" name="queue_select">
+                        <option value="Adding">Adding</option>
+                        <option value="Blacklisted">Blacklisted</option>
+                        <option value="Checking">Checking</option>
+                        <option value="Scraping">Scraping</option>
+                        <option value="Sleeping">Sleeping</option>
+                        <option value="Unreleased">Unreleased</option>
+                        <option value="Wanted">Wanted</option>
+                    </select>
+                </div>
+                <div id="queue_items_container" class="queue-items-container">
+                    <h4>Select Items:</h4>
+                    <div class="select-all-container">
+                        <button type="button" id="select_all_btn">Select All</button>
+                        <button type="button" id="unselect_all_btn">Unselect All</button>
+                    </div>
+                    <div id="queue_items">Loading...</div>
+                </div>
+                <div class="form-group">
+                    <label for="action_select">Action:</label>
+                    <select id="action_select" name="action">
+                        <option value="delete">Delete</option>
+                        <option value="move">Move to...</option>
+                    </select>
+                </div>
+                <div id="target_queue_container" style="display: none;">
+                    <label for="target_queue">Target Queue:</label>
+                    <select id="target_queue" name="target_queue">
+                        <option value="Adding">Adding</option>
+                        <option value="Blacklisted">Blacklisted</option>
+                        <option value="Checking">Checking</option>
+                        <option value="Scraping">Scraping</option>
+                        <option value="Sleeping">Sleeping</option>
+                        <option value="Unreleased">Unreleased</option>
+                        <option value="Wanted">Wanted</option>
+                    </select>
+                </div>
+                <button type="submit">Apply Action</button>
+            </form>
         </div>
-        <div class="form-group">
-            <label for="action_select">Action:</label>
-            <select id="action_select" name="action">
-                <option value="delete">Delete</option>
-                <option value="move">Move to...</option>
-            </select>
-        </div>
-        <div id="target_queue_container" style="display: none;">
-            <label for="target_queue">Target Queue:</label>
-            <select id="target_queue" name="target_queue">
-                <option value="Adding">Adding</option>
-                <option value="Blacklisted">Blacklisted</option>
-                <option value="Checking">Checking</option>
-                <option value="Scraping">Scraping</option>
-                <option value="Sleeping">Sleeping</option>
-                <option value="Unreleased">Unreleased</option>
-                <option value="Wanted">Wanted</option>
-            </select>
-        </div>
-        <button type="submit">Apply Action</button>
-    </form>
-    
-    <h3>Manual Blacklist</h3>
-    <a href="{{ url_for('debug.manual_blacklist') }}" class="btn btn-primary">Manage Manual Blacklist</a>
-
+    </div>
 </div>
 
 <div id="loading" class="loading">
