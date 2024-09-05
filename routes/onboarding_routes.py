@@ -9,6 +9,8 @@ from config_manager import add_scraper, add_content_source
 import logging
 from scraper_manager import ScraperManager
 
+scraper_manager = ScraperManager()
+
 onboarding_bp = Blueprint('onboarding', __name__)
 
 def get_next_onboarding_step():
@@ -43,12 +45,12 @@ def get_next_onboarding_step():
     # If all steps are completed, return the final step (5)
     return 5
 
-@onboarding_bp.route('/onboarding')
+@onboarding_bp.route('/')
 @login_required
 def onboarding():
     return render_template('onboarding.html', is_onboarding=True)
 
-@onboarding_bp.route('/onboarding/step/<int:step>', methods=['GET', 'POST'])
+@onboarding_bp.route('/step/<int:step>', methods=['GET', 'POST'])
 @login_required
 def onboarding_step(step):
     from routes.auth_routes import db
@@ -148,7 +150,7 @@ def onboarding_step(step):
         return render_template('onboarding_step_5.html', current_step=step, can_proceed=can_proceed, is_onboarding=True)
 
 
-@onboarding_bp.route('/onboarding/complete', methods=['POST'])
+@onboarding_bp.route('/complete', methods=['POST'])
 @login_required
 def complete_onboarding():
     from routes.auth_routes import db
@@ -160,7 +162,7 @@ def complete_onboarding():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
     
-@onboarding_bp.route('/onboarding/update_can_proceed', methods=['POST'])
+@onboarding_bp.route('/update_can_proceed', methods=['POST'])
 @login_required
 def update_can_proceed():
     data = request.json
@@ -232,7 +234,7 @@ def setup_admin():
                     flash(f'An error occurred: {str(e)}', 'error')
     return render_template('setup_admin.html', is_onboarding=True)
 
-@onboarding_bp.route('/onboarding/content_sources/add', methods=['POST'])
+@onboarding_bp.route('/content_sources/add', methods=['POST'])
 def add_onboarding_content_source():
     from routes.auth_routes import db
 
@@ -256,7 +258,7 @@ def add_onboarding_content_source():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@onboarding_bp.route('/onboarding/content_sources/get', methods=['GET'])
+@onboarding_bp.route('/content_sources/get', methods=['GET'])
 def get_onboarding_content_sources():
     config = load_config()
     content_source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
@@ -268,7 +270,7 @@ def get_onboarding_content_sources():
         'settings': SETTINGS_SCHEMA['Content Sources']['schema']
     })
 
-@onboarding_bp.route('/onboarding/scrapers/add', methods=['POST'])
+@onboarding_bp.route('/scrapers/add', methods=['POST'])
 def add_onboarding_scraper():
     data = request.json
     scraper_type = data.get('type')
@@ -289,7 +291,7 @@ def add_onboarding_scraper():
 
     return jsonify({'success': True, 'scraper_id': scraper_id})
 
-@onboarding_bp.route('/onboarding/scrapers/get', methods=['GET'])
+@onboarding_bp.route('/scrapers/get', methods=['GET'])
 def get_onboarding_scrapers():
     config = load_config()
     scraper_types = scraper_manager.get_scraper_types()
