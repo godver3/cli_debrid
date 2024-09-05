@@ -147,24 +147,36 @@ def get_release_date(media_details: Dict[str, Any], media_type: str) -> str:
         return 'Unknown'
 
 
-def get_overseerr_cookies(overseerr_url: str) -> api.cookies.RequestsCookieJar:
-    session = api.Session()
-    session.get(overseerr_url)
-    return session.cookies
+def get_overseerr_cookies(overseerr_url: str) -> Optional[api.cookies.RequestsCookieJar]:
+    try:
+        session = api.Session()
+        session.get(overseerr_url, timeout=REQUEST_TIMEOUT)
+        return session.cookies
+    except api.exceptions.RequestException as e:
+        logging.error(f"Error getting Overseerr cookies: {str(e)}")
+        return None
 
-def get_overseerr_show_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Dict[str, Any]:
+def get_overseerr_show_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Optional[Dict[str, Any]]:
     url = get_url(overseerr_url, f"/api/v1/tv/{tmdb_id}?language=en")
     headers = get_overseerr_headers(overseerr_api_key)
-    response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        return response.json()
+    except api.exceptions.RequestException as e:
+        logging.error(f"Error fetching show details for TMDB ID {tmdb_id}: {str(e)}")
+        return None
 
-def get_overseerr_show_episodes(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, season_number: int, cookies: api.cookies.RequestsCookieJar) -> Dict[str, Any]:
+def get_overseerr_show_episodes(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, season_number: int, cookies: api.cookies.RequestsCookieJar) -> Optional[Dict[str, Any]]:
     url = get_url(overseerr_url, f"/api/v1/tv/{tmdb_id}/season/{season_number}?language=en")
     headers = get_overseerr_headers(overseerr_api_key)
-    response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        return response.json()
+    except api.exceptions.RequestException as e:
+        logging.error(f"Error fetching show episodes for TMDB ID {tmdb_id}, season {season_number}: {str(e)}")
+        return None
 
 def get_overseerr_movie_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Optional[Dict[str, Any]]:
     url = get_url(overseerr_url, f"/api/v1/movie/{tmdb_id}?language=en")
