@@ -19,6 +19,7 @@ import pykakasi
 from babelfish import Language
 from .scraper_manager import ScraperManager
 from config_manager import load_config
+import unicodedata
 
 def romanize_japanese(text):
     kks = pykakasi.kakasi()
@@ -103,13 +104,13 @@ def similarity(a: str, b: str) -> float:
 
 def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False) -> float:
     # Normalize titles
-    query_title = normalize_title(query_title).lower()
+    query_title = clean_title(query_title)
     
     parsed_info = result.get('parsed_info', {})
     guessit_title = parsed_info.get('title', '')
-    guessit_title = normalize_title(guessit_title).lower()
+    guessit_title = clean_title(guessit_title)
 
-    logging.debug(f"Comparing titles - Query: '{query_title}', Guessit: '{guessit_title}'")
+    logging.debug(f"Comparing cleaned titles - Query: '{query_title}', Guessit: '{guessit_title}'")
 
     if is_anime:
         # For anime, use match_any_title function
@@ -144,6 +145,19 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
     logging.debug(f"Final similarity score: {similarity}")
 
     return similarity  # Already a float between 0 and 1
+
+def clean_title(title: str) -> str:
+    # Normalize Unicode characters
+    title = unicodedata.normalize('NFKD', title)
+    # Remove non-ASCII characters
+    title = re.sub(r'[^\x00-\x7F]+', '', title)
+    # Remove non-alphanumeric characters except spaces
+    title = re.sub(r'[^\w\s]', '', title)
+    # Convert periods to spaces
+    title = title.replace('.', ' ')
+    # Normalize whitespace
+    title = ' '.join(title.split())
+    return title.lower()  # Ensure lowercase
 
 def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
     max_similarity = 0
@@ -762,6 +776,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         else:
             logging.info("No details found in Overseerr.")
 
+    pre_size_filtered_results = []
+
     for result in results:
         result['filter_reason'] = "Passed all filters"  # Default reason
 
@@ -880,17 +896,6 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
         result['bitrate'] = bitrate
 
-        # Apply size filter after per-file size calculation
-        if result['size'] > 0 and result['size'] < min_size_gb:
-            result['filter_reason'] = f"Size too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
-            continue
-        elif result['size'] == 0:
-            logging.warning(f"Size is 0 for result: {result.get('title', 'Unknown')}. Skipping size filter.")
-            
-        if result['size'] > max_size_gb:
-            result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
-            continue
-
         # Apply custom filters with smart matching
         if filter_in and not any(smart_search(pattern, original_title) for pattern in filter_in):
             result['filter_reason'] = "Not matching any filter_in patterns"
@@ -931,6 +936,19 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     if detected_season != season and detected_season != 1:  # Allow season 1 if it doesn't match the requested season
                         result['filter_reason'] = f"Season mismatch: S{detected_season} vs S{season}"
                         continue
+        
+        pre_size_filtered_results.append(result)
+
+        # Apply size filter after per-file size calculation
+        if result['size'] > 0 and result['size'] < min_size_gb:
+            result['filter_reason'] = f"Size too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
+            continue
+        elif result['size'] == 0:
+            logging.warning(f"Size is 0 for result: {result.get('title', 'Unknown')}. Skipping size filter.")
+            
+        if result['size'] > max_size_gb:
+            result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
+            continue
 
         # If the result passed all filters, add it to filtered_results
         if result['filter_reason'] == "Passed all filters":
@@ -940,18 +958,17 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             if result['filter_reason'] == "Passed all filters":
                 result['filter_reason'] = "Failed to meet all criteria"
 
-    return filtered_results
+    return filtered_results, pre_size_filtered_results
 
 def normalize_title(title: str) -> str:
     """
     Normalize the title by replacing spaces with periods, removing colons and apostrophes,
     replacing ".~." with "-", and removing duplicate periods.
     """
+    normalized = re.sub(r'[^\w\s]', '', title)
+
     # Remove apostrophes and colons
     normalized = re.sub(r"[':]", "", title)
-    
-    # Replace spaces with periods
-    normalized = normalized.replace(' ', '.')
     
     # Replace ".~." with "-"
     normalized = normalized.replace('.~.', '-')
@@ -1033,7 +1050,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             normalized_results.append(normalized_result)
 
         # Filter results
-        filtered_results = filter_results(normalized_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
+        filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
         filtered_out_results = [result for result in normalized_results if result not in filtered_results]
 
         logging.debug(f"Filtering took {time.time() - start_time:.2f} seconds")
@@ -1067,7 +1084,31 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             )
             return (primary_key, secondary_keys)
 
-        final_results = sorted(filtered_results, key=stable_rank_key)
+        
+        # Apply ultimate sort order if present
+        if get_setting('Scraping', 'ultimate_sort_order')=='Size: large to small':
+            logging.info(f"Applying ultimate sort order: Size: large to small")
+            final_results = sorted(filtered_results, key=stable_rank_key)
+            final_results = sorted(final_results, key=lambda x: x.get('size', 0), reverse=True)
+        elif get_setting('Scraping', 'ultimate_sort_order')=='Size: small to large':
+            logging.info(f"Applying ultimate sort order: Size: small to large")
+            final_results = sorted(filtered_results, key=stable_rank_key)
+            final_results = sorted(final_results, key=lambda x: x.get('size', 0))
+        else:
+            logging.info(f"Applying default sort order: None")
+            final_results = sorted(filtered_results, key=stable_rank_key)
+
+        # Apply soft max size if present
+        if not final_results and get_setting('Scraping', 'soft_max_size_gb'):
+            logging.info(f"No results within size limits. Applying soft_max_size logic.")
+            final_results = sorted(pre_size_filtered_results, key=stable_rank_key)
+
+            final_results = sorted(final_results, key=lambda x: x.get('size', float('inf')))
+
+            if final_results:
+                logging.info(f"Found {len(final_results)} soft max size results.")
+            else:
+                logging.warning("No results found even with soft max size applied")
 
         logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
 

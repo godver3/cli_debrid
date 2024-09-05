@@ -117,7 +117,7 @@
     </table>
     <div class="add-user-form">
         <h3>Add New User</h3>
-        <form action="{{ url_for('add_user') }}" method="POST">
+        <form action="{{ url_for('user_management.add_user') }}" method="POST">
             <input type="text" name="username" placeholder="Username" required autocomplete="new-username">
             <input type="password" name="password" placeholder="Password" required autocomplete="new-password">
             <select name="role" required>
@@ -145,7 +145,7 @@ document.addEventListener('DOMContentLoaded', function() {
             title: "Add User",
             message: `Are you sure you want to add user "${username}" with role "${role}"?`,
             onConfirm: function() {
-                fetch("{{ url_for('add_user') }}", {
+                fetch("{{ url_for('user_management.add_user') }}", {
                     method: 'POST',
                     body: formData
                 })
@@ -181,7 +181,7 @@ function deleteUser(userId) {
         title: "Delete User",
         message: "Are you sure you want to delete this user?",
         onConfirm: function() {
-            fetch(`/delete_user/${userId}`, {
+            fetch(`/user_management/delete_user/${userId}`, {
                 method: 'POST',
             })
             .then(response => response.json())

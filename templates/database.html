@@ -217,7 +217,7 @@ document.addEventListener('DOMContentLoaded', function() {
             e.preventDefault();
             const formData = new FormData(this);
             const params = Object.fromEntries(formData.entries());
-            updateContent('{{ url_for('database') }}', params);
+            updateContent('{{ url_for('database.index') }}', params);
         });
     }
 
@@ -248,7 +248,7 @@ document.addEventListener('DOMContentLoaded', function() {
         currentLetter = 'A';
 
         // Update the content with default values
-        updateContent('{{ url_for('database') }}', {
+        updateContent('{{ url_for('database.index') }}', {
             content_type: currentContentType,
             letter: currentLetter
         });
@@ -325,7 +325,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var contentType = this.getAttribute('data-content-type');
                 clearFilter();
-                updateContent('{{ url_for('database') }}', { content_type: contentType });
+                updateContent('{{ url_for('database.index') }}', { content_type: contentType });
             });
         });
 
@@ -334,7 +334,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var letter = this.getAttribute('data-letter');
                 clearFilter();
-                updateContent('{{ url_for('database') }}', { letter: letter });
+                updateContent('{{ url_for('database.index') }}', { letter: letter });
             });
         });
     }
@@ -362,7 +362,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function deleteItem(itemId) {
-        fetch('{{ url_for('delete_item') }}', {
+        fetch('{{ url_for('database.delete_item') }}', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -370,7 +370,12 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             body: JSON.stringify({ item_id: itemId })
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
                 // Remove the row from the table
@@ -384,13 +389,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     autoClose: 3000 // Close after 3 seconds
                 });
             } else {
-                // Show error popup
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: 'Error deleting item: ' + (data.error || 'Unknown error'),
-                    autoClose: 5000 // Close after 5 seconds
-                });
+                throw new Error(data.error || 'Unknown error');
             }
         })
         .catch(error => {
@@ -399,7 +398,7 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 title: 'Error',
-                message: 'An error occurred while deleting the item',
+                message: 'An error occurred while deleting the item: ' + error.message,
                 autoClose: 5000 // Close after 5 seconds
             });
         });

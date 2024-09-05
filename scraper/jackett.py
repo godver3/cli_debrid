@@ -1,7 +1,6 @@
 from api_tracker import api
 import logging
 from typing import List, Dict, Any, Tuple
-from database import get_title_by_imdb_id
 from metadata.metadata import get_year_from_imdb_id
 from settings import get_setting, load_config as get_jackett_settings
 from urllib.parse import quote, urlencode
@@ -130,6 +129,7 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
             }
             results.append(result)
     return results
+
 def construct_url(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, jackett_filter: str = "!status:failing,test:passed", multi: bool = False) -> str:
     jackett_url = settings['url']
     jackett_api = settings['api']

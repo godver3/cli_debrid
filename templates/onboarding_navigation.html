@@ -20,27 +20,27 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (prevStepBtn) {
         prevStepBtn.addEventListener('click', function() {
-            window.location.href = '{{ url_for("onboarding_step", step=current_step-1) }}';
+            window.location.href = '{{ url_for("onboarding.onboarding_step", step=current_step-1) }}';
         });
     }
 
     if (nextStepBtn) {
         nextStepBtn.addEventListener('click', function() {
             if (!this.disabled) {
-                window.location.href = '{{ url_for("onboarding_step", step=current_step+1) }}';
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step=current_step+1) }}';
             }
         });
     }
 
     if (finishSetupBtn) {
         finishSetupBtn.addEventListener('click', function() {
-            fetch('{{ url_for("complete_onboarding") }}', {
+            fetch('{{ url_for("onboarding.complete_onboarding") }}', {
                 method: 'POST',
             })
             .then(response => response.json())
             .then(result => {
                 if (result.success) {
-                    window.location.href = '{{ url_for("statistics") }}';
+                    window.location.href = '{{ url_for("statistics.index") }}';
                 } else {
                     alert('Error: ' + result.error);
                 }
