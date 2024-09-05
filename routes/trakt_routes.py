@@ -4,6 +4,9 @@ from trakt.core import get_device_code, get_device_token
 import time
 import json
 import os
+import sys
+from flask import current_app
+import traceback
 
 trakt_bp = Blueprint('trakt', __name__)
 
@@ -17,7 +20,7 @@ def trakt_auth():
         
         if not client_id or not client_secret:
             return jsonify({'error': 'Trakt client ID or secret not set. Please configure in settings.'}), 400
-        
+              
         device_code_response = get_device_code(client_id, client_secret)
         
         # Store the device code response in the Trakt config file
@@ -29,9 +32,10 @@ def trakt_auth():
             'device_code': device_code_response['device_code']
         })
     except Exception as e:
-        return jsonify({'error': 'Unable to start authorization process'}), 500
+        current_app.logger.error(f"Error in trakt_auth: {str(e)}")
+        current_app.logger.error(traceback.format_exc())
+        return jsonify({'error': f'Unable to start authorization process: {str(e)}'}), 500
 
-# Update the existing trakt_auth_status route
 @trakt_bp.route('/trakt_auth_status', methods=['POST'])
 def trakt_auth_status():
     try:
@@ -62,7 +66,11 @@ def trakt_auth_status():
             trakt_config.pop('device_code_response', None)
             save_trakt_config(trakt_config)
             
-            return jsonify({'status': 'authorized'})
+            # TODO: - Purge and reload Trakt auth
+
+            return jsonify({
+                'status': 'authorized', 
+            })
         elif response.status_code == 400:
             return jsonify({'status': 'pending'})
         else:
