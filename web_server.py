@@ -7,7 +7,6 @@ import os
 from datetime import datetime
 from template_utils import render_settings, render_content_sources
 import json
-from scraper_manager import ScraperManager
 from routes.program_operation_routes import program_is_running, start_server
 from sqlalchemy import inspect
 from flask_login import LoginManager
@@ -21,8 +20,8 @@ from routes import register_blueprints, auth_bp
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
 app.secret_key = '9683650475'
+
 queue_manager = QueueManager()
-scraper_manager = ScraperManager()
 
 db_directory = os.path.join(app.root_path, 'db_content')
 os.makedirs(db_directory, exist_ok=True)

@@ -75,7 +75,7 @@ def update_media_item_state(item_id, state, **kwargs):
         params = [state, datetime.now()]
 
         # Add optional fields to the query if they are provided
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'hybrid_flag']
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results']
         for field in optional_fields:
             if field in kwargs:
                 query += f", {field} = ?"
