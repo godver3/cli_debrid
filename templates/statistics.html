@@ -355,8 +355,8 @@
     .compact-view .air-date,
     .compact-view .release-date {
         margin-left: 10px;
-        font-style: italic;
-        color: #aaa;
+        font-style: normal;
+        color: #d4d4d4;
         white-space: nowrap;
     }
 
@@ -388,7 +388,7 @@
 
     .compact-view .air-date,
     .compact-view .release-date {
-        font-size: 0.8em;
+        font-size: 0.9em;
     }
 
     @media (max-width: 768px) {
@@ -404,8 +404,13 @@
     }
 
     /* Compact view styles for recently added section */
+    .compact-view .recently-added {
+        display: flex;
+        flex-direction: row;
+        gap: 10px;
+    }
     .compact-view .recently-added-section{
-        display:  inline-block;
+        flex: 1;
     }
 
     .compact-view .recently-added-section .card-container {
@@ -563,10 +568,9 @@
             </div>
         </div>
 
-        <div class="stats-box recently-added">
-            <h3>Recently Added</h3>
-            <div class="recently-added-section">
-                <h4>Movies</h4>
+        <div class="recently-added">
+            <div class="stats-box recently-added-section">
+                <h4>Recently Added Movies</h4>
                 {% if stats.recently_added_movies %}
                     <div class="card-container">
                     {% for movie in stats.recently_added_movies %}
@@ -581,17 +585,15 @@
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
                                 <p class="info-line">Added: {{ movie.collected_at }}</p>
                                 <p class="info-line">Versions: {{ movie.versions }}</p>
-                                {% if movie.filled_by_title %}
-                                    <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${movie.filled_by_title}</span></p>
-                                {% endif %}
+                                <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${movie.filled_by_title}</span></p>
                             </div>
                         </div>
                     {% endfor %}
                     </div>
                 {% endif %}
             </div>
-            <div class="recently-added-section">
-                <h4>TV Shows</h4>
+            <div class="stats-box recently-added-section">
+                <h4>Recently Added Shows</h4>
                 {% if stats.recently_added_shows %}
                     <div class="card-container">
                     {% for show in stats.recently_added_shows %}
@@ -608,9 +610,8 @@
                                 <p class="info-line">Versions: {{ show.versions }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
-                                {% if show.filled_by_title %}
-                                    <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${show.filled_by_title}</span></p>
-                                {% endif %}
+                                <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${show.filled_by_title}</span></p>
+
                             </div>
                         </div>
                     {% endfor %}
@@ -820,12 +821,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateRecentlyAdded(movies, shows) {
         console.log('Recently added movies:', movies);
         console.log('Recently added shows:', shows);
-        updateRecentlyAddedSection('Movies', movies);
-        updateRecentlyAddedSection('TV Shows', shows);
+        updateRecentlyAddedSection('Recently Added Movies', movies);
+        updateRecentlyAddedSection('Recently Added Shows', shows);
     }
 
     function updateRecentlyAddedSection(type, items) {
-        const sections = document.querySelectorAll('.recently-added-section');
+        const sections = document.querySelectorAll('.stats-box.recently-added-section');
         let section = null;
         for (let s of sections) {
             if (s.querySelector('h4').textContent.trim() === type) {
