@@ -193,7 +193,7 @@ def setup_admin():
     from routes.auth_routes import User
 
     if not current_user.is_default:
-        return redirect(url_for('onboarding_step', step=1))
+        return redirect(url_for('onboarding.onboarding_step', step=1))
     if request.method == 'POST':
         new_username = request.form['new_username']
         new_password = request.form['new_password']
@@ -223,7 +223,7 @@ def setup_admin():
                     login_user(new_admin)
                     
                     # Redirect to the first onboarding step
-                    return redirect(url_for('onboarding_step', step=1))
+                    return redirect(url_for('onboarding.onboarding_step', step=1))
                 except Exception as e:
                     db.session.rollback()
                     flash(f'An error occurred: {str(e)}', 'error')
