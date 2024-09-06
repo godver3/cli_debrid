@@ -6,7 +6,6 @@ import json
 from fuzzywuzzy import fuzz
 from settings import get_setting
 
-
 def add_collected_items(media_items_batch, recent=False):
     from metadata.metadata import get_show_airtime_by_imdb_id
 
@@ -17,21 +16,28 @@ def add_collected_items(media_items_batch, recent=False):
         processed_items = set()
         airtime_cache = {}  # Cache to store airtimes for each show
 
-        existing_items = conn.execute('SELECT id, imdb_id, type, season_number, episode_number, state, version, filled_by_file FROM media_items').fetchall()
+        existing_items = conn.execute('SELECT id, imdb_id, tmdb_id, type, season_number, episode_number, state, version, filled_by_file FROM media_items').fetchall()
         existing_ids = {}
         for row in map(row_to_dict, existing_items):
             if row['type'] == 'movie':
-                key = (row['imdb_id'], 'movie', row['version'])
+                imdb_key = (row['imdb_id'], 'movie', row['version'])
+                tmdb_key = (row['tmdb_id'], 'movie', row['version']) if row['tmdb_id'] else None
             else:
-                key = (row['imdb_id'], 'episode', row['season_number'], row['episode_number'], row['version'])
-            existing_ids[key] = (row['id'], row['state'], row['filled_by_file'])
+                imdb_key = (row['imdb_id'], 'episode', row['season_number'], row['episode_number'], row['version'])
+                tmdb_key = (row['tmdb_id'], 'episode', row['season_number'], row['episode_number'], row['version']) if row['tmdb_id'] else None
+            
+            item_data = (row['id'], row['state'], row['filled_by_file'])
+            existing_ids[imdb_key] = item_data
+            if tmdb_key:
+                existing_ids[tmdb_key] = item_data
 
         scraping_versions = get_setting('Scraping', 'versions', {})
         versions = list(scraping_versions.keys())
 
         for item in media_items_batch:
-            if not item.get('imdb_id'):
-                logging.warning(f"Skipping item without valid IMDb ID: {item.get('title', 'Unknown')}")
+            logging.debug(f"Processing item: {item}")
+            if not item.get('imdb_id') and not item.get('tmdb_id'):
+                logging.warning(f"Skipping item without valid IMDb ID or TMDB ID: {item.get('title', 'Unknown')}")
                 continue
 
             normalized_title = normalize_string(item.get('title', 'Unknown'))
@@ -44,14 +50,30 @@ def add_collected_items(media_items_batch, recent=False):
             item_found = False
             for version in versions:
                 if item_type == 'movie':
-                    item_key = (item['imdb_id'], 'movie', version)
+                    imdb_key = (item.get('imdb_id'), 'movie', version)
+                    tmdb_key = (item.get('tmdb_id'), 'movie', version) if item.get('tmdb_id') else None
                 else:
-                    item_key = (item['imdb_id'], 'episode', item['season_number'], item['episode_number'], version)
+                    imdb_key = (item.get('imdb_id'), 'episode', item['season_number'], item['episode_number'], version)
+                    tmdb_key = (item.get('tmdb_id'), 'episode', item['season_number'], item['episode_number'], version) if item.get('tmdb_id') else None
 
-                if item_key in existing_ids:
+                logging.debug(f"IMDb key: {imdb_key}")
+                logging.debug(f"TMDB key: {tmdb_key}")
+                logging.debug(f"IMDb key in existing_ids: {imdb_key in existing_ids}")
+                logging.debug(f"TMDB key in existing_ids: {tmdb_key and tmdb_key in existing_ids}")
+
+                if imdb_key in existing_ids:
                     item_found = True
-                    item_id, current_state, filled_by_file = existing_ids[item_key]
+                    item_id, current_state, filled_by_file = existing_ids[imdb_key]
+                elif tmdb_key and tmdb_key in existing_ids:
+                    item_found = True
+                    item_id, current_state, filled_by_file = existing_ids[tmdb_key]
 
+                logging.debug(f"Item found: {item_found}")
+                logging.debug(f"Item ID: {item_id}")
+                logging.debug(f"Current state: {current_state}")
+                logging.debug(f"Filled by file: {filled_by_file}")
+
+                if item_found:
                     logging.debug(f"Comparing existing item in DB with Plex item:")
                     logging.debug(f"  DB Item: {normalized_title} (ID: {item_id}, State: {current_state}, Version: {version})")
                     logging.debug(f"  DB Filled By File: {filled_by_file}")

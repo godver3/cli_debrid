@@ -70,6 +70,7 @@
                         if (typeof window.reloadTabContent === 'function') {
                             window.reloadTabContent('scrapers', () => {
                                 window.initializeExpandCollapse(); // Reinitialize expand/collapse
+                                initializeScrapersFunctionality(); // Reinitialize scraper functionality
                                 window.showPopup({
                                     type: POPUP_TYPES.SUCCESS,
                                     message: 'Scraper added and tab content reloaded successfully',
@@ -120,6 +121,7 @@
                         if (typeof window.reloadTabContent === 'function') {
                             window.reloadTabContent('scrapers', () => {
                                 window.initializeExpandCollapse(); // Reinitialize expand/collapse
+                                initializeScrapersFunctionality(); // Reinitialize scraper functionality
                                 window.showPopup({
                                     type: POPUP_TYPES.SUCCESS,
                                     message: 'Scraper deleted and tab content reloaded successfully',
