@@ -118,6 +118,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function addScraper(scraperType, scraperConfig) {
+        console.log('Adding scraper:', scraperType, scraperConfig); // Add this line for debugging
         fetch('/onboarding/scrapers/add', {
             method: 'POST',
             headers: {
@@ -166,7 +167,7 @@ document.addEventListener('DOMContentLoaded', function() {
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/scrapers/delete', {
+                fetch('/onboarding/scrapers/delete', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
