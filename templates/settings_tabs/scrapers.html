@@ -57,7 +57,7 @@
             confirmText: 'Add',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/scrapers/add', {
+                fetch('/settings/scrapers/add', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -107,7 +107,7 @@
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/scrapers/delete', {
+                fetch('/settings/scrapers/delete', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
