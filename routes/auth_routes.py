@@ -64,21 +64,16 @@ def login():
         if not current_user.onboarding_complete:
             next_step = get_next_onboarding_step()
             if next_step <= 5:  # Assuming 5 is the last step
-                return redirect(url_for('onboarding_step', step=next_step))
+                return redirect(url_for('onboarding.setup_admin'))  # Changed this line
         return redirect(url_for('statistics.index'))
 
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        user = User.query.filter_by(username=username).first()
+        # ... existing code ...
         if user and check_password_hash(user.password, password):
             login_user(user)
             logging.info(f"User {user.username} logged in. Onboarding complete: {user.onboarding_complete}")
-            if user.is_default:
-                return redirect(url_for('onboarding.step', step=1))
-            if not user.onboarding_complete:
-                logging.info(f"Redirecting user {user.username} to onboarding")
-                return redirect(url_for('onboarding.step', step=1))
+            if user.is_default or not user.onboarding_complete:
+                return redirect(url_for('onboarding.setup_admin'))  # Changed this line
             return redirect(url_for('statistics.index'))
         else:
             flash('Invalid username or password.', 'error')
