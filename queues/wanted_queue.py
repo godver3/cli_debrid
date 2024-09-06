@@ -43,16 +43,22 @@ class WantedQueue:
             try:
                 # Determine airtime offset based on content type
                 if item['type'] == 'movie':
-                    movie_airtime_offset = (float(get_setting("Queue", "movie_airtime_offset", "19"))*60)
-                    if not movie_airtime_offset:
-                        logging.warning("movie_airtime_offset setting is empty, using default value of 19")
-                    airtime_offset = float(movie_airtime_offset) if movie_airtime_offset else 19*60
+                    movie_airtime_offset_str = get_setting("Queue", "movie_airtime_offset", "19")
+                    try:
+                        movie_airtime_offset = float(movie_airtime_offset_str) * 60
+                    except ValueError:
+                        logging.warning(f"Invalid movie_airtime_offset setting: '{movie_airtime_offset_str}'. Using default value of 19.")
+                        movie_airtime_offset = 19 * 60
+                    airtime_offset = movie_airtime_offset
                     airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(hours=airtime_offset)).time()
                 elif item['type'] == 'episode':
-                    episode_airtime_offset = (float(get_setting("Queue", "episode_airtime_offset", "0"))*60)
-                    if not episode_airtime_offset:
-                        logging.warning("episode_airtime_offset setting is empty, using default value of 0")
-                    airtime_offset = float(episode_airtime_offset) if episode_airtime_offset else 0
+                    episode_airtime_offset_str = get_setting("Queue", "episode_airtime_offset", "0")
+                    try:
+                        episode_airtime_offset = float(episode_airtime_offset_str) * 60
+                    except ValueError:
+                        logging.warning(f"Invalid episode_airtime_offset setting: '{episode_airtime_offset_str}'. Using default value of 0.")
+                        episode_airtime_offset = 0
+                    airtime_offset = episode_airtime_offset
                     
                     # Get the airtime from the database
                     conn = get_db_connection()
