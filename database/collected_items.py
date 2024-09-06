@@ -35,7 +35,6 @@ def add_collected_items(media_items_batch, recent=False):
         versions = list(scraping_versions.keys())
 
         for item in media_items_batch:
-            logging.debug(f"Processing item: {item}")
             if not item.get('imdb_id') and not item.get('tmdb_id'):
                 logging.warning(f"Skipping item without valid IMDb ID or TMDB ID: {item.get('title', 'Unknown')}")
                 continue
@@ -48,6 +47,10 @@ def add_collected_items(media_items_batch, recent=False):
             genres = json.dumps(item.get('genres', []))  # Convert genres list to JSON string
 
             item_found = False
+            item_id = None  # Initialize item_id here
+            current_state = None
+            filled_by_file = None
+
             for version in versions:
                 if item_type == 'movie':
                     imdb_key = (item.get('imdb_id'), 'movie', version)
@@ -56,22 +59,12 @@ def add_collected_items(media_items_batch, recent=False):
                     imdb_key = (item.get('imdb_id'), 'episode', item['season_number'], item['episode_number'], version)
                     tmdb_key = (item.get('tmdb_id'), 'episode', item['season_number'], item['episode_number'], version) if item.get('tmdb_id') else None
 
-                logging.debug(f"IMDb key: {imdb_key}")
-                logging.debug(f"TMDB key: {tmdb_key}")
-                logging.debug(f"IMDb key in existing_ids: {imdb_key in existing_ids}")
-                logging.debug(f"TMDB key in existing_ids: {tmdb_key and tmdb_key in existing_ids}")
-
                 if imdb_key in existing_ids:
                     item_found = True
                     item_id, current_state, filled_by_file = existing_ids[imdb_key]
                 elif tmdb_key and tmdb_key in existing_ids:
                     item_found = True
                     item_id, current_state, filled_by_file = existing_ids[tmdb_key]
-
-                logging.debug(f"Item found: {item_found}")
-                logging.debug(f"Item ID: {item_id}")
-                logging.debug(f"Current state: {current_state}")
-                logging.debug(f"Filled by file: {filled_by_file}")
 
                 if item_found:
                     logging.debug(f"Comparing existing item in DB with Plex item:")
