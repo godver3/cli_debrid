@@ -11,7 +11,7 @@ app.config['PREFERRED_URL_SCHEME'] = 'https'
 
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = 'login'
+login_manager.login_view = 'auth.login'
 
 app_start_time = time.time()
 
