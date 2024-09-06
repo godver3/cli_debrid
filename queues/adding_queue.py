@@ -5,14 +5,12 @@ from typing import Dict, Any, List
 from api_tracker import api
 import hashlib
 import bencodepy
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
-
 from database import get_all_media_items, get_media_item_by_id, update_media_item_state
 from settings import get_setting
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, API_BASE_URL
-from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted
+from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted, get_not_wanted_magnets
 from scraper.scraper import scrape
 from metadata.metadata import get_all_season_episode_counts, get_overseerr_cookies
 from guessit import guessit
@@ -60,7 +58,7 @@ class AddingQueue:
                         queue_manager.move_to_sleeping(item, "Adding")
                         return
 
-                    uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None')
+                    uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
 
                     self.process_item(queue_manager, item, scrape_results, uncached_handling)
 
@@ -198,7 +196,12 @@ class AddingQueue:
         if not link:
             logging.error(f"No magnet link found for {item_identifier}")
             return False
-
+        
+        # Check if the hash is in the not_wanted list
+        if is_magnet_not_wanted(current_hash):
+            logging.info(f"Hash {current_hash} for {item_identifier} is in not_wanted_magnets. Skipping.")
+            return False
+        
         add_result = add_to_real_debrid(link)
         if add_result:
             if isinstance(add_result, dict):
@@ -353,7 +356,8 @@ class AddingQueue:
     def add_to_real_debrid_helper(self, link: str, item_identifier: str, hash_value: str, add_if_uncached: bool = True) -> Dict[str, Any]:
         try:
             logging.info(f"Processing link for {item_identifier}. Hash: {hash_value}")
-    
+
+
             # Check if the hash is already in the not wanted list
             if is_magnet_not_wanted(hash_value):
                 logging.info(f"Hash {hash_value} for {item_identifier} is already in not_wanted_magnets. Skipping.")
@@ -439,6 +443,9 @@ class AddingQueue:
         try:
             add_to_not_wanted(hash_value)
             logging.info(f"Added hash {hash_value} to not_wanted_magnets for {item_identifier}")
+            
+            # Add this line to log the current contents of the not_wanted list
+            logging.debug(f"Current not_wanted_magnets: {get_not_wanted_magnets()}")
         except Exception as e:
             logging.error(f"Error adding hash {hash_value} to not_wanted_magnets for {item_identifier}: {str(e)}")
 
@@ -527,24 +534,7 @@ class AddingQueue:
                     wanted_item['id'] != item['id'])
             ])
         return matching_items
-
-    def extract_episode_range(self, file_name):
-        match = re.search(r'S\d+E(\d+)(?:-|-)E?(\d+)', file_name, re.IGNORECASE)
-        if match:
-            return (int(match.group(1)), int(match.group(2)))
-        return None
-
-    def find_related_episode(self, item, episode_number, queue_manager):
-        for queue_name in ['Wanted', 'Scraping', 'Sleeping']:
-            queue = queue_manager.queues[queue_name]
-            for queue_item in queue.get_contents():
-                if (queue_item['type'] == 'episode' and
-                    queue_item['imdb_id'] == item['imdb_id'] and
-                    queue_item['season_number'] == item['season_number'] and
-                    int(queue_item['episode_number']) == episode_number):
-                    return queue_item
-        return None
-            
+           
     def file_matches_item(self, file: str, item: Dict[str, Any]) -> bool:
         filename = os.path.basename(file)
         logging.debug(f"Analyzing filename: {filename}")
