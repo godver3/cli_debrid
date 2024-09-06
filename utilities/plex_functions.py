@@ -352,11 +352,11 @@ async def get_recent_from_plex():
         logger.debug(f"Final movies list length: {len(processed_movies)}")
 
         for episode in processed_episodes:
-            genres = episode['genres']
-            logger.debug(f"Processed episode: {genres}")
+            location = episode['location']
+            logger.debug(f"Processed episode: {location}")
         for movie in processed_movies:
-            genres = movie['genres']
-            logger.debug(f"Processed movie: {genres}")
+            location = movie['location']
+            logger.debug(f"Processed movie: {location}")
 
         return {
             'movies': processed_movies,
