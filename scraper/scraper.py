@@ -99,11 +99,11 @@ def similarity(a: str, b: str) -> float:
 
 def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False) -> float:
     # Normalize titles
-    query_title = clean_title(query_title)
+    query_title = normalize_title(query_title)
     
     parsed_info = result.get('parsed_info', {})
     guessit_title = parsed_info.get('title', '')
-    guessit_title = clean_title(guessit_title)
+    guessit_title = normalize_title(guessit_title)
 
     logging.debug(f"Comparing cleaned titles - Query: '{query_title}', Guessit: '{guessit_title}'")
 
@@ -141,18 +141,7 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
 
     return similarity  # Already a float between 0 and 1
 
-def clean_title(title: str) -> str:
-    # Normalize Unicode characters
-    title = unicodedata.normalize('NFKD', title)
-    # Remove non-ASCII characters
-    title = re.sub(r'[^\x00-\x7F]+', '', title)
-    # Remove non-alphanumeric characters except spaces
-    title = re.sub(r'[^\w\s]', '', title)
-    # Convert periods to spaces
-    title = title.replace('.', ' ')
-    # Normalize whitespace
-    title = ' '.join(title.split())
-    return title.lower()  # Ensure lowercase
+
 
 def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
     max_similarity = 0
@@ -960,19 +949,31 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
 def normalize_title(title: str) -> str:
     """
-    Normalize the title by removing non-alphanumeric characters, years, and quality information.
+    Normalize the title by replacing spaces with periods, removing certain punctuation,
+    standardizing the format, and removing non-English letters while keeping accented English letters.
     """
-    # Remove year and quality information
-    title = re.sub(r'\b(19|20)\d{2}\b', '', title)
-    title = re.sub(r'\b\d{3,4}p\b', '', title)
-    title = re.sub(r'\bWEB-DL\b', '', title, flags=re.IGNORECASE)
-    title = re.sub(r'\bH264\b', '', title, flags=re.IGNORECASE)
-
-    # Remove non-alphanumeric characters and extra spaces
-    title = re.sub(r'[^\w\s]', ' ', title)
-    title = re.sub(r'\s+', ' ', title).strip()
-
-    return title.lower()  # Convert to lowercase for case-insensitive comparison
+    # Normalize Unicode characters
+    normalized = unicodedata.normalize('NFKD', title)
+    
+    # Remove apostrophes, colons, and parentheses
+    normalized = re.sub(r"[':()\[\]{}]", "", normalized)
+    
+    # Replace spaces and underscores with periods
+    normalized = re.sub(r'[\s_]+', '.', normalized)
+    
+    # Replace multiple periods with a single period
+    normalized = re.sub(r'\.+', '.', normalized)
+    
+    # Keep only English letters (including accented ones), numbers, periods, and hyphens
+    normalized = ''.join(c for c in normalized if c.isalnum() or c in '.-' or (unicodedata.category(c).startswith('L') and ord(c) < 0x300))
+    
+    # Remove any remaining non-ASCII characters
+    normalized = re.sub(r'[^\x00-\x7F]+', '', normalized)
+    
+    # Remove leading and trailing periods
+    normalized = normalized.strip('.')
+    
+    return normalized.lower()  # Convert to lowercase for case-insensitive comparison
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
 
@@ -1022,6 +1023,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             logging.warning(f"Version {version} not found in settings. Using default settings.")
             version_settings = {}
         logging.debug(f"Using version settings: {version_settings}")
+
+        title = normalize_title(title)
 
         # Use ScraperManager to handle scraping
         scraper_manager = ScraperManager(load_config())
