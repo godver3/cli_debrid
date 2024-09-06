@@ -1,5 +1,7 @@
 import sys
 import os
+import time
+import random
 
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,17 +16,17 @@ import re
 def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     nyaa_instances = [
         "https://nyaa.land/",
-        "https://nyaa.unblockninja.com/",
         "https://nyaa.si/",
-        "https://nyaa.iss.ink/"
+        "https://nyaa.unblockninja.com/",
+        "https://nyaa.iss.ink/",
     ]
     
-    categories = settings.get('categories', '1_0')
-    filter_option = settings.get('filter', '0')
+    #categories = settings.get('categories', '1_0')
+    #filter_option = settings.get('filter', '0')
     sort = settings.get('sort', 'seeders')
     order = settings.get('order', 'desc')
     
-    params = f'&c={categories}&f={filter_option}&s={sort}&o={order}'
+    params = f'&s={sort}&o={order}'
     
     if content_type.lower() == 'movie':
         query = f"{title} {year}"
@@ -37,13 +39,22 @@ def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, 
         else:
             query += f" {year}"  # Add year for general series search
     
-    encoded_query = quote(query)
+    encoded_query = quote(query).replace('.', '+').replace('%20', '+')    
     
     for base_url in nyaa_instances:
         full_url = f"{base_url}?f=0{params}&q={encoded_query}"
-        
+        logging.info(f"Scraping {full_url}")
         try:
-            response = api.get(full_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'})
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Referer': base_url,
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
+            response = api.get(full_url, headers=headers, timeout=10)
             if response.status_code == 200:
                 results = parse_nyaa_results(response.content)
                 if results:
@@ -51,8 +62,11 @@ def scrape_nyaa_instance(instance: str, settings: Dict[str, Any], imdb_id: str, 
                     return results
             else:
                 logging.warning(f"Nyaa API error for {base_url}: Status code {response.status_code}")
-        except Exception as e:
-            logging.error(f"Error scraping Nyaa instance {base_url}: {str(e)}", exc_info=True)
+        except api.exceptions.RequestException as e:
+            logging.error(f"Error scraping Nyaa instance {base_url}: {str(e)}")
+        
+        # Add a small delay between requests to avoid overwhelming the servers
+        time.sleep(random.uniform(1, 3))
     
     logging.warning("Failed to scrape results from all Nyaa instances")
     return []
