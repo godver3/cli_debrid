@@ -76,7 +76,11 @@ def onboarding_step(step):
             else:
                 return jsonify({'success': False, 'error': 'Passwords do not match'})
 
-        return render_template('onboarding_step_1.html', current_step=step, can_proceed=can_proceed, admin_created=admin_created, is_onboarding=True)
+        return render_template('onboarding_step_1.html', 
+                               current_step=step, 
+                               can_proceed=can_proceed, 
+                               admin_created=admin_created, 
+                               is_onboarding=True)
        
     if step == 2:
         required_settings = [
