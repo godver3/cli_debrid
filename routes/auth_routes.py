@@ -55,28 +55,26 @@ def load_user(user_id):
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
-    from routes.settings_routes import is_user_system_enabled
-
-    if not is_user_system_enabled():
-        return redirect(url_for('statistics.index'))
-    
     if current_user.is_authenticated:
         if not current_user.onboarding_complete:
             next_step = get_next_onboarding_step()
             if next_step <= 5:  # Assuming 5 is the last step
-                return redirect(url_for('onboarding.setup_admin'))  # Changed this line
+                return redirect(url_for('onboarding.setup_admin'))
         return redirect(url_for('statistics.index'))
 
     if request.method == 'POST':
-        # ... existing code ...
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        user = User.query.filter_by(username=username).first()
+        
         if user and check_password_hash(user.password, password):
             login_user(user)
-            logging.info(f"User {user.username} logged in. Onboarding complete: {user.onboarding_complete}")
             if user.is_default or not user.onboarding_complete:
-                return redirect(url_for('onboarding.setup_admin'))  # Changed this line
+                return redirect(url_for('onboarding.setup_admin'))
             return redirect(url_for('statistics.index'))
         else:
-            flash('Invalid username or password.', 'error')
+            flash('Please check your login details and try again.')
     
     return render_template('login.html')
 
