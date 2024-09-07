@@ -3,9 +3,6 @@ import sqlite3
 import string
 from database import get_db_connection
 import logging
-from routes import admin_required
-import os
-from database import create_tables, verify_database, bulk_delete_by_imdb_id
 from sqlalchemy import text, inspect
 from extensions import db
 from database import remove_from_media_items

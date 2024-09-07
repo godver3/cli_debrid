@@ -12,7 +12,7 @@
             <h3>Bulk Delete from Database</h3>
             <form action="{{ url_for('debug.bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
                 <div class="form-group">
-                    <label for="imdb_id">IMDB ID:</label>
+                    <label for="imdb_id">IMDB or TMDB ID:</label>
                     <input type="text" id="imdb_id" name="imdb_id" required>
                 </div>
                 <button type="submit">Delete</button>

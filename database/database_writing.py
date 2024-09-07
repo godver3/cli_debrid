@@ -3,16 +3,16 @@ import logging
 from datetime import datetime
 import json
 
-def bulk_delete_by_imdb_id(imdb_id):
+def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute('DELETE FROM media_items WHERE imdb_id = ?', (imdb_id,))
+        cursor.execute(f'DELETE FROM media_items WHERE {id_type} = ?', (id_value,))
         deleted_count = cursor.rowcount
         conn.commit()
         return deleted_count
     except Exception as e:
-        logging.error(f"Error bulk deleting items with IMDB ID {imdb_id}: {str(e)}")
+        logging.error(f"Error bulk deleting items with {id_type.upper()} {id_value}: {str(e)}")
         return 0
     finally:
         conn.close()
