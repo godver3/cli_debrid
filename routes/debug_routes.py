@@ -12,7 +12,7 @@ from content_checkers.collected import get_wanted_from_collected
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from metadata.metadata import process_metadata
-from database import add_wanted_items, bulk_delete_by_imdb_id, get_db_connection, create_tables, verify_database
+from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 import os
 
 debug_bp = Blueprint('debug', __name__)
@@ -25,15 +25,17 @@ def debug_functions():
 
 @debug_bp.route('/bulk_delete_by_imdb', methods=['POST'])
 def bulk_delete_by_imdb():
-    imdb_id = request.form.get('imdb_id')
-    if not imdb_id:
-        return jsonify({'success': False, 'error': 'IMDB ID is required'})
+    id_value = request.form.get('imdb_id')
+    if not id_value:
+        return jsonify({'success': False, 'error': 'ID is required'})
 
-    deleted_count = bulk_delete_by_imdb_id(imdb_id)
+    id_type = 'imdb_id' if id_value.startswith('tt') else 'tmdb_id'
+    deleted_count = bulk_delete_by_id(id_value, id_type)
+    
     if deleted_count > 0:
-        return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with IMDB ID: {imdb_id}'})
+        return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with {id_type.upper()}: {id_value}'})
     else:
-        return jsonify({'success': False, 'error': f'No items found with IMDB ID: {imdb_id}'})
+        return jsonify({'success': False, 'error': f'No items found with {id_type.upper()}: {id_value}'})
 
 @debug_bp.route('/delete_database', methods=['POST'])
 @admin_required
