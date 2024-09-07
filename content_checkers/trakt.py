@@ -163,7 +163,7 @@ def ensure_trakt_auth():
     
     current_time = int(time.time())
     
-    if current_time > trakt.core.OAUTH_EXPIRES_AT:
+    if current_time > (trakt.core.OAUTH_EXPIRES_AT - 86400):
         logging.info("Token has expired, attempting to refresh")
         try:
             trakt.core._validate_token(trakt.core.CORE)
