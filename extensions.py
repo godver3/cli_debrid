@@ -1,13 +1,16 @@
 from flask_sqlalchemy import SQLAlchemy
-from flask import Flask, redirect, request
+from flask import Flask, redirect, request, jsonify
 from flask_login import LoginManager
 import time
 from sqlalchemy import inspect
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 db = SQLAlchemy()
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 app.config['PREFERRED_URL_SCHEME'] = 'https'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Add this line
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -39,14 +42,22 @@ def handle_https():
         if request.headers.get('X-Forwarded-Proto') == 'http':
             url = request.url.replace('http://', 'https://', 1)
             return redirect(url, code=301)
-    else:
-        # Remove HTTPS forcing for direct IP access
-        if request.url.startswith('https://'):
-            url = request.url.replace('https://', 'http://', 1)
-            return redirect(url, code=301)
+    # Remove the else clause to avoid redirecting HTTPS to HTTP
 
 @app.after_request
 def add_security_headers(response):
     if is_behind_proxy():
         response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    
+    # Add CORS headers
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    
     return response
+
+# Add an error handler for JSON parsing
+@app.errorhandler(400)
+def bad_request(error):
+    return jsonify({"error": "Bad request", "message": str(error)}), 400
