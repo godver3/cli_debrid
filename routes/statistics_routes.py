@@ -11,6 +11,7 @@ from .models import user_required, onboarding_required
 from extensions import app_start_time
 import time 
 from database import get_recently_added_items, get_poster_url, get_collected_counts
+from debrid.real_debrid import get_active_downloads
 
 statistics_bp = Blueprint('statistics', __name__)
 
@@ -144,6 +145,7 @@ def index():
     collected_counts = get_collected_counts()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
     upcoming_releases = get_upcoming_releases()
+    active_downloads, limit_downloads = get_active_downloads()
     now = datetime.now()
     
     # Fetch recently added items from the database
@@ -179,7 +181,9 @@ def index():
         'recently_aired': recently_aired,
         'airing_soon': airing_soon,
         'upcoming_releases': upcoming_releases,
-        'timezone': time.tzname[0]
+        'timezone': time.tzname[0],
+        'active_downloads': active_downloads, 
+        'limit_downloads': limit_downloads
     }
     
     compact_view = session.get('compact_view', False)

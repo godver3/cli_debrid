@@ -294,6 +294,23 @@ def process_hashes(hashes, batch_size=100):
                 results[hash_] = None
     return results
 
+def get_active_downloads(check=False):
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    response = api.get(f"{API_BASE_URL}/torrents/activeCount", headers=headers, timeout=60)
+    response = response.json()
+    if check:
+        if 'nb' in response:
+            return response['nb'] < response['limit']
+        else: return False
+    else:
+        if 'nb' in response:
+            return response['nb'], response['limit']
+        else:
+            return 0, response['limit']
+
 def file_matches_item(filename, item):
     filename = filename.lower()
     
