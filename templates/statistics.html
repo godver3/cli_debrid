@@ -267,6 +267,7 @@
         }
         
         .top-stats {
+            display: grid;
             grid-template-columns: 1fr;
         }
         
@@ -391,18 +392,6 @@
         font-size: 0.9em;
     }
 
-    @media (max-width: 768px) {
-        .compact-view .card {
-            width: calc(33.33% - 7px);
-        }
-    }
-
-    @media (max-width: 480px) {
-        .compact-view .card {
-            width: calc(50% - 5px);
-        }
-    }
-
     /* Compact view styles for recently added section */
     .compact-view .recently-added {
         display: flex;
@@ -465,6 +454,55 @@
         margin: 0 0 0 5px;
         color: #aaa;
         display: inline;
+    }
+
+    @media (max-width: 768px) {
+        .compact-view .card {
+            width: calc(33.33% - 7px);
+        }
+    }
+
+    @media (max-width: 480px) {
+        .compact-view .card {
+            width: calc(50% - 5px);
+        }
+    }
+
+    @media (max-width: 1200px) {
+        .compact-view .top-stats {
+            display: grid;
+        }
+        .compact-view .stats-box.recently-aired, .compact-view .stats-box.airing-soon, .compact-view .stats-box.upcoming-releases {
+            width: 100%;
+        }
+
+        .compact-view .recently-added {
+            display: block;
+        }
+
+        .compact-view .recently-added-section {
+            margin-bottom: 10px;
+        }
+
+        .compact-view .recently-added-section .card-container {
+            display: block;
+        }
+
+        .compact-view .recently-added-section .card {
+            display: grid;
+        }
+
+        .compact-view .recently-added-section .card-hover-content {
+            display: inline-grid;
+            padding: 0px;
+            margin-bottom: 8px;
+            overflow-wrap: anywhere;
+        }
+
+        .compact-view .recently-added-section .card .info-line {
+            font-size: 0.8em;
+            margin: 0px;
+        }
     }
 
 </style>
@@ -586,7 +624,7 @@
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
                                 <p class="info-line">Added: {{ movie.collected_at }}</p>
                                 <p class="info-line">Versions: {{ movie.versions }}</p>
-                                <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${movie.filled_by_title}</span></p>
+                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${movie.filled_by_title}</span></p>
                             </div>
                         </div>
                     {% endfor %}
@@ -611,7 +649,7 @@
                                 <p class="info-line">Versions: {{ show.versions }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
-                                <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${show.filled_by_title}</span></p>
+                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${show.filled_by_title}</span></p>
 
                             </div>
                         </div>
@@ -872,7 +910,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
                                 `<p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
                                 <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
-                            <p class="info-line" style="display: inherit;"><span style="color: #f4f4f4;">File:</span> <span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
+                            <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
                         </div>
                     </div>
                 `;

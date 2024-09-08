@@ -417,7 +417,7 @@ function displayTorrentResults(data, title, year) {
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     function handleScreenChange(e) {
         if (e.matches) {
-            const overlayContentRes = document.getElementById('overlayContentRes');
+            const overlayContentRes = document.getElementById('overlayContent');
             overlayContentRes.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
             const gridContainer = document.createElement('div');
             gridContainer.style.display = 'flex';
