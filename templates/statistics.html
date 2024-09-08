@@ -488,6 +488,7 @@
                 <span class="toggle-slider"></span>
             </label>
         </div>
+        <div class="toggle-item"><span id="active-downloads"></span></div>
     </div>
 
     <div class="stats-container">
@@ -755,6 +756,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Update timezone information
             updateTimezone(data.timezone);
+            getActiveDownloads(data.active_downloads,data.limit_downloads);
         })
         .catch(error => {
             console.error('Error updating statistics:', error);
@@ -771,6 +773,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const timezoneElement = document.getElementById('current-timezone');
         if (timezoneElement) {
             timezoneElement.textContent = timezone;
+        }
+    }
+    function getActiveDownloads(active_downloads,limit_downloads) {
+        const rdActiveDownloads = document.getElementById('active-downloads');
+        if (rdActiveDownloads) {
+            rdActiveDownloads.textContent = `RD: ${active_downloads}/${limit_downloads}`;
         }
     }
 
