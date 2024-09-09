@@ -76,13 +76,7 @@ def handle_https():
 def check_user_system():
     # Exclude the webhook route, its subpaths, and static files
     if request.path.startswith('/webhook') or request.path.startswith('/static'):
-        return
-
-    user_system_enabled = is_user_system_enabled()
-    
-    logging.debug(f"User system enabled: {user_system_enabled}")
-    logging.debug(f"Current endpoint: {request.endpoint}")
-    logging.debug(f"User authenticated: {current_user.is_authenticated}")
+        return    
 
     # Remove any specific handling for statistics.index here
     # The decorators will handle the logic now
