@@ -14,6 +14,7 @@ from flask_sqlalchemy import SQLAlchemy
 from extensions import db, app, app_start_time
 from routes.auth_routes import init_db
 from flask_login import current_user
+import logging
 
 from routes import register_blueprints, auth_bp
 
@@ -37,7 +38,7 @@ init_db(app)
 
 # Disable Werkzeug request logging
 log = logging.getLogger('werkzeug')
-log.disabled = True
+log.disabled = False
 
 # Configure logging for web_server
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -107,11 +108,22 @@ def favicon():
 
 @app.route('/site.webmanifest')
 def manifest():
+    logging.info(f"Static folder path: {app.static_folder}")
+    manifest_path = os.path.join(app.static_folder, 'site.webmanifest')
+    if not os.path.exists(manifest_path):
+        logging.info(f"Manifest file not found at: {manifest_path}")
+        return "Manifest file not found", 404
+    
     try:
-        return send_from_directory(app.static_folder, 'site.webmanifest', mimetype='application/manifest+json')
+        logging.info(f"Attempting to serve manifest from: {app.static_folder}")
+        response = send_from_directory(app.static_folder, 'site.webmanifest', mimetype='application/manifest+json')
+        logging.info(f"Manifest served successfully")
+        return response
     except Exception as e:
-        app.logger.error(f"Error serving manifest: {str(e)}")
-        return "Error serving manifest", 500
+        logging.info(f"Error serving manifest: {str(e)}")
+        logging.info(f"Static folder path: {app.static_folder}")
+        logging.info(f"Full file path: {os.path.join(app.static_folder, 'site.webmanifest')}")
+        return f"Error serving manifest: {str(e)}", 500
 
 if __name__ == '__main__':
     start_server()
