@@ -12,6 +12,7 @@ from extensions import app_start_time
 import time 
 from database import get_recently_added_items, get_poster_url, get_collected_counts
 from debrid.real_debrid import get_active_downloads
+import logging
 
 statistics_bp = Blueprint('statistics', __name__)
 
@@ -136,6 +137,8 @@ def set_compact_preference():
 @user_required
 @onboarding_required
 def index():
+    logging.debug(f"Statistics request: {request.url}")
+
     os.makedirs('db_content', exist_ok=True)
 
     start_time = time.time()
@@ -195,10 +198,12 @@ def index():
     end_time = time.time()
     total_time = end_time - start_time
 
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+    if request.args.get('ajax') == '1':
+        logging.debug("Returning JSON response")
         return jsonify(stats)
     else:
-        return render_template('statistics.html', stats=stats, compact_view=compact_view)
+        logging.debug("Rendering HTML template")
+        return render_template('statistics.html', stats=stats)
         
 @statistics_bp.route('/set_time_preference', methods=['POST'])
 def set_time_preference():

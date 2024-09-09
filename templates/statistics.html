@@ -715,9 +715,10 @@ document.addEventListener('DOMContentLoaded', () => {
         fetch('/statistics/set_time_preference', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
             },
-            body: JSON.stringify({ use24HourFormat: use24HourFormat }),
+            body: new URLSearchParams({ use24HourFormat: use24HourFormat }),
+            credentials: 'include',
         })
         .then(response => response.json())
         .then(data => {
@@ -740,9 +741,10 @@ document.addEventListener('DOMContentLoaded', () => {
         fetch('/statistics/set_compact_preference', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
             },
-            body: JSON.stringify({ compactView: this.checked }),
+            body: new URLSearchParams({ compactView: this.checked }),
+            credentials: 'include',
         })
         .then(response => response.json())
         .then(data => {
@@ -760,10 +762,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateStatistics() {
         console.log('Attempting to fetch statistics...');
-        fetch('/statistics', {
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            }
+        const protocol = window.location.protocol;
+        const host = window.location.host;
+        fetch(`/statistics?ajax=1`, {
+            method: 'GET',
+            credentials: 'include'
         })
         .then(response => {
             console.log('Response received:', response);

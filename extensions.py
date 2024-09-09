@@ -13,6 +13,13 @@ db = SQLAlchemy()
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+# Configure CORS
+CORS(app, supports_credentials=True, resources={r"/*": {
+    "origins": "*",
+    "methods": ["GET", "HEAD", "POST", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Authorization", "Accept", "Accept-Language", "Content-Language", "Range"]
+}})
+
 app.config['PREFERRED_URL_SCHEME'] = 'https'
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Add this line
 
@@ -70,6 +77,7 @@ def handle_https():
     if is_behind_proxy():
         if request.headers.get('X-Forwarded-Proto') == 'http':
             url = request.url.replace('http://', 'https://', 1)
+            print(f"Redirecting to: {url}")
             return redirect(url, code=301)
     # Remove the else clause to avoid redirecting HTTPS to HTTP
 
@@ -82,23 +90,24 @@ def check_user_system():
     # Remove any specific handling for statistics.index here
     # The decorators will handle the logic now
 
-# Initialize CORS with the app
-CORS(app, supports_credentials=True, allow_headers="*")
-
 @app.after_request
-def add_security_headers(response):
-    if is_behind_proxy():
-        response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
-        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    
-    # Modify CORS headers
+def add_cors_headers(response):
     origin = request.headers.get('Origin')
     if origin:
         response.headers['Access-Control-Allow-Origin'] = origin
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = '*'  # Allow all headers
+    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range'
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     
+    # Handle preflight requests
+    if request.method == 'OPTIONS':
+        response.headers['Access-Control-Max-Age'] = '3600'
+    
+    return response
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
     return response
 
 # Add an error handler for JSON parsing
