@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, jsonify
 from .models import user_required, onboarding_required
 from datetime import datetime
 from queue_manager import QueueManager
+import logging
 
 queues_bp = Blueprint('queues', __name__)
 
@@ -20,10 +21,15 @@ def index():
         elif queue_name == 'Checking':
             for item in items:
                 item['time_added'] = item.get('time_added', datetime.now())
-                item['filled_by_file'] = item.get('filled_by_file', 'Unknown')  # Add this line
+                item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
         elif queue_name == 'Sleeping':
             for item in items:
                 item['wake_count'] = queue_manager.get_wake_count(item['id'])
+        elif queue_name == 'Pending Uncached':
+            for item in items:
+                item['time_added'] = item.get('time_added', datetime.now())
+                item['magnet_link'] = item.get('magnet_link', 'Unknown')
+
 
     upgrading_queue = queue_contents.get('Upgrading', [])
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
@@ -35,5 +41,5 @@ def api_queue_contents():
     if 'Sleeping' in contents:
         for item in contents['Sleeping']:
             item['wake_count'] = queue_manager.get_wake_count(item['id'])
-    #logging.info(f"Queue contents: {contents}")  # Add this line
+
     return jsonify(contents)

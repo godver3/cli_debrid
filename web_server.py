@@ -92,8 +92,11 @@ def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
 
 @app.route('/')
 def index():
-    if current_user.is_authenticated:
-        return redirect(url_for('statistics.index'))  # Update this line
+    from routes.settings_routes import is_user_system_enabled
+    if not is_user_system_enabled():
+        return redirect(url_for('statistics.index'))
+    elif current_user.is_authenticated:
+        return redirect(url_for('statistics.index'))
     else:
         return redirect(url_for('auth.login'))
 

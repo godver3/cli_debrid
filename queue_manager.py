@@ -11,6 +11,7 @@ from queues.checking_queue import CheckingQueue
 from queues.sleeping_queue import SleepingQueue
 from queues.unreleased_queue import UnreleasedQueue
 from queues.blacklisted_queue import BlacklistedQueue
+from queues.pending_uncached_queue import PendingUncachedQueue
 from wake_count_manager import wake_count_manager
 
 class QueueManager:
@@ -30,7 +31,8 @@ class QueueManager:
             "Checking": CheckingQueue(),
             "Sleeping": SleepingQueue(),
             "Unreleased": UnreleasedQueue(),
-            "Blacklisted": BlacklistedQueue()
+            "Blacklisted": BlacklistedQueue(),
+            "Pending Uncached": PendingUncachedQueue()
         }
 
     def update_all_queues(self):
@@ -42,7 +44,6 @@ class QueueManager:
         contents = OrderedDict()
         for state, queue in self.queues.items():
             contents[state] = queue.get_contents()
-        #logging.info(f"Getting queue contents: {contents}")  # Add this line
         return contents
 
     @staticmethod
@@ -83,6 +84,9 @@ class QueueManager:
         
     def process_blacklisted(self):
         self.queues["Blacklisted"].process(self)
+
+    def process_pending_uncached(self):
+        self.queues["Pending Uncached"].process(self)
 
     def blacklist_item(self, item: Dict[str, Any], from_queue: str):
         self.queues["Blacklisted"].blacklist_item(item, self)
@@ -185,6 +189,18 @@ class QueueManager:
             self.queues["Blacklisted"].add_item(updated_item)
             self.queues[from_queue].remove_item(item)
             logging.debug(f"Successfully moved item {item_identifier} to Blacklisted queue")
+        else:
+            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+
+    def move_to_pending_uncached(self, item: Dict[str, Any], from_queue: str, title: str, link: str, scrape_results: List[Dict]):
+        item_identifier = self.generate_identifier(item)
+        logging.info(f"Moving item {item_identifier} to Pending Uncached Additions queue")
+        update_media_item_state(item['id'], 'Pending Uncached', filled_by_title=title, filled_by_magnet=link, scrape_results=scrape_results)
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            self.queues["Pending Uncached"].add_item(updated_item)
+            self.queues[from_queue].remove_item(item)
+            logging.debug(f"Successfully moved item {item_identifier} to Pending Uncached Additions queue")
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 

@@ -9,7 +9,7 @@ from datetime import datetime
 import os
 from database import get_all_media_items, get_media_item_by_id, update_media_item_state
 from settings import get_setting
-from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, API_BASE_URL
+from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, API_BASE_URL, get_active_downloads
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted, get_not_wanted_magnets
 from scraper.scraper import scrape
 from metadata.metadata import get_all_season_episode_counts, get_overseerr_cookies
@@ -73,62 +73,40 @@ class AddingQueue:
         logging.debug(f"Processing {mode} mode for item: {item_identifier}")
         logging.debug(f"Total scrape results: {len(scrape_results)}")
 
-        processed_results = []
-        hashes = []
-
-        # First pass: extract hashes and prepare results
         for index, result in enumerate(scrape_results):
             title = result.get('title', '')
             link = result.get('magnet', '')
-            logging.debug(f"Processing result {index + 1}: Title: {title}")
-
-            current_hash = extract_hash_from_magnet(link) if link.startswith('magnet:') else self.download_and_extract_hash(link)
+            
+            if link.startswith('magnet:'):
+                current_hash = extract_hash_from_magnet(link)
+            else:
+                current_hash = self.download_and_extract_hash(link)
 
             if not current_hash:
                 logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
                 continue
 
-            hashes.append(current_hash)
-            processed_results.append({
-                'result': result,
-                'hash': current_hash,
-                'title': title,
-                'link': link,
-                'original_index': index
-            })
-
-        logging.debug(f"Processed results: {len(processed_results)}")
-
-        # Check cache status for all hashes at once
-        cache_status = is_cached_on_rd(hashes) if hashes else {}
-        logging.info(f"Cache status returned: {cache_status}")
-
-        # Process results based on mode
-        for processed_result in processed_results:
-            current_hash = processed_result['hash']
-            result = processed_result['result']
-            original_index = processed_result['original_index']
-            is_cached = cache_status.get(current_hash, False)
-
+            is_cached = is_cached_on_rd(current_hash).get(current_hash, False)
+            
             if mode == 'none' and not is_cached:
-                logging.debug(f"Skipping uncached result {original_index + 1} for {item_identifier}")
+                logging.debug(f"Skipping uncached result {index + 1} for {item_identifier}")
                 continue
 
-            if mode == 'hybrid' and not is_cached and any(cache_status.values()):
-                logging.debug(f"Skipping uncached result {original_index + 1} for {item_identifier} in hybrid mode")
-                continue
+            if mode == 'hybrid' and not is_cached:
+                cached_results = [r for r in scrape_results if is_cached_on_rd(extract_hash_from_magnet(r.get('magnet', ''))).get(extract_hash_from_magnet(r.get('magnet', '')), False)]
+                if cached_results:
+                    logging.debug(f"Skipping uncached result {index + 1} for {item_identifier} in hybrid mode")
+                    continue
 
-            logging.info(f"Processing result {original_index + 1} for {item_identifier}. Cached: {is_cached}")
-            success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached)
+            logging.info(f"Processing result {index + 1} for {item_identifier}. Cached: {is_cached}")
+            success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached, scrape_results=scrape_results)
             
             if success:
-                logging.info(f"Successfully processed result {original_index + 1} for {item_identifier}")
+                logging.info(f"Successfully processed result {index + 1} for {item_identifier}")
                 return True
-            else:
-                logging.warning(f"Failed to process result {original_index + 1} for {item_identifier}. Continuing to next result.")
 
         # If we're here, no results were successfully processed.
-        logging.info(f"No results successfully processed for {item_identifier}")
+        logging.info(f"No results successfully processed for {self.generate_identifier(item)}")
 
         # For episodes, try individual episode scraping
         if item['type'] == 'episode':
@@ -185,13 +163,14 @@ class AddingQueue:
             logging.warning(f"No file information available for torrent: {item_identifier}")
             return False, torrent_id
 
-    def process_result(self, queue_manager, item, result, current_hash, is_cached):
+    def process_result(self, queue_manager, item, result, current_hash, is_cached, scrape_results):
         item_identifier = queue_manager.generate_identifier(item)
         title = result.get('title', '')
         link = result.get('magnet', '')
 
         torrent_id = result.get('torrent_id')
-        logging.debug(f"Torrent ID: {torrent_id}")
+        logging.info(f"Torrent ID: {torrent_id}")
+        logging.info(f"Link: {link}")
 
         if not link:
             logging.error(f"No magnet link found for {item_identifier}")
@@ -202,6 +181,25 @@ class AddingQueue:
             logging.info(f"Hash {current_hash} for {item_identifier} is in not_wanted_magnets. Skipping.")
             return False
         
+        # Check if we're about to add an uncached item
+        if not is_cached:
+            active_downloads, download_limit = get_active_downloads()
+
+            logging.info(f"Active downloads: {active_downloads}")
+            logging.info(f"Download limit: {download_limit}")
+            
+            if active_downloads >= download_limit:
+                logging.info(f"Download limit reached. Moving {item_identifier} to Pending Uncached Additions queue.")
+                queue_manager.move_to_pending_uncached(item, "Adding", title, link, scrape_results=scrape_results)
+
+                logging.info(f"Result: {result.get('season_pack')}")
+
+                # Process other season items
+                if result.get('season_pack'):
+                    self.move_related_season_items(queue_manager, item, result.get('season_pack'), title, link)
+
+                return True
+
         add_result = add_to_real_debrid(link)
         if add_result:
             if isinstance(add_result, dict):
@@ -239,6 +237,38 @@ class AddingQueue:
 
         return False
 
+    def move_related_season_items(self, queue_manager, item, season_pack, title, link):
+        item_identifier = queue_manager.generate_identifier(item)
+        
+        if not isinstance(season_pack, list):
+            season_pack = [season_pack]
+        
+        
+        for season in season_pack:
+            for queue_name in ['Wanted', 'Scraping']:
+                queue = queue_manager.queues[queue_name]
+                queue_contents = queue.get_contents()
+
+                for queue_item in queue_contents:
+                    item_identifier = queue_manager.generate_identifier(queue_item)
+
+                related_items = [
+                    related_item for related_item in queue_contents
+                    if (related_item.get('type') == 'episode' and
+                        related_item.get('imdb_id') == item.get('imdb_id') and
+                        str(related_item.get('season_number')) == str(season))
+                ]
+                
+                logging.info(f"Found {len(related_items)} related items in {queue_name} queue for season {season}")
+                
+                for related_item in related_items:
+                    related_identifier = queue_manager.generate_identifier(related_item)
+                    logging.info(f"Moving related item {related_identifier} to Pending Uncached Additions queue.")
+                    queue_manager.move_to_pending_uncached(related_item, queue_name, title, link)
+                
+                if not related_items:
+                    logging.info(f"No related items found in {queue_name} queue for season {season}")
+        
     def handle_failed_item(self, queue_manager, item, from_queue):
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Handling failed item: {item_identifier}")
