@@ -15,6 +15,8 @@ let mobileTooltipContent = null;
 let scrollTimeout = null;
 const SCROLL_HIDE_DELAY = 100; // ms to wait after scrolling stops before hiding tooltip
 
+let isUpdatingContent = false;
+
 function isMobileDevice() {
     return (typeof window.orientation !== "undefined") || 
            (navigator.userAgent.indexOf('IEMobile') !== -1) ||
@@ -34,11 +36,13 @@ async function fetchTooltips() {
 }
 
 function showTooltip(event) {
-    if (isMobileDevice()) return;
+    if (isMobileDevice() || isUpdatingContent) return;
 
     const element = event.currentTarget;
     const tooltipKey = element.dataset.tooltip;
-    console.log('Preparing to show tooltip for:', tooltipKey);
+    const fullContent = element.dataset.fullContent;
+    
+    console.log('Preparing to show tooltip for:', tooltipKey || 'database cell');
     
     // Clear any existing timeouts
     if (tooltipTimeout) {
@@ -69,24 +73,37 @@ function showTooltip(event) {
     tooltipTimeout = setTimeout(() => {
         if (activeTooltipElement !== element) return; // Don't show if we've moved to another element
 
-        const [page, key] = tooltipKey.split('.');
-        
-        if (tooltips[page] && tooltips[page][key]) {
-            const tooltipText = tooltips[page][key];
-            
-            tooltipElement.textContent = tooltipText;
-            tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
-            
-            // Force a reflow before changing the opacity
-            tooltipElement.offsetHeight;
-            tooltipElement.style.opacity = '1';
-            
-            console.log('Tooltip displayed:', tooltipText);
+        let tooltipText;
+
+        if (tooltipKey) {
+            // Regular tooltip
+            const [page, key] = tooltipKey.split('.');
+            if (tooltips[page] && tooltips[page][key]) {
+                tooltipText = tooltips[page][key];
+            } else {
+                console.log('Tooltip not found for:', tooltipKey);
+                tooltipElement.style.display = 'none';
+                document.removeEventListener('mousemove', updatePosition);
+                return;
+            }
+        } else if (fullContent) {
+            // Database cell tooltip
+            tooltipText = fullContent;
         } else {
-            console.log('Tooltip not found for:', tooltipKey);
+            console.log('No tooltip content found');
             tooltipElement.style.display = 'none';
             document.removeEventListener('mousemove', updatePosition);
+            return;
         }
+        
+        tooltipElement.textContent = tooltipText;
+        tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
+        
+        // Force a reflow before changing the opacity
+        tooltipElement.offsetHeight;
+        tooltipElement.style.opacity = '1';
+        
+        console.log('Tooltip displayed:', tooltipText);
     }, TOOLTIP_DELAY);
 
     // Update hideTooltip to remove the mousemove listener
@@ -124,6 +141,8 @@ function updateTooltipPosition(event) {
 }
 
 function hideTooltip() {
+    if (isUpdatingContent) return;
+
     if (tooltipTimeout) {
         clearTimeout(tooltipTimeout);
         tooltipTimeout = null;
@@ -257,9 +276,88 @@ function removeMobileTooltip() {
     mobileTooltipContent = null;
 }
 
+function initializeDatabaseTooltips() {
+    const truncatedCells = document.querySelectorAll('.truncate');
+    truncatedCells.forEach(cell => {
+        const fullContent = cell.textContent;
+        if (cell.offsetWidth < cell.scrollWidth) {
+            cell.setAttribute('data-full-content', fullContent);
+            if (isMobileDevice()) {
+                addMobileTooltipButton(cell);
+            }
+        }
+    });
+}
+
+function showDatabaseTooltip(event) {
+    const cell = event.currentTarget;
+    const fullContent = cell.getAttribute('data-full-content');
+
+    if (!tooltipElement) {
+        tooltipElement = document.createElement('div');
+        tooltipElement.className = 'tooltip database-tooltip';
+        document.body.appendChild(tooltipElement);
+    }
+
+    tooltipElement.textContent = fullContent;
+    tooltipElement.style.display = 'block';
+    tooltipElement.style.opacity = '0';
+
+    updateTooltipPosition(event);
+
+    // Force a reflow before changing the opacity
+    tooltipElement.offsetHeight;
+    tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
+    tooltipElement.style.opacity = '1';
+
+    document.addEventListener('mousemove', updateTooltipPosition);
+}
+
+function addMobileTooltipButton(cell) {
+    const button = document.createElement('i');
+    button.className = 'fas fa-ellipsis-h mobile-tooltip-button';
+    button.setAttribute('aria-label', 'Show full content');
+    cell.appendChild(button);
+
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        showMobileDatabaseTooltip(cell, button);
+    });
+}
+
+function showMobileDatabaseTooltip(cell, button) {
+    const fullContent = cell.getAttribute('data-full-content');
+
+    if (mobileTooltipContent) {
+        hideMobileTooltip(false);
+    }
+
+    mobileTooltipContent = document.createElement('div');
+    mobileTooltipContent.className = 'mobile-tooltip-content database-tooltip';
+    mobileTooltipContent.innerHTML = `<p>${fullContent}</p>`;
+
+    button.parentNode.insertBefore(mobileTooltipContent, button.nextSibling);
+
+    mobileTooltipContent.style.opacity = '0';
+    mobileTooltipContent.style.display = 'block';
+
+    positionTooltip(button, mobileTooltipContent);
+
+    requestAnimationFrame(() => {
+        mobileTooltipContent.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
+        mobileTooltipContent.style.opacity = '0.75';
+    });
+
+    if (scrollTimeout) {
+        clearTimeout(scrollTimeout);
+        scrollTimeout = null;
+    }
+}
+
 function initializeTooltips() {
     console.log('Initializing tooltips');
     console.log('Is mobile device?', isMobileDevice());
+
     if (isMobileDevice()) {
         console.log('Mobile device detected. Setting up mobile tooltips.');
         fetchTooltips().then(() => {
@@ -273,14 +371,14 @@ function initializeTooltips() {
         document.addEventListener('click', handleInteraction);
     } else {
         console.log('Desktop device detected. Setting up desktop tooltips.');
-        fetchTooltips();
-        
-        const tooltipElements = document.querySelectorAll('[data-tooltip]');
-        
-        tooltipElements.forEach(element => {
-            element.addEventListener('mouseenter', showTooltip);
+        fetchTooltips().then(() => {
+            initializeDesktopTooltips();
+            console.log('Desktop tooltips initialized');
         });
     }
+
+    // Initialize database tooltips
+    initializeDatabaseTooltips();
 
     // Close mobile tooltip when tapping outside
     document.addEventListener('click', (event) => {
@@ -297,6 +395,15 @@ function initializeTooltips() {
                 positionTooltip(button, mobileTooltipContent);
             }
         }
+    });
+}
+
+function initializeDesktopTooltips() {
+    const tooltipElements = document.querySelectorAll('[data-tooltip], .truncate');
+    
+    tooltipElements.forEach(element => {
+        element.addEventListener('mouseenter', showTooltip);
+        element.addEventListener('mouseleave', hideTooltip);
     });
 }
 
@@ -360,6 +467,17 @@ function addMobileTooltipStyles() {
                 max-width: calc(100vw - 30px);
             }
         }
+
+        .database-tooltip {
+            white-space: normal;
+            word-break: break-word;
+        }
+
+        .mobile-tooltip-button.fa-ellipsis-h {
+            color: #007bff;
+            font-size: 1em;
+            margin-left: 5px;
+        }
     `;
     document.head.appendChild(style);
 }
@@ -367,4 +485,32 @@ function addMobileTooltipStyles() {
 // Call this function when the script loads
 addMobileTooltipStyles();
 
-export { initializeTooltips };
+function cleanupExistingTooltips() {
+    // Remove existing tooltip elements
+    const existingTooltips = document.querySelectorAll('.tooltip, .mobile-tooltip-content');
+    existingTooltips.forEach(tooltip => tooltip.remove());
+
+    // Remove existing event listeners
+    const tooltipElements = document.querySelectorAll('[data-tooltip], .truncate');
+    tooltipElements.forEach(element => {
+        element.removeEventListener('mouseenter', showTooltip);
+        element.removeEventListener('mouseleave', hideTooltip);
+        element.removeEventListener('mouseenter', showDatabaseTooltip);
+    });
+
+    // Remove mobile tooltip buttons
+    const mobileTooltipButtons = document.querySelectorAll('.mobile-tooltip-button');
+    mobileTooltipButtons.forEach(button => button.remove());
+
+    // Reset global variables
+    tooltipElement = null;
+    mobileTooltipContent = null;
+    activeTooltipElement = null;
+}
+
+// Add these functions to control content updating
+function setUpdatingContent(value) {
+    isUpdatingContent = value;
+}
+
+export { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips };

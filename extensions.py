@@ -7,6 +7,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_login import current_user
 import logging
 from routes.utils import is_user_system_enabled
+from flask_cors import CORS
 
 db = SQLAlchemy()
 app = Flask(__name__)
@@ -81,16 +82,22 @@ def check_user_system():
     # Remove any specific handling for statistics.index here
     # The decorators will handle the logic now
 
+# Initialize CORS with the app
+CORS(app, supports_credentials=True)
+
 @app.after_request
 def add_security_headers(response):
     if is_behind_proxy():
         response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     
-    # Add CORS headers
-    response.headers['Access-Control-Allow-Origin'] = '*'
+    # Modify CORS headers
+    origin = request.headers.get('Origin')
+    if origin:
+        response.headers['Access-Control-Allow-Origin'] = origin
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
     
     return response
 
