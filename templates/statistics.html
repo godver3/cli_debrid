@@ -470,7 +470,7 @@
 </style>
 
 <div class="statistics-wrapper">
-    <div class="toggle-container">
+    <div class="toggle-container" data-tooltip="home.toggle_container">
         <div class="toggle-item">
             <span class="toggle-label"><i class="fas fa-globe"></i> <span id="current-timezone">{{ stats.timezone }}</span></span>
         </div>
@@ -492,7 +492,7 @@
     </div>
 
     <div class="stats-container">
-        <div class="stats-box collection-stats">
+        <div class="stats-box collection-stats" data-tooltip="home.collection_stats">
             <div class="stat-items">
                 <div class="stat-item">
                     <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
@@ -510,7 +510,7 @@
         </div>
 
         <div class="top-stats">
-            <div class="stats-box recently-aired">
+            <div class="stats-box recently-aired" data-tooltip="home.recently_aired">
                 <h3>Recently Aired</h3>
                 {% if stats.recently_aired %}
                     <ul>
@@ -526,7 +526,7 @@
                 {% endif %}
             </div>
             
-            <div class="stats-box airing-soon">
+            <div class="stats-box airing-soon" data-tooltip="home.airing_soon">
                 <h3>Airing Soon</h3>
                 {% if stats.airing_soon %}
                     <ul>
@@ -542,7 +542,7 @@
                 {% endif %}
             </div>
             
-            <div class="stats-box upcoming-releases">
+            <div class="stats-box upcoming-releases" data-tooltip="home.upcoming_releases">
                 <h3>Upcoming Releases</h3>
                 {% if stats.upcoming_releases %}
                     <ul>
@@ -570,7 +570,7 @@
         </div>
 
         <div class="recently-added">
-            <div class="stats-box recently-added-section">
+            <div class="stats-box recently-added-section" data-tooltip="home.recently_added_movies">
                 <h4>Recently Added Movies</h4>
                 {% if stats.recently_added_movies %}
                     <div class="card-container">
@@ -593,7 +593,7 @@
                     </div>
                 {% endif %}
             </div>
-            <div class="stats-box recently-added-section">
+            <div class="stats-box recently-added-section" data-tooltip="home.recently_added_shows">
                 <h4>Recently Added Shows</h4>
                 {% if stats.recently_added_shows %}
                     <div class="card-container">
