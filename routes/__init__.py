@@ -1,4 +1,7 @@
-from flask import Blueprint
+from flask import Blueprint, jsonify
+import json
+import os
+
 from .models import admin_required, user_required
 from .auth_routes import auth_bp
 from .scraper_routes import scraper_bp
@@ -14,6 +17,15 @@ from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
+
+tooltip_bp = Blueprint('tooltip', __name__)
+
+@tooltip_bp.route('/tooltips')
+def get_tooltips():
+    tooltip_path = os.path.join(os.path.dirname(__file__), '..', 'tooltip_schema.json')
+    with open(tooltip_path, 'r') as f:
+        tooltips = json.load(f)
+    return jsonify(tooltips)
 
 def register_blueprints(app):
     blueprints = [
@@ -32,6 +44,7 @@ def register_blueprints(app):
         (settings_bp, '/settings'),
         (program_operation_bp, '/program_operation'),
         (real_time_api_bp, '/realtime_api_calls'),
+        (tooltip_bp, '/tooltip'),
     ]
     
     for blueprint, url_prefix in blueprints:
