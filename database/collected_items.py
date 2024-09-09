@@ -45,73 +45,82 @@ def add_collected_items(media_items_batch, recent=False):
         airtime_cache = {}
         
         for item in media_items_batch:
-            locations = item.get('location', [])
-            if isinstance(locations, str):
-                locations = [locations]
-            
-            for location in locations:
-                filename = os.path.basename(location)
-                if filename:
-                    all_valid_filenames.add(filename)
-                    
-            imdb_id = item.get('imdb_id') or None
-            tmdb_id = item.get('tmdb_id')
-            normalized_title = normalize_string(item.get('title', 'Unknown'))
-            item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
-
-            for location in locations:
-                filename = os.path.basename(location)
-
-                collected_at = datetime.fromtimestamp(item.get('addedAt', datetime.now().timestamp()))
-                genres = json.dumps(item.get('genres', []))
-
-                if filename in existing_file_map:
-                    existing_item = existing_file_map[filename]
-                    item_id = existing_item['id']
-                    
-                    # Update the existing item
-                    conn.execute('''
-                        UPDATE media_items
-                        SET state = ?, last_updated = ?, collected_at = ?
-                        WHERE id = ?
-                    ''', ('Collected', datetime.now(), collected_at, item_id))
-                    logging.info(f"Updated existing item to Collected: {normalized_title} (ID: {item_id})")
-                else:
-                    # Insert new item
-                    if item_type == 'movie':
-                        cursor = conn.execute('''
-                            INSERT OR REPLACE INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres, filled_by_file)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        ''', (
-                            imdb_id, tmdb_id, normalized_title, item.get('year'),
-                            item.get('release_date'), 'Collected', 'movie',
-                            datetime.now(), datetime.now(), 'unknown', collected_at, genres, filename
-                        ))
-                    else:
-                        if imdb_id not in airtime_cache:
-                            airtime_cache[imdb_id] = get_existing_airtime(conn, imdb_id)
-                            if airtime_cache[imdb_id] is None:
-                                airtime_cache[imdb_id] = get_show_airtime_by_imdb_id(imdb_id)
-                            if not airtime_cache[imdb_id]:
-                                airtime_cache[imdb_id] = '19:00'
+            try:
+                locations = item.get('location', [])
+                if isinstance(locations, str):
+                    locations = [locations]
+                
+                for location in locations:
+                    filename = os.path.basename(location)
+                    if filename:
+                        all_valid_filenames.add(filename)
                         
-                        airtime = airtime_cache[imdb_id]
-                        cursor = conn.execute('''
-                            INSERT OR REPLACE INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres, filled_by_file)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        ''', (
-                            imdb_id, tmdb_id, normalized_title, item.get('year'),
-                            item.get('release_date'), 'Collected', 'episode',
-                            item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), datetime.now(), 'unknown', airtime, collected_at, genres, filename
-                        ))
-                    logging.info(f"Added new item as Collected: {normalized_title} (ID: {cursor.lastrowid})")
+                imdb_id = item.get('imdb_id') or None
+                tmdb_id = item.get('tmdb_id')
+                normalized_title = normalize_string(item.get('title', 'Unknown'))
+                item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+
+                for location in locations:
+                    filename = os.path.basename(location)
+
+                    added_at = item.get('addedAt')
+                    if added_at is not None:
+                        collected_at = datetime.fromtimestamp(added_at)
+                    else:
+                        collected_at = datetime.now()
+                    genres = json.dumps(item.get('genres', []))
+
+                    if filename in existing_file_map:
+                        existing_item = existing_file_map[filename]
+                        item_id = existing_item['id']
+                        
+                        # Update the existing item
+                        conn.execute('''
+                            UPDATE media_items
+                            SET state = ?, last_updated = ?, collected_at = ?
+                            WHERE id = ?
+                        ''', ('Collected', datetime.now(), collected_at, item_id))
+                        logging.info(f"Updated existing item to Collected: {normalized_title} (ID: {item_id})")
+                    else:
+                        # Insert new item
+                        if item_type == 'movie':
+                            cursor = conn.execute('''
+                                INSERT OR REPLACE INTO media_items
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres, filled_by_file)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            ''', (
+                                imdb_id, tmdb_id, normalized_title, item.get('year'),
+                                item.get('release_date'), 'Collected', 'movie',
+                                datetime.now(), datetime.now(), 'unknown', collected_at, genres, filename
+                            ))
+                        else:
+                            if imdb_id not in airtime_cache:
+                                airtime_cache[imdb_id] = get_existing_airtime(conn, imdb_id)
+                                if airtime_cache[imdb_id] is None:
+                                    airtime_cache[imdb_id] = get_show_airtime_by_imdb_id(imdb_id)
+                                if not airtime_cache[imdb_id]:
+                                    airtime_cache[imdb_id] = '19:00'
+                            
+                            airtime = airtime_cache[imdb_id]
+                            cursor = conn.execute('''
+                                INSERT OR REPLACE INTO media_items
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres, filled_by_file)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            ''', (
+                                imdb_id, tmdb_id, normalized_title, item.get('year'),
+                                item.get('release_date'), 'Collected', 'episode',
+                                item['season_number'], item['episode_number'], item.get('episode_title', ''),
+                                datetime.now(), datetime.now(), 'unknown', airtime, collected_at, genres, filename
+                            ))
+                        logging.info(f"Added new item as Collected: {normalized_title} (ID: {cursor.lastrowid})")
                 
                 # Remove this line:
                 # processed_filenames.add(filename)
                 # (It's redundant now because we're already adding to all_valid_filenames earlier)
+
+            except Exception as e:
+                logging.error(f"Error processing item {item.get('title', 'Unknown')}: {str(e)}", exc_info=True)
+                # Continue processing other items
 
         # Handle items not in the batch if not recent
         if not recent:
