@@ -105,10 +105,13 @@ def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
                                'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
-@app.route('/manifest.json')
+@app.route('/site.webmanifest')
 def manifest():
-    return send_from_directory(os.path.join(app.root_path, 'static'),
-                               'site.webmanifest', mimetype='application/json')
+    try:
+        return send_from_directory(app.static_folder, 'site.webmanifest', mimetype='application/manifest+json')
+    except Exception as e:
+        app.logger.error(f"Error serving manifest: {str(e)}")
+        return "Error serving manifest", 500
 
 if __name__ == '__main__':
     start_server()
