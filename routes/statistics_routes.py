@@ -145,7 +145,11 @@ def index():
     collected_counts = get_collected_counts()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
     upcoming_releases = get_upcoming_releases()
-    active_downloads, limit_downloads = get_active_downloads()
+    try:
+        active_downloads, limit_downloads = get_active_downloads()
+    except Exception as e:
+        logging.error(f"Error fetching active downloads: {e}")
+        active_downloads, limit_downloads = 0, 0
     now = datetime.now()
     
     # Fetch recently added items from the database
