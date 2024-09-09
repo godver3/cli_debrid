@@ -83,7 +83,7 @@ def check_user_system():
     # The decorators will handle the logic now
 
 # Initialize CORS with the app
-CORS(app, supports_credentials=True)
+CORS(app, supports_credentials=True, allow_headers="*")
 
 @app.after_request
 def add_security_headers(response):
@@ -96,7 +96,7 @@ def add_security_headers(response):
     if origin:
         response.headers['Access-Control-Allow-Origin'] = origin
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Access-Control-Allow-Headers'] = '*'  # Allow all headers
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     
     return response
