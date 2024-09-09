@@ -5,7 +5,8 @@ import time
 from sqlalchemy import inspect
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_login import current_user
-from routes.settings_routes import is_user_system_enabled
+import logging
+from routes.utils import is_user_system_enabled
 
 db = SQLAlchemy()
 app = Flask(__name__)
@@ -73,15 +74,18 @@ def handle_https():
 
 @app.before_request
 def check_user_system():
-    # Exclude the webhook route and its subpaths
+    # Exclude the webhook route, its subpaths, and static files
     if request.path.startswith('/webhook') or request.path.startswith('/static'):
         return
 
-    if not is_user_system_enabled():
-        if request.endpoint and 'auth.' in request.endpoint:
-            return redirect(url_for('statistics.index'))
-    elif not current_user.is_authenticated and request.endpoint not in ['auth.login', 'auth.unauthorized']:
-        return redirect(url_for('auth.login'))
+    user_system_enabled = is_user_system_enabled()
+    
+    logging.debug(f"User system enabled: {user_system_enabled}")
+    logging.debug(f"Current endpoint: {request.endpoint}")
+    logging.debug(f"User authenticated: {current_user.is_authenticated}")
+
+    # Remove any specific handling for statistics.index here
+    # The decorators will handle the logic now
 
 @app.after_request
 def add_security_headers(response):
