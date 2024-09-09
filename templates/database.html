@@ -100,7 +100,7 @@
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
                         </td>
                         {% for column in selected_columns %}
-                            <td class="truncate">{{ item[column] }}</td>
+                            <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
                         {% endfor %}
                     </tr>
                 {% endfor %}
@@ -111,7 +111,9 @@
     {% endif %}
 </div>
 
-<script>
+<script type="module">
+import { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips } from '/static/js/tooltips.js';
+
 document.addEventListener('DOMContentLoaded', function() {
     let currentContentType = 'movie'; // Default to 'movie'
     let currentLetter = 'A'; // Default to 'A'
@@ -218,6 +220,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const formData = new FormData(this);
             const params = Object.fromEntries(formData.entries());
             updateContent('{{ url_for('database.index') }}', params);
+
+
         });
     }
 
@@ -266,6 +270,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const queryString = new URLSearchParams(params).toString();
         url += '?' + queryString;
 
+        // Set updating content flag to true
+        setUpdatingContent(true);
+
         fetch(url)
             .then(response => response.text())
             .then(html => {
@@ -285,8 +292,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Reattach event listeners
                 attachEventListeners();
                 attachDeleteListeners();
+
+                // Reinitialize tooltips after content update
+                initializeTooltips();
+                initializeDatabaseTooltips();
+
+                // Set updating content flag to false after a short delay
+                setTimeout(() => {
+                    setUpdatingContent(false);
+                }, 100);
             })
-            .catch(error => console.error('Error updating content:', error));
+            .catch(error => {
+                console.error('Error updating content:', error);
+                setUpdatingContent(false);
+            });
     }
 
     function updateUIForClearedState() {
@@ -414,6 +433,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial attachment of event listeners
     attachEventListeners();
     attachDeleteListeners();
+
+    // Initialize tooltips
+    initializeTooltips();
+    initializeDatabaseTooltips();
 });
 </script>
 {% endblock %}
