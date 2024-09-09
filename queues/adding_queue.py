@@ -79,6 +79,9 @@ class AddingQueue:
         logging.debug(f"Processing {mode} mode for item: {item_identifier}")
         logging.debug(f"Total scrape results: {len(scrape_results)}")
 
+        if get_setting('Debug', 'sort_by_uncached_status'):
+            scrape_results = self.sort_results_by_cache_status(scrape_results)
+
         uncached_result = None
         for index, result in enumerate(scrape_results):
             title = result.get('title', '')
@@ -98,10 +101,10 @@ class AddingQueue:
                     logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
                     continue
 
-                if current_hash:
-                    is_cached = is_cached_on_rd(current_hash)
-                else:
-                    is_cached = False
+                cache_status = is_cached_on_rd(current_hash)
+                is_cached = cache_status.get(current_hash, False)
+                logging.debug(f"Cache status for result {index + 1}: {cache_status}")
+                logging.debug(f"Is cached: {is_cached}")
 
                 if mode == 'none' and not is_cached:
                     logging.debug(f"Skipping uncached result {index + 1} for {item_identifier}")
@@ -155,6 +158,27 @@ class AddingQueue:
         logging.warning(f"No results successfully processed for {item_identifier}")
         self.handle_failed_item(queue_manager, item, "Adding")
         return False
+
+    def sort_results_by_cache_status(self, scrape_results):
+        def get_cache_status(result):
+            link = result.get('magnet', '')
+            if link.startswith('magnet:'):
+                current_hash = extract_hash_from_magnet(link)
+            else:
+                current_hash = self.download_and_extract_hash(link)
+            
+            if current_hash:
+                cache_status = is_cached_on_rd(current_hash)
+                return cache_status.get(current_hash, False)
+            return False
+
+        # Add cache status to each result
+        for result in scrape_results:
+            result['is_cached'] = get_cache_status(result)
+
+        # Sort results: uncached first, then cached
+        return sorted(scrape_results, key=lambda x: x['is_cached'])
+
 
     def process_torrent(self, queue_manager, item, title, link, add_result):
         item_identifier = queue_manager.generate_identifier(item)
