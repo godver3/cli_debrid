@@ -74,7 +74,7 @@ def handle_https():
 @app.before_request
 def check_user_system():
     # Exclude the webhook route and its subpaths
-    if request.path.startswith('/webhook'):
+    if request.path.startswith('/webhook') or request.path.startswith('/static'):
         return
 
     if not is_user_system_enabled():
