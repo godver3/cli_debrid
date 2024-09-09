@@ -430,6 +430,8 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     return processed_items
     
 def refresh_release_dates():
+    from database import get_all_media_items, update_release_date_and_state
+
     logging.info("Starting refresh_release_dates function")
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')
