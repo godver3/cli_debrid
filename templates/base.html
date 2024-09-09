@@ -688,7 +688,6 @@
                     ('scraper.index', 'Scraper'),
                     ('logs.logs', 'Logs'),
                     ('settings.index', 'Settings'),
-                    ('user_management.manage_users', 'Users'),
                     ('database.index', 'Database'),
                     ('scraper.scraper_tester', 'Tester'),
                     ('debug.debug_functions', 'Debug')
@@ -701,6 +700,9 @@
                                 <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
                             {% endif %}
                         {% endfor %}
+                        {% if current_user.role == 'admin' %}
+                            <li><a href="{{ url_for('user_management.manage_users') }}">Users</a></li>
+                        {% endif %}
                     {% endif %}
                 {% else %}
                     {% for route, label in menu_items %}

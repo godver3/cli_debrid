@@ -19,7 +19,7 @@ def change_password():
             current_user.is_default = False
             db.session.commit()
             flash('Password changed successfully.', 'success')
-            return redirect(url_for('statistics'))
+            return redirect(url_for('statistics.index'))
         else:
             flash('Passwords do not match.', 'error')
     return render_template('change_password.html')
@@ -30,8 +30,7 @@ def change_password():
 @onboarding_required
 def manage_users():
     if not is_user_system_enabled():
-        flash('User management is disabled.', 'error')
-        return redirect(url_for('statistics'))
+        return redirect(url_for('statistics.index'))
     users = User.query.all()
     return render_template('manage_users.html', users=users)
 
@@ -77,10 +76,10 @@ def delete_user(user_id):
 @user_management_bp.route('/register', methods=['GET', 'POST'])
 def register():
     if not is_user_system_enabled():
-        return redirect(url_for('statistics'))
+        return redirect(url_for('statistics.index'))
     
     if current_user.is_authenticated:
-        return redirect(url_for('statistics'))
+        return redirect(url_for('statistics.index'))
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -96,5 +95,5 @@ def register():
         db.session.commit()
         login_user(new_user)
         flash('Registered successfully.', 'success')
-        return redirect(url_for('statistics'))
+        return redirect(url_for('statistics.index'))
     return render_template('register.html')

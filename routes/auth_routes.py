@@ -8,6 +8,7 @@ import logging
 from settings import load_config
 from routes.onboarding_routes import get_next_onboarding_step
 from extensions import db, login_manager
+from .utils import is_user_system_enabled
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 
@@ -55,14 +56,15 @@ def load_user(user_id):
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
-    from routes.settings_routes import is_user_system_enabled
+    
+    logging.debug("Entering login route")
     
     if not is_user_system_enabled():
+        logging.debug("User system not enabled, redirecting to statistics.index")
         return redirect(url_for('statistics.index'))
 
     if current_user.is_authenticated:
-        if not current_user.onboarding_complete:
-            return redirect(url_for('onboarding.onboarding_step', step=1))
+        logging.debug("User already authenticated, redirecting to statistics.index")
         return redirect(url_for('statistics.index'))
 
     if request.method == 'POST':
