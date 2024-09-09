@@ -53,60 +53,91 @@ class AddingQueue:
                 if scrape_results_str:
                     try:
                         scrape_results = json.loads(scrape_results_str)
+                        if not scrape_results:
+                            logging.warning(f"Empty scrape results for item: {item_identifier}")
+                            self.handle_failed_item(queue_manager, item, "Adding")
+                            return
                     except json.JSONDecodeError:
                         logging.error(f"Error parsing JSON scrape results for item: {item_identifier}")
-                        queue_manager.move_to_sleeping(item, "Adding")
+                        self.handle_failed_item(queue_manager, item, "Adding")
                         return
 
                     uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
 
                     self.process_item(queue_manager, item, scrape_results, uncached_handling)
-
                 else:
                     logging.error(f"No scrape results found for {item_identifier}")
-                    queue_manager.move_to_sleeping(item, "Adding")
+                    self.handle_failed_item(queue_manager, item, "Adding")
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+                self.handle_failed_item(queue_manager, item, "Adding")
+        else:
+            logging.debug("Adding queue is empty")
 
     def process_item(self, queue_manager, item, scrape_results, mode):
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Processing {mode} mode for item: {item_identifier}")
         logging.debug(f"Total scrape results: {len(scrape_results)}")
 
+        uncached_result = None
         for index, result in enumerate(scrape_results):
             title = result.get('title', '')
             link = result.get('magnet', '')
             
-            if link.startswith('magnet:'):
-                current_hash = extract_hash_from_magnet(link)
-            else:
-                current_hash = self.download_and_extract_hash(link)
-
-            if not current_hash:
-                logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
-                continue
-
-            is_cached = is_cached_on_rd(current_hash).get(current_hash, False)
-            
-            if mode == 'none' and not is_cached:
-                logging.debug(f"Skipping uncached result {index + 1} for {item_identifier}")
-                continue
-
-            if mode == 'hybrid' and not is_cached:
-                cached_results = [r for r in scrape_results if is_cached_on_rd(extract_hash_from_magnet(r.get('magnet', ''))).get(extract_hash_from_magnet(r.get('magnet', '')), False)]
-                if cached_results:
-                    logging.debug(f"Skipping uncached result {index + 1} for {item_identifier} in hybrid mode")
+            try:
+                if not link:
+                    logging.warning(f"No magnet link found for result {index + 1}: {item_identifier}")
                     continue
 
-            logging.info(f"Processing result {index + 1} for {item_identifier}. Cached: {is_cached}")
-            success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached, scrape_results=scrape_results)
-            
+                if link.startswith('magnet:'):
+                    current_hash = extract_hash_from_magnet(link)
+                else:
+                    current_hash = self.download_and_extract_hash(link)
+
+                if not current_hash:
+                    logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
+                    continue
+
+                if current_hash:
+                    is_cached = is_cached_on_rd(current_hash)
+                else:
+                    is_cached = False
+
+                if mode == 'none' and not is_cached:
+                    logging.debug(f"Skipping uncached result {index + 1} for {item_identifier}")
+                    continue
+
+                if mode == 'hybrid':
+                    if is_cached:
+                        logging.info(f"Found cached result {index + 1} for {item_identifier}")
+                        success = self.process_result(queue_manager, item, result, current_hash, is_cached=True, scrape_results=scrape_results)
+                        if success:
+                            return True
+                    elif not uncached_result:
+                        uncached_result = (result, current_hash)
+                    continue
+
+                logging.info(f"Processing result {index + 1} for {item_identifier}. Cached: {is_cached}")
+                success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached, scrape_results=scrape_results)
+                
+                if success:
+                    logging.info(f"Successfully processed result {index + 1} for {item_identifier}")
+                    return True
+
+            except Exception as e:
+                logging.error(f"Error processing result {index + 1} for {item_identifier}: {str(e)}")
+                continue
+
+        # If we're in hybrid mode and found an uncached result but no cached results
+        if mode == 'hybrid' and uncached_result:
+            result, current_hash = uncached_result
+            logging.info(f"No cached results found for {item_identifier}. Processing best uncached result.")
+            success = self.process_result(queue_manager, item, result, current_hash, is_cached=False, scrape_results=scrape_results)
             if success:
-                logging.info(f"Successfully processed result {index + 1} for {item_identifier}")
                 return True
 
-        # If we're here, no results were successfully processed.
-        logging.info(f"No results successfully processed for {self.generate_identifier(item)}")
+        # If we reach here, no results were successfully processed
+        logging.warning(f"No valid results found for {item_identifier}")
 
         # For episodes, try individual episode scraping
         if item['type'] == 'episode':

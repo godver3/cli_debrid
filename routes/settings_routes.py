@@ -4,15 +4,11 @@ from settings_schema import SETTINGS_SCHEMA
 import logging
 from config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config
 from routes.models import admin_required, onboarding_required
+from .utils import is_user_system_enabled
 import traceback
 import json
 
 settings_bp = Blueprint('settings', __name__)
-
-
-def is_user_system_enabled():
-    config = load_config()
-    return config.get('UI Settings', {}).get('enable_user_system', True)
 
 @settings_bp.route('/content-sources/content')
 def content_sources_content():

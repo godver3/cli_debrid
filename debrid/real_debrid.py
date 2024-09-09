@@ -161,8 +161,23 @@ def namespace_to_dict(obj):
 )
 @rate_limited_request
 def is_cached_on_rd(hashes):
+    if not hashes:
+        logging.warning("Empty hashes input to is_cached_on_rd")
+        return {}
+
     if isinstance(hashes, str):
         hashes = [hashes]
+    elif not isinstance(hashes, list):
+        logging.error(f"Invalid input type for hashes: {type(hashes)}")
+        return {}
+
+    # Filter out any non-string elements
+    hashes = [h for h in hashes if isinstance(h, str)]
+
+    if not hashes:
+        logging.warning("No valid hashes after filtering")
+        return {}
+
     url = f'{API_BASE_URL}/torrents/instantAvailability/{"/".join(hashes)}'
     
     try:
