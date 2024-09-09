@@ -1,0 +1,199 @@
+{
+  "Plex": {
+    "url": "http://192.168.1.51:32400",
+    "token": "FiKcc4CcUjwDsXCWzk7L",
+    "shows_libraries": "TV Shows",
+    "movie_libraries": "Films"
+  },
+  "Overseerr": {
+    "url": "http://192.168.1.51:5055",
+    "api_key": "MTcyMDM1MTE5MjU1Mjk2ZjUwNzkzLTMzMjctNDU4MC04Mzg4LTk5MGE1NWRkNDJmNg=="
+  },
+  "RealDebrid": {
+    "api_key": "5CJXB4D5NJ6RNKYGBKCA5M6TGP2KRBDSXFRZSUBJIUJIMY54NC4Q"
+  },
+  "Debug": {
+    "skip_menu": false,
+    "logging_level": "INFO",
+    "skip_initial_plex_update": false,
+    "disable_initialization": false,
+    "jackett_seeders_only": false
+  },
+  "Scrapers": {
+    "Zilean_1": {
+      "type": "Zilean",
+      "enabled": true,
+      "url": "http://192.168.1.51:8181"
+    },
+    "Comet_1": {
+      "type": "Comet",
+      "enabled": false,
+      "url": "https://comet.godver3.xyz/eyJpbmRleGVycyI6WyJiaXRzZWFyY2giLCJlenR2IiwidGhlX3BpcmF0ZV9iYXkiLCJ0aGVyYXJiZyIsInl0cyJdLCJtYXhSZXN1bHRzIjowLCJtYXhTaXplIjowLCJyZXNvbHV0aW9ucyI6WyJBbGwiXSwibGFuZ3VhZ2VzIjpbIkFsbCJdLCJkZWJyaWRTZXJ2aWNlIjoicmVhbGRlYnJpZCIsImRlYnJpZEFwaUtleSI6IjVDSlhCNEQ1Tko2Uk5LWUdCS0NBNU02VEdQMktSQkRTWEZSWlNVQkpJVUpJTVk1NE5DNFEiLCJkZWJyaWRTdHJlYW1Qcm94eVBhc3N3b3JkIjoibGtqc2Rmb2l1d2VyIn0=/manifest.json"
+    },
+    "Jackett_1": {
+      "type": "Jackett",
+      "enabled": true,
+      "url": "http://192.168.1.51:9117",
+      "api": "5hg85otk8hisu4e7rum7ti1gj3c3rqww",
+      "enabled_indexers": ""
+    },
+    "Torrentio_1": {
+      "type": "Torrentio",
+      "enabled": true,
+      "opts": ""
+    },
+    "Nyaa_1": {
+      "type": "Nyaa",
+      "enabled": true
+    }
+  },
+  "Scraping": {
+    "versions": {
+      "2160p": {
+        "bitrate_weight": "3",
+        "enable_hdr": true,
+        "hdr_weight": "5",
+        "max_resolution": "2160p",
+        "max_size_gb": null,
+        "min_size_gb": 0.01,
+        "resolution_wanted": "==",
+        "resolution_weight": "5",
+        "similarity_weight": "3",
+        "size_weight": "5",
+        "filter_in": [],
+        "filter_out": [
+          "Telesync",
+          "3D",
+          "HDTS",
+          "HD-TS"
+        ],
+        "preferred_filter_in": [],
+        "preferred_filter_out": [
+          [
+            "720p",
+            5
+          ],
+          [
+            "TrueHD",
+            3
+          ],
+          [
+            "SDR",
+            5
+          ]
+        ]
+      },
+      "1080p": {
+        "bitrate_weight": "3",
+        "enable_hdr": true,
+        "filter_in": [
+          "dts-hd.ma.5.1-wrz"
+        ],
+        "filter_out": [
+          "Telesync",
+          "3D",
+          "HDTS",
+          "HD-TS"
+        ],
+        "hdr_weight": "5",
+        "max_resolution": "1080p",
+        "max_size_gb": null,
+        "min_size_gb": 0.01,
+        "preferred_filter_in": [],
+        "preferred_filter_out": [
+          [
+            "720p",
+            50
+          ],
+          [
+            "TrueHD",
+            30
+          ],
+          [
+            "SDR",
+            50
+          ],
+          [
+            "HDTV",
+            50
+          ]
+        ],
+        "resolution_wanted": "<=",
+        "resolution_weight": "5",
+        "similarity_weight": "3",
+        "size_weight": "5"
+      }
+    },
+    "uncached_content_handling": "Hybrid",
+    "jackett_seeders_only": true,
+    "soft_max_size_gb": false,
+    "ultimate_sort_order": "None"
+  },
+  "Content Sources": {
+    "MDBList_1": {
+      "versions": [
+        "2160p",
+        "1080p"
+      ],
+      "enabled": true,
+      "urls": "https://mdblist.com/lists/godver3/trending-movies, https://mdblist.com/lists/godver3/top-movies",
+      "display_name": ""
+    },
+    "Collected_1": {
+      "versions": [
+        "2160p",
+        "1080p"
+      ],
+      "enabled": false,
+      "display_name": ""
+    },
+    "Trakt Watchlist_1": {
+      "versions": [
+        "2160p",
+        "1080p"
+      ],
+      "enabled": true,
+      "display_name": ""
+    },
+    "Trakt Lists_1": {
+      "versions": [
+        "2160p",
+        "1080p"
+      ],
+      "enabled": true,
+      "trakt_lists": "https://trakt.tv/users/godver3/lists/trending-movies?sort=rank,asc, https://trakt.tv/users/vicxtoryluzon/lists/my-list-of-good-movies?sort=rank,asc",
+      "display_name": ""
+    },
+    "Overseerr_1": {
+      "versions": [
+        "2160p",
+        "1080p"
+      ],
+      "enabled": true,
+      "url": "http://192.168.1.51:5055",
+      "api_key": "MTcyMDM1MTE5MjU1Mjk2ZjUwNzkzLTMzMjctNDU4MC04Mzg4LTk5MGE1NWRkNDJmNg==",
+      "display_name": ""
+    }
+  },
+  "TMDB": {
+    "api_key": "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI4MWQ2ZWU1YTBhYTljYTkzOTg5YzNiYjUxMDNkNTdkNSIsIm5iZiI6MTcyMjI3ODYwMS4zMTY3MTYsInN1YiI6IjY1MDlkNzEwODI2MWVlMDBmZjlhMTZmNSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.XUOQfPtbhTB3yC2RWCQ-VGeZgoOZdwaOcviNQ6KW_zQ"
+  },
+  "Queue": {
+    "wake_limit": "24",
+    "movie_airtime_offset": "19",
+    "episode_airtime_offset": "-1.5"
+  },
+  "Trakt": {
+    "client_id": "f6459c965973e24566f1cc8ba8e93cee81373c46fa8c11b65727441d10fbb71d",
+    "client_secret": "6301ad0f1730dc4a23d3a65282563174408e9db94ac23e386d0ce058aa63e42b",
+    "user_watchlist_enabled": true,
+    "trakt_lists": "https://trakt.tv/users/godver3/lists/trending-movies?sort=rank,asc, https://trakt.tv/users/vicxtoryluzon/lists/my-list-of-good-movies?sort=rank,asc"
+  },
+  "Notifications": {},
+  "UI Settings": {
+    "enable_user_system": true
+  },
+  "Metadata Battery": {
+    "url": "http://localhost:5001"
+  }
+}
