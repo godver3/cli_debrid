@@ -314,22 +314,33 @@ def get_active_downloads(check=False):
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/x-www-form-urlencoded'
     }
-    response = api.get(f"{API_BASE_URL}/torrents/activeCount", headers=headers, timeout=60)
-    response_json = response.json()
-    logging.debug(f"Real-Debrid active downloads response: {response_json}")
-    
-    if check:
-        if 'nb' in response_json:
-            return response_json['nb'] < response_json['limit']
+    try:
+        response = api.get(f"{API_BASE_URL}/torrents/activeCount", headers=headers, timeout=60)
+        response.raise_for_status()  # This will raise an HTTPError for bad responses
+        response_json = response.json()
+        logging.debug(f"Real-Debrid active downloads response: {response_json}")
+        
+        if check:
+            if 'nb' in response_json:
+                return response_json['nb'] < response_json['limit']
+            else:
+                logging.warning("'nb' not found in Real-Debrid response")
+                return False
         else:
-            logging.warning("'nb' not found in Real-Debrid response")
-            return False
-    else:
-        if 'nb' in response_json:
-            return response_json['nb'], response_json['limit']
+            if 'nb' in response_json:
+                return response_json['nb'], response_json['limit']
+            else:
+                logging.warning("'nb' not found in Real-Debrid response")
+                return 0, response_json.get('limit', 0)
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            logging.error("Unauthorized access to Real-Debrid API. Please check your API key.")
         else:
-            logging.warning("'nb' not found in Real-Debrid response")
-            return 0, response_json['limit']
+            logging.error(f"HTTP error occurred: {e}")
+        return (0, 0) if not check else False
+    except Exception as e:
+        logging.error(f"An error occurred while fetching active downloads: {e}")
+        return (0, 0) if not check else False
 
 def file_matches_item(filename, item):
     filename = filename.lower()
