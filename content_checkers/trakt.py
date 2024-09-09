@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 from settings import get_all_settings
 import trakt.core
 import time
-from database import get_media_item_presence
 import pickle
 import os
 

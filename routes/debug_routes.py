@@ -49,7 +49,6 @@ def delete_database():
     try:
         # Close any open database connections
         conn.close()
-        conn.engine.dispose()
 
         # Delete the media_items.db file
         db_path = os.path.join(current_app.root_path, 'db_content', 'media_items.db')

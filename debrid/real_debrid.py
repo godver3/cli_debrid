@@ -300,16 +300,21 @@ def get_active_downloads(check=False):
         'Content-Type': 'application/x-www-form-urlencoded'
     }
     response = api.get(f"{API_BASE_URL}/torrents/activeCount", headers=headers, timeout=60)
-    response = response.json()
+    response_json = response.json()
+    logging.debug(f"Real-Debrid active downloads response: {response_json}")
+    
     if check:
-        if 'nb' in response:
-            return response['nb'] < response['limit']
-        else: return False
-    else:
-        if 'nb' in response:
-            return response['nb'], response['limit']
+        if 'nb' in response_json:
+            return response_json['nb'] < response_json['limit']
         else:
-            return 0, response['limit']
+            logging.warning("'nb' not found in Real-Debrid response")
+            return False
+    else:
+        if 'nb' in response_json:
+            return response_json['nb'], response_json['limit']
+        else:
+            logging.warning("'nb' not found in Real-Debrid response")
+            return 0, response_json['limit']
 
 def file_matches_item(filename, item):
     filename = filename.lower()
@@ -347,3 +352,26 @@ def file_matches_item(filename, item):
             return bool(re.search(absolute_pattern, filename))
 
     return False
+
+def get_torrent_info(torrent_id):
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    try:
+        info_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
+        info_response.raise_for_status()
+        torrent_info = info_response.json()
+
+        return {
+            'status': torrent_info.get('status', 'unknown'),
+            'seeders': torrent_info.get('seeders', 0),
+            'progress': torrent_info.get('progress', 0),
+            'files': torrent_info.get('files', [])
+        }
+    except api.exceptions.RequestException as e:
+        logging.error(f"Error getting torrent info from Real-Debrid: {str(e)}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error in get_torrent_info: {str(e)}")
+        return None
