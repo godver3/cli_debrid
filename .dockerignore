@@ -57,6 +57,7 @@ archives
 config.ini
 commit.sh
 logs
+*.json
 update.sh
 db_content
 content_checkers/*backup*

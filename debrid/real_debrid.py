@@ -307,13 +307,13 @@ def get_active_downloads(check=False):
         if 'nb' in response_json:
             return response_json['nb'] < response_json['limit']
         else:
-            logging.debug("'nb' not found in Real-Debrid response")
+            logging.warning("'nb' not found in Real-Debrid response")
             return False
     else:
         if 'nb' in response_json:
             return response_json['nb'], response_json['limit']
         else:
-            logging.debug("'nb' not found in Real-Debrid response")
+            logging.warning("'nb' not found in Real-Debrid response")
             return 0, response_json['limit']
 
 def file_matches_item(filename, item):
