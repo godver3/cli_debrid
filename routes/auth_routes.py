@@ -49,12 +49,17 @@ def init_db(app):
 def load_user(user_id):
     from routes.settings_routes import is_user_system_enabled
 
-    if is_user_system_enabled():
-        return User.query.get(int(user_id))
-    return None
+    if not is_user_system_enabled():
+        return None
+    return User.query.get(int(user_id))
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
+    from routes.settings_routes import is_user_system_enabled
+    
+    if not is_user_system_enabled():
+        return redirect(url_for('statistics.index'))
+
     if current_user.is_authenticated:
         if not current_user.onboarding_complete:
             return redirect(url_for('onboarding.onboarding_step', step=1))

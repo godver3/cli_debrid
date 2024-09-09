@@ -152,6 +152,13 @@
                 `;
             }
 
+            if (queueName === 'Pending Uncached') {
+                itemContent += `
+                    - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
+                    - Magnet Link: ${item.magnet_link || 'Unknown'}
+                `;
+            }
+
             itemContent += `</div>`;
             return itemContent;
         }).join('');
@@ -164,7 +171,7 @@
                 let queueContents = document.getElementById('queue-contents');
                 if (queueContents) {
                     queueContents.innerHTML = '';
-                    const queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted'];
+                    const queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
                     
                     let hasContent = false;
                     queueOrder.forEach(queueName => {
@@ -191,7 +198,7 @@
                     });
 
                     if (!hasContent) {
-                        queueContents.innerHTML = '<p>Program is curently idle.</p>';
+                        queueContents.innerHTML = '<p>Program is currently idle.</p>';
                     }
 
                     // Update filename visibility after refreshing

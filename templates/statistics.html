@@ -813,12 +813,15 @@ document.addEventListener('DOMContentLoaded', () => {
             timezoneElement.textContent = timezone;
         }
     }
-    function getActiveDownloads(active_downloads,limit_downloads) {
-        const rdActiveDownloads = document.getElementById('active-downloads');
-        if (rdActiveDownloads) {
-            rdActiveDownloads.textContent = `RD: ${active_downloads}/${limit_downloads}`;
-        }
+    function getActiveDownloads(active_downloads, limit_downloads) {
+    const rdActiveDownloads = document.getElementById('active-downloads');
+    if (rdActiveDownloads) {
+        console.log(`Updating RD active downloads: ${active_downloads}/${limit_downloads}`);
+        rdActiveDownloads.textContent = `RD: ${active_downloads}/${limit_downloads}`;
+    } else {
+        console.error('Element with id "active-downloads" not found');
     }
+}
 
     function updateRecentlyAired(recentlyAired) {
         const container = document.querySelector('.stats-box.recently-aired');

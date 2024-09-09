@@ -635,10 +635,29 @@
             position: static;
             transform: none;
         }
+
+        .tooltip {
+            display: none !important;
+        }
     }
 
     body[data-is-onboarding="true"] .navMenu {
         display: none;
+    }
+
+    .tooltip {
+        position: fixed;
+        background-color: #333;
+        color: #fff;
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 14px;
+        z-index: 9999; /* Ensure it's above other elements */
+        max-width: 200px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 300ms ease-in;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Optional: adds a subtle shadow */
     }
 </style>
 <body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}" data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}">
@@ -723,6 +742,7 @@
     <script type="module">
         import { initializeProgramControls } from "{{ url_for('static', filename='js/program_controls.js') }}";
         import { showPopup, POPUP_TYPES } from "{{ url_for('static', filename='js/notifications.js') }}";
+        import { initializeTooltips } from "{{ url_for('static', filename='js/tooltips.js') }}";
 
         document.addEventListener('DOMContentLoaded', function() {
             if (document.getElementById('programControlButton')) {
@@ -737,6 +757,9 @@
             const isAuthenticated = {{ 'true' if current_user.is_authenticated else 'false' }};
 
             initializeHamburgerMenu(userSystemEnabled, isAuthenticated);
+            
+            // Initialize tooltips
+            initializeTooltips();
         });
 
         function initializeHamburgerMenu(userSystemEnabled, isAuthenticated) {
