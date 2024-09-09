@@ -372,6 +372,17 @@ function updateSettings() {
         console.warn("Metadata Battery URL input element not found!");
     }
 
+    const sortByUncachedStatus = document.getElementById('debug-sort_by_uncached_status');
+    console.log("Sort By Uncached Status element:", sortByUncachedStatus);
+    
+    if (sortByUncachedStatus) {
+        settingsData['Debug']['sort_by_uncached_status'] = sortByUncachedStatus.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Sort By Uncached Status checkbox element not found!");
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {

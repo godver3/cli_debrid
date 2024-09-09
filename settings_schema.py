@@ -189,6 +189,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Disable initialization tasks",
             "default": False
+        },
+        "sort_by_uncached_status": {
+            "type": "boolean",
+            "description": "Sort results by uncached status over cached status",
+            "default": False
         }
     },
     "Scrapers": {
