@@ -395,7 +395,7 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
-        'addedAt': movie['addedAt'],
+        'addedAt': movie.get('addedAt'),  # Use .get() method with a default value
         'guid': movie.get('guid'),
         'ratingKey': movie['ratingKey'],
         'release_date': movie.get('originallyAvailableAt'),
