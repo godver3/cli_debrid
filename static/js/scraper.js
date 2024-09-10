@@ -433,10 +433,10 @@ function displayTorrentResults(data, title, year) {
                     <button>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title}</p>
-                        <p class="torresult-item">${(torrent.size).toFixed(1)} GB |${torrent.cached ? ` ${torrent.cached} |` : ''} ${torrent.score_breakdown.total_score}</p>
+                        <p class="torresult-item">${(torrent.size).toFixed(1)} GB | ${torrent.cached} | ${torrent.score_breakdown.total_score}</p>
                         <p class="torresult-item">${torrent.source}</p>
                     </div>
-                    </button>                
+                    </button>             
                 `;        
                 torResDiv.onclick = function() {
                     addToRealDebrid(torrent.magnet)
