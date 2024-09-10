@@ -12,8 +12,10 @@ from content_checkers.collected import get_wanted_from_collected
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from metadata.metadata import process_metadata
-from database import add_wanted_items, bulk_delete_by_imdb_id, get_db_connection, create_tables, verify_database
+from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 import os
+from api_tracker import api 
+import time
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -25,15 +27,17 @@ def debug_functions():
 
 @debug_bp.route('/bulk_delete_by_imdb', methods=['POST'])
 def bulk_delete_by_imdb():
-    imdb_id = request.form.get('imdb_id')
-    if not imdb_id:
-        return jsonify({'success': False, 'error': 'IMDB ID is required'})
+    id_value = request.form.get('imdb_id')
+    if not id_value:
+        return jsonify({'success': False, 'error': 'ID is required'})
 
-    deleted_count = bulk_delete_by_imdb_id(imdb_id)
+    id_type = 'imdb_id' if id_value.startswith('tt') else 'tmdb_id'
+    deleted_count = bulk_delete_by_id(id_value, id_type)
+    
     if deleted_count > 0:
-        return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with IMDB ID: {imdb_id}'})
+        return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with {id_type.upper()}: {id_value}'})
     else:
-        return jsonify({'success': False, 'error': f'No items found with IMDB ID: {imdb_id}'})
+        return jsonify({'success': False, 'error': f'No items found with {id_type.upper()}: {id_value}'})
 
 @debug_bp.route('/delete_database', methods=['POST'])
 @admin_required
@@ -47,7 +51,6 @@ def delete_database():
     try:
         # Close any open database connections
         conn.close()
-        conn.engine.dispose()
 
         # Delete the media_items.db file
         db_path = os.path.join(current_app.root_path, 'db_content', 'media_items.db')
@@ -271,3 +274,25 @@ def get_wanted_content():
         return jsonify({'success': True, 'message': message}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@debug_bp.route('/api/rate_limit_info')
+def get_rate_limit_info():
+    rate_limit_info = {}
+    current_time = time.time()
+    
+    for domain in api.monitored_domains:
+        hourly_calls = [t for t in api.rate_limiter.hourly_calls[domain] if t > current_time - 3600]
+        five_minute_calls = [t for t in api.rate_limiter.five_minute_calls[domain] if t > current_time - 300]
+        
+        rate_limit_info[domain] = {
+            'five_minute': {
+                'count': len(five_minute_calls),
+                'limit': api.rate_limiter.five_minute_limit
+            },
+            'hourly': {
+                'count': len(hourly_calls),
+                'limit': api.rate_limiter.hourly_limit
+            }
+        }
+    
+    return jsonify(rate_limit_info)

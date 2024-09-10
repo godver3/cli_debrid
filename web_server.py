@@ -14,6 +14,7 @@ from flask_sqlalchemy import SQLAlchemy
 from extensions import db, app, app_start_time
 from routes.auth_routes import init_db
 from flask_login import current_user
+import logging
 
 from routes import register_blueprints, auth_bp
 
@@ -92,9 +93,13 @@ def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
 
 @app.route('/')
 def index():
-    if current_user.is_authenticated:
-        return redirect(url_for('statistics.index'))  # Update this line
+    from routes.settings_routes import is_user_system_enabled
+    logging.debug("Entering index route")
+    if not is_user_system_enabled() or current_user.is_authenticated:
+        logging.debug("Redirecting to statistics.index")
+        return redirect(url_for('statistics.index'))
     else:
+        logging.debug("Redirecting to auth.login")
         return redirect(url_for('auth.login'))
 
 @app.route('/favicon.ico')
@@ -102,10 +107,17 @@ def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
                                'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
-@app.route('/manifest.json')
+@app.route('/site.webmanifest')
 def manifest():
-    return send_from_directory(os.path.join(app.root_path, 'static'),
-                               'site.webmanifest', mimetype='application/json')
+    manifest_path = os.path.join(app.static_folder, 'site.webmanifest')
+    if not os.path.exists(manifest_path):
+        return "Manifest file not found", 404
+    
+    try:
+        response = send_from_directory(app.static_folder, 'site.webmanifest', mimetype='application/manifest+json')
+        return response
+    except Exception as e:
+        return f"Error serving manifest: {str(e)}", 500
 
 if __name__ == '__main__':
     start_server()

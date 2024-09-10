@@ -10,17 +10,41 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import time
 import requests
 from functools import wraps
+from datetime import datetime, timedelta
+from functools import lru_cache
 
 class RealDebridUnavailableError(Exception):
     pass
 
 API_BASE_URL = "https://api.real-debrid.com/rest/1.0"
-api_key = get_setting('RealDebrid', 'api_key')
 
 # Common video file extensions
 VIDEO_EXTENSIONS = [
     'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm', 'mpg', 'mpeg', 'm2ts', 'ts'
 ]
+
+_cache = {}
+
+def get_api_key():
+    return get_setting('RealDebrid', 'api_key')
+
+def timed_lru_cache(seconds: int, maxsize: int = 128):
+    def wrapper_cache(func):
+        func = lru_cache(maxsize=maxsize)(func)
+        func.lifetime = timedelta(seconds=seconds)
+        func.expiration = datetime.utcnow() + func.lifetime
+
+        @wraps(func)
+        def wrapped_func(*args, **kwargs):
+            if datetime.utcnow() >= func.expiration:
+                func.cache_clear()
+                func.expiration = datetime.utcnow() + func.lifetime
+
+            return func(*args, **kwargs)
+
+        return wrapped_func
+
+    return wrapper_cache
 
 def is_video_file(filename):
     result = any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)
@@ -53,6 +77,7 @@ def rate_limited_request(func):
 
 @rate_limited_request
 def add_to_real_debrid(magnet_link):
+    api_key = get_api_key()
     if not api_key:
         logging.error("Real-Debrid API token not found in settings")
         return
@@ -161,8 +186,23 @@ def namespace_to_dict(obj):
 )
 @rate_limited_request
 def is_cached_on_rd(hashes):
+    if not hashes:
+        logging.warning("Empty hashes input to is_cached_on_rd")
+        return {}
+
     if isinstance(hashes, str):
         hashes = [hashes]
+    elif not isinstance(hashes, list):
+        logging.error(f"Invalid input type for hashes: {type(hashes)}")
+        return {}
+
+    # Filter out any non-string elements
+    hashes = [h for h in hashes if isinstance(h, str)]
+
+    if not hashes:
+        logging.warning("No valid hashes after filtering")
+        return {}
+
     url = f'{API_BASE_URL}/torrents/instantAvailability/{"/".join(hashes)}'
     
     try:
@@ -234,6 +274,8 @@ def get_cached_files(hash_):
 
 @rate_limited_request
 def get(url):
+    api_key = get_api_key()
+
     headers = {
         'User-Agent': 'Mozilla/5.0',
         'Authorization': f'Bearer {api_key}'
@@ -258,6 +300,7 @@ def get(url):
         return None
 
 def get_magnet_files(magnet_link):
+    api_key = get_api_key()
     torrent_id = add_to_real_debrid(magnet_link)
     if not torrent_id:
         return None
@@ -293,6 +336,87 @@ def process_hashes(hashes, batch_size=100):
             else:
                 results[hash_] = None
     return results
+
+@timed_lru_cache(seconds=300)  # Cache for 5 minutes
+def get_active_downloads(check=False):
+    api_key = get_api_key()
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    try:
+        response = api.get(f"{API_BASE_URL}/torrents/activeCount", headers=headers, timeout=60)
+        response.raise_for_status()
+        response_json = response.json()
+        logging.debug(f"Real-Debrid active downloads response: {response_json}")
+        
+        active = response_json.get('nb', 0)
+        limit = round(response_json.get('limit', 0) * 0.75)
+        
+        if check:
+            return active < limit
+        else:
+            return active, limit
+    except Exception as e:
+        logging.error(f"An error occurred while fetching active downloads: {e}")
+        return (0, 0) if not check else True
+
+@timed_lru_cache(seconds=300)  # Cache for 5 minutes
+def get_user_traffic():
+    api_key = get_api_key()
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    try:
+        response = api.get(f"{API_BASE_URL}/traffic/details", headers=headers, timeout=60)
+        response.raise_for_status()
+        traffic_info = response.json()
+        
+        logging.debug(f"Real-Debrid traffic response: {traffic_info}")
+        return traffic_info
+    except Exception as e:
+        logging.error(f"An error occurred while fetching traffic info: {e}")
+        return None
+
+def check_daily_usage():
+    server_time, _ = get_server_time()
+    if not server_time:
+        logging.error("Failed to get server time")
+        return {'used': 0, 'limit': 2000}  # Default values
+
+    current_date_str = server_time.strftime("%Y-%m-%d")
+    
+    traffic_info = get_user_traffic()
+    if not traffic_info:
+        logging.error("Failed to get traffic information")
+        return {'used': 0, 'limit': 2000}  # Default values
+
+    daily_usage = traffic_info.get(current_date_str, {}).get('bytes', 0)
+    daily_usage_gb = daily_usage / (1024 * 1024 * 1024)
+    is_over_limit = daily_usage_gb > 2000
+
+    return {
+        'used': round(daily_usage_gb, 2),
+        'limit': 2000,
+        'is_over_limit': is_over_limit
+    }
+
+@timed_lru_cache(seconds=300)
+def get_server_time():
+    api_key = get_api_key()
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    try:
+        response = api.get(f"{API_BASE_URL}/time", headers=headers, timeout=60)
+        response.raise_for_status()
+        server_time = datetime.strptime(response.text.strip(), "%Y-%m-%d %H:%M:%S")
+        return server_time, datetime.now()
+    except Exception as e:
+        logging.error(f"Error getting server time: {str(e)}")
+        return None, datetime.now()
 
 def file_matches_item(filename, item):
     filename = filename.lower()
@@ -330,3 +454,27 @@ def file_matches_item(filename, item):
             return bool(re.search(absolute_pattern, filename))
 
     return False
+
+def get_torrent_info(torrent_id):
+    api_key = get_api_key()
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    try:
+        info_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
+        info_response.raise_for_status()
+        torrent_info = info_response.json()
+
+        return {
+            'status': torrent_info.get('status', 'unknown'),
+            'seeders': torrent_info.get('seeders', 0),
+            'progress': torrent_info.get('progress', 0),
+            'files': torrent_info.get('files', [])
+        }
+    except api.exceptions.RequestException as e:
+        logging.error(f"Error getting torrent info from Real-Debrid: {str(e)}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error in get_torrent_info: {str(e)}")
+        return None

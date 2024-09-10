@@ -162,7 +162,7 @@ document.addEventListener('DOMContentLoaded', function() {
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/content_sources/delete', {
+                fetch('/onboarding/content_sources/delete', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

@@ -19,7 +19,7 @@ def change_password():
             current_user.is_default = False
             db.session.commit()
             flash('Password changed successfully.', 'success')
-            return redirect(url_for('statistics'))
+            return redirect(url_for('statistics.index'))
         else:
             flash('Passwords do not match.', 'error')
     return render_template('change_password.html')
@@ -30,8 +30,7 @@ def change_password():
 @onboarding_required
 def manage_users():
     if not is_user_system_enabled():
-        flash('User management is disabled.', 'error')
-        return redirect(url_for('statistics'))
+        return redirect(url_for('statistics.index'))
     users = User.query.all()
     return render_template('manage_users.html', users=users)
 
@@ -47,7 +46,7 @@ def add_user():
         return jsonify({'success': False, 'error': 'Username already exists.'})
     else:
         hashed_password = generate_password_hash(password)
-        new_user = User(username=username, password=hashed_password, role=role)
+        new_user = User(username=username, password=hashed_password, role=role, onboarding_complete=True)
         db.session.add(new_user)
         db.session.commit()
         return jsonify({'success': True})
@@ -77,10 +76,10 @@ def delete_user(user_id):
 @user_management_bp.route('/register', methods=['GET', 'POST'])
 def register():
     if not is_user_system_enabled():
-        return redirect(url_for('statistics'))
+        return redirect(url_for('statistics.index'))
     
     if current_user.is_authenticated:
-        return redirect(url_for('statistics'))
+        return redirect(url_for('statistics.index'))
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -89,12 +88,12 @@ def register():
             flash('Username already exists.', 'error')
             return redirect(url_for('register'))
         hashed_password = generate_password_hash(password)
-        new_user = User(username=username, password=hashed_password)
+        new_user = User(username=username, password=hashed_password, onboarding_complete=True)
         if User.query.count() == 0:
             new_user.role = 'admin'
         db.session.add(new_user)
         db.session.commit()
         login_user(new_user)
         flash('Registered successfully.', 'success')
-        return redirect(url_for('statistics'))
+        return redirect(url_for('statistics.index'))
     return render_template('register.html')

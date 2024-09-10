@@ -3,7 +3,6 @@ from api_tracker import api
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from settings import get_setting
-from database import get_all_media_items, update_release_date_and_state
 from content_checkers.trakt import load_trakt_credentials, ensure_trakt_auth, get_trakt_headers
 
 REQUEST_TIMEOUT = 15  # seconds
@@ -300,6 +299,8 @@ def get_release_date_if_missing(item: Dict[str, Any], details: Dict[str, Any]) -
     return item['release_date']
 
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    from database import get_all_media_items, update_release_date_and_state
+
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')
     if not overseerr_url or not overseerr_api_key:
@@ -429,6 +430,8 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     return processed_items
     
 def refresh_release_dates():
+    from database import get_all_media_items, update_release_date_and_state
+
     logging.info("Starting refresh_release_dates function")
     overseerr_url = get_setting('Overseerr', 'url')
     overseerr_api_key = get_setting('Overseerr', 'api_key')

@@ -5,7 +5,8 @@ cd "$(dirname "$0")"
 
 # Run a Python script to reset the admin account
 python3 << END
-from web_server import app, db, User
+from web_server import app, db
+from routes.auth_routes import User
 from werkzeug.security import generate_password_hash
 
 with app.app_context():

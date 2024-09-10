@@ -45,6 +45,7 @@ class ProgramRunner:
             'sleeping': 900,
             'unreleased': 3600,
             'blacklisted': 3600,
+            'pending_uncached': 3600,
             'task_plex_full_scan': 3600,
             'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
@@ -62,55 +63,66 @@ class ProgramRunner:
             'sleeping', 
             'unreleased', 
             'blacklisted',
+            'pending_uncached',
             'task_plex_full_scan', 
             'task_debug_log', 
             'task_refresh_release_dates',
             'task_generate_airtime_report'
         }
         
-        self.content_sources = self.load_content_sources()
+        # Add this line to store content sources
+        self.content_sources = None
 
-    def load_content_sources(self):
-        settings = get_all_settings()
-        content_sources = settings.get('Content Sources', {})
-        
-        default_intervals = {
-            'Overseerr': 900,
-            'MDBList': 900,
-            'Collected': 86400,
-            'Trakt Watchlist': 900,
-            'Trakt Lists': 900
-        }
-        
-        for source, data in content_sources.items():
-            if isinstance(data, str):
-                data = {'enabled': data.lower() == 'true'}
+    # Modify this method to cache content sources
+    def get_content_sources(self, force_refresh=False):
+        if self.content_sources is None or force_refresh:
+            settings = get_all_settings()
+            self.content_sources = settings.get('Content Sources', {})
+            debug_settings = settings.get('Debug', {})
+            custom_check_periods = debug_settings.get('content_source_check_period', {})
             
-            if not isinstance(data, dict):
-                logging.error(f"Unexpected data type for content source {source}: {type(data)}")
-                continue
+            default_intervals = {
+                'Overseerr': 900,
+                'MDBList': 900,
+                'Collected': 86400,
+                'Trakt Watchlist': 900,
+                'Trakt Lists': 900
+            }
             
-            source_type = source.split('_')[0]
+            for source, data in self.content_sources.items():
+                if isinstance(data, str):
+                    data = {'enabled': data.lower() == 'true'}
+                
+                if not isinstance(data, dict):
+                    logging.error(f"Unexpected data type for content source {source}: {type(data)}")
+                    continue
+                
+                source_type = source.split('_')[0]
 
-            data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
+                # Use custom check period if present, otherwise use default
+                custom_interval = custom_check_periods.get(source)
+                if custom_interval is not None:
+                    data['interval'] = int(custom_interval) * 60  # Convert minutes to seconds
+                else:
+                    data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
 
-            task_name = f'task_{source}_wanted'
-            self.task_intervals[task_name] = data['interval']
-            self.last_run_times[task_name] = self.start_time
+                task_name = f'task_{source}_wanted'
+                self.task_intervals[task_name] = data['interval']
+                self.last_run_times[task_name] = self.start_time
+                
+                if isinstance(data.get('enabled'), str):
+                    data['enabled'] = data['enabled'].lower() == 'true'
+                
+                if data.get('enabled', False):
+                    self.enabled_tasks.add(task_name)
             
-            if isinstance(data.get('enabled'), str):
-                data['enabled'] = data['enabled'].lower() == 'true'
-            
-            if data.get('enabled', False):
-                self.enabled_tasks.add(task_name)
-        
-        # Log the intervals only once
-        logging.info("Content source intervals:")
-        for task, interval in self.task_intervals.items():
-            if task.startswith('task_') and task.endswith('_wanted'):
-                logging.info(f"{task}: {interval} seconds")
-        
-        return content_sources
+            # Log the intervals only once
+            logging.info("Content source intervals:")
+            for task, interval in self.task_intervals.items():
+                if task.startswith('task_') and task.endswith('_wanted'):
+                    logging.info(f"{task}: {interval} seconds")
+
+        return self.content_sources
         
     def should_run_task(self, task_name):
         if task_name not in self.enabled_tasks:
@@ -121,10 +133,11 @@ class ProgramRunner:
             return True
         return False
 
+    # Update this method to use the cached content sources
     def process_queues(self):
         self.queue_manager.update_all_queues()
 
-        for queue_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted']:
+        for queue_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached']:
             if self.should_run_task(queue_name):
                 self.safe_process_queue(queue_name)
 
@@ -136,7 +149,7 @@ class ProgramRunner:
             self.task_debug_log()
 
         # Process content source tasks
-        for source, data in self.content_sources.items():
+        for source, data in self.get_content_sources().items():
             task_name = f'task_{source}_wanted'
             if self.should_run_task(task_name):
                 self.process_content_source(source, data)
@@ -296,9 +309,13 @@ class ProgramRunner:
 
     def run(self):
         self.run_initialization()
+            
         while self.running:
             self.process_queues()
             time.sleep(1)  # Main loop runs every second
+
+    def invalidate_content_sources_cache(self):
+        self.content_sources = None
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
@@ -328,7 +345,8 @@ def process_overseerr_webhook(data):
     wanted_content_processed = process_metadata(wanted_content)
     if wanted_content_processed:
         # Get the versions for Overseerr from settings
-        overseerr_settings = next((data for source, data in ProgramRunner().content_sources.items() if source.startswith('Overseerr')), {})
+        content_sources = ProgramRunner().get_content_sources(force_refresh=True)
+        overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
         versions = overseerr_settings.get('versions', {})
         
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])

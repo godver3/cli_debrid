@@ -148,15 +148,18 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
-        'addedAt': movie['addedAt'],
+        'addedAt': movie.get('addedAt', None),  # Use None as default if 'addedAt' is missing
         'guid': movie.get('guid'),
         'ratingKey': movie['ratingKey'],
         'release_date': movie.get('originallyAvailableAt'),
         'imdb_id': None,
         'tmdb_id': None,
         'type': 'movie',
-        'genres': filter_genres(genres) 
+        'genres': filtered_genres
     }
+
+    if 'addedAt' not in movie:
+        logger.warning(f"'addedAt' field missing for movie: {movie['title']}. Movie data: {movie}")
 
     #logger.debug(f"Movie: {movie_data['title']}, All genres: {genres}")
     
@@ -352,11 +355,11 @@ async def get_recent_from_plex():
         logger.debug(f"Final movies list length: {len(processed_movies)}")
 
         for episode in processed_episodes:
-            genres = episode['genres']
-            logger.debug(f"Processed episode: {genres}")
+            location = episode['location']
+            logger.debug(f"Processed episode: {location}")
         for movie in processed_movies:
-            genres = movie['genres']
-            logger.debug(f"Processed movie: {genres}")
+            location = movie['location']
+            logger.debug(f"Processed movie: {location}")
 
         return {
             'movies': processed_movies,
@@ -395,16 +398,18 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
-        'addedAt': movie['addedAt'],
+        'addedAt': movie.get('addedAt', None),  # Use None as default if 'addedAt' is missing
         'guid': movie.get('guid'),
         'ratingKey': movie['ratingKey'],
         'release_date': movie.get('originallyAvailableAt'),
         'imdb_id': None,
         'tmdb_id': None,
         'type': 'movie',
-        'genres': filter_genres(genres)
+        'genres': filtered_genres
     }
-    
+
+    if 'addedAt' not in movie:
+        logger.warning(f"'addedAt' field missing for movie: {movie['title']}. Movie data: {movie}")
 
     if 'Guid' in movie:
         for guid in movie['Guid']:

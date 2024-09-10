@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 from settings import get_all_settings
 import trakt.core
 import time
-from database import get_media_item_presence
 import pickle
 import os
 
@@ -163,7 +162,7 @@ def ensure_trakt_auth():
     
     current_time = int(time.time())
     
-    if current_time > trakt.core.OAUTH_EXPIRES_AT:
+    if current_time > (trakt.core.OAUTH_EXPIRES_AT - 86400):
         logging.info("Token has expired, attempting to refresh")
         try:
             trakt.core._validate_token(trakt.core.CORE)
@@ -196,15 +195,21 @@ def check_for_updates(list_url: str = None) -> bool:
 
     if list_url:
         list_id = list_url.split('/')[-1].split('?')[0]
-        if current_activity['lists']['updated_at'] != cached_activity['lists'].get(list_id):
+        if list_id not in cached_activity['lists'] or current_activity['lists']['updated_at'] != cached_activity['lists'].get(list_id):
+            logging.info(f"Update detected for list {list_id}")
             cached_activity['lists'][list_id] = current_activity['lists']['updated_at']
             save_last_activity_cache(cached_activity)
             return True
+        else:
+            logging.info(f"No update detected for list {list_id}")
     else:  # Checking watchlist
-        if current_activity['watchlist']['updated_at'] != cached_activity['watchlist']:
+        if 'watchlist' not in cached_activity or current_activity['watchlist']['updated_at'] != cached_activity['watchlist']:
+            logging.info("Update detected for watchlist")
             cached_activity['watchlist'] = current_activity['watchlist']['updated_at']
             save_last_activity_cache(cached_activity)
             return True
+        else:
+            logging.info("No update detected for watchlist")
 
     return False
 

@@ -38,14 +38,20 @@ def start_program():
     else:
         return jsonify({"status": "error", "message": "Program is already running"})
 
-@program_operation_bp.route('/api/stop_program', methods=['POST'])
-def reset_program():
+def stop_program():
     global program_runner
-    if program_runner is not None:
+    if program_runner is not None and program_runner.is_running():
         program_runner.stop()
-    program_runner = None
-    current_app.config['PROGRAM_RUNNING'] = False
-    return jsonify({"status": "success", "message": "Program reset"})
+        program_runner = None
+        current_app.config['PROGRAM_RUNNING'] = False
+        return {"status": "success", "message": "Program stopped"}
+    else:
+        return {"status": "error", "message": "Program is not running"}
+
+@program_operation_bp.route('/api/stop_program', methods=['POST'])
+def stop_program_route():
+    result = stop_program()
+    return jsonify(result)
 
 @program_operation_bp.route('/api/update_program_state', methods=['POST'])
 def update_program_state():

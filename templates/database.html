@@ -100,7 +100,7 @@
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
                         </td>
                         {% for column in selected_columns %}
-                            <td class="truncate">{{ item[column] }}</td>
+                            <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
                         {% endfor %}
                     </tr>
                 {% endfor %}
@@ -111,10 +111,12 @@
     {% endif %}
 </div>
 
-<script>
+<script type="module">
+import { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips } from '/static/js/tooltips.js';
+
 document.addEventListener('DOMContentLoaded', function() {
-    let currentContentType = 'movie'; // Default to 'movie'
-    let currentLetter = 'A'; // Default to 'A'
+    let currentContentType = '{{ content_type }}';
+    let currentLetter = '{{ current_letter }}';
 
     const availableColumns = document.getElementById('available-columns');
     const selectedColumns = document.getElementById('selected-columns');
@@ -218,6 +220,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const formData = new FormData(this);
             const params = Object.fromEntries(formData.entries());
             updateContent('{{ url_for('database.index') }}', params);
+
+
         });
     }
 
@@ -254,69 +258,136 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function renderTable(items, selectedColumns) {
+        let tableHTML = '<table><thead><tr>';
+        tableHTML += '<th>Delete</th>'; // Add delete column header
+        selectedColumns.forEach(column => {
+            tableHTML += `<th>${column}</th>`;
+        });
+        tableHTML += '</tr></thead><tbody>';
+
+        items.forEach(item => {
+            tableHTML += '<tr>';
+            tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`; // Add delete button
+            selectedColumns.forEach(column => {
+                let cellContent = item[column];
+                if (cellContent === null || cellContent === undefined || cellContent === '') {
+                    cellContent = 'None';
+                }
+                tableHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
+            });
+            tableHTML += '</tr>';
+        });
+
+        tableHTML += '</tbody></table>';
+        return tableHTML;
+    }
+
     function updateContent(url, params = {}) {
         // Preserve current states if not explicitly changed
         params.content_type = params.content_type || currentContentType;
         params.letter = params.letter || currentLetter;
 
+        // Reset to default values when clearing filters
+        if (params.content_type && !params.letter) {
+            params.letter = 'A';
+        }
+        if (params.letter && !params.content_type) {
+            params.content_type = 'movie';
+        }
+
         // Add default sort parameters if not present
-        if (!params.sort_column) params.sort_column = 'id';
-        if (!params.sort_order) params.sort_order = 'asc';
+        if (!params.sort_column) params.sort_column = '{{ sort_column }}';
+        if (!params.sort_order) params.sort_order = '{{ sort_order }}';
+
+        // Add ajax parameter
+        params.ajax = '1';
 
         const queryString = new URLSearchParams(params).toString();
         url += '?' + queryString;
 
+        // Set updating content flag to true
+        setUpdatingContent(true);
+
         fetch(url)
-            .then(response => response.text())
-            .then(html => {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-                document.querySelector('.table-container').innerHTML = doc.querySelector('.table-container').innerHTML;
-                document.querySelector('.pagination').innerHTML = doc.querySelector('.pagination').innerHTML;
-                document.querySelector('.content-type-filter').innerHTML = doc.querySelector('.content-type-filter').innerHTML;
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                const tableContainer = document.querySelector('.table-container');
+                if (tableContainer) {
+                    tableContainer.innerHTML = data.items.length > 0 
+                        ? renderTable(data.items, data.selected_columns)
+                        : '<p>No items found in the database.</p>';
+                } else {
+                    console.error('Table container not found');
+                }
+
+                const paginationElement = document.querySelector('.pagination');
+                if (paginationElement) {
+                    paginationElement.innerHTML = renderPagination(data);
+                }
+
+                const contentTypeFilterElement = document.querySelector('.content-type-filter');
+                if (contentTypeFilterElement) {
+                    contentTypeFilterElement.innerHTML = renderContentTypeFilter(data);
+                }
+
+                document.querySelector('.pagination').innerHTML = renderPagination(data);
+                document.querySelector('.content-type-filter').innerHTML = renderContentTypeFilter(data);
                 
                 // Update current states
-                currentContentType = params.content_type;
-                currentLetter = params.letter;
+                currentContentType = data.content_type;
+                currentLetter = data.current_letter;
 
-                // Update UI to reflect cleared state
-                updateUIForClearedState();
+                // Update UI to reflect current state
+                updateUIForCurrentState(data);
 
                 // Reattach event listeners
                 attachEventListeners();
                 attachDeleteListeners();
+
+                // Reinitialize tooltips after content update
+                initializeTooltips();
+                initializeDatabaseTooltips();
             })
-            .catch(error => console.error('Error updating content:', error));
+            .catch(error => {
+                console.error('Error updating content:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Failed to update database content: ' + error.message
+                });
+            })
+            .finally(() => {
+                setUpdatingContent(false);
+            });
     }
 
-    function updateUIForClearedState() {
-        // Update content type buttons
-        document.querySelectorAll('.content-type-link').forEach(link => {
-            link.classList.remove('active');
-            if (link.getAttribute('data-content-type') === currentContentType) {
-                link.classList.add('active');
-            }
+    function renderPagination(data) {
+        if (!data.alphabet || data.alphabet.length === 0) {
+            return '<p>No pagination data available</p>';
+        }
+
+        let paginationHTML = '<a href="#" data-letter="#" class="pagination-link ' + (data.current_letter === '#' ? 'active' : '') + '">#</a>';
+        data.alphabet.forEach(letter => {
+            paginationHTML += '<a href="#" data-letter="' + letter + '" class="pagination-link ' + (letter === data.current_letter ? 'active' : '') + '">' + letter + '</a>';
         });
 
-        // Update pagination links
-        document.querySelectorAll('.pagination-link').forEach(link => {
-            link.classList.remove('active');
-            if (link.getAttribute('data-letter') === currentLetter) {
-                link.classList.add('active');
-            }
-        });
+        return paginationHTML;
+    }
 
-        // Clear filter inputs visually
-        const filterColumn = document.getElementById('filter-column');
-        const filterValue = document.getElementById('filter-value');
-        if (filterColumn) filterColumn.value = '';
-        if (filterValue) filterValue.value = '';
+    function renderContentTypeFilter(data) {
+        return `
+            <a href="#" data-content-type="movie" class="content-type-link ${data.content_type === 'movie' ? 'active' : ''}">Movies</a>
+            <a href="#" data-content-type="episode" class="content-type-link ${data.content_type === 'episode' ? 'active' : ''}">Episodes</a>
+        `;
+    }
 
-        // Update sort controls visually (if they exist in your HTML)
-        const sortColumn = document.getElementById('sort-column');
-        const sortOrder = document.getElementById('sort-order');
-        if (sortColumn) sortColumn.value = 'id';
-        if (sortOrder) sortOrder.value = 'asc';
+    function updateUIForCurrentState(data) {
+        // ... (implement UI update logic)
     }
 
     function attachEventListeners() {
@@ -325,7 +396,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var contentType = this.getAttribute('data-content-type');
                 clearFilter();
-                updateContent('{{ url_for('database.index') }}', { content_type: contentType });
+                updateContent('{{ url_for('database.index') }}', { content_type: contentType, letter: 'A' });
             });
         });
 
@@ -334,7 +405,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var letter = this.getAttribute('data-letter');
                 clearFilter();
-                updateContent('{{ url_for('database.index') }}', { letter: letter });
+                updateContent('{{ url_for('database.index') }}', { letter: letter, content_type: 'movie' });
             });
         });
     }
@@ -365,8 +436,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('{{ url_for('database.delete_item') }}', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({ item_id: itemId })
         })
@@ -414,6 +484,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial attachment of event listeners
     attachEventListeners();
     attachDeleteListeners();
+
+    // Initialize tooltips
+    initializeTooltips();
+    initializeDatabaseTooltips();
 });
 </script>
 {% endblock %}

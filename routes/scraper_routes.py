@@ -169,12 +169,16 @@ def select_media():
 
         cached_results = []
         for result in torrent_results:
-            result_hash = result.get('hash')
-            if result_hash:
-                is_cached = cache_status.get(result_hash, False)
-                result['cached'] = 'RD' if is_cached else ''
+            # Check if the source is Jackett or Prowlarr
+            if any(src in result.get('source', '').lower() for src in ['jackett', 'prowlarr']):
+                result['cached'] = 'Not Checked'
             else:
-                result['cached'] = ''
+                result_hash = result.get('hash')
+                if result_hash:
+                    is_cached = cache_status.get(result_hash, False)
+                    result['cached'] = 'Yes' if is_cached else 'No'
+                else:
+                    result['cached'] = 'No'
             cached_results.append(result)
 
         logging.info(f"Processed {len(cached_results)} results")
