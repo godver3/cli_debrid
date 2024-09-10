@@ -383,6 +383,14 @@ function updateSettings() {
         console.warn("Sort By Uncached Status checkbox element not found!");
     }
 
+    // Handle Content Source check periods
+    const contentSourceCheckPeriods = {};
+    document.querySelectorAll('#content-source-check-periods input').forEach(input => {
+        const sourceName = input.id.replace('debug-content-source-', '');
+        contentSourceCheckPeriods[sourceName] = parseInt(input.value) || 1;
+    });
+    settingsData['Debug']['content_source_check_period'] = contentSourceCheckPeriods;
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {
@@ -407,3 +415,4 @@ function updateSettings() {
         throw error;
     });
 }
+
