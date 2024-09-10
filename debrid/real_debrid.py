@@ -329,13 +329,13 @@ def get_active_downloads(check=False):
         
         if check:
             if 'nb' in response_json:
-                return response_json['nb'] < response_json['limit']
+                return response_json['nb'] < round(response_json['limit']*0.75)
             else:
                 logging.debug("'nb' not found in Real-Debrid response")
                 return False
         else:
             if 'nb' in response_json:
-                return response_json['nb'], response_json['limit']
+                return response_json['nb'], round(response_json['limit']*0.75)
             else:
                 logging.debug("'nb' not found in Real-Debrid response")
                 return 0, round(response_json.get('limit', 0)*0.75)

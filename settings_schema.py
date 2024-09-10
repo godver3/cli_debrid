@@ -180,9 +180,9 @@ SETTINGS_SCHEMA = {
             "description": "Skip Plex initial collection scan",
             "default": False
         },
-        "skip_menu": {
+        "auto_run_program": {
             "type": "boolean",
-            "description": "Skip menu",
+            "description": "Run the program automatically on startup",
             "default": False
         },
         "disable_initialization": {
