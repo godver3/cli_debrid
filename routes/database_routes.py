@@ -3,9 +3,6 @@ import sqlite3
 import string
 from database import get_db_connection
 import logging
-from routes import admin_required
-import os
-from database import create_tables, verify_database, bulk_delete_by_imdb_id
 from sqlalchemy import text, inspect
 from extensions import db
 from database import remove_from_media_items
@@ -116,45 +113,39 @@ def index():
         # Convert items to a list of dictionaries, always including 'id'
         items = [dict(zip(query_columns, item)) for item in items]
 
+        # Prepare the data dictionary
+        data = {
+            'items': items,
+            'all_columns': all_columns,
+            'selected_columns': selected_columns,
+            'filter_column': filter_column,
+            'filter_value': filter_value,
+            'sort_column': sort_column,
+            'sort_order': sort_order,
+            'alphabet': alphabet,
+            'current_letter': current_letter,
+            'content_type': content_type
+        }
 
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({
-                'table': render_template('database_table.html', 
-                                        items=items, 
-                                        all_columns=all_columns,
-                                        selected_columns=selected_columns,
-                                        content_type=content_type),
-                'pagination': render_template('database_pagination.html',
-                                            alphabet=alphabet,
-                                            current_letter=current_letter,
-                                            content_type=content_type,
-                                            filter_column=filter_column,
-                                            filter_value=filter_value,
-                                            sort_column=sort_column,
-                                            sort_order=sort_order)
-            })
+        if request.args.get('ajax') == '1':
+            return jsonify(data)
+        else:
+            return render_template('database.html', **data)
         
     except sqlite3.Error as e:
         logging.error(f"SQLite error in database route: {str(e)}")
-        items = []
-        flash(f"Database error: {str(e)}", "error")
+        error_message = f"Database error: {str(e)}"
     except Exception as e:
         logging.error(f"Unexpected error in database route: {str(e)}")
-        items = []
-        flash("An unexpected error occurred. Please try again later.", "error")
+        error_message = "An unexpected error occurred. Please try again later."
 
-    return render_template('database.html', 
-                           items=items, 
-                           all_columns=all_columns,
-                           selected_columns=selected_columns,
-                           filter_column=filter_column,
-                           filter_value=filter_value,
-                           sort_column=sort_column,
-                           sort_order=sort_order,
-                           alphabet=alphabet,
-                           current_letter=current_letter,
-                           content_type=content_type)
-    
+    if request.args.get('ajax') == '1':
+        return jsonify({'error': error_message}), 500
+    else:
+        flash(error_message, "error")
+        # Remove 'items' from the arguments here
+        return render_template('database.html', **{**data, 'items': []})
+
 @database_bp.route('/bulk_queue_action', methods=['POST'])
 def bulk_queue_action():
     action = request.form.get('action')

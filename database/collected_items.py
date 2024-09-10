@@ -1,191 +1,141 @@
 from .core import get_db_connection, row_to_dict, normalize_string, get_existing_airtime
+from metadata.metadata import get_show_airtime_by_imdb_id
 import logging
 import os
 from datetime import datetime
 import json
-from fuzzywuzzy import fuzz
-from settings import get_setting
-
 
 def add_collected_items(media_items_batch, recent=False):
-    from metadata.metadata import get_show_airtime_by_imdb_id
-
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
         
-        processed_items = set()
-        airtime_cache = {}  # Cache to store airtimes for each show
+        # Fetch all existing collected items from the database
+        existing_items = conn.execute('''
+            SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file 
+            FROM media_items 
+            WHERE state IN ('Collected', 'Checking')
+        ''').fetchall()
+        
+        # Create a set of existing filenames in 'Collected' state
+        existing_collected_files = {row['filled_by_file'] for row in existing_items if row['state'] == 'Collected'}
 
-        existing_items = conn.execute('SELECT id, imdb_id, type, season_number, episode_number, state, version, filled_by_file FROM media_items').fetchall()
-        existing_ids = {}
-        for row in map(row_to_dict, existing_items):
-            if row['type'] == 'movie':
-                key = (row['imdb_id'], 'movie', row['version'])
-            else:
-                key = (row['imdb_id'], 'episode', row['season_number'], row['episode_number'], row['version'])
-            existing_ids[key] = (row['id'], row['state'], row['filled_by_file'])
+        # Create a dictionary of existing filenames to item details for all fetched items
+        existing_file_map = {row['filled_by_file']: row_to_dict(row) for row in existing_items if row['filled_by_file']}
 
-        scraping_versions = get_setting('Scraping', 'versions', {})
-        versions = list(scraping_versions.keys())
-
+        # Filter out items that are already in 'Collected' state
+        filtered_media_items_batch = []
         for item in media_items_batch:
-            if not item.get('imdb_id'):
-                logging.warning(f"Skipping item without valid IMDb ID: {item.get('title', 'Unknown')}")
-                continue
+            locations = item.get('location', [])
+            if isinstance(locations, str):
+                locations = [locations]
+            
+            new_locations = []
+            for location in locations:
+                filename = os.path.basename(location)
+                if filename and filename not in existing_collected_files:
+                    new_locations.append(location)
+            
+            if new_locations:
+                item['location'] = new_locations
+                filtered_media_items_batch.append(item)
 
-            normalized_title = normalize_string(item.get('title', 'Unknown'))
-            item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
-
-            plex_filename = os.path.basename(item.get('location', ''))
-
-            genres = json.dumps(item.get('genres', []))  # Convert genres list to JSON string
-
-            item_found = False
-            for version in versions:
-                if item_type == 'movie':
-                    item_key = (item['imdb_id'], 'movie', version)
-                else:
-                    item_key = (item['imdb_id'], 'episode', item['season_number'], item['episode_number'], version)
-
-                if item_key in existing_ids:
-                    item_found = True
-                    item_id, current_state, filled_by_file = existing_ids[item_key]
-
-                    logging.debug(f"Comparing existing item in DB with Plex item:")
-                    logging.debug(f"  DB Item: {normalized_title} (ID: {item_id}, State: {current_state}, Version: {version})")
-                    logging.debug(f"  DB Filled By File: {filled_by_file}")
-                    logging.debug(f"  Plex Filename: {plex_filename}")
-
-                    if filled_by_file and plex_filename:
-                        match_ratio = fuzz.ratio(filled_by_file.lower(), plex_filename.lower())
-                        logging.debug(f"  Fuzzy match ratio: {match_ratio}%")
-
-                        if match_ratio >= 95:  # You can adjust this threshold
-                            logging.debug(f"  Match found: DB Filled By File matches Plex Filename (Fuzzy match: {match_ratio}%)")
-
-                            if current_state != 'Collected':
-                                conn.execute('''
-                                    UPDATE media_items
-                                    SET state = ?, last_updated = ?, collected_at = ?
-                                    WHERE id = ?
-                                ''', ('Collected', datetime.now(), datetime.now(), item_id))
-                                logging.debug(f"Updating item in DB to Collected: {normalized_title} (Version: {version})")
-
-                                # Check for other episodes with the same filled_by_file
-                                cursor = conn.execute('''
-                                    SELECT id, state FROM media_items
-                                    WHERE filled_by_file = ? AND state = 'Checking'
-                                ''', (filled_by_file,))
-                                related_episodes = cursor.fetchall()
-
-                                for related_id, related_state in related_episodes:
-                                    conn.execute('''
-                                        UPDATE media_items
-                                        SET state = ?, last_updated = ?, collected_at = ?
-                                        WHERE id = ?
-                                    ''', ('Collected', datetime.now(), datetime.now(), related_id))
-                                    logging.debug(f"Updating related item in DB to Collected: ID {related_id} (Same filled_by_file)")
-
-                        else:
-                            logging.debug(f"  No match: DB Filled By File does not match Plex Filename (Fuzzy match: {match_ratio}%)")
-                    elif current_state == 'Collected':
-                        logging.debug(f"Item already Collected, keeping state: {normalized_title} (Version: {version})")
-                    else:
-                        logging.debug(f"Cannot compare item, keeping current state: {normalized_title} (Version: {version})")
-
-                    processed_items.add(item_id)
-
-            if not item_found:
-                if item_type == 'movie':
-                    cursor = conn.execute('''
-                        SELECT id FROM media_items
-                        WHERE imdb_id = ? AND type = 'movie' AND version = 'unknown'
-                    ''', (item['imdb_id'],))
-                else:
-                    # For episodes, get the airtime
-                    if item['imdb_id'] not in airtime_cache:
-                        airtime_cache[item['imdb_id']] = get_existing_airtime(conn, item['imdb_id'])
-                        if airtime_cache[item['imdb_id']] is None:
-                            logging.debug(f"No existing airtime found for show {item['imdb_id']}, fetching from metadata")
-                            airtime_cache[item['imdb_id']] = get_show_airtime_by_imdb_id(item['imdb_id'])
-                        
-                        # Ensure we always have a default airtime
-                        if not airtime_cache[item['imdb_id']]:
-                            airtime_cache[item['imdb_id']] = '19:00'
-                            logging.debug(f"No airtime found, defaulting to 19:00 for show {item['imdb_id']}")
-                        
-                        logging.debug(f"Airtime for show {item['imdb_id']} set to {airtime_cache[item['imdb_id']]}")
-                    
-                    airtime = airtime_cache[item['imdb_id']]
-
-                    cursor = conn.execute('''
-                        SELECT id FROM media_items
-                        WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND version = 'unknown'
-                    ''', (item['imdb_id'], item['season_number'], item['episode_number']))
-
-                existing_item = cursor.fetchone()
-
-                if existing_item:
-                    # Update existing item
-                    item_id = existing_item[0]
-                    if item_type == 'movie':
-                        conn.execute('''
-                            UPDATE media_items
-                            SET state = ?, last_updated = ?
-                            WHERE id = ?
-                        ''', ('Collected', datetime.now(), item_id))
-                    else:
-                        conn.execute('''
-                            UPDATE media_items
-                            SET state = ?, last_updated = ?, airtime = ?
-                            WHERE id = ?
-                        ''', ('Collected', datetime.now(), airtime, item_id))
-                    logging.debug(f"Updating existing item to Collected: {normalized_title}")
-                else:
-                    # Insert new item
-                    if item_type == 'movie':
-                        cursor = conn.execute('''
-                            INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                        ''', (
-                            item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                            item.get('release_date'), 'Collected', 'movie',
-                            datetime.now(), datetime.now(), 'unknown', datetime.now(), genres
-                        ))
-                        logging.info(f"Adding new movie to DB as Collected: {normalized_title}")
-                    else:
-                        cursor = conn.execute('''
-                            INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        ''', (
-                            item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                            item.get('release_date'), 'Collected', 'episode',
-                            item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), datetime.now(), 'unknown', airtime, datetime.now(), genres
-                        ))
-                        logging.info(f"Adding new episode to DB as Collected: {normalized_title} S{item['season_number']}E{item['episode_number']} (Airtime: {airtime})")
+        # Process all items, including existing ones
+        all_valid_filenames = set()
+        airtime_cache = {}
+        
+        for item in media_items_batch:
+            try:
+                locations = item.get('location', [])
+                if isinstance(locations, str):
+                    locations = [locations]
                 
-                new_item_id = cursor.lastrowid
-                processed_items.add(new_item_id)
+                for location in locations:
+                    filename = os.path.basename(location)
+                    if filename:
+                        all_valid_filenames.add(filename)
+                        
+                imdb_id = item.get('imdb_id') or None
+                tmdb_id = item.get('tmdb_id')
+                normalized_title = normalize_string(item.get('title', 'Unknown'))
+                item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+
+                for location in locations:
+                    filename = os.path.basename(location)
+
+                    added_at = item.get('addedAt')
+                    if added_at is not None:
+                        collected_at = datetime.fromtimestamp(added_at)
+                    else:
+                        collected_at = datetime.now()
+                    genres = json.dumps(item.get('genres', []))
+
+                    if filename in existing_file_map:
+                        existing_item = existing_file_map[filename]
+                        item_id = existing_item['id']
+                        
+                        # Update the existing item
+                        conn.execute('''
+                            UPDATE media_items
+                            SET state = ?, last_updated = ?, collected_at = ?
+                            WHERE id = ?
+                        ''', ('Collected', datetime.now(), collected_at, item_id))
+                        logging.info(f"Updated existing item to Collected: {normalized_title} (ID: {item_id})")
+                    else:
+                        # Insert new item
+                        if item_type == 'movie':
+                            cursor = conn.execute('''
+                                INSERT OR REPLACE INTO media_items
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres, filled_by_file)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            ''', (
+                                imdb_id, tmdb_id, normalized_title, item.get('year'),
+                                item.get('release_date'), 'Collected', 'movie',
+                                datetime.now(), datetime.now(), 'unknown', collected_at, genres, filename
+                            ))
+                        else:
+                            if imdb_id not in airtime_cache:
+                                airtime_cache[imdb_id] = get_existing_airtime(conn, imdb_id)
+                                if airtime_cache[imdb_id] is None:
+                                    airtime_cache[imdb_id] = get_show_airtime_by_imdb_id(imdb_id)
+                                if not airtime_cache[imdb_id]:
+                                    airtime_cache[imdb_id] = '19:00'
+                            
+                            airtime = airtime_cache[imdb_id]
+                            cursor = conn.execute('''
+                                INSERT OR REPLACE INTO media_items
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres, filled_by_file)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            ''', (
+                                imdb_id, tmdb_id, normalized_title, item.get('year'),
+                                item.get('release_date'), 'Collected', 'episode',
+                                item['season_number'], item['episode_number'], item.get('episode_title', ''),
+                                datetime.now(), datetime.now(), 'unknown', airtime, collected_at, genres, filename
+                            ))
+                        logging.info(f"Added new item as Collected: {normalized_title} (ID: {cursor.lastrowid})")
+                
+                # Remove this line:
+                # processed_filenames.add(filename)
+                # (It's redundant now because we're already adding to all_valid_filenames earlier)
+
+            except Exception as e:
+                logging.error(f"Error processing item {item.get('title', 'Unknown')}: {str(e)}", exc_info=True)
+                # Continue processing other items
 
         # Handle items not in the batch if not recent
         if not recent:
-            items_to_check = set(id for id, _, _ in existing_ids.values()) - processed_items
-            for item_id in items_to_check:
-                item_info = conn.execute('SELECT title, state, version FROM media_items WHERE id = ?', (item_id,)).fetchone()
-                if item_info:
-                    title, state, version = item_info
-                    if state not in ['Collected', 'Blacklisted']:
-                        conn.execute('UPDATE media_items SET state = ?, last_updated = ?, collected_at = NULL WHERE id = ?', ('Wanted', datetime.now(), item_id))
-                        logging.debug(f"Moving non-Collected/non-Blacklisted item back to Wanted state: ID {item_id}, {title} (Version: {version})")
-                    else:
-                        logging.debug(f"Keeping {state} item in DB: ID {item_id}, {title} (Version: {version})")
+            for row in existing_items:
+                item = row_to_dict(row)
+                if item['filled_by_file'] and item['filled_by_file'] not in all_valid_filenames:
+                    conn.execute('''
+                        UPDATE media_items
+                        SET state = ?, last_updated = ?, collected_at = NULL, filled_by_file = NULL
+                        WHERE id = ?
+                    ''', ('Wanted', datetime.now(), item['id']))
+                    logging.info(f"Moved item to Wanted state (file no longer present): {item.get('title', 'Unknown')} (ID: {item['id']})")
 
         conn.commit()
-        logging.debug(f"Collected items processed and database updated. Total items: {len(media_items_batch)}, Processed: {len(processed_items)}")
+        logging.debug(f"Collected items processed and database updated. Original batch: {len(media_items_batch)}, Filtered batch: {len(filtered_media_items_batch)}")
     except Exception as e:
         logging.error(f"Error adding collected items: {str(e)}", exc_info=True)
         conn.rollback()

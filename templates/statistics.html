@@ -267,6 +267,7 @@
         }
         
         .top-stats {
+            display: grid;
             grid-template-columns: 1fr;
         }
         
@@ -355,8 +356,8 @@
     .compact-view .air-date,
     .compact-view .release-date {
         margin-left: 10px;
-        font-style: italic;
-        color: #aaa;
+        font-style: normal;
+        color: #d4d4d4;
         white-space: nowrap;
     }
 
@@ -388,22 +389,19 @@
 
     .compact-view .air-date,
     .compact-view .release-date {
-        font-size: 0.8em;
-    }
-
-    @media (max-width: 768px) {
-        .compact-view .card {
-            width: calc(33.33% - 7px);
-        }
-    }
-
-    @media (max-width: 480px) {
-        .compact-view .card {
-            width: calc(50% - 5px);
-        }
+        font-size: 0.9em;
     }
 
     /* Compact view styles for recently added section */
+    .compact-view .recently-added {
+        display: flex;
+        flex-direction: row;
+        gap: 10px;
+    }
+    .compact-view .recently-added-section{
+        flex: 1;
+    }
+
     .compact-view .recently-added-section .card-container {
         display: table;
         width: 100%;
@@ -458,10 +456,59 @@
         display: inline;
     }
 
+    @media (max-width: 768px) {
+        .compact-view .card {
+            width: calc(33.33% - 7px);
+        }
+    }
+
+    @media (max-width: 480px) {
+        .compact-view .card {
+            width: calc(50% - 5px);
+        }
+    }
+
+    @media (max-width: 1200px) {
+        .compact-view .top-stats {
+            display: grid;
+        }
+        .compact-view .stats-box.recently-aired, .compact-view .stats-box.airing-soon, .compact-view .stats-box.upcoming-releases {
+            width: 100%;
+        }
+
+        .compact-view .recently-added {
+            display: block;
+        }
+
+        .compact-view .recently-added-section {
+            margin-bottom: 10px;
+        }
+
+        .compact-view .recently-added-section .card-container {
+            display: block;
+        }
+
+        .compact-view .recently-added-section .card {
+            display: grid;
+        }
+
+        .compact-view .recently-added-section .card-hover-content {
+            display: inline-grid;
+            padding: 0px;
+            margin-bottom: 8px;
+            overflow-wrap: anywhere;
+        }
+
+        .compact-view .recently-added-section .card .info-line {
+            font-size: 0.8em;
+            margin: 0px;
+        }
+    }
+
 </style>
 
 <div class="statistics-wrapper">
-    <div class="toggle-container">
+    <div class="toggle-container" data-tooltip="home.toggle_container">
         <div class="toggle-item">
             <span class="toggle-label"><i class="fas fa-globe"></i> <span id="current-timezone">{{ stats.timezone }}</span></span>
         </div>
@@ -479,10 +526,14 @@
                 <span class="toggle-slider"></span>
             </label>
         </div>
+        <div class="toggle-item"><span id="active-downloads"></span></div>
+        <div class="stat-item">
+            <p>Daily Usage: <span id="daily-usage">{{ stats.daily_usage }} / {{ stats.daily_limit }} GB</span></p>
+        </div>
     </div>
 
     <div class="stats-container">
-        <div class="stats-box collection-stats">
+        <div class="stats-box collection-stats" data-tooltip="home.collection_stats">
             <div class="stat-items">
                 <div class="stat-item">
                     <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
@@ -500,7 +551,7 @@
         </div>
 
         <div class="top-stats">
-            <div class="stats-box recently-aired">
+            <div class="stats-box recently-aired" data-tooltip="home.recently_aired">
                 <h3>Recently Aired</h3>
                 {% if stats.recently_aired %}
                     <ul>
@@ -516,7 +567,7 @@
                 {% endif %}
             </div>
             
-            <div class="stats-box airing-soon">
+            <div class="stats-box airing-soon" data-tooltip="home.airing_soon">
                 <h3>Airing Soon</h3>
                 {% if stats.airing_soon %}
                     <ul>
@@ -532,7 +583,7 @@
                 {% endif %}
             </div>
             
-            <div class="stats-box upcoming-releases">
+            <div class="stats-box upcoming-releases" data-tooltip="home.upcoming_releases">
                 <h3>Upcoming Releases</h3>
                 {% if stats.upcoming_releases %}
                     <ul>
@@ -559,10 +610,9 @@
             </div>
         </div>
 
-        <div class="stats-box recently-added">
-            <h3>Recently Added</h3>
-            <div class="recently-added-section">
-                <h4>Movies</h4>
+        <div class="recently-added">
+            <div class="stats-box recently-added-section" data-tooltip="home.recently_added_movies">
+                <h4>Recently Added Movies</h4>
                 {% if stats.recently_added_movies %}
                     <div class="card-container">
                     {% for movie in stats.recently_added_movies %}
@@ -577,14 +627,15 @@
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
                                 <p class="info-line">Added: {{ movie.collected_at }}</p>
                                 <p class="info-line">Versions: {{ movie.versions }}</p>
+                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${movie.filled_by_title}</span></p>
                             </div>
                         </div>
                     {% endfor %}
                     </div>
                 {% endif %}
             </div>
-            <div class="recently-added-section">
-                <h4>TV Shows</h4>
+            <div class="stats-box recently-added-section" data-tooltip="home.recently_added_shows">
+                <h4>Recently Added Shows</h4>
                 {% if stats.recently_added_shows %}
                     <div class="card-container">
                     {% for show in stats.recently_added_shows %}
@@ -601,6 +652,8 @@
                                 <p class="info-line">Versions: {{ show.versions }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
+                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${show.filled_by_title}</span></p>
+
                             </div>
                         </div>
                     {% endfor %}
@@ -610,7 +663,6 @@
         </div>
     </div>
 </div>
-
 <script>
 // Use the server-side preference to set the initial state
 let use24HourFormat = {{ 'true' if stats.use_24hour_format else 'false' }};
@@ -659,6 +711,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const compactToggle = document.getElementById('compact-toggle');
     const statisticsWrapper = document.querySelector('.statistics-wrapper');
     
+    // Replace the existing time format toggle event listener with this:
     timeFormatToggle.addEventListener('change', function() {
         use24HourFormat = this.checked;
         
@@ -668,6 +721,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ use24HourFormat: use24HourFormat }),
+            credentials: 'include',
         })
         .then(response => response.json())
         .then(data => {
@@ -679,6 +733,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Replace the existing compact toggle event listener with this:
     compactToggle.addEventListener('change', function() {
         if (this.checked) {
             statisticsWrapper.classList.add('compact-view');
@@ -693,6 +748,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ compactView: this.checked }),
+            credentials: 'include',
         })
         .then(response => response.json())
         .then(data => {
@@ -710,10 +766,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateStatistics() {
         console.log('Attempting to fetch statistics...');
-        fetch('/statistics', {
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            }
+        const protocol = window.location.protocol;
+        const host = window.location.host;
+        fetch(`/statistics?ajax=1`, {
+            method: 'GET',
+            credentials: 'include'
         })
         .then(response => {
             console.log('Response received:', response);
@@ -744,6 +801,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Update timezone information
             updateTimezone(data.timezone);
+            getActiveDownloads(data.active_downloads,data.limit_downloads);
         })
         .catch(error => {
             console.error('Error updating statistics:', error);
@@ -762,6 +820,15 @@ document.addEventListener('DOMContentLoaded', () => {
             timezoneElement.textContent = timezone;
         }
     }
+    function getActiveDownloads(active_downloads, limit_downloads) {
+    const rdActiveDownloads = document.getElementById('active-downloads');
+    if (rdActiveDownloads) {
+        console.log(`Updating RD active downloads: ${active_downloads}/${limit_downloads}`);
+        rdActiveDownloads.textContent = `RD: ${active_downloads}/${limit_downloads}`;
+    } else {
+        console.error('Element with id "active-downloads" not found');
+    }
+}
 
     function updateRecentlyAired(recentlyAired) {
         const container = document.querySelector('.stats-box.recently-aired');
@@ -810,12 +877,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateRecentlyAdded(movies, shows) {
         console.log('Recently added movies:', movies);
         console.log('Recently added shows:', shows);
-        updateRecentlyAddedSection('Movies', movies);
-        updateRecentlyAddedSection('TV Shows', shows);
+        updateRecentlyAddedSection('Recently Added Movies', movies);
+        updateRecentlyAddedSection('Recently Added Shows', shows);
     }
 
     function updateRecentlyAddedSection(type, items) {
-        const sections = document.querySelectorAll('.recently-added-section');
+        const sections = document.querySelectorAll('.stats-box.recently-added-section');
         let section = null;
         for (let s of sections) {
             if (s.querySelector('h4').textContent.trim() === type) {
@@ -848,11 +915,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <div class="card-hover-content">
                             <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                            <p class="info-line">Added: ${formattedDate}</p>
-                            <p class="info-line">Versions: ${item.versions}</p>
+                            <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${formattedDate}</p>
+                            <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
                             ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
-                                `<p class="info-line">Seasons: ${item.seasons.join(', ')}</p>
-                                <p class="info-line">Latest: S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
+                                `<p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
+                                <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
+                            <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
                         </div>
                     </div>
                 `;
@@ -879,5 +947,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial updates
     updateStatistics();
 });
+
 </script>
 {% endblock %}

@@ -165,3 +165,62 @@ button:hover {
 .select-all-container button {
     margin-right: 10px;
 }
+
+.domain-rate-limit {
+    background-color: #3a3a3a;
+    border: 1px solid #555;
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.domain-rate-limit h5 {
+    color: #f4f4f4;
+    font-size: 18px;
+    margin-top: 0;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #555;
+    padding-bottom: 5px;
+}
+
+.domain-rate-limit p {
+    color: #f4f4f4;
+    margin: 5px 0;
+    font-size: 14px;
+}
+
+.rate-limit-info {
+    margin-top: 15px;
+}
+
+.rate-limit-count {
+    font-weight: bold;
+}
+
+.rate-limit-warning {
+    color: #ffc107;
+}
+
+.rate-limit-danger {
+    color: #dc3545;
+}
+
+#refresh-rate-limits {
+    background-color: #28a745;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin-top: 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+}
+
+#refresh-rate-limits:hover {
+    background-color: #218838;
+}
+

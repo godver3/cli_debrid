@@ -4,15 +4,11 @@ from settings_schema import SETTINGS_SCHEMA
 import logging
 from config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config
 from routes.models import admin_required, onboarding_required
+from .utils import is_user_system_enabled
 import traceback
 import json
 
 settings_bp = Blueprint('settings', __name__)
-
-
-def is_user_system_enabled():
-    config = load_config()
-    return config.get('UI Settings', {}).get('enable_user_system', True)
 
 @settings_bp.route('/content-sources/content')
 def content_sources_content():
@@ -339,6 +335,7 @@ def api_program_settings():
         program_settings = {
             'Scrapers': config.get('Scrapers', {}),
             'Content Sources': config.get('Content Sources', {}),
+            'Debug': config.get('Debug', {}),
             'Plex': {
                 'url': config.get('Plex', {}).get('url', ''),
                 'token': config.get('Plex', {}).get('token', '')
@@ -379,6 +376,12 @@ def update_settings():
                     current[key] = value
 
         update_nested_dict(config, new_settings)
+        
+        # Update content source check periods
+        if 'Debug' in new_settings and 'content_source_check_period' in new_settings['Debug']:
+            config['Debug']['content_source_check_period'] = {
+                source: int(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
+            }
         
         save_config(config)
         

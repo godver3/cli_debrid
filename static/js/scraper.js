@@ -417,7 +417,7 @@ function displayTorrentResults(data, title, year) {
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     function handleScreenChange(e) {
         if (e.matches) {
-            const overlayContentRes = document.getElementById('overlayContentRes');
+            const overlayContentRes = document.getElementById('overlayContent');
             overlayContentRes.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
             const gridContainer = document.createElement('div');
             gridContainer.style.display = 'flex';
@@ -433,10 +433,10 @@ function displayTorrentResults(data, title, year) {
                     <button>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title}</p>
-                        <p class="torresult-item">${(torrent.size).toFixed(1)} GB |${torrent.cached ? ` ${torrent.cached} |` : ''} ${torrent.score_breakdown.total_score}</p>
+                        <p class="torresult-item">${(torrent.size).toFixed(1)} GB | ${torrent.cached} | ${torrent.score_breakdown.total_score}</p>
                         <p class="torresult-item">${torrent.source}</p>
                     </div>
-                    </button>                
+                    </button>             
                 `;        
                 torResDiv.onclick = function() {
                     addToRealDebrid(torrent.magnet)
@@ -649,8 +649,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (status.status == 'authorized') {
                     get_trendingMovies();
                     get_trendingShows();
+                } else {
+                    displayTraktAuthMessage();
                 }
-                });
+            });
         searchForm.addEventListener('submit', searchMedia);
     }
 });
+
+function displayTraktAuthMessage() {
+    const trendingContainer = document.getElementById('trendingContainer');
+    trendingContainer.innerHTML = '<p>Please authenticate with Trakt to see trending movies and shows.</p>';
+}

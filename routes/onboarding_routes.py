@@ -3,7 +3,7 @@ from flask_login import login_required, current_user, login_user, logout_user
 from werkzeug.security import generate_password_hash
 from settings import load_config, get_setting, save_config
 from settings_schema import SETTINGS_SCHEMA
-from config_manager import add_scraper, add_content_source
+from config_manager import add_scraper, add_content_source, load_config
 import logging
 
 onboarding_bp = Blueprint('onboarding', __name__)
@@ -76,7 +76,11 @@ def onboarding_step(step):
             else:
                 return jsonify({'success': False, 'error': 'Passwords do not match'})
 
-        return render_template('onboarding_step_1.html', current_step=step, can_proceed=can_proceed, admin_created=admin_created, is_onboarding=True)
+        return render_template('onboarding_step_1.html', 
+                               current_step=step, 
+                               can_proceed=can_proceed, 
+                               admin_created=admin_created, 
+                               is_onboarding=True)
        
     if step == 2:
         required_settings = [
@@ -193,7 +197,7 @@ def setup_admin():
     from routes.auth_routes import User
 
     if not current_user.is_default:
-        return redirect(url_for('onboarding_step', step=1))
+        return redirect(url_for('onboarding.onboarding_step', step=1))
     if request.method == 'POST':
         new_username = request.form['new_username']
         new_password = request.form['new_password']
@@ -223,7 +227,7 @@ def setup_admin():
                     login_user(new_admin)
                     
                     # Redirect to the first onboarding step
-                    return redirect(url_for('onboarding_step', step=1))
+                    return redirect(url_for('onboarding.onboarding_step', step=1))
                 except Exception as e:
                     db.session.rollback()
                     flash(f'An error occurred: {str(e)}', 'error')
@@ -267,24 +271,36 @@ def get_onboarding_content_sources():
 
 @onboarding_bp.route('/scrapers/add', methods=['POST'])
 def add_onboarding_scraper():
-    data = request.json
-    scraper_type = data.get('type')
-    scraper_config = data.get('config')
-    
-    if not scraper_type or not scraper_config:
-        return jsonify({'success': False, 'error': 'Invalid scraper data'}), 400
+    logging.info(f"Received request to add scraper during onboarding. Content-Type: {request.content_type}")
+    logging.info(f"Request data: {request.data}")
+    try:
+        if request.is_json:
+            data = request.json
+        else:
+            return jsonify({'success': False, 'error': f'Unsupported Content-Type: {request.content_type}'}), 415
+        
+        logging.info(f"Parsed data: {data}")
+        
+        scraper_type = data.get('type')
+        scraper_config = data.get('config')
+        
+        if not scraper_type:
+            return jsonify({'success': False, 'error': 'No scraper type provided'}), 400
+        
+        if not scraper_config:
+            return jsonify({'success': False, 'error': 'No scraper config provided'}), 400
 
-    config = load_config()
-    scrapers = config.get('Scrapers', {})
-    
-    # Generate a unique ID for the new scraper
-    scraper_id = f"{scraper_type}_{len([s for s in scrapers if s.startswith(scraper_type)]) + 1}"
-    
-    scrapers[scraper_id] = scraper_config
-    config['Scrapers'] = scrapers
-    save_config(config)
-
-    return jsonify({'success': True, 'scraper_id': scraper_id})
+        # Use the add_scraper function from config_manager
+        new_scraper_id = add_scraper(scraper_type, scraper_config)
+        
+        # Log the updated config after adding the scraper
+        updated_config = load_config()
+        logging.info(f"Updated config after adding scraper: {updated_config}")
+        
+        return jsonify({'success': True, 'scraper_id': new_scraper_id})
+    except Exception as e:
+        logging.error(f"Error adding scraper during onboarding: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/scrapers/get', methods=['GET'])
 def get_onboarding_scrapers():

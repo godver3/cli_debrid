@@ -1,0 +1,19 @@
+{
+    "home": {
+      "toggle_container": "Control panel for adjusting time format, view mode, and displaying active downloads.",
+      "collection_stats": "Overview of your media collection, including total movies, TV shows, episodes, and system uptime.",
+      "recently_aired": "Shows episodes that have aired recently.",
+      "airing_soon": "Upcoming episodes scheduled to air in the near future.",
+      "upcoming_releases": "New movies or shows expected to be released soon.",
+      "recently_added_movies": "Latest movies added to your collection.",
+      "recently_added_shows": "Latest TV shows added to your collection."
+    },
+    "queues": {
+      "add_to_queue": "Sample text.",
+      "queue_priority": "Sample text."
+    },
+    "settings": {
+      "debrid_api_key": "Sample text.",
+      "max_concurrent_downloads": "Sample text."
+    }
+  }

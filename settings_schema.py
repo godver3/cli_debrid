@@ -169,9 +169,9 @@ SETTINGS_SCHEMA = {
     },
     "Debug": {
         "tab": "Debug Settings",
-        "logging_level": {
+        "console_logging_level": {
             "type": "string",
-            "description": "Logging level",
+            "description": "Console logging level",
             "default": "INFO",
             "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         },
@@ -180,15 +180,33 @@ SETTINGS_SCHEMA = {
             "description": "Skip Plex initial collection scan",
             "default": False
         },
-        "skip_menu": {
+        "auto_run_program": {
             "type": "boolean",
-            "description": "Skip menu",
+            "description": "Run the program automatically on startup",
             "default": False
         },
         "disable_initialization": {
             "type": "boolean",
             "description": "Disable initialization tasks",
             "default": False
+        },
+        "sort_by_uncached_status": {
+            "type": "boolean",
+            "description": "Sort results by uncached status over cached status",
+            "default": False
+        },
+        "content_source_check_period": {
+            "type": "dict",
+            "description": "Override Content Source checking period (in minutes)",
+            "default": {},
+            "schema": {
+                "*": {"type": "integer", "min": 1}
+            }
+        },
+        "checking_queue_period": {
+            "type": "integer",
+            "description": "Checking queue max period (in minutes) before moving items back to Wanted queue",
+            "default": 3600
         }
     },
     "Scrapers": {

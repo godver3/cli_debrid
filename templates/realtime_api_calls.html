@@ -119,7 +119,7 @@
     <script>
         function updateTable() {
             const filter = document.getElementById('filterSelect').value;
-            fetch(`/api/latest_calls?filter=${filter}`)
+            fetch(`/api_call_summary/api/latest_calls?filter=${filter}`)
                 .then(response => response.json())
                 .then(data => {
                     const tableBody = document.querySelector('#apiCallsTable tbody');
@@ -145,7 +145,7 @@
         });
 
         // Update the table every 5 seconds
-        setInterval(updateTable, 5000);
+        setInterval(updateTable, 1000);
     </script>
 </body>
 </html>
