@@ -15,12 +15,14 @@ class RealDebridUnavailableError(Exception):
     pass
 
 API_BASE_URL = "https://api.real-debrid.com/rest/1.0"
-api_key = get_setting('RealDebrid', 'api_key')
 
 # Common video file extensions
 VIDEO_EXTENSIONS = [
     'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm', 'mpg', 'mpeg', 'm2ts', 'ts'
 ]
+
+def get_api_key():
+    return get_setting('RealDebrid', 'api_key')
 
 def is_video_file(filename):
     result = any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)
@@ -53,6 +55,7 @@ def rate_limited_request(func):
 
 @rate_limited_request
 def add_to_real_debrid(magnet_link):
+    api_key = get_api_key()
     if not api_key:
         logging.error("Real-Debrid API token not found in settings")
         return
@@ -249,6 +252,8 @@ def get_cached_files(hash_):
 
 @rate_limited_request
 def get(url):
+    api_key = get_api_key()
+
     headers = {
         'User-Agent': 'Mozilla/5.0',
         'Authorization': f'Bearer {api_key}'
@@ -273,6 +278,7 @@ def get(url):
         return None
 
 def get_magnet_files(magnet_link):
+    api_key = get_api_key()
     torrent_id = add_to_real_debrid(magnet_link)
     if not torrent_id:
         return None
@@ -310,6 +316,7 @@ def process_hashes(hashes, batch_size=100):
     return results
 
 def get_active_downloads(check=False):
+    api_key = get_api_key()
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/x-www-form-urlencoded'
@@ -380,6 +387,7 @@ def file_matches_item(filename, item):
     return False
 
 def get_torrent_info(torrent_id):
+    api_key = get_api_key()
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/x-www-form-urlencoded'
