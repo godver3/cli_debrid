@@ -335,6 +335,7 @@ def api_program_settings():
         program_settings = {
             'Scrapers': config.get('Scrapers', {}),
             'Content Sources': config.get('Content Sources', {}),
+            'Debug': config.get('Debug', {}),
             'Plex': {
                 'url': config.get('Plex', {}).get('url', ''),
                 'token': config.get('Plex', {}).get('token', '')
