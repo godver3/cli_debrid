@@ -202,7 +202,12 @@ SETTINGS_SCHEMA = {
             "schema": {
                 "*": {"type": "integer", "min": 1}
             }
-    },
+        },
+        "checking_queue_period": {
+            "type": "integer",
+            "description": "Checking queue max period (in minutes) before moving items back to Wanted queue",
+            "default": 3600
+        }
     },
     "Scrapers": {
         "tab": "Scrapers",
