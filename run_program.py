@@ -75,6 +75,8 @@ class ProgramRunner:
     def load_content_sources(self):
         settings = get_all_settings()
         content_sources = settings.get('Content Sources', {})
+        debug_settings = settings.get('Debug', {})
+        custom_check_periods = debug_settings.get('content_source_check_period', {})
         
         default_intervals = {
             'Overseerr': 900,
@@ -94,7 +96,12 @@ class ProgramRunner:
             
             source_type = source.split('_')[0]
 
-            data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
+            # Use custom check period if present, otherwise use default
+            custom_interval = custom_check_periods.get(source)
+            if custom_interval is not None:
+                data['interval'] = int(custom_interval) * 60  # Convert minutes to seconds
+            else:
+                data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
 
             task_name = f'task_{source}_wanted'
             self.task_intervals[task_name] = data['interval']
