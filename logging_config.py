@@ -9,10 +9,20 @@ class OverwriteFileHandler(logging.FileHandler):
         with open(self.baseFilename, 'w') as f:
             f.write(self.format(record) + self.terminator)
 
+class DynamicConsoleHandler(logging.StreamHandler):
+    def __init__(self):
+        super().__init__()
+        self.setLevel(self.get_level())
+
+    def get_level(self):
+        console_level = get_setting("Debug", "logging_level", "INFO")
+        return getattr(logging, console_level.upper())
+
+    def emit(self, record):
+        self.setLevel(self.get_level())
+        super().emit(record)
+
 def setup_logging():
-    # Get logging level from settings
-    console_level = get_setting("Debug", "logging_level", "INFO")
-    
     # Create formatter
     formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
     
@@ -29,8 +39,7 @@ def setup_logging():
         root_logger.removeHandler(handler)
     
     # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(getattr(logging, console_level.upper()))
+    console_handler = DynamicConsoleHandler()
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
     

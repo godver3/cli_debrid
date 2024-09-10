@@ -70,9 +70,11 @@ class ProgramRunner:
             'task_generate_airtime_report'
         }
         
-        self.content_sources = self.load_content_sources()
+        # Remove this line:
+        # self.content_sources = self.load_content_sources()
 
-    def load_content_sources(self):
+    # Modify this method to always fetch fresh content sources
+    def get_content_sources(self):
         settings = get_all_settings()
         content_sources = settings.get('Content Sources', {})
         debug_settings = settings.get('Debug', {})
@@ -130,6 +132,7 @@ class ProgramRunner:
             return True
         return False
 
+    # Update this method to use get_content_sources()
     def process_queues(self):
         self.queue_manager.update_all_queues()
 
@@ -145,7 +148,7 @@ class ProgramRunner:
             self.task_debug_log()
 
         # Process content source tasks
-        for source, data in self.content_sources.items():
+        for source, data in self.get_content_sources().items():
             task_name = f'task_{source}_wanted'
             if self.should_run_task(task_name):
                 self.process_content_source(source, data)
@@ -174,6 +177,7 @@ class ProgramRunner:
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()
 
+    # Update this method to use get_content_sources()
     def process_content_source(self, source, data):
         source_type = source.split('_')[0]
         versions = data.get('versions', {})
@@ -338,7 +342,8 @@ def process_overseerr_webhook(data):
     wanted_content_processed = process_metadata(wanted_content)
     if wanted_content_processed:
         # Get the versions for Overseerr from settings
-        overseerr_settings = next((data for source, data in ProgramRunner().content_sources.items() if source.startswith('Overseerr')), {})
+        content_sources = ProgramRunner().get_content_sources()
+        overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
         versions = overseerr_settings.get('versions', {})
         
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
