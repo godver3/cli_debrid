@@ -1,3 +1,19 @@
+// Declare settingsData globally
+let settingsData = {};
+
+// Function to load settings data
+function loadSettingsData() {
+    return fetch('/settings/api/program_settings')
+        .then(response => response.json())
+        .then(data => {
+            settingsData = data;
+            return data;
+        })
+        .catch(error => {
+            console.error('Error loading settings:', error);
+        });
+}
+
 function updateSettings() {
     const settingsData = {};
     const inputs = document.querySelectorAll('#settingsForm input, #settingsForm select, #settingsForm textarea');
@@ -387,9 +403,14 @@ function updateSettings() {
     const contentSourceCheckPeriods = {};
     document.querySelectorAll('#content-source-check-periods input').forEach(input => {
         const sourceName = input.id.replace('debug-content-source-', '');
-        contentSourceCheckPeriods[sourceName] = parseInt(input.value) || 1;
+        const value = input.value.trim();
+        if (value !== '') {
+            contentSourceCheckPeriods[sourceName] = parseInt(value) || 1;
+        }
     });
+    settingsData['Debug'] = settingsData['Debug'] || {};
     settingsData['Debug']['content_source_check_period'] = contentSourceCheckPeriods;
+
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
@@ -416,3 +437,27 @@ function updateSettings() {
     });
 }
 
+// Update this function to use the loaded settingsData
+function updateContentSourceCheckPeriods() {
+    const contentSourcesDiv = document.getElementById('content-source-check-periods');
+    const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);
+    
+    contentSourcesDiv.innerHTML = '';
+    enabledContentSources.forEach(source => {
+        const div = document.createElement('div');
+        div.className = 'content-source-check-period';
+        div.innerHTML = `
+            <label for="debug-content-source-${source}">${source}:</label>
+            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" min="1" class="settings-input" placeholder="Default">
+        `;
+        contentSourcesDiv.appendChild(div);
+    });
+}
+
+// Update the DOMContentLoaded event listener
+document.addEventListener('DOMContentLoaded', () => {
+    loadSettingsData().then(() => {
+        updateContentSourceCheckPeriods();
+        // Add any other initialization functions here
+    });
+});
