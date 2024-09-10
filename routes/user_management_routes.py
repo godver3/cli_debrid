@@ -46,7 +46,7 @@ def add_user():
         return jsonify({'success': False, 'error': 'Username already exists.'})
     else:
         hashed_password = generate_password_hash(password)
-        new_user = User(username=username, password=hashed_password, role=role)
+        new_user = User(username=username, password=hashed_password, role=role, onboarding_complete=True)
         db.session.add(new_user)
         db.session.commit()
         return jsonify({'success': True})
@@ -88,7 +88,7 @@ def register():
             flash('Username already exists.', 'error')
             return redirect(url_for('register'))
         hashed_password = generate_password_hash(password)
-        new_user = User(username=username, password=hashed_password)
+        new_user = User(username=username, password=hashed_password, onboarding_complete=True)
         if User.query.count() == 0:
             new_user.role = 'admin'
         db.session.add(new_user)
