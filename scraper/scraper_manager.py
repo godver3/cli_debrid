@@ -6,6 +6,7 @@ from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
 from .nyaa import scrape_nyaa_instance
+from settings import get_setting
 
 class ScraperManager:
     def __init__(self, config):
@@ -19,16 +20,23 @@ class ScraperManager:
             'Nyaa': scrape_nyaa_instance
         }
 
+    def get_scraper_settings(self, instance):
+        # Fetch the latest settings for each scraper instance
+        return get_setting('Scrapers', instance, {})
+
     def scrape_all(self, imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> List[Dict[str, Any]]:
         all_results = []
         is_anime = genres and 'anime' in [genre.lower() for genre in genres]
 
         for instance, settings in self.config.get('Scrapers', {}).items():
-            if not settings.get('enabled', False):
+            # Get the latest settings for this instance
+            current_settings = self.get_scraper_settings(instance)
+            
+            if not current_settings.get('enabled', False):
                 logging.info(f"Scraper {instance} is disabled. Skipping.")
                 continue
             
-            scraper_type = settings.get('type')
+            scraper_type = current_settings.get('type')
             if scraper_type not in self.scrapers:
                 logging.warning(f"Unknown scraper type '{scraper_type}' for instance '{instance}'. Skipping.")
                 continue
@@ -41,7 +49,7 @@ class ScraperManager:
             scrape_func = self.scrapers[scraper_type]
             try:
                 logging.info(f"Scraping with {instance} ({scraper_type})")
-                results = scrape_func(instance, settings, imdb_id, title, year, content_type, season, episode, multi)
+                results = scrape_func(instance, current_settings, imdb_id, title, year, content_type, season, episode, multi)
                 logging.info(f"Found {len(results)} results from {instance}")
                 all_results.extend(results)
             except Exception as e:
