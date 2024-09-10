@@ -194,7 +194,15 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Sort results by uncached status over cached status",
             "default": False
-        }
+        },
+        "content_source_check_period": {
+            "type": "dict",
+            "description": "Override Content Source checking period (in minutes)",
+            "default": {},
+            "schema": {
+                "*": {"type": "integer", "min": 1}
+            }
+    },
     },
     "Scrapers": {
         "tab": "Scrapers",
