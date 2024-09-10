@@ -135,9 +135,9 @@
         display: flex;
         align-items: center;
         position: absolute;
+        left: 50%;
         transform: translateX(-50%);
         height: 100%;
-        left: calc(50%); /* Half of the header-content width */
     }
 
     nav ul {
@@ -145,22 +145,30 @@
         padding: 0;
         margin: 0;
         display: flex;
+        height: 100%;
+        align-items: center;
     }
 
     nav ul li {
         margin-right: 10px;
         position: relative;
+        height: 100%; /* Fixed height */
+        display: flex;
+        align-items: center;
     }
 
     nav ul li a {
         color: white;
         text-decoration: none;
         font-size: 1.3em;
-        padding: 5px 8px; /* Added padding for larger hit area */
-        transition: color 0.3s ease; /* Smooth transition for color change */
+        padding: 5px 8px;
+        transition: color 0.3s ease;
+        display: flex;
+        align-items: center;
+        height: 100%; /* Make the anchor fill the li height */
     }
 
-        /* Hover effect for menu items */
+    /* Hover effect for menu items */
     nav ul li a::after {
         content: '';
         position: absolute;
@@ -508,6 +516,7 @@
             flex: 0 0 auto;
         }
     }
+
 
     @media (max-width: 776px) {
         .header-content {
