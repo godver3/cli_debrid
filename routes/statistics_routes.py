@@ -121,6 +121,8 @@ def get_recently_aired_and_airing_soon():
     
     return recently_aired, airing_soon
 
+from flask import make_response
+
 @statistics_bp.route('/set_compact_preference', methods=['POST'])
 def set_compact_preference():
     data = request.json
@@ -129,9 +131,17 @@ def set_compact_preference():
     # Save the preference to the user's session
     session['compact_view'] = compact_view
     
-    # If you want to persist this preference for the user, you might save it to a database here
+    # Create a response
+    response = make_response(jsonify({'success': True, 'compactView': compact_view}))
     
-    return jsonify({'success': True, 'compactView': compact_view})
+    # Set a cookie to persist the preference
+    response.set_cookie('compact_view', 
+                        str(compact_view).lower(), 
+                        max_age=31536000,  # 1 year
+                        path='/',  # Ensure cookie is available for entire site
+                        httponly=False)  # Allow JavaScript access
+    
+    return response
 
 @statistics_bp.route('/')
 @user_required
@@ -193,7 +203,7 @@ def index():
         'limit_downloads': limit_downloads
     }
     
-    compact_view = session.get('compact_view', False)
+    compact_view = request.cookies.get('compact_view', 'false').lower() == 'true'
 
     end_time = time.time()
     total_time = end_time - start_time
@@ -203,7 +213,7 @@ def index():
         return jsonify(stats)
     else:
         logging.debug("Rendering HTML template")
-        return render_template('statistics.html', stats=stats)
+        return render_template('statistics.html', stats=stats, compact_view=compact_view)
         
 @statistics_bp.route('/set_time_preference', methods=['POST'])
 def set_time_preference():

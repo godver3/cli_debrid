@@ -709,15 +709,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const compactToggle = document.getElementById('compact-toggle');
     const statisticsWrapper = document.querySelector('.statistics-wrapper');
     
+    // Replace the existing time format toggle event listener with this:
     timeFormatToggle.addEventListener('change', function() {
         use24HourFormat = this.checked;
         
         fetch('/statistics/set_time_preference', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Type': 'application/json',
             },
-            body: new URLSearchParams({ use24HourFormat: use24HourFormat }),
+            body: JSON.stringify({ use24HourFormat: use24HourFormat }),
             credentials: 'include',
         })
         .then(response => response.json())
@@ -730,6 +731,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Replace the existing compact toggle event listener with this:
     compactToggle.addEventListener('change', function() {
         if (this.checked) {
             statisticsWrapper.classList.add('compact-view');
@@ -741,9 +743,9 @@ document.addEventListener('DOMContentLoaded', () => {
         fetch('/statistics/set_compact_preference', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Type': 'application/json',
             },
-            body: new URLSearchParams({ compactView: this.checked }),
+            body: JSON.stringify({ compactView: this.checked }),
             credentials: 'include',
         })
         .then(response => response.json())
