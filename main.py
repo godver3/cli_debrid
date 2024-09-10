@@ -4,8 +4,9 @@ import shutil
 import signal
 import sys
 import time
-from datetime import datetime
 from api_tracker import api
+from settings import get_setting
+import requests
 
 def setup_logging():
     logging.getLogger('selector').setLevel(logging.WARNING)
@@ -99,6 +100,18 @@ def main():
     print(f"The web UI is available at http://{ip_address}:5000")
     print("Use the web UI to control the program.")
     print("Press Ctrl+C to stop the program.")
+
+    if get_setting('Debug', 'auto_run_program'):
+        # Call the start_program route
+        try:
+            response = requests.post('http://localhost:5000/program_operation/api/start_program')
+            if response.status_code == 200:
+                print("Program started successfully")
+            else:
+                print(f"Failed to start program. Status code: {response.status_code}")
+                print(f"Response: {response.text}")
+        except requests.RequestException as e:
+            print(f"Error calling start_program route: {e}")
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
