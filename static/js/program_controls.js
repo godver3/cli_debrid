@@ -3,6 +3,11 @@ import { showPopup, POPUP_TYPES } from './notifications.js';
 let currentSettings = {};
 
 export function initializeProgramControls() {
+    if (window.isRateLimited) {
+        console.log("Rate limit exceeded. Skipping program controls initialization.");
+        return;
+    }
+
     const programControlButton = document.getElementById('programControlButton');
     if (!programControlButton) return;
 
@@ -138,6 +143,11 @@ export function initializeProgramControls() {
     }
 
     function fetchSettings() {
+        if (window.isRateLimited) {
+            console.log("Rate limit exceeded. Skipping settings fetch.");
+            return Promise.resolve({}); // Return an empty object or default settings
+        }
+
         fetch('/settings/api/program_settings')
             .then(response => response.json())
             .then(data => {

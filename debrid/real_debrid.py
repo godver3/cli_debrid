@@ -10,6 +10,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import time
 import requests
 from functools import wraps
+from datetime import datetime, timedelta
+from functools import lru_cache
 
 class RealDebridUnavailableError(Exception):
     pass
@@ -21,8 +23,28 @@ VIDEO_EXTENSIONS = [
     'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm', 'mpg', 'mpeg', 'm2ts', 'ts'
 ]
 
+_cache = {}
+
 def get_api_key():
     return get_setting('RealDebrid', 'api_key')
+
+def timed_lru_cache(seconds: int, maxsize: int = 128):
+    def wrapper_cache(func):
+        func = lru_cache(maxsize=maxsize)(func)
+        func.lifetime = timedelta(seconds=seconds)
+        func.expiration = datetime.utcnow() + func.lifetime
+
+        @wraps(func)
+        def wrapped_func(*args, **kwargs):
+            if datetime.utcnow() >= func.expiration:
+                func.cache_clear()
+                func.expiration = datetime.utcnow() + func.lifetime
+
+            return func(*args, **kwargs)
+
+        return wrapped_func
+
+    return wrapper_cache
 
 def is_video_file(filename):
     result = any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)
@@ -315,6 +337,7 @@ def process_hashes(hashes, batch_size=100):
                 results[hash_] = None
     return results
 
+@timed_lru_cache(seconds=300)  # Cache for 5 minutes
 def get_active_downloads(check=False):
     api_key = get_api_key()
     headers = {
@@ -323,31 +346,77 @@ def get_active_downloads(check=False):
     }
     try:
         response = api.get(f"{API_BASE_URL}/torrents/activeCount", headers=headers, timeout=60)
-        response.raise_for_status()  # This will raise an HTTPError for bad responses
+        response.raise_for_status()
         response_json = response.json()
         logging.debug(f"Real-Debrid active downloads response: {response_json}")
         
+        active = response_json.get('nb', 0)
+        limit = round(response_json.get('limit', 0) * 0.75)
+        
         if check:
-            if 'nb' in response_json:
-                return response_json['nb'] < round(response_json['limit']*0.75)
-            else:
-                logging.debug("'nb' not found in Real-Debrid response")
-                return False
+            return active < limit
         else:
-            if 'nb' in response_json:
-                return response_json['nb'], round(response_json['limit']*0.75)
-            else:
-                logging.debug("'nb' not found in Real-Debrid response")
-                return 0, round(response_json.get('limit', 0)*0.75)
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            logging.error("Unauthorized access to Real-Debrid API. Please check your API key.")
-        else:
-            logging.error(f"HTTP error occurred: {e}")
-        return (0, 0) if not check else False
+            return active, limit
     except Exception as e:
         logging.error(f"An error occurred while fetching active downloads: {e}")
-        return (0, 0) if not check else False
+        return (0, 0) if not check else True
+
+@timed_lru_cache(seconds=300)  # Cache for 5 minutes
+def get_user_traffic():
+    api_key = get_api_key()
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    try:
+        response = api.get(f"{API_BASE_URL}/traffic/details", headers=headers, timeout=60)
+        response.raise_for_status()
+        traffic_info = response.json()
+        
+        logging.debug(f"Real-Debrid traffic response: {traffic_info}")
+        return traffic_info
+    except Exception as e:
+        logging.error(f"An error occurred while fetching traffic info: {e}")
+        return None
+
+def check_daily_usage():
+    server_time, _ = get_server_time()
+    if not server_time:
+        logging.error("Failed to get server time")
+        return {'used': 0, 'limit': 2000}  # Default values
+
+    current_date_str = server_time.strftime("%Y-%m-%d")
+    
+    traffic_info = get_user_traffic()
+    if not traffic_info:
+        logging.error("Failed to get traffic information")
+        return {'used': 0, 'limit': 2000}  # Default values
+
+    daily_usage = traffic_info.get(current_date_str, {}).get('bytes', 0)
+    daily_usage_gb = daily_usage / (1024 * 1024 * 1024)
+    is_over_limit = daily_usage_gb > 2000
+
+    return {
+        'used': round(daily_usage_gb, 2),
+        'limit': 2000,
+        'is_over_limit': is_over_limit
+    }
+
+@timed_lru_cache(seconds=300)
+def get_server_time():
+    api_key = get_api_key()
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    try:
+        response = api.get(f"{API_BASE_URL}/time", headers=headers, timeout=60)
+        response.raise_for_status()
+        server_time = datetime.strptime(response.text.strip(), "%Y-%m-%d %H:%M:%S")
+        return server_time, datetime.now()
+    except Exception as e:
+        logging.error(f"Error getting server time: {str(e)}")
+        return None, datetime.now()
 
 def file_matches_item(filename, item):
     filename = filename.lower()
