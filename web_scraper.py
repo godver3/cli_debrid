@@ -440,10 +440,11 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 if 'magnet:?xt=urn:btih:' in magnet_link:
                     magnet_hash = extract_hash_from_magnet(magnet_link)
                     result['hash'] = magnet_hash
-                    hashes.append(magnet_hash)
-                    processed_results.append(result)
-                else:
-                    processed_results.append(result)
+                    # Only add to hashes if the source is not Jackett or Prowlarr
+                    if result.get('source') not in ['jackett', 'prowlarr']:
+                        hashes.append(magnet_hash)
+                processed_results.append(result)
+
 
     # Check cache status for all hashes at once
     cache_status = is_cached_on_rd(hashes) if hashes else {}
@@ -453,8 +454,11 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     for result in processed_results:
         result_hash = result.get('hash')
         if result_hash:
-            is_cached = cache_status.get(result_hash, False)
-            result['cached'] = 'Yes' if is_cached else 'No'
+            if result.get('source') in ['jackett', 'prowlarr']:
+                result['cached'] = 'Not Checked'
+            else:
+                is_cached = cache_status.get(result_hash, False)
+                result['cached'] = 'Yes' if is_cached else 'No'
             logging.info(f"Cache status for {result['title']} (hash: {result_hash}): {result['cached']}")
 
     return processed_results, cache_status
