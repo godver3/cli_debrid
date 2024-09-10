@@ -11,7 +11,7 @@ from .models import user_required, onboarding_required
 from extensions import app_start_time
 import time 
 from database import get_recently_added_items, get_poster_url, get_collected_counts
-from debrid.real_debrid import get_active_downloads
+from debrid.real_debrid import get_active_downloads, check_daily_usage
 import logging
 
 statistics_bp = Blueprint('statistics', __name__)
@@ -121,8 +121,6 @@ def get_recently_aired_and_airing_soon():
     
     return recently_aired, airing_soon
 
-from flask import make_response
-
 @statistics_bp.route('/set_compact_preference', methods=['POST'])
 def set_compact_preference():
     data = request.json
@@ -155,20 +153,41 @@ def index():
 
     uptime = int(time.time() - app_start_time)
 
+    # Timing for collected_counts
+    collected_counts_start = time.time()
     collected_counts = get_collected_counts()
+    collected_counts_end = time.time()
+    logging.debug(f"Time for get_collected_counts: {collected_counts_end - collected_counts_start:.2f} seconds")
+
+    # Timing for recently_aired and airing_soon
+    recently_aired_start = time.time()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+    recently_aired_end = time.time()
+    logging.debug(f"Time for get_recently_aired_and_airing_soon: {recently_aired_end - recently_aired_start:.2f} seconds")
+
+    # Timing for upcoming_releases
+    upcoming_releases_start = time.time()
     upcoming_releases = get_upcoming_releases()
+    upcoming_releases_end = time.time()
+    logging.debug(f"Time for get_upcoming_releases: {upcoming_releases_end - upcoming_releases_start:.2f} seconds")
+
+    # Timing for active_downloads
+    active_downloads_start = time.time()
     try:
         active_downloads, limit_downloads = get_active_downloads()
     except Exception as e:
         logging.error(f"Error fetching active downloads: {e}")
         active_downloads, limit_downloads = 0, 0
+    active_downloads_end = time.time()
+    logging.debug(f"Time for get_active_downloads: {active_downloads_end - active_downloads_start:.2f} seconds")
+
     now = datetime.now()
     
     # Fetch recently added items from the database
     recently_added_start = time.time()
     recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
     recently_added_end = time.time()
+    logging.debug(f"Time for get_recently_added_items: {recently_added_end - recently_added_start:.2f} seconds")
     
     cookie_value = request.cookies.get('use24HourFormat')
     use_24hour_format = cookie_value == 'true' if cookie_value is not None else True
@@ -180,6 +199,17 @@ def index():
     # Format times for upcoming releases (if they have time information)
     for item in upcoming_releases:
         item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
+
+    # Timing for daily_usage
+    daily_usage_start = time.time()
+    try:
+        daily_usage = check_daily_usage()
+    except Exception as e:
+        logging.error(f"Error fetching Real-Debrid information: {e}")
+        active_downloads, limit_downloads = 0, 0
+        daily_usage = {'used': 0, 'limit': 0}
+    daily_usage_end = time.time()
+    logging.debug(f"Time for check_daily_usage: {daily_usage_end - daily_usage_start:.2f} seconds")
 
     stats = {
         'uptime': uptime,
@@ -200,13 +230,16 @@ def index():
         'upcoming_releases': upcoming_releases,
         'timezone': time.tzname[0],
         'active_downloads': active_downloads, 
-        'limit_downloads': limit_downloads
+        'limit_downloads': limit_downloads,
+        'daily_usage': daily_usage['used'],
+        'daily_limit': daily_usage['limit']
     }
     
     compact_view = request.cookies.get('compact_view', 'false').lower() == 'true'
 
     end_time = time.time()
     total_time = end_time - start_time
+    logging.debug(f"Total time for statistics page: {total_time:.2f} seconds")
 
     if request.args.get('ajax') == '1':
         logging.debug("Returning JSON response")
