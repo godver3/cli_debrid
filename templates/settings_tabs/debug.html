@@ -22,6 +22,15 @@
                             <option value="{{ option }}" {% if settings.Debug[key] == option %}selected{% endif %}>{{ option }}</option>
                         {% endfor %}
                     </select>
+                {% elif key == 'content_source_check_period' %}
+                    <div id="content-source-check-periods">
+                        {% for source, period in settings.Debug.content_source_check_period.items() %}
+                            <div class="content-source-check-period">
+                                <label for="debug-content-source-{{ source }}">{{ source }}:</label>
+                                <input type="number" id="debug-content-source-{{ source }}" name="Debug.content_source_check_period.{{ source }}" value="{{ period }}" min="1" class="settings-input">
+                            </div>
+                        {% endfor %}
+                    </div>
                 {% else %}
                     <input type="{{ value.type }}" id="debug-{{ key }}" name="Debug.{{ key }}" value="{{ settings.Debug[key] }}" class="settings-input">
                 {% endif %}

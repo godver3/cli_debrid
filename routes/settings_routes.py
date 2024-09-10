@@ -376,6 +376,12 @@ def update_settings():
 
         update_nested_dict(config, new_settings)
         
+        # Update content source check periods
+        if 'Debug' in new_settings and 'content_source_check_period' in new_settings['Debug']:
+            config['Debug']['content_source_check_period'] = {
+                source: int(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
+            }
+        
         save_config(config)
         
         return jsonify({"status": "success", "message": "Settings updated successfully"})
