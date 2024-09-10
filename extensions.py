@@ -14,13 +14,14 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # Configure CORS
-CORS(app, supports_credentials=True, resources={r"/*": {
+CORS(app, resources={r"/*": {
     "origins": "*",
     "methods": ["GET", "HEAD", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization", "Accept", "Accept-Language", "Content-Language", "Range"]
+    "allow_headers": ["Content-Type", "Authorization", "Accept", "Accept-Language", "Content-Language", "Range"],
+    "supports_credentials": True
 }})
 
-app.config['PREFERRED_URL_SCHEME'] = 'https'
+# app.config['PREFERRED_URL_SCHEME'] = 'https'
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Add this line
 
 from flask_login import LoginManager
@@ -79,7 +80,7 @@ def handle_https():
             url = request.url.replace('http://', 'https://', 1)
             print(f"Redirecting to: {url}")
             return redirect(url, code=301)
-    # Remove the else clause to avoid redirecting HTTPS to HTTP
+    # Remove any forced HTTPS redirect for non-proxy requests
 
 @app.before_request
 def check_user_system():
@@ -92,14 +93,11 @@ def check_user_system():
 
 @app.after_request
 def add_cors_headers(response):
-    origin = request.headers.get('Origin')
-    if origin:
-        response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
     response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range'
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     
-    # Handle preflight requests
     if request.method == 'OPTIONS':
         response.headers['Access-Control-Max-Age'] = '3600'
     
@@ -107,7 +105,8 @@ def add_cors_headers(response):
 
 @app.after_request
 def add_security_headers(response):
-    response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
+    # Remove the upgrade-insecure-requests directive
+    # response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
     return response
 
 # Add an error handler for JSON parsing
