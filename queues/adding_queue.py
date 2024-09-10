@@ -21,7 +21,7 @@ import functools
 class AddingQueue:
     def __init__(self):
         self.items = []
-        #self.api_key = get_setting("RealDebrid", "api_key")
+        self.api_key = None
         self.episode_count_cache = {}  # Add this line
         self.anime_matcher = AnimeMatcher(self.calculate_absolute_episode)
 
@@ -503,8 +503,8 @@ class AddingQueue:
             return {"success": False, "message": f"Error: {str(e)}"}
 
     def get_torrent_info(self, hash_value: str) -> Dict[str, Any] or None:
-        api_key = self.get_api_key()
-        headers = {'Authorization': f'Bearer {api_key}'}
+        self.api_key = self.get_api_key()
+        headers = {'Authorization': f'Bearer {self.api_key}'}
 
         for _ in range(10):  # Try for about 100 seconds
             time.sleep(10)
@@ -666,9 +666,9 @@ class AddingQueue:
 
 
     def remove_unwanted_torrent(self, torrent_id):
-        api_key = self.get_api_key()
+        self.api_key = self.get_api_key()
         try:
-            headers = {'Authorization': f'Bearer {api_key}'}
+            headers = {'Authorization': f'Bearer {self.api_key}'}
             response = api.delete(f"{API_BASE_URL}/torrents/delete/{torrent_id}", headers=headers)
             response.raise_for_status()
             logging.info(f"Successfully removed unwanted torrent with ID: {torrent_id}")
