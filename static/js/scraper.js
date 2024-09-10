@@ -649,8 +649,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (status.status == 'authorized') {
                     get_trendingMovies();
                     get_trendingShows();
+                } else {
+                    displayTraktAuthMessage();
                 }
-                });
+            });
         searchForm.addEventListener('submit', searchMedia);
     }
 });
+
+function displayTraktAuthMessage() {
+    const trendingContainer = document.getElementById('trendingContainer');
+    trendingContainer.innerHTML = '<p>Please authenticate with Trakt to see trending movies and shows.</p>';
+}

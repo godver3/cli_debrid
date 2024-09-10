@@ -3,6 +3,12 @@
 {% block content %}
 <style>
     @import url('{{ url_for('static', filename='css/scraper.css') }}');
+
+    .trending-container p {
+        font-style: italic;
+        color: #888;
+        text-align: center;
+    }
 </style>
     <div id="scraper-container">
         <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">
