@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 import re
 from routes import admin_required
+import logging
 
 api_summary_bp = Blueprint('api_summary', __name__)
 real_time_api_bp = Blueprint('real_time_api', __name__)
@@ -41,70 +42,22 @@ except Exception as e:
     logging.error(f"Failed to load cache: {str(e)}. Starting with an empty cache.")
     cache = {'hour': {}, 'day': {}, 'month': {}, 'last_processed_line': 0}
 
-def summarize_api_calls(time_frame):
-    log_path = 'logs/api_calls.log'
-    summary = defaultdict(lambda: defaultdict(int))
-    
-    with open(log_path, 'r') as f:
-        for line in f:
-            match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
-            if match:
-                timestamp, method, url, domain = match.groups()
-                dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S,%f')
-                
-                if time_frame == 'hour':
-                    key = dt.strftime('%Y-%m-%d %H:00')
-                elif time_frame == 'day':
-                    key = dt.strftime('%Y-%m-%d')
-                elif time_frame == 'month':
-                    key = dt.strftime('%Y-%m')
-                
-                summary[key][domain] += 1
-    
-    return dict(summary)
-
-def get_cached_summary(time_frame):
-    current_time = datetime.now()
-    if time_frame in cache:
-        last_update, data = cache[time_frame]
-        if current_time - last_update < timedelta(hours=1):
-            return data
-    
-    data = summarize_api_calls(time_frame)
-    cache[time_frame] = (current_time, data)
-    save_cache(cache)
-    return data
-
-def summarize_api_calls(time_frame):
-    log_path = 'logs/api_calls.log'
-    summary = defaultdict(lambda: defaultdict(int))
-    
-    with open(log_path, 'r') as f:
-        for line in f:
-            match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
-            if match:
-                timestamp, method, url, domain = match.groups()
-                dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S,%f')
-                
-                if time_frame == 'hour':
-                    key = dt.strftime('%Y-%m-%d %H:00')
-                elif time_frame == 'day':
-                    key = dt.strftime('%Y-%m-%d')
-                elif time_frame == 'month':
-                    key = dt.strftime('%Y-%m')
-                
-                summary[key][domain] += 1
-    
-    return dict(summary)
-
 def update_cache_with_new_entries():
     global cache
     log_path = 'logs/api_calls.log'
     last_processed_line = cache['last_processed_line']
     
+    logging.debug(f"Updating cache from line {last_processed_line}")
+    
     with open(log_path, 'r') as f:
         lines = f.readlines()[last_processed_line:]
-        
+    
+    if not lines:
+        logging.debug("No new entries to process")
+        return
+
+    current_time = datetime.now()
+    new_entries_count = 0
     for i, line in enumerate(lines, start=last_processed_line):
         match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
         if match:
@@ -121,23 +74,47 @@ def update_cache_with_new_entries():
                 if domain not in cache[time_frame][key]:
                     cache[time_frame][key][domain] = 0
                 cache[time_frame][key][domain] += 1
+            new_entries_count += 1
+    
+    logging.debug(f"Processed {new_entries_count} new entries")
+
+    # Remove old entries from cache
+    for time_frame, delta in [('hour', timedelta(days=2)), ('day', timedelta(days=32)), ('month', timedelta(days=366))]:
+        old_count = len(cache[time_frame])
+        cache[time_frame] = {k: v for k, v in cache[time_frame].items() if parse_cache_key(k, time_frame) > current_time - delta}
+        new_count = len(cache[time_frame])
+        logging.debug(f"Removed {old_count - new_count} old entries from {time_frame} cache")
     
     cache['last_processed_line'] = last_processed_line + len(lines)
     save_cache(cache)
+    logging.debug("Cache updated and saved")
+
+def parse_cache_key(key, time_frame):
+    if time_frame == 'hour':
+        return datetime.strptime(key, '%Y-%m-%d %H:00')
+    elif time_frame == 'day':
+        return datetime.strptime(key, '%Y-%m-%d')
+    elif time_frame == 'month':
+        return datetime.strptime(key, '%Y-%m')
+    else:
+        raise ValueError(f"Unknown time frame: {time_frame}")
 
 @api_summary_bp.route('/')
 def index():
+    logging.debug("API summary request received")
     update_cache_with_new_entries()
     
     time_frame = request.args.get('time_frame', 'day')
     if time_frame not in ['hour', 'day', 'month']:
         time_frame = 'day'
     
+    logging.debug(f"Retrieving {time_frame} summary from cache")
     summary = cache[time_frame]
     
     # Get a sorted list of all domains
     all_domains = sorted(set(domain for period in summary.values() for domain in period))
     
+    logging.debug(f"Returning summary for {len(summary)} periods and {len(all_domains)} domains")
     return render_template('api_call_summary.html', 
                            summary=summary, 
                            time_frame=time_frame,
