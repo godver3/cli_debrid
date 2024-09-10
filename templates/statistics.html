@@ -527,6 +527,9 @@
             </label>
         </div>
         <div class="toggle-item"><span id="active-downloads"></span></div>
+        <div class="stat-item">
+            <p>Daily Usage: <span id="daily-usage">{{ stats.daily_usage }} / {{ stats.daily_limit }} GB</span></p>
+        </div>
     </div>
 
     <div class="stats-container">
@@ -660,7 +663,6 @@
         </div>
     </div>
 </div>
-
 <script>
 // Use the server-side preference to set the initial state
 let use24HourFormat = {{ 'true' if stats.use_24hour_format else 'false' }};
@@ -945,5 +947,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial updates
     updateStatistics();
 });
+
 </script>
 {% endblock %}

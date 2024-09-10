@@ -26,6 +26,11 @@ function isMobileDevice() {
 }
 
 async function fetchTooltips() {
+    if (window.isRateLimited) {
+        console.log("Rate limit exceeded. Skipping tooltips fetch.");
+        return {};
+    }
+
     try {
         const response = await fetch('/tooltip/tooltips');
         tooltips = await response.json();
@@ -355,6 +360,11 @@ function showMobileDatabaseTooltip(cell, button) {
 }
 
 function initializeTooltips() {
+    if (window.isRateLimited) {
+        console.log("Rate limit exceeded. Skipping tooltips initialization.");
+        return;
+    }
+
     console.log('Initializing tooltips');
     console.log('Is mobile device?', isMobileDevice());
 

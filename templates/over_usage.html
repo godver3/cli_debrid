@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Rate Limit Exceeded{% endblock %}
+
+{% block content %}
+<style>
+    .rate-limit-container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 2rem;
+        line-height: 1.6;
+    }
+
+    .rate-limit-title {
+        color: #d9534f;
+        font-size: 2.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .section-title {
+        color: #ffffff;
+        font-size: 1.8rem;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+
+    .blocked-domains-list {
+        color: #ffffff;
+        border-radius: 4px;
+        padding: 1rem 1rem 1rem 2rem;
+    }
+
+    .blocked-domains-list li {
+        margin-bottom: 0.5rem;
+    }
+
+    p {
+        margin-bottom: 1rem;
+    }
+
+    ul {
+        padding-left: 1.5rem;
+    }
+
+    .action-buttons {
+        margin-top: 2rem;
+    }
+
+    .btn-primary {
+        background-color: #007bff;
+        border-color: #007bff;
+        padding: 0.5rem 1rem;
+        font-size: 1rem;
+    }
+
+    .btn-primary:hover {
+        background-color: #0056b3;
+        border-color: #0056b3;
+    }
+</style>
+<div class="container rate-limit-container">
+    <h2 class="rate-limit-title">Rate Limit Exceeded</h2>
+    <div class="alert alert-danger">
+        <p>The application has exceeded its API rate limits and has been temporarily halted to prevent further issues.</p>
+    </div>
+
+    <h3 class="section-title">Blocked Domains</h3>
+    <ul class="blocked-domains-list">
+        {% for domain in blocked_domains %}
+            <li>{{ domain }}</li>
+        {% else %}
+            <li>No specific domains are currently blocked.</li>
+        {% endfor %}
+    </ul>
+
+    <h3>What does this mean?</h3>
+    <p>To protect our services and comply with API usage policies, we've implemented strict rate limiting. When these limits are exceeded, the application automatically stops to prevent potential abuse or overuse of external APIs.</p>
+
+    <h3>What should I do?</h3>
+    <ul>
+        <li>Wait for a short period (usually about an hour) before attempting to use the application again.</li>
+        <li>If you're an administrator, review the application logs to identify any unusual activity or potential issues causing excessive API calls.</li>
+        <li>Consider optimizing your usage patterns to reduce the frequency of API calls if this occurs regularly.</li>
+    </ul>
+
+    <h3>Current usage limits:</h3>
+    <ul>
+        <li>Hourly limit: {{ hourly_limit }}</li>
+        <li>Five-minute limit: {{ five_minute_limit }}</li>
+    </ul>
+
+    <div class="action-buttons">
+        <a href="{{ url_for('statistics.index') }}" class="btn btn-primary">Try to Return to Home Page</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Remove the JavaScript for checking rate limit -->
+{% endblock %}
