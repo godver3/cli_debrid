@@ -331,14 +331,14 @@ def get_active_downloads(check=False):
             if 'nb' in response_json:
                 return response_json['nb'] < response_json['limit']
             else:
-                logging.warning("'nb' not found in Real-Debrid response")
+                logging.debug("'nb' not found in Real-Debrid response")
                 return False
         else:
             if 'nb' in response_json:
                 return response_json['nb'], response_json['limit']
             else:
-                logging.warning("'nb' not found in Real-Debrid response")
-                return 0, response_json.get('limit', 0)
+                logging.debug("'nb' not found in Real-Debrid response")
+                return 0, round(response_json.get('limit', 0)*0.75)
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             logging.error("Unauthorized access to Real-Debrid API. Please check your API key.")
