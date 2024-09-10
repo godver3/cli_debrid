@@ -169,9 +169,9 @@ SETTINGS_SCHEMA = {
     },
     "Debug": {
         "tab": "Debug Settings",
-        "logging_level": {
+        "console_logging_level": {
             "type": "string",
-            "description": "Logging level",
+            "description": "Console logging level",
             "default": "INFO",
             "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         },
