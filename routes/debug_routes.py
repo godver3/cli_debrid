@@ -14,6 +14,8 @@ from content_checkers.mdb_list import get_wanted_from_mdblists
 from metadata.metadata import process_metadata
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 import os
+from api_tracker import api 
+import time
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -272,3 +274,25 @@ def get_wanted_content():
         return jsonify({'success': True, 'message': message}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@debug_bp.route('/api/rate_limit_info')
+def get_rate_limit_info():
+    rate_limit_info = {}
+    current_time = time.time()
+    
+    for domain in api.monitored_domains:
+        hourly_calls = [t for t in api.rate_limiter.hourly_calls[domain] if t > current_time - 3600]
+        five_minute_calls = [t for t in api.rate_limiter.five_minute_calls[domain] if t > current_time - 300]
+        
+        rate_limit_info[domain] = {
+            'five_minute': {
+                'count': len(five_minute_calls),
+                'limit': api.rate_limiter.five_minute_limit
+            },
+            'hourly': {
+                'count': len(hourly_calls),
+                'limit': api.rate_limiter.hourly_limit
+            }
+        }
+    
+    return jsonify(rate_limit_info)

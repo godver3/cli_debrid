@@ -119,6 +119,13 @@
                 <button type="submit">Apply Action</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Current Rate Limit State</h3>
+            <div id="rate-limit-info">
+                <p>Loading rate limit information...</p>
+            </div>
+            <button id="refresh-rate-limits">Refresh Rate Limits</button>
+        </div>
     </div>
 </div>
 
@@ -444,6 +451,36 @@
         // Initial fetch of queue items
         console.log('Initial queue fetch');
         fetchQueueItems(queueSelect.value);
+
+        // Add this new function to fetch and display rate limit information
+        function fetchRateLimitInfo() {
+            fetch('/debug/api/rate_limit_info')
+                .then(response => response.json())
+                .then(data => {
+                    const rateLimitInfo = document.getElementById('rate-limit-info');
+                    let html = '<h4>Rate Limits by Domain:</h4>';
+                    for (const [domain, limits] of Object.entries(data)) {
+                        html += `
+                            <div class="domain-rate-limit">
+                                <h5>${domain}</h5>
+                                <p>5-minute limit: ${limits.five_minute.count} / ${limits.five_minute.limit}</p>
+                                <p>Hourly limit: ${limits.hourly.count} / ${limits.hourly.limit}</p>
+                            </div>
+                        `;
+                    }
+                    rateLimitInfo.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error fetching rate limit info:', error);
+                    document.getElementById('rate-limit-info').innerHTML = '<p>Error loading rate limit information. Please try again.</p>';
+                });
+        }
+
+        // Fetch rate limit info on page load
+        fetchRateLimitInfo();
+
+        // Add event listener for the refresh button
+        document.getElementById('refresh-rate-limits').addEventListener('click', fetchRateLimitInfo);
     });
 </script>
 {% endblock %}
