@@ -399,6 +399,17 @@ function updateSettings() {
         console.warn("Sort By Uncached Status checkbox element not found!");
     }
 
+    const checkingQueuePeriod = document.getElementById('debug-checking_queue_period');
+    console.log("Checking Queue Period element:", checkingQueuePeriod);
+    
+    if (checkingQueuePeriod) {
+        settingsData['Debug']['checking_queue_period'] = parseInt(checkingQueuePeriod.value) || 3600;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Checking Queue Period input element not found!");
+    }
+
     // Handle Content Source check periods
     const contentSourceCheckPeriods = {};
     document.querySelectorAll('#content-source-check-periods input').forEach(input => {
