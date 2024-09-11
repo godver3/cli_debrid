@@ -7,14 +7,17 @@ from collections import defaultdict
 from flask import current_app
 from requests.exceptions import RequestException
 
-# Setup logging for API calls
-api_logger = logging.getLogger('api_calls')
-api_logger.setLevel(logging.INFO)
-api_logger.propagate = False  # Prevent propagation to root logger
-handler = logging.FileHandler('logs/api_calls.log')
-formatter = logging.Formatter('%(asctime)s - %(message)s')
-handler.setFormatter(formatter)
-api_logger.addHandler(handler)
+def setup_api_logging():
+    print("Setting up API logging")
+    # Setup logging for API calls
+    global api_logger
+    api_logger = logging.getLogger('api_calls')
+    api_logger.setLevel(logging.INFO)
+    api_logger.propagate = False  # Prevent propagation to root logger
+    handler = logging.FileHandler('logs/api_calls.log')
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    handler.setFormatter(formatter)
+    api_logger.addHandler(handler)
 
 def log_api_call(func):
     @wraps(func)
