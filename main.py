@@ -121,6 +121,8 @@ def main():
         time.sleep(1)
 
 if __name__ == "__main__":
+    from api_tracker import setup_api_logging
+    setup_api_logging()
     from web_server import start_server
     start_server()
     main()
