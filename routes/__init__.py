@@ -22,6 +22,7 @@ from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
 from api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from extensions import app
+from flask_login import current_user
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -97,6 +98,36 @@ def reset_rate_limits():
     api.rate_limiter.reset_limits()
     flash('Rate limits have been reset successfully.', 'success')
     return redirect(url_for('statistics.index'))
+
+@app.context_processor
+def inject_menu_items():
+    menu_items = [
+        ('statistics.index', 'Home'),
+        ('queues.index', 'Queues'),
+        ('scraper.index', 'Scraper'),
+        ('logs.logs', 'Logs'),
+        ('settings.index', 'Settings'),
+        ('database.index', 'Database'),
+        ('scraper.scraper_tester', 'Tester'),
+        ('debug.debug_functions', 'Debug')
+    ]
+    
+    def is_user_system_enabled():
+        # Implement this function based on your application's logic
+        return True  # or False, depending on your setup
+
+    visible_menu_items = []
+    if is_user_system_enabled():
+        if current_user.is_authenticated:
+            for route, label in menu_items:
+                if current_user.role == 'admin' or menu_items.index((route, label)) < 3:
+                    visible_menu_items.append((route, label))
+            if current_user.role == 'admin':
+                visible_menu_items.append(('user_management.manage_users', 'Users'))
+    else:
+        visible_menu_items = menu_items
+
+    return dict(menu_items=visible_menu_items, is_user_system_enabled=is_user_system_enabled)
 
 def register_blueprints(app):
     blueprints = [
