@@ -76,7 +76,7 @@ def rate_limited_request(func):
     return wrapper
 
 @rate_limited_request
-def add_to_real_debrid(magnet_link):
+def add_to_real_debrid(magnet_link, temp_file_path=None):
     api_key = get_api_key()
     if not api_key:
         logging.error("Real-Debrid API token not found in settings")
@@ -92,14 +92,18 @@ def add_to_real_debrid(magnet_link):
             magnet_data = {'magnet': magnet_link}
             torrent_response = api.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
         else:
-            torrent = api.get(magnet_link, allow_redirects=False, timeout=60)
-            if torrent.status_code != 200:
-                sleep(1)
+            if temp_file_path:
+                with open(temp_file_path, 'rb') as torrent_file:
+                    torrent_response = api.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent_file, timeout=60)
+            else:
                 torrent = api.get(magnet_link, allow_redirects=False, timeout=60)
                 if torrent.status_code != 200:
-                    torrent.raise_for_status()
-                    return False
-            torrent_response = api.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
+                    sleep(1)
+                    torrent = api.get(magnet_link, allow_redirects=False, timeout=60)
+                    if torrent.status_code != 200:
+                        torrent.raise_for_status()
+                        return False
+                torrent_response = api.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
             if not torrent_response:
                 sleep(1)
                 torrent_response = api.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
