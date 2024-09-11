@@ -54,7 +54,7 @@
     }
 
     function showAddSourcePopup() {
-        fetch('/settings/content-sources/content')
+        fetch('/settings/content-sources/types')
             .then(response => response.json())
             .then(data => {
                 const sourceTypes = data.source_types;
