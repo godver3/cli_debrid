@@ -19,6 +19,15 @@ def content_sources_content():
                            source_types=source_types, 
                            settings_schema=SETTINGS_SCHEMA)
 
+@settings_bp.route('/content-sources/types')
+def content_sources_types():
+    config = load_config()
+    source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+    return jsonify({
+        'source_types': source_types,
+        'settings': SETTINGS_SCHEMA['Content Sources']['schema']
+    })
+
 @settings_bp.route('/content_sources/add', methods=['POST'])
 def add_content_source_route():
     try:
