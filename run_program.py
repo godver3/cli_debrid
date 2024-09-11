@@ -5,7 +5,7 @@ from settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
-from metadata.metadata import process_metadata, refresh_release_dates
+from metadata.working_metadata import process_metadata, refresh_release_dates
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
 from not_wanted_magnets import task_purge_not_wanted_magnets_file
