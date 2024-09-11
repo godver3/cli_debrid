@@ -11,7 +11,7 @@ from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
 from content_checkers.mdb_list import get_wanted_from_mdblists
-from metadata.metadata import process_metadata
+from metadata.working_metadata import process_metadata
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 import os
 from api_tracker import api 
