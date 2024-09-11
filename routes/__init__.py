@@ -85,8 +85,8 @@ def handle_too_many_requests(e):
 @over_usage_bp.route('/')
 def index():
     blocked_domains = get_blocked_domains()
-    hourly_limit = 1000
-    five_minute_limit = 200
+    hourly_limit = 2000
+    five_minute_limit = 1000
     return render_template('over_usage.html', blocked_domains=blocked_domains, is_rate_limited=True, hourly_limit=hourly_limit, five_minute_limit=five_minute_limit)
 
 # Create a new Blueprint for admin routes
