@@ -254,7 +254,16 @@ class AddingQueue:
 
                 return True
 
-        add_result = add_to_real_debrid(link)
+        temp_file_path = None
+        if not link.startswith('magnet:'):
+            current_hash, temp_file_path = self.download_and_extract_hash(link)
+
+        add_result = add_to_real_debrid(link, temp_file_path)
+        
+        # Clean up the temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+            
         if add_result:
             if isinstance(add_result, dict):
                 status = add_result.get('status')
@@ -399,7 +408,7 @@ class AddingQueue:
 
         logging.info(f"Moved item {item_identifier} to Blacklisted state")
       
-    def download_and_extract_hash(self, url: str) -> str:
+    def download_and_extract_hash(self, url: str) -> tuple:
         def obfuscate_url(url: str) -> str:
             parts = url.split('/')
             if len(parts) > 3:
@@ -413,6 +422,11 @@ class AddingQueue:
             torrent_content = response.content
             logging.debug(f"Successfully downloaded torrent file from {obfuscated_url}. Content length: {len(torrent_content)} bytes")
             
+            # Save the torrent content to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as temp_file:
+                temp_file.write(torrent_content)
+                temp_file_path = temp_file.name
+
             # Decode the torrent file
             torrent_data = bencodepy.decode(torrent_content)
             
@@ -425,7 +439,7 @@ class AddingQueue:
             # Calculate the SHA1 hash
             hash_result = hashlib.sha1(encoded_info).hexdigest()
             logging.debug(f"Successfully extracted hash: {hash_result}")
-            return hash_result
+            return hash_result, temp_file_path
         except api.exceptions.RequestException as e:
             logging.error(f"Network error while downloading torrent file from {obfuscated_url}: {str(e)}")
         except bencodepy.exceptions.BencodeDecodeError as e:
@@ -434,7 +448,7 @@ class AddingQueue:
             logging.error(f"Error extracting info from torrent file from {obfuscated_url}: {str(e)}")
         except Exception as e:
             logging.error(f"Unexpected error processing torrent file from {obfuscated_url}: {str(e)}")
-        return None
+        return None, None
 
 
     def add_to_real_debrid_helper(self, link: str, item_identifier: str, hash_value: str, add_if_uncached: bool = True) -> Dict[str, Any]:
