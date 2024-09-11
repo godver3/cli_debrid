@@ -18,11 +18,14 @@ const SCROLL_HIDE_DELAY = 100; // ms to wait after scrolling stops before hiding
 let isUpdatingContent = false;
 
 function isMobileDevice() {
-    return (typeof window.orientation !== "undefined") || 
-           (navigator.userAgent.indexOf('IEMobile') !== -1) ||
-           ('ontouchstart' in window) ||
-           (navigator.maxTouchPoints > 0) ||
-           (navigator.msMaxTouchPoints > 0);
+    // Check if the screen width is less than 768px (typical mobile breakpoint)
+    if (window.innerWidth <= 768) {
+        return true;
+    }
+
+    // Check for mobile-specific properties
+    const mobileKeywords = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+    return mobileKeywords.test(navigator.userAgent);
 }
 
 async function fetchTooltips() {
