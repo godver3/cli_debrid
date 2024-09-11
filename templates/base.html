@@ -567,11 +567,15 @@
             max-height: 0;
             overflow: hidden;
             transition: max-height 0.3s ease-out;
+            z-index: 9999; /* Increase z-index to ensure it's on top */
+            background-color: #1a1a1a;
         }
 
         nav ul.show {
-            max-height: 500px; /* Adjust this value based on your menu's height */
+            height: auto;
+            max-height: 1000px; /* Adjust this value based on your menu's height */
             transition: max-height 0.5s ease-in;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Add shadow for better visibility */
         }
 
         nav ul li {
@@ -729,6 +733,12 @@
 
     .btn:hover {
         opacity: 0.9;
+    }
+
+    /* Add this new style for the main content */
+    main {
+        position: relative;
+        z-index: 1; /* Ensure main content is below the nav menu */
     }
 </style>
 <!-- Add this near the top of the <body> tag -->
