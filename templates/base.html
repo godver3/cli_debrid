@@ -559,7 +559,7 @@
 
         nav ul {
             flex-direction: column;
-            position: fixed;  /* Change from absolute to fixed */
+            position: absolute;
             top: 50px;
             left: 0;
             width: 100%;
@@ -567,12 +567,15 @@
             max-height: 0;
             overflow: hidden;
             transition: max-height 0.3s ease-out;
-            z-index: 1000;  /* Add this line to ensure it's on top */
+            z-index: 9999; /* Increase z-index to ensure it's on top */
+            background-color: #1a1a1a;
         }
 
         nav ul.show {
-            max-height: 500px; /* Adjust this value based on your menu's height */
+            height: auto;
+            max-height: 1000px; /* Adjust this value based on your menu's height */
             transition: max-height 0.5s ease-in;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Add shadow for better visibility */
         }
 
         nav ul li {
@@ -731,6 +734,12 @@
     .btn:hover {
         opacity: 0.9;
     }
+
+    /* Add this new style for the main content */
+    main {
+        position: relative;
+        z-index: 1; /* Ensure main content is below the nav menu */
+    }
 </style>
 <!-- Add this near the top of the <body> tag -->
 <script>
@@ -769,9 +778,33 @@
                 <div class="bar"></div>
             </div>
             <ul id="navMenu">
-                {% for route, label in menu_items %}
-                    <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
-                {% endfor %}
+                {% set menu_items = [
+                    ('statistics.index', 'Home'),
+                    ('queues.index', 'Queues'),
+                    ('scraper.index', 'Scraper'),
+                    ('logs.logs', 'Logs'),
+                    ('settings.index', 'Settings'),
+                    ('database.index', 'Database'),
+                    ('scraper.scraper_tester', 'Tester'),
+                    ('debug.debug_functions', 'Debug')
+                ] %}
+                
+                {% if is_user_system_enabled() %}
+                    {% if current_user.is_authenticated %}
+                        {% for route, label in menu_items %}
+                            {% if current_user.role == 'admin' or loop.index <= 3 %}
+                                <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                            {% endif %}
+                        {% endfor %}
+                        {% if current_user.role == 'admin' %}
+                            <li><a href="{{ url_for('user_management.manage_users') }}">Users</a></li>
+                        {% endif %}
+                    {% endif %}
+                {% else %}
+                    {% for route, label in menu_items %}
+                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                    {% endfor %}
+                {% endif %}
             </ul>
         </nav>
         <div class="header-controls">
@@ -832,10 +865,14 @@
             const navMenu = document.querySelector('#navMenu');
 
             if (hamburger && navMenu) {
-                const navItems = navMenu.querySelectorAll('li a');
+                const navItems = navMenu.querySelectorAll('li');
 
-                // Always show hamburger menu on mobile devices
-                hamburger.style.display = 'flex';
+                // Show hamburger menu only if user system is disabled or user is authenticated
+                if (!userSystemEnabled || isAuthenticated) {
+                    hamburger.style.display = 'flex';
+                } else {
+                    hamburger.style.display = 'none';
+                }
 
                 hamburger.addEventListener('click', function() {
                     hamburger.classList.toggle('active');
@@ -852,14 +889,6 @@
                             item.style.transitionDelay = '0s';
                         });
                     }
-                });
-
-                // Close menu when a link is clicked
-                navItems.forEach(item => {
-                    item.addEventListener('click', function() {
-                        hamburger.classList.remove('active');
-                        navMenu.classList.remove('show');
-                    });
                 });
             }
         }
