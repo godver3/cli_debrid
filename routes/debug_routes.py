@@ -64,6 +64,12 @@ def delete_database():
         create_tables()
         verify_database()
 
+        # Delete the trakt cache file
+        from content_checkers.trakt import CACHE_FILE
+        if os.path.exists(CACHE_FILE):
+            os.remove(CACHE_FILE)
+            logging.info(f"Deleted trakt cache file: {CACHE_FILE}")
+            
         return jsonify({'success': True, 'message': 'Database deleted and tables recreated successfully'})
     except Exception as e:
         logging.error(f"Error deleting database: {str(e)}", exc_info=True)
