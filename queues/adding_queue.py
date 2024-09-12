@@ -12,7 +12,7 @@ from settings import get_setting
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, API_BASE_URL, get_active_downloads
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted, get_not_wanted_magnets, is_url_not_wanted, add_to_not_wanted_urls, get_not_wanted_urls
 from scraper.scraper import scrape
-from metadata.metadata import get_all_season_episode_counts, get_overseerr_cookies
+from database.database_reading import get_all_season_episode_counts
 from guessit import guessit
 import functools
 from .anime_matcher import AnimeMatcher
@@ -758,10 +758,7 @@ class AddingQueue:
     
     @functools.lru_cache(maxsize=1000)
     def get_season_episode_counts(self, tmdb_id: str) -> Dict[int, int]:
-        overseerr_url = get_setting('Overseerr', 'url')
-        overseerr_api_key = get_setting('Overseerr', 'api_key')
-        cookies = get_overseerr_cookies(overseerr_url)
-        return get_all_season_episode_counts(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+        return get_all_season_episode_counts(tmdb_id)
 
     def scrape_individual_episode(self, item):
         logging.info(f"Performing individual episode scrape for {self.generate_identifier(item)}")

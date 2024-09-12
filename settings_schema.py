@@ -34,21 +34,6 @@ SETTINGS_SCHEMA = {
             "default": ""
         }
     },
-    "Overseerr": {
-        "tab": "Required Settings",
-        "url": {
-            "type": "string",
-            "description": "Overseerr server URL. Overseerr is used here not as a content source, but for processing metadata. If using as a content source ensure you add it to the Content Sources tab.",
-            "default": "",
-            "validate": "url"
-        },
-        "api_key": {
-            "type": "string",
-            "description": "Overseerr API key",
-            "default": "",
-            "sensitive": True
-        }
-    },
     "RealDebrid": {
         "tab": "Required Settings",
         "api_key": {
