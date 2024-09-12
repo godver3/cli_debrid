@@ -83,9 +83,8 @@ def check_program_conditions():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('Overseerr', 'url'),
-        ('Overseerr', 'api_key'),
-        ('RealDebrid', 'api_key')
+        ('RealDebrid', 'api_key'),
+        ('Metadata Battery', 'url')
     ]
     
     missing_fields = []

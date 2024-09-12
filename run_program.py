@@ -5,7 +5,7 @@ from settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
-from metadata.working_metadata import process_metadata, refresh_release_dates
+from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
 from not_wanted_magnets import task_purge_not_wanted_magnets_file
@@ -410,13 +410,46 @@ def generate_airtime_report():
     # Log the report
     logging.info("Airtime Report:\n" + "\n".join(report))
 
+def append_runtime_airtime(items):
+    logging.info(f"Starting to append runtime and airtime for {len(items)} items")
+    for index, item in enumerate(items, start=1):
+        imdb_id = item.get('imdb_id')
+        media_type = item.get('type')
+        
+        if not imdb_id or not type:
+            logging.warning(f"Item {index} is missing imdb_id or type: {item}")
+            continue
+        
+        try:
+            if media_type == 'movie':
+                runtime = get_runtime(imdb_id, 'movie')
+                item['runtime'] = runtime
+            elif media_type == 'episode':
+                runtime = get_runtime(imdb_id, 'episode')
+                airtime = get_episode_airtime(imdb_id)
+                item['runtime'] = runtime
+                item['airtime'] = airtime
+            else:
+                logging.warning(f"Unknown media type for item {index}: {media_type}")
+        except Exception as e:
+            logging.error(f"Error processing item {index} (IMDb: {imdb_id}): {str(e)}")
+            logging.error(f"Item details: {item}")
+            logging.error(traceback.format_exc())
+    
 def get_and_add_all_collected_from_plex():
     logging.info("Getting all collected content from Plex")
     collected_content = asyncio.run(run_get_collected_from_plex())
     
     if collected_content:
-        logging.info(f"Retrieved {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes from Plex")
-        add_collected_items(collected_content['movies'] + collected_content['episodes'])
+        movies = collected_content['movies']
+        episodes = collected_content['episodes']
+        
+        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from Plex")
+        
+        #append_runtime_airtime(movies)
+        #append_runtime_airtime(episodes)
+        
+        add_collected_items(movies + episodes)
     else:
         logging.error("Failed to retrieve content from Plex")
 
@@ -425,8 +458,15 @@ def get_and_add_recent_collected_from_plex():
     collected_content = asyncio.run(run_get_recent_from_plex())
     
     if collected_content:
-        logging.info(f"Retrieved {len(collected_content['movies'])} movies and {len(collected_content['episodes'])} episodes from Plex")
-        add_collected_items(collected_content['movies'] + collected_content['episodes'], recent=True)
+        movies = collected_content['movies']
+        episodes = collected_content['episodes']
+        
+        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from Plex")
+        
+        #append_runtime_airtime(movies)
+        #append_runtime_airtime(episodes)
+
+        add_collected_items(movies + episodes, recent=True)
     else:
         logging.error("Failed to retrieve content from Plex")
 

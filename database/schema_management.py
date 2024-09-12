@@ -11,23 +11,30 @@ def create_database():
 def migrate_schema():
     conn = get_db_connection()
     try:
-        # Drop the old unique constraint if it exists
-        try:
-            conn.execute('DROP INDEX IF EXISTS media_items_unique_constraint')
-            logging.info("Successfully dropped old unique constraint.")
-        except sqlite3.OperationalError as e:
-            logging.error(f"Error dropping old unique constraint: {str(e)}")
+        # Add the runtime column if it doesn't exist
+        conn.execute('''
+            ALTER TABLE media_items ADD COLUMN runtime INTEGER
+            ALTER TABLE media_items ADD COLUMN alternate_title TEXT
+            ALTER TABLE media_items ADD COLUMN airtime TIMESTAMP
+        ''')
+        logging.info("Successfully added runtime column to media_items table.")
 
-        # Create new unique index
+        # Update the unique index
+        conn.execute('DROP INDEX IF EXISTS unique_media_item_file')
         conn.execute('''
             CREATE UNIQUE INDEX IF NOT EXISTS unique_media_item_file 
             ON media_items (imdb_id, tmdb_id, title, year, season_number, episode_number, version, filled_by_file)
             WHERE filled_by_file IS NOT NULL
         ''')
-        logging.info("Successfully created new unique index.")
+        logging.info("Successfully updated unique index.")
 
         conn.commit()
         logging.info("Schema migration completed successfully.")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            logging.info("Runtime column already exists. Skipping addition.")
+        else:
+            logging.error(f"Error during schema migration: {str(e)}")
     except Exception as e:
         conn.rollback()
         logging.error(f"Unexpected error during schema migration: {str(e)}")
@@ -46,11 +53,11 @@ def verify_database():
     if not cursor.fetchone():
         logging.error("media_items table does not exist!")
     
-    # Verify filled_by_file column
+    # Verify runtime column
     cursor.execute("PRAGMA table_info(media_items)")
     columns = [column[1] for column in cursor.fetchall()]
-    if 'filled_by_file' not in columns:
-        logging.error("filled_by_file column does not exist in media_items table!")
+    if 'runtime' not in columns:
+        logging.error("runtime column does not exist in media_items table!")
     
     # Verify unique index
     cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='unique_media_item_file'")
@@ -91,11 +98,14 @@ def create_tables():
                 scrape_results TEXT,
                 version TEXT,
                 genres TEXT,
-                file_path TEXT
+                file_path TEXT,
+                runtime INTEGER,  -- Add the runtime column
+                alternate_title TEXT
             )
         ''')
 
         conn.commit()
+        logging.info("Tables created successfully.")
     except Exception as e:
         logging.error(f"Error creating media_items table: {str(e)}")
     finally:

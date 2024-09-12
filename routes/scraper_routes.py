@@ -3,11 +3,13 @@ import logging
 from debrid.real_debrid import add_to_real_debrid
 from .models import user_required, onboarding_required, admin_required
 from settings import get_setting, get_all_settings, load_config, save_config
-from metadata.metadata import get_all_season_episode_counts, get_overseerr_cookies
+from database.database_reading import get_all_season_episode_counts
 from web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
-from web_scraper import search_overseerr, get_media_details
+from web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
+from web_scraper import search_trakt
+from database.database_reading import get_all_season_episode_counts
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -72,7 +74,7 @@ def shows_trending():
 @user_required
 @onboarding_required
 def index():
-    from web_scraper import get_available_versions
+    from web_scraper import get_available_versions, web_scrape
 
     versions = get_available_versions()
     if request.method == 'POST':
@@ -82,7 +84,8 @@ def index():
             session['search_term'] = search_term  # Store the search term in the session
             session['version'] = version  # Store the version in the session
             results = web_scrape(search_term, version)
-            return jsonify(results)
+            logging.info(f"Search results for '{search_term}': {results}")  # Log the results
+            return jsonify({'results': results})  # Wrap results in a dictionary here
         else:
             return jsonify({'error': 'No search term provided'})
     
@@ -213,7 +216,7 @@ def scraper_tester():
             search_term = request.form.get('search_term')
         
         if search_term:
-            search_results = search_overseerr(search_term)
+            search_results = search_trakt(search_term)
             
             # Fetch IMDB IDs and season/episode counts for each result
             for result in search_results:
@@ -221,13 +224,13 @@ def scraper_tester():
                 
                 if details:
                     imdb_id = details.get('externalIds', {}).get('imdbId', 'N/A')
+                    tmdb_id = details.get('id', 'N/A')
                     result['imdbId'] = imdb_id
                     
                     if result['mediaType'] == 'tv':
                         overseerr_url = get_setting('Overseerr', 'url')
                         overseerr_api_key = get_setting('Overseerr', 'api_key')
-                        cookies = get_overseerr_cookies(overseerr_url)
-                        season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, result['id'], cookies)
+                        season_episode_counts = get_all_season_episode_counts(tmdb_id)
                         result['seasonEpisodeCounts'] = season_episode_counts
                 else:
                     result['imdbId'] = 'N/A'

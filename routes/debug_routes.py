@@ -2,7 +2,6 @@ from flask import jsonify, Blueprint, render_template, request, redirect, url_fo
 from flask.json import jsonify
 from initialization import get_all_wanted_from_enabled_sources
 from run_program import get_and_add_recent_collected_from_plex, get_and_add_all_collected_from_plex
-from metadata.metadata import get_overseerr_show_details, get_overseerr_cookies, get_overseerr_movie_details, get_tmdb_id_and_media_type
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
 from settings import get_all_settings, get_setting, set_setting
 import logging
@@ -11,11 +10,12 @@ from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
 from content_checkers.mdb_list import get_wanted_from_mdblists
-from metadata.working_metadata import process_metadata
+from metadata.metadata import process_metadata
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 import os
 from api_tracker import api 
 import time
+from metadata.metadata import get_metadata, get_tmdb_id_and_media_type
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -129,8 +129,6 @@ def manual_blacklist():
         flash('Overseerr URL or API key not set. Please configure in settings.', 'error')
         return redirect(url_for('settings'))
 
-    cookies = get_overseerr_cookies(overseerr_url)
-
     if request.method == 'POST':
         action = request.form.get('action')
         imdb_id = request.form.get('imdb_id')
@@ -141,9 +139,9 @@ def manual_blacklist():
             if tmdb_id and media_type:
                 # Fetch details based on media type
                 if media_type == 'movie':
-                    details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+                    details = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
                 else:  # TV show
-                    details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+                    details = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
                 
                 if details:
                     title = details.get('title') if media_type == 'movie' else details.get('name')
