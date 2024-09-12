@@ -7,7 +7,6 @@ from scraper.scraper import scrape
 from utilities.result_viewer import display_results
 from debrid.real_debrid import add_to_real_debrid, extract_hash_from_magnet
 from settings import get_setting
-from metadata.metadata import imdb_to_tmdb
 import os
 from collections import Counter
 
@@ -161,46 +160,6 @@ def get_details(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching details from Overseerr: {e}")
         return None
-
-def imdb_id_to_title_and_year(imdb_id: str, movie_or_episode: str) -> Tuple[str, int]:
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    
-    if movie_or_episode == "movie":
-        media_type = "movie"
-    else:
-        media_type = "tv"
-
-    tmdb_id = imdb_to_tmdb(imdb_id)
-    if not tmdb_id:
-        return "", 0
-
-    headers = {
-        'X-Api-Key': overseerr_api_key,
-        'Accept': 'application/json'
-    }
-
-    if movie_or_episode == "movie":
-        movie_url = f"{overseerr_url}/api/v1/movie/{tmdb_id}"
-        try:
-            response = api.get(movie_url, headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                return data['title'], int(data['releaseDate'][:4])
-        except api.exceptions.RequestException as e:
-            logging.error(f"Error fetching movie data: {e}")
-    else:
-        tv_url = f"{overseerr_url}/api/v1/tv/{tmdb_id}"
-        try:
-            response = api.get(tv_url, headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                return data['name'], int(data['firstAirDate'][:4])
-        except api.exceptions.RequestException as e:
-            logging.error(f"Error fetching TV show data: {e}")
-    os.system('clear')
-
-    return "", 0
 
 def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode, multi, version, genres):
     logger = logging.getLogger(__name__)

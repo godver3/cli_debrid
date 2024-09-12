@@ -3,7 +3,7 @@ import configparser
 from typing import List, Dict, Any, Optional
 from scraper.scraper import scrape, rank_result_key, parse_size, calculate_bitrate
 from settings import set_setting, get_scraping_settings, load_config, save_config
-from utilities.manual_scrape import imdb_id_to_title_and_year, run_manual_scrape
+from utilities.manual_scrape import run_manual_scrape
 import logging
 
 CONFIG_FILE = './config.ini'

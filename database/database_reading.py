@@ -80,3 +80,73 @@ def get_media_item_by_id(item_id):
         return None
     finally:
         conn.close()
+
+def get_movie_runtime(tmdb_id):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('SELECT runtime FROM media_items WHERE tmdb_id = ? AND type = "movie"', (tmdb_id,))
+        result = cursor.fetchone()
+        return result['runtime'] if result else None
+    except Exception as e:
+        logging.error(f"Error retrieving movie runtime (TMDB ID: {tmdb_id}): {str(e)}")
+        return None
+    finally:
+        conn.close()
+
+def get_episode_runtime(tmdb_id):
+    conn = get_db_connection()
+    try:
+        query = '''
+            SELECT AVG(runtime) as runtime FROM media_items 
+            WHERE tmdb_id = ? AND type = "episode"
+        '''
+        cursor = conn.execute(query, (tmdb_id,))
+        result = cursor.fetchone()
+        return result['runtime'] if result and result['runtime'] is not None else None
+    except Exception as e:
+        logging.error(f"Error retrieving episode runtime (TMDB ID: {tmdb_id}): {str(e)}")
+        return None
+    finally:
+        conn.close()
+
+def get_episode_count(tmdb_id):
+    conn = get_db_connection()
+    try:
+        query = '''
+            SELECT COUNT(*) as episode_count 
+            FROM (
+                SELECT DISTINCT season_number, episode_number, version
+                FROM media_items 
+                WHERE tmdb_id = ? AND type = "episode"
+            )
+        '''
+        cursor = conn.execute(query, (tmdb_id,))
+        result = cursor.fetchone()
+        return result['episode_count'] if result else 0
+    except Exception as e:
+        logging.error(f"Error retrieving episode count (TMDB ID: {tmdb_id}): {str(e)}")
+        return 0
+    finally:
+        conn.close()
+
+def get_all_season_episode_counts(tmdb_id):
+    conn = get_db_connection()
+    try:
+        query = '''
+            SELECT season_number, COUNT(*) as episode_count
+            FROM (
+                SELECT DISTINCT season_number, episode_number, version
+                FROM media_items
+                WHERE tmdb_id = ? AND type = "episode"
+            )
+            GROUP BY season_number
+            ORDER BY season_number
+        '''
+        cursor = conn.execute(query, (tmdb_id,))
+        results = cursor.fetchall()
+        return {row['season_number']: row['episode_count'] for row in results}
+    except Exception as e:
+        logging.error(f"Error retrieving season episode counts (TMDB ID: {tmdb_id}): {str(e)}")
+        return {}
+    finally:
+        conn.close()

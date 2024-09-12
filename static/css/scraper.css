@@ -349,24 +349,26 @@ button#seasonPackButton {
 
 .season-bg-image {
     position: absolute;
-    top: 128px;
+    top: 64px;
     left: 0;
     width: 100%;
-    height: 29%;
+    height: 85%;
     background-size: cover;
-    background-position: center;
+    background-position: center top;
     z-index: 0;
+
+    /* Apply a mask to fade the bottom of the image to transparent */
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 40%, rgba(0, 0, 0, 0) 55%);
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 40%, rgba(0, 0, 0, 0) 55%);
 }
 
-.season-bg-image::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgb(36 34 34 / 88%);
-    z-index: 1;
+
+
+#episodeResults > div {
+    position: relative;
+    width: 1600px;
+    margin: 0 auto;
+    top: 140px;
 }
 
 
@@ -450,13 +452,6 @@ h2.episode-title {
     color: rgb(191 191 190);
     margin-block-end: -10px;
     padding-top: 10px;
-}
-
-#episodeResults > div {
-    position: relative;
-    width: 1600px;
-    margin: 0 auto;
-    top: 70px;
 }
 
 .overlay {

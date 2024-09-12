@@ -5,8 +5,10 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
 from settings import get_setting
 import time
-from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, get_overseerr_show_details, get_overseerr_show_episodes, get_all_season_episode_counts
+#from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, get_overseerr_show_details, get_overseerr_show_episodes, get_all_season_episode_counts
+from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
 from fuzzywuzzy import fuzz
+from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
 import os
 from utilities.plex_functions import filter_genres
 from guessit import guessit
@@ -263,68 +265,51 @@ def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Opti
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching TMDB season info: {e}")
         return None
-
+    
 def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Retrieve episode count and runtime information for given media items.
-    
-    Args:
-    media_items (List[Dict[str, Any]]): List of media items to process.
-    
-    Returns:
-    List[Dict[str, Any]]: List of media items with additional 'episode_count' and 'runtime' fields.
-    """
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    if not overseerr_url or not overseerr_api_key:
-        logging.error("Overseerr URL or API key not set. Please configure in settings.")
-        return []
-
-    cookies = get_overseerr_cookies(overseerr_url)
     processed_items = []
 
     for item in media_items:
         try:
             if item['media_type'] == 'movie':
-                details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-                if details:
+                db_runtime = get_movie_runtime(item['tmdb_id'])
+                if db_runtime:
                     item['episode_count'] = 1
-                    item['runtime'] = details.get('runtime', 100)  # Default to 100 minutes if not available
+                    item['runtime'] = db_runtime
                 else:
-                    logging.warning(f"Could not fetch details for movie: {item['title']}")
+                    logging.info(f"Fetching metadata for movie: {item['title']}")
+                    metadata = get_metadata(tmdb_id=item['tmdb_id'], item_media_type='movie')
+                    item['runtime'] = metadata.get('runtime', 100)  # Default to 100 if not found
                     item['episode_count'] = 1
-                    item['runtime'] = 100  # Default value
-            
+                    logging.info(f"Runtime for movie: {item['runtime']}")
+        
             elif item['media_type'] == 'episode':
-                show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-                if show_details:
-                    seasons = show_details.get('seasons', [])
-                    item['episode_count'] = sum(season.get('episodeCount', 0) for season in seasons if season.get('seasonNumber', 0) != 0)
-                    
-                    # Try to get runtime from TMDB API first
-                    tmdb_api_key = get_setting('TMDB', 'api_key')
-                    if tmdb_api_key:
-                        try:
-                            first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
-                            if first_season:
-                                season_info = get_tmdb_season_info(item['tmdb_id'], first_season['seasonNumber'], tmdb_api_key)
-                                if season_info and season_info.get('episodes'):
-                                    item['runtime'] = season_info['episodes'][0].get('runtime', 30)
-                                else:
-                                    raise Exception("Failed to get episode runtime from TMDB")
-                            else:
-                                raise Exception("No valid season found")
-                        except Exception as e:
-                            logging.warning(f"Error fetching TMDB data: {str(e)}. Falling back to Overseerr data.")
-                            # Fall back to Overseerr data
-                            item['runtime'] = get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-                    else:
-                        # Use Overseerr data if TMDB API key is not available
-                        item['runtime'] = get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+                db_runtime = get_episode_runtime(item['tmdb_id'])
+                if db_runtime:
+                    item['runtime'] = db_runtime
+                    item['episode_count'] = get_episode_count(item['tmdb_id'])
                 else:
-                    logging.warning(f"Could not fetch details for TV show: {item['title']}")
-                    item['episode_count'] = 1
-                    item['runtime'] = 30  # Default value
+                    logging.info(f"Fetching metadata for TV show: {item['title']}")
+                    if 'imdb_id' in item:
+                        tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
+                    elif 'tmdb_id' in item:
+                        tmdb_id, media_type = item['tmdb_id'], 'tv'
+                    else:
+                        logging.warning(f"No IMDb ID or TMDB ID found for TV show: {item['title']}")
+                        tmdb_id, media_type = None, None
+
+                    if tmdb_id and media_type == 'tv':
+                        metadata = get_metadata(tmdb_id=tmdb_id, item_media_type='tv')
+                        item['runtime'] = metadata.get('runtime', 30)  # Default to 30 if not found
+                        seasons = metadata.get('seasons', {})
+                        item['episode_count'] = sum(season.get('episode_count', 0) for season in seasons.values())
+                    else:
+                        logging.warning(f"Could not fetch details for TV show: {item['title']}")
+                        item['episode_count'] = 1
+                        item['runtime'] = 30  # Default value
+                    
+                    logging.info(f"Runtime for TV show: {item['runtime']}")
+                    logging.info(f"Episode count for TV show: {item['episode_count']}")
             
             logging.debug(f"Processed {item['title']}: {item['episode_count']} episodes, {item['runtime']} minutes per episode/movie")
             processed_items.append(item)
@@ -337,15 +322,6 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
             processed_items.append(item)
 
     return processed_items
-
-def get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, tmdb_id, cookies):
-    if seasons:
-        first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
-        if first_season:
-            season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, first_season['seasonNumber'], cookies)
-            first_episode = season_details.get('episodes', [{}])[0]
-            return first_episode.get('runtime', 30)
-    return 30  # Default runtime if no data is available
 
 def parse_size(size):
     if isinstance(size, (int, float)):
@@ -733,6 +709,9 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     original_title = None
     is_anime = genres and 'anime' in [genre.lower() for genre in genres]
     if is_anime:
+        # TODO: Add metadata battery cache for aliases from Trakt
+        logging.info(f"Anime detected for {title}. Using current title until this function is built.")
+        '''
         logging.info(f"Anime detected for {title}. Fetching original title.")
         overseerr_url = get_setting('Overseerr', 'url')
         overseerr_api_key = get_setting('Overseerr', 'api_key')
@@ -762,6 +741,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 logging.info("No original title found in Overseerr details.")
         else:
             logging.info("No details found in Overseerr.")
+        '''
 
     pre_size_filtered_results = []
 
@@ -990,11 +970,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             logging.warning(f"Invalid content_type: {content_type}. Defaulting to 'movie'.")
             content_type = 'movie'
 
-        # Get TMDB ID and runtime once for all results
-        overseerr_url = get_setting('Overseerr', 'url')
-        overseerr_api_key = get_setting('Overseerr', 'api_key')
-        cookies = get_overseerr_cookies(overseerr_url)
-
         # Get media info for bitrate calculation
         media_item = {
             'title': title,
@@ -1012,7 +987,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Pre-calculate episode counts for TV shows
         season_episode_counts = {}
         if content_type.lower() == 'episode':
-            season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+            season_episode_counts = get_all_season_episode_counts(tmdb_id)
+
 
         logging.debug(f"Retrieved runtime for {title}: {runtime} minutes, Episode count: {episode_count}")
 
@@ -1136,9 +1112,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             result_info = (
                 f"- {result.get('title', '')}: "
                 f"Size: {result.get('size', 'N/A')} GB, "
+                f"Length: {result.get('runtime', 'N/A')} minutes, "
                 f"Bitrate: {result.get('bitrate', 'N/A')} Mbps, "
                 f"Multi-pack: {'Yes' if result.get('is_multi_pack', False) else 'No'}, "
-                f"Season pack: {result.get('season_pack', 'N/A')}"
+                f"Season pack: {result.get('season_pack', 'N/A')}, "
+                f"Source: {result.get('source', 'N/A')}"
             )
             scraper_logger.info(result_info)
 
