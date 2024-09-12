@@ -8,7 +8,6 @@ from time import sleep
 from functools import lru_cache
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import time
-import requests
 from functools import wraps
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -183,6 +182,9 @@ def namespace_to_dict(obj):
     else:
         return obj
 
+def is_valid_hash(hash_string):
+    return bool(re.match(r'^[a-fA-F0-9]{40}$', hash_string))
+
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=4, max=60),
@@ -196,12 +198,14 @@ def is_cached_on_rd(hashes):
 
     if isinstance(hashes, str):
         hashes = [hashes]
-    elif not isinstance(hashes, list):
+    elif isinstance(hashes, (tuple, list)):
+        hashes = list(hashes)
+    else:
         logging.error(f"Invalid input type for hashes: {type(hashes)}")
         return {}
 
-    # Filter out any non-string elements
-    hashes = [h for h in hashes if isinstance(h, str)]
+    # Filter out any non-string elements, None values, and invalid hashes
+    hashes = [h for h in hashes if isinstance(h, str) and h is not None and is_valid_hash(h)]
 
     if not hashes:
         logging.warning("No valid hashes after filtering")
@@ -279,13 +283,14 @@ def get_cached_files(hash_):
 @rate_limited_request
 def get(url):
     api_key = get_api_key()
-
+    print(api_key)
     headers = {
         'User-Agent': 'Mozilla/5.0',
         'Authorization': f'Bearer {api_key}'
     }
     try:
         response = api.get(url, headers=headers, timeout=10)
+        print(response)
         if response.status_code == 429:
             retry_after = int(response.headers.get('Retry-After', 5))
             logging.warning(f"Rate limited. Waiting for {retry_after} seconds.")
