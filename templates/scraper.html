@@ -64,6 +64,11 @@
             </div>
         </div>
         <div id="searchResult"></div>
+        <!-- Add this div for search results -->
+        <div id="searchResults" style="display: none;">
+            <h2>Search Results</h2>
+            <div id="resultsList"></div>
+        </div>
     </div>
     <script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
 {% endblock %}

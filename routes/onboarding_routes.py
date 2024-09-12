@@ -20,9 +20,8 @@ def get_next_onboarding_step():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('Overseerr', 'url'),
-        ('Overseerr', 'api_key'),
-        ('RealDebrid', 'api_key')
+        ('RealDebrid', 'api_key'),
+        ('Metadata Battery', 'url')
     ]
     
     for category, key in required_settings:

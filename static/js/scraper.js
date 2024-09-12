@@ -11,16 +11,64 @@ function searchMedia(event) {
     })
     .then(response => response.json())
     .then(data => {
+        console.log('Received data:', JSON.stringify(data, null, 2));  // Pretty print the entire response
         if (data.error) {
             displayError(data.error);
-        } else {
+        } else if (data.results && Array.isArray(data.results)) {
             displaySearchResults(data.results, version);
+        } else {
+            displayError('Invalid response from server');
         }
     })
     .catch(error => {
         console.error('Error:', error);
         displayError('An error occurred while searching.');
     });
+}
+
+function displaySearchResults(results, version) {
+    console.log('Displaying results:', results);  // Debugging line
+    toggleResultsVisibility('displaySearchResults');
+    const searchResultsDiv = document.getElementById('searchResult');
+    searchResultsDiv.innerHTML = '';
+    
+    // Create a container for the grid layout
+    const gridContainer = document.createElement('div');
+    gridContainer.style.display = 'flex';
+    gridContainer.style.flexWrap = 'wrap';
+    gridContainer.style.gap = '20px';
+    const mediaQuery = window.matchMedia('(max-width: 1024px)');
+    function handleScreenChange(e) {
+        if (e.matches) {
+            gridContainer.style.justifyContent = 'center';
+        } else {
+            gridContainer.style.justifyContent = 'flex-start';
+        }
+    }
+    mediaQuery.addListener(handleScreenChange);
+    handleScreenChange(mediaQuery);
+
+    results.forEach(item => {
+        const searchResDiv = document.createElement('div');
+        searchResDiv.className = 'sresult';
+        searchResDiv.innerHTML = `
+            <button>${item.media_type === 'show' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
+            <img src="${item.poster_path ? 'https://image.tmdb.org/t/p/w600_and_h900_bestv2' + item.poster_path : '/static/noimage-cli.png'}" alt="${item.title}" style="width: 100%; height: auto;">
+            <div class="searchresult-info">
+                <h2 class="searchresult-item">${item.title} (${item.year || 'N/A'})</h2>
+            </div></button>                
+        `;        
+        searchResDiv.onclick = function() {
+            if (item.media_type === 'movie') {
+                selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
+            } else {
+                selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview);
+            }
+        };
+        gridContainer.appendChild(searchResDiv);
+    });
+
+    searchResultsDiv.appendChild(gridContainer);
 }
 
 function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path, genre_ids, vote_average, backdrop_path, show_overview) {
@@ -361,53 +409,6 @@ function toggleResultsVisibility(section) {
         episodeResultsDiv.style.display = 'none';
 
     }
-}
-
-function displaySearchResults(searchResult) {
-    toggleResultsVisibility('displaySearchResults');
-    const searchResultsDiv = document.getElementById('searchResult');
-    searchResultsDiv.innerHTML = '';
-    
-    // Create a container for the grid layout
-    const gridContainer = document.createElement('div');
-    gridContainer.style.display = 'flex';
-    gridContainer.style.flexWrap = 'wrap';
-    gridContainer.style.gap = '20px';
-    const mediaQuery = window.matchMedia('(max-width: 1024px)');
-    function handleScreenChange(e) {
-        if (e.matches) {
-            gridContainer.style.justifyContent = 'center';
-        } else {
-            gridContainer.style.justifyContent = 'flex-start';
-        }
-    }
-    mediaQuery.addListener(handleScreenChange);
-    handleScreenChange(mediaQuery);
-
-    searchResult.forEach(item => {
-        if (item.year) {
-            const searchResDiv = document.createElement('div');
-            searchResDiv.className = 'sresult';
-            searchResDiv.innerHTML = `
-                <button>${item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-                <img src="https://image.tmdb.org/t/p/w600_and_h900_bestv2${item.poster_path}" alt="${item.episode_title}" style="width: 100%; height: auto;">
-                <div class="searchresult-info">
-                    <h2 class="searchresult-item">${item.title} (${item.year})</h2>
-                </div></button>                
-            `;        
-            searchResDiv.onclick = function() {
-                //selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi);
-                if (item.media_type === 'movie') {
-                    selectMedia(item.id, item.title, item.year, item.media_type, item.season || 'null', item.episode || 'null', item.multi);
-                } else {
-                    selectSeason(item.id, item.title, item.year, item.media_type, item.season || 'null', item.episode || 'null', item.multi, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview);
-                }
-            };
-            gridContainer.appendChild(searchResDiv);
-        }
-    });
-
-    searchResultsDiv.appendChild(gridContainer);
 }
 
 function displayTorrentResults(data, title, year) {

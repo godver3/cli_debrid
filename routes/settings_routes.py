@@ -349,9 +349,8 @@ def api_program_settings():
                 'url': config.get('Plex', {}).get('url', ''),
                 'token': config.get('Plex', {}).get('token', '')
             },
-            'Overseerr': {
-                'url': config.get('Overseerr', {}).get('url', ''),
-                'api_key': config.get('Overseerr', {}).get('api_key', '')
+            'Metadata Battery': {
+                'url': config.get('Metadata Battery', {}).get('url', '')
             },
             'RealDebrid': {
                 'api_key': config.get('RealDebrid', {}).get('api_key', '')
@@ -595,7 +594,6 @@ def update_required_settings(form_data):
     config['Plex']['token'] = form_data.get('plex_token')
     config['Plex']['shows_libraries'] = form_data.get('shows_libraries')
     config['Plex']['movies_libraries'] = form_data.get('movies_libraries')
-    config['Overseerr']['url'] = form_data.get('overseerr_url')
-    config['Overseerr']['api_key'] = form_data.get('overseerr_api_key')
     config['RealDebrid']['api_key'] = form_data.get('realdebrid_api_key')
+    config['Metadata Battery']['url'] = form_data.get('metadata_battery_url')
     save_config(config)
