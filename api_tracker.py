@@ -53,8 +53,8 @@ class Args:
 
 class APIRateLimiter:
     def __init__(self):
-        self.hourly_limit = 1000
-        self.five_minute_limit = 200
+        self.hourly_limit = 2000
+        self.five_minute_limit = 1000
         self.hourly_calls = defaultdict(list)
         self.five_minute_calls = defaultdict(list)
         self.blocked_domains = set()
