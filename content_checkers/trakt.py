@@ -192,12 +192,22 @@ def get_last_activity() -> Dict[str, Any]:
 def check_for_updates(list_url: str = None) -> bool:
     cached_activity = load_last_activity_cache()
     current_activity = get_last_activity()
+    current_time = int(time.time())
+    cache_age = current_time - cached_activity.get('last_updated', 0)
+
+    # If cache is 24 hours old or older, recreate it
+    if cache_age >= 86400:  # 86400 seconds = 24 hours
+        logging.info("Cache is 24 hours old or older. Recreating cache.")
+        cached_activity = {'lists': {}, 'watchlist': None, 'last_updated': current_time}
+        save_last_activity_cache(cached_activity)
+        return True
 
     if list_url:
         list_id = list_url.split('/')[-1].split('?')[0]
         if list_id not in cached_activity['lists'] or current_activity['lists']['updated_at'] != cached_activity['lists'].get(list_id):
             logging.info(f"Update detected for list {list_id}")
             cached_activity['lists'][list_id] = current_activity['lists']['updated_at']
+            cached_activity['last_updated'] = current_time
             save_last_activity_cache(cached_activity)
             return True
         else:
@@ -206,6 +216,7 @@ def check_for_updates(list_url: str = None) -> bool:
         if 'watchlist' not in cached_activity or current_activity['watchlist']['updated_at'] != cached_activity['watchlist']:
             logging.info("Update detected for watchlist")
             cached_activity['watchlist'] = current_activity['watchlist']['updated_at']
+            cached_activity['last_updated'] = current_time
             save_last_activity_cache(cached_activity)
             return True
         else:
