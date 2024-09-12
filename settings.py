@@ -3,6 +3,7 @@ import logging
 from urllib.parse import urlparse
 import json
 import ast
+from settings_schema import SETTINGS_SCHEMA
 
 CONFIG_FILE = './config/config.json'
 
@@ -177,15 +178,14 @@ def get_jackett_settings():
         
     return jackett_settings
 
-from settings_schema import SETTINGS_SCHEMA
-
-from settings_schema import SETTINGS_SCHEMA
-
-from settings_schema import SETTINGS_SCHEMA
-
 def ensure_settings_file():
-    config = load_config()
-    is_new_file = not config  # Check if the config is empty (new file)
+    if not os.path.exists(CONFIG_FILE):
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        config = {}
+        is_new_file = True
+    else:
+        config = load_config()
+        is_new_file = not config  # Check if the config is empty (existing but empty file)
     
     for section, section_data in SETTINGS_SCHEMA.items():
         if section not in config:

@@ -80,7 +80,7 @@ class CheckingQueue:
 
                 # Check if any item in the group has been in the queue for more than 1 hour
                 oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
-                if current_time - oldest_item_time > get_setting('Checking', 'checking_queue_period'):
+                if current_time - oldest_item_time > get_setting('Debug', 'checking_queue_period'):
                     logging.info(f"Items for torrent {torrent_id} have been in queue for over an hour. Moving all back to Wanted queue.")
                     self.move_items_to_wanted(items, queue_manager, adding_queue, torrent_id)
                     items_to_remove.extend(items)
