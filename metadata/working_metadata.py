@@ -31,26 +31,12 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}")
             return {}
 
-    data = api_request(f"metadata/{imdb_id}")
+    media_type = item_media_type.lower() if item_media_type else 'movie'
+    endpoint = 'episode/metadata' if media_type == 'tv' else 'movie/metadata'
+    data = api_request(f"{endpoint}/{imdb_id}")
     logging.debug(f"API response for IMDb ID {imdb_id}: {data}")
 
     metadata = data.get('metadata', {})
-    
-    # Look for media_type in multiple places
-    metadata['media_type'] = (
-        metadata.get('media_type') or 
-        data.get('media_type') or 
-        data.get('type') or
-        item_media_type
-    )
-
-    if metadata['media_type']:
-        metadata['media_type'] = metadata['media_type'].lower()
-        if metadata['media_type'] == 'show':
-            metadata['media_type'] = 'tv'
-    else:
-        logging.error(f"Unknown media type for IMDb ID {imdb_id}")
-        return {}
 
     # Process common fields
     metadata['imdb_id'] = metadata.get('ids', {}).get('imdb') or imdb_id
@@ -60,12 +46,44 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
     metadata['release_date'] = get_release_date(metadata)
     metadata['genres'] = metadata.get('genres', [])
 
-    if metadata['media_type'] == 'tv':
-        seasons_data = api_request(f"seasons/{imdb_id}")
-        logging.debug(f"Seasons data for IMDb ID {imdb_id}: {seasons_data}")  # Add this line
+    is_anime = 'anime' in [genre.lower() for genre in metadata.get('genres', [])]
+    metadata['genres'] = ['anime'] if is_anime else []
+    logging.debug(f"Movie {metadata['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {metadata['genres']}")
+
+    if media_type == 'tv':
+        seasons_data = api_request(f"episode/seasons/{imdb_id}")
+        logging.debug(f"Seasons data for IMDb ID {imdb_id}: {seasons_data}")
         metadata['seasons'] = seasons_data.get('seasons', {})
 
     return metadata
+
+def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    processed_items = {'movies': [], 'episodes': []}
+
+    for item in media_items:
+        logging.debug(f"Processing item: {item}")
+
+        try:
+            metadata = get_metadata(imdb_id=item.get('imdb_id'), tmdb_id=item.get('tmdb_id'), item_media_type=item.get('media_type'))
+            if not metadata:
+                logging.warning(f"Could not fetch metadata for item: {item}")
+                continue
+
+            if item['media_type'].lower() == 'movie':
+                processed_items['movies'].append(metadata)
+            elif item['media_type'].lower() in ['tv', 'show']:
+                seasons = metadata.get('seasons', {})
+                for season_number, season_data in seasons.items():
+                    episodes = season_data.get('episodes', {})
+                    for episode_number, episode_data in episodes.items():
+                        episode_item = create_episode_item(metadata, season_number, episode_number, episode_data, metadata['genres'])
+                        processed_items['episodes'].append(episode_item)
+
+        except Exception as e:
+            logging.error(f"Error processing item {item}: {str(e)}", exc_info=True)
+
+    logging.info(f"Processed {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes")
+    return processed_items
 
 def get_release_date(media_details: Dict[str, Any]) -> str:
     imdb_id = media_details.get('imdb_id')
@@ -150,81 +168,6 @@ def get_imdb_id_if_missing(item: Dict[str, Any]) -> Optional[str]:
     imdb_data = api_request(f"tmdb_to_imdb/{tmdb_id}")
     return imdb_data.get('imdb_id')
 
-def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    processed_items = {'movies': [], 'episodes': []}
-
-    for item in media_items:
-        logging.debug(f"Processing item: {item}")
-
-        try:
-            metadata = get_metadata(imdb_id=item.get('imdb_id'), tmdb_id=item.get('tmdb_id'), item_media_type=item.get('media_type'))
-            if not metadata:
-                logging.warning(f"Could not fetch metadata for item: {item}")
-                # Add the item to the appropriate list even without metadata
-                if item['media_type'].lower() in ['movie', 'tv', 'show']:
-                    processed_items['movies' if item['media_type'].lower() == 'movie' else 'episodes'].append(item)
-                continue
-
-            if metadata['media_type'] == 'movie':
-                process_movie(item, metadata, processed_items)
-            elif metadata['media_type'] == 'tv':
-                process_tv_show(item, metadata, processed_items)
-            else:
-                logging.warning(f"Unknown media type for item: {item}")
-                # Add the item to the appropriate list even with unknown media type
-                if item['media_type'].lower() in ['movie', 'tv', 'show']:
-                    processed_items['movies' if item['media_type'].lower() == 'movie' else 'episodes'].append(item)
-
-        except Exception as e:
-            logging.error(f"Error processing item {item}: {str(e)}", exc_info=True)
-            # Add the item to the appropriate list even if an error occurs
-            if item['media_type'].lower() in ['movie', 'tv', 'show']:
-                processed_items['movies' if item['media_type'].lower() == 'movie' else 'episodes'].append(item)
-
-    logging.info(f"Processed {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes")
-    return processed_items
-
-def process_movie(item: Dict[str, Any], metadata: Dict[str, Any], processed_items: Dict[str, List[Dict[str, Any]]]):
-    item['title'] = item.get('title') or metadata.get('title', 'Unknown Title')
-    item['year'] = item.get('year') or metadata.get('year', '')
-    item['release_date'] = item.get('release_date') or get_release_date(metadata)
-    
-    genres = metadata.get('genres', [])
-    is_anime = 'anime' in [genre.lower() for genre in genres]
-    
-    item['genres'] = ['anime'] if is_anime else []
-    logging.debug(f"Movie {item['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {item['genres']}")
-    
-    processed_items['movies'].append(item)
-
-def process_tv_show(item: Dict[str, Any], metadata: Dict[str, Any], processed_items: Dict[str, List[Dict[str, Any]]]):
-    show_item = {
-        'imdb_id': metadata.get('imdb_id'),
-        'tmdb_id': metadata.get('tmdb_id'),
-        'title': metadata.get('title', 'Unknown Title'),
-        'year': metadata.get('year'),
-        'release_date': metadata.get('release_date'),
-        'genres': metadata.get('genres', []),
-        'media_type': 'tv'
-    }
-    
-    is_anime = 'anime' in [genre.lower() for genre in show_item['genres']]
-    logging.debug(f"Show {show_item['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {show_item['genres']}")
-
-    seasons = metadata.get('seasons', {})
-    for season_number, season_data in seasons.items():
-        episodes = season_data.get('episodes', {})
-        if isinstance(episodes, dict):
-            for episode_number, episode_data in episodes.items():
-                logging.debug(f"Processing episode S{season_number}E{episode_number}")
-                episode_item = create_episode_item(show_item, season_number, episode_number, episode_data, is_anime)
-                processed_items['episodes'].append(episode_item)
-                logging.debug(f"Added episode: S{season_number}E{episode_number}")
-        else:
-            logging.warning(f"Unexpected episodes data type: {type(episodes)}")
-
-    logging.debug(f"Processed {len(processed_items['episodes'])} episodes for show: {show_item['title']}")
-
 def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_number: str, episode_data: Dict[str, Any], is_anime: bool) -> Dict[str, Any]:
     return {
         'imdb_id': show_item['imdb_id'],
@@ -258,20 +201,6 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
     logging.warning(f"Unable to parse date: {date_str}")
     return None
-
-def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_number: str, episode_data: Dict[str, Any], is_anime: bool) -> Dict[str, Any]:
-    return {
-        'imdb_id': show_item['imdb_id'],
-        'tmdb_id': show_item['tmdb_id'],
-        'title': show_item['title'],
-        'year': show_item['year'],
-        'season_number': int(season_number),
-        'episode_number': int(episode_number),
-        'episode_title': episode_data.get('title', 'Unknown Episode Title'),
-        'release_date': parse_date(episode_data.get('first_aired')) or show_item['release_date'],
-        'media_type': 'episode',
-        'genres': ['anime'] if is_anime else []
-    }
     
 def refresh_release_dates():
     logging.info("Starting refresh_release_dates function")
@@ -322,15 +251,45 @@ def refresh_release_dates():
     logging.info("Finished refresh_release_dates function")
 
 def get_episode_count_for_seasons(imdb_id: str, seasons: List[int]) -> int:
-    seasons_data = api_request(f"seasons/{imdb_id}")
-    all_seasons = seasons_data.get('seasons', {})
+    seasons_data = api_request(f"episode/seasons/{imdb_id}")
+    all_seasons = seasons_data.get('episode/seasons', {})
     return sum(all_seasons.get(str(season), {}).get('episode_count', 0) for season in seasons)
 
 def get_all_season_episode_counts(imdb_id: str) -> Dict[int, int]:
-    seasons_data = api_request(f"seasons/{imdb_id}")
-    return {int(season): data['episode_count'] for season, data in seasons_data.get('seasons', {}).items() if season != '0'}
+    seasons_data = api_request(f"episode/seasons/{imdb_id}")
+    return {int(season): data['episode_count'] for season, data in seasons_data.get('episode/seasons', {}).items() if season != '0'}
 
 def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
     DEFAULT_AIRTIME = "19:00"
     metadata = api_request(f"metadata/{imdb_id}")
     return metadata.get('metadata', {}).get('airs', {}).get('time', DEFAULT_AIRTIME)
+
+def test_metadata_processing():
+    test_items = [
+        # Movies
+        {'imdb_id': 'tt0111161', 'media_type': 'movie'},  # The Shawshank Redemption
+        {'imdb_id': 'tt0068646', 'media_type': 'movie'},  # The Godfather
+        {'tmdb_id': 155, 'media_type': 'movie'},  # The Dark Knight
+
+        # TV Shows
+        {'imdb_id': 'tt0944947', 'media_type': 'tv'},  # Game of Thrones
+        {'imdb_id': 'tt0903747', 'media_type': 'tv'},  # Breaking Bad
+        {'tmdb_id': 1396, 'media_type': 'tv'},  # Breaking Bad (using TMDB ID)
+    ]
+
+    processed_data = process_metadata(test_items)
+
+    print("Processed Movies:")
+    for movie in processed_data['movies']:
+        print(f"- {movie['title']} ({movie['year']}) - IMDb: {movie['imdb_id']}, TMDB: {movie['tmdb_id']}")
+
+    print("\nProcessed TV Show Episodes:")
+    for episode in processed_data['episodes'][:10]:  # Limiting to first 10 episodes for brevity
+        print(f"- {episode['title']} S{episode['season_number']:02d}E{episode['episode_number']:02d}: {episode['episode_title']}")
+
+    print(f"\nTotal movies processed: {len(processed_data['movies'])}")
+    print(f"Total episodes processed: {len(processed_data['episodes'])}")
+
+# Call the test function
+if __name__ == "__main__":
+    test_metadata_processing()
