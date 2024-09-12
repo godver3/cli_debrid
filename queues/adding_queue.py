@@ -10,13 +10,14 @@ import os
 from database import get_all_media_items, get_media_item_by_id, update_media_item_state
 from settings import get_setting
 from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, API_BASE_URL, get_active_downloads
-from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted, get_not_wanted_magnets
+from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted, get_not_wanted_magnets, is_url_not_wanted, add_to_not_wanted_urls, get_not_wanted_urls
 from scraper.scraper import scrape
 from metadata.metadata import get_all_season_episode_counts, get_overseerr_cookies
 from guessit import guessit
 import functools
 from .anime_matcher import AnimeMatcher
 import functools
+import tempfile
 
 class AddingQueue:
     def __init__(self):
@@ -77,6 +78,10 @@ class AddingQueue:
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Processing {mode} mode for item: {item_identifier}")
         logging.debug(f"Total scrape results: {len(scrape_results)}")
+        index = 0
+        for result in scrape_results:
+            logging.info(f"Index: {index} - Scrape result: {result['title']}")
+            index += 1
 
         if get_setting('Debug', 'sort_by_uncached_status'):
             scrape_results = self.sort_results_by_cache_status(scrape_results)
@@ -85,6 +90,7 @@ class AddingQueue:
         for index, result in enumerate(scrape_results):
             title = result.get('title', '')
             link = result.get('magnet', '')
+            temp_file_path = None
             
             try:
                 if not link:
@@ -94,15 +100,23 @@ class AddingQueue:
                 if link.startswith('magnet:'):
                     current_hash = extract_hash_from_magnet(link)
                 else:
-                    current_hash = self.download_and_extract_hash(link)
+                    logging.info(f"Link: {link}")
+                    logging.info(f"is_url_not_wanted: {is_url_not_wanted(link)}")
+                    if is_url_not_wanted(link):
+                        logging.info(f"URL {link} for {item_identifier} is in not_wanted_urls. Skipping.")
+                        continue
+                    current_hash, temp_file_path = self.download_and_extract_hash(link)
 
                 if not current_hash:
                     logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
                     continue
 
                 cache_status = is_cached_on_rd(current_hash)
-                is_cached = cache_status.get(current_hash, False)
                 logging.debug(f"Cache status for result {index + 1}: {cache_status}")
+                
+                # Check if any hash in the response is True (cached)
+                is_cached = any(status for status in cache_status.values())
+                
                 logging.debug(f"Is cached: {is_cached}")
 
                 if mode == 'none' and not is_cached:
@@ -120,10 +134,15 @@ class AddingQueue:
                     continue
 
                 logging.info(f"Processing result {index + 1} for {item_identifier}. Cached: {is_cached}")
-                success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached, scrape_results=scrape_results)
+                if temp_file_path:  
+                    success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached, scrape_results=scrape_results, temp_file_path=temp_file_path)
+                else:
+                    success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached, scrape_results=scrape_results)
                 
                 if success:
                     logging.info(f"Successfully processed result {index + 1} for {item_identifier}")
+                    add_to_not_wanted_urls(link)
+                    logging.info(f"Added to not_wanted_url {link} for {item_identifier}")
                     return True
 
             except Exception as e:
@@ -217,7 +236,7 @@ class AddingQueue:
             logging.warning(f"No file information available for torrent: {item_identifier}")
             return False, torrent_id
 
-    def process_result(self, queue_manager, item, result, current_hash, is_cached, scrape_results):
+    def process_result(self, queue_manager, item, result, current_hash, is_cached, scrape_results, temp_file_path=None):
         item_identifier = queue_manager.generate_identifier(item)
         title = result.get('title', '')
         link = result.get('magnet', '')
@@ -233,8 +252,14 @@ class AddingQueue:
         # Check if the hash is in the not_wanted list
         if is_magnet_not_wanted(current_hash):
             logging.info(f"Hash {current_hash} for {item_identifier} is in not_wanted_magnets. Skipping.")
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
             return False
         
+        # Check if the item is cached using only the hash
+        cache_status = is_cached_on_rd(current_hash)
+        is_cached = cache_status.get(current_hash, False)
+
         # Check if we're about to add an uncached item
         if not is_cached:
             active_downloads, download_limit = get_active_downloads()
@@ -252,9 +277,16 @@ class AddingQueue:
                 if result.get('season_pack'):
                     self.move_related_season_items(queue_manager, item, result.get('season_pack'), title, link)
 
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
                 return True
 
-        add_result = add_to_real_debrid(link)
+        add_result = add_to_real_debrid(link, temp_file_path)
+        
+        # Clean up the temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+
         if add_result:
             if isinstance(add_result, dict):
                 status = add_result.get('status')
@@ -399,7 +431,7 @@ class AddingQueue:
 
         logging.info(f"Moved item {item_identifier} to Blacklisted state")
       
-    def download_and_extract_hash(self, url: str) -> str:
+    def download_and_extract_hash(self, url: str) -> tuple:
         def obfuscate_url(url: str) -> str:
             parts = url.split('/')
             if len(parts) > 3:
@@ -413,6 +445,11 @@ class AddingQueue:
             torrent_content = response.content
             logging.debug(f"Successfully downloaded torrent file from {obfuscated_url}. Content length: {len(torrent_content)} bytes")
             
+            # Save the torrent content to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as temp_file:
+                temp_file.write(torrent_content)
+                temp_file_path = temp_file.name
+
             # Decode the torrent file
             torrent_data = bencodepy.decode(torrent_content)
             
@@ -425,7 +462,7 @@ class AddingQueue:
             # Calculate the SHA1 hash
             hash_result = hashlib.sha1(encoded_info).hexdigest()
             logging.debug(f"Successfully extracted hash: {hash_result}")
-            return hash_result
+            return hash_result, temp_file_path
         except api.exceptions.RequestException as e:
             logging.error(f"Network error while downloading torrent file from {obfuscated_url}: {str(e)}")
         except bencodepy.exceptions.BencodeDecodeError as e:
@@ -434,7 +471,7 @@ class AddingQueue:
             logging.error(f"Error extracting info from torrent file from {obfuscated_url}: {str(e)}")
         except Exception as e:
             logging.error(f"Unexpected error processing torrent file from {obfuscated_url}: {str(e)}")
-        return None
+        return None, None
 
 
     def add_to_real_debrid_helper(self, link: str, item_identifier: str, hash_value: str, add_if_uncached: bool = True) -> Dict[str, Any]:
@@ -478,7 +515,9 @@ class AddingQueue:
     
                 # Add to not wanted list only for uncached torrents
                 add_to_not_wanted(hash_value)
+                add_to_not_wanted_urls(link)
                 logging.info(f"Added hash {hash_value} to not_wanted_magnets for {item_identifier}")
+                logging.info(f"Added URL {link} to not_wanted_urls for {item_identifier}")
     
                 # Poll for torrent status and retrieve file list
                 torrent_info = self.get_torrent_info(hash_value)
