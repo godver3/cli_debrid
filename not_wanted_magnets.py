@@ -35,3 +35,31 @@ def task_purge_not_wanted_magnets_file():
 # New function to get the current set of not wanted magnets
 def get_not_wanted_magnets():
     return load_not_wanted_magnets()
+
+def get_not_wanted_urls():
+    return load_not_wanted_urls()
+
+def add_to_not_wanted_urls(url):
+    not_wanted = load_not_wanted_urls()
+    not_wanted.add(url)
+    save_not_wanted_urls(not_wanted)
+
+def is_url_not_wanted(url):
+    not_wanted = load_not_wanted_urls()
+    file_part = url.split("file=")[-1] if "file=" in url else url
+    return any(file_part in nw_url.split("file=")[-1] if "file=" in nw_url else nw_url for nw_url in not_wanted)
+
+def load_not_wanted_urls():
+    try:
+        with open('db_content/not_wanted_urls.pkl', 'rb') as f:
+            return pickle.load(f)
+    except (EOFError, pickle.UnpicklingError):
+        return set()
+    except FileNotFoundError:
+        with open('db_content/not_wanted_urls.pkl', 'wb') as f:
+            pickle.dump(set(), f)
+        return set()
+    
+def save_not_wanted_urls(not_wanted_set):
+    with open('db_content/not_wanted_urls.pkl', 'wb') as f:
+        pickle.dump(not_wanted_set, f)
