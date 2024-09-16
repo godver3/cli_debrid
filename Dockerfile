@@ -1,24 +1,24 @@
 # Use Python 3 as the base image
-FROM python:3.11-alpine
+FROM python:3.11-slim
 
 # Set the working directory in the container
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache gcc musl-dev linux-headers
+RUN apt-get update && apt-get install -y gcc
 
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements.txt .
 
-# Install any needed packages specified in requirements.txt
+# Install the requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
 
 # Create necessary directories and files
-RUN mkdir -p logs db_content config && \
-    touch logs/debug.log logs/info.log logs/queue.log
+RUN mkdir -p /user/db_content /user/config /user/logs && \
+    touch /user/logs/debug.log /user/logs/info.log /user/logs/queue.log
 
 # Make the entrypoint script executable (if it exists)
 RUN if [ -f entrypoint.sh ]; then chmod +x entrypoint.sh; fi

@@ -1,4 +1,4 @@
-from flask import jsonify, request, current_app, Blueprint
+from flask import jsonify, request, current_app, Blueprint, logging
 from routes import admin_required
 from .database_routes import perform_database_migration 
 from extensions import initialize_app 
@@ -7,6 +7,8 @@ from settings import get_setting
 import threading
 from run_program import ProgramRunner
 from flask_login import login_required
+from requests.exceptions import RequestException
+from api_tracker import api
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -26,10 +28,60 @@ def start_server():
     server_thread.daemon = True
     server_thread.start()
 
+def check_service_connectivity():
+    logger = current_app.logger
+    plex_url = get_setting('Plex', 'url')
+    plex_token = get_setting('Plex', 'token')
+    rd_api_key = get_setting('RealDebrid', 'api_key')
+    metadata_battery_url = get_setting('Metadata Battery', 'url')
+
+    services_reachable = True
+
+    # Check Plex connectivity
+    try:
+        response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
+        response.raise_for_status()
+        logger.info("Plex server is reachable.")
+    except RequestException as e:
+        logger.error(f"Failed to connect to Plex server: {str(e)}")
+        services_reachable = False
+
+    # Check Real Debrid connectivity
+    try:
+        response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {rd_api_key}"}, timeout=5)
+        response.raise_for_status()
+        logger.info("Real Debrid API is reachable.")
+    except RequestException as e:
+        logger.error(f"Failed to connect to Real Debrid API: {str(e)}")
+        services_reachable = False
+
+    # Check Metadata Battery connectivity and Trakt authorization
+    try:
+        response = api.post(f"{metadata_battery_url}/trakt_auth_status", timeout=5)
+        response.raise_for_status()
+        trakt_status = response.json().get('status')
+        if trakt_status == 'authorized':
+            logger.info("Metadata Battery is reachable and authorized with Trakt.")
+        elif trakt_status == 'pending':
+            logger.warning("Metadata Battery is reachable, but Trakt authorization is pending.")
+            services_reachable = False
+        else:
+            logger.error("Metadata Battery is reachable, but Trakt is not authorized.")
+            services_reachable = False
+    except RequestException as e:
+        logger.error(f"Failed to connect to Metadata Battery: {str(e)}")
+        services_reachable = False
+
+    return services_reachable
+
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 def start_program():
     global program_runner
     if program_runner is None or not program_runner.is_running():
+        # Check service connectivity before starting the program
+        if not check_service_connectivity():
+            return jsonify({"status": "error", "message": "Failed to connect to Plex, Real Debrid, or Metadata Battery. Check logs for details."})
+
         program_runner = ProgramRunner()
         # Start the program runner in a separate thread to avoid blocking the Flask server
         threading.Thread(target=program_runner.start).start()
@@ -83,9 +135,8 @@ def check_program_conditions():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('Overseerr', 'url'),
-        ('Overseerr', 'api_key'),
-        ('RealDebrid', 'api_key')
+        ('RealDebrid', 'api_key'),
+        ('Metadata Battery', 'url')
     ]
     
     missing_fields = []

@@ -5,7 +5,7 @@ import logging
 class WakeCountManager:
     def __init__(self):
         self.wake_counts = {}
-        self.file_path = os.path.join('db_content', 'wake_counts.pkl')
+        self.file_path = os.path.join('/user/db_content', 'wake_counts.pkl')
         self.load_wake_counts()
 
     def load_wake_counts(self):

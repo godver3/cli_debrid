@@ -13,11 +13,11 @@ import os
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
 
-CACHE_FILE = 'db_content/trakt_last_activity.pkl'
+CACHE_FILE = '/user/db_content/trakt_last_activity.pkl'
 
 def load_trakt_credentials() -> Dict[str, str]:
     try:
-        with open('config/.pytrakt.json', 'r') as file:
+        with open('/user/config/.pytrakt.json', 'r') as file:
             credentials = json.load(file)
         return credentials
     except FileNotFoundError:
@@ -138,7 +138,7 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def ensure_trakt_auth():
     logging.info("Starting Trakt authentication check")
     
-    trakt.core.CONFIG_PATH = './config/.pytrakt.json'
+    trakt.core.CONFIG_PATH = '/user/config/.pytrakt.json'
     
     logging.info("Loading Trakt configuration")
     trakt.core.load_config()
