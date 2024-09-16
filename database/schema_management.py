@@ -11,13 +11,11 @@ def create_database():
 def migrate_schema():
     conn = get_db_connection()
     try:
-        # Add the runtime column if it doesn't exist
-        conn.execute('''
-            ALTER TABLE media_items ADD COLUMN runtime INTEGER
-            ALTER TABLE media_items ADD COLUMN alternate_title TEXT
-            ALTER TABLE media_items ADD COLUMN airtime TIMESTAMP
-        ''')
-        logging.info("Successfully added runtime column to media_items table.")
+        # Add new columns if they don't exist
+        conn.execute('ALTER TABLE media_items ADD COLUMN runtime INTEGER')
+        conn.execute('ALTER TABLE media_items ADD COLUMN alternate_title TEXT')
+        conn.execute('ALTER TABLE media_items ADD COLUMN airtime TIMESTAMP')
+        logging.info("Successfully added new columns to media_items table.")
 
         # Update the unique index
         conn.execute('DROP INDEX IF EXISTS unique_media_item_file')
@@ -32,7 +30,7 @@ def migrate_schema():
         logging.info("Schema migration completed successfully.")
     except sqlite3.OperationalError as e:
         if "duplicate column name" in str(e):
-            logging.info("Runtime column already exists. Skipping addition.")
+            logging.info("One or more columns already exist. Skipping addition.")
         else:
             logging.error(f"Error during schema migration: {str(e)}")
     except Exception as e:

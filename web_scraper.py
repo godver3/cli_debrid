@@ -8,7 +8,7 @@ from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
 from poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
-from metadata.metadata import get_metadata
+from metadata.metadata import get_metadata, get_imdb_id_if_missing, get_all_season_episode_counts, get_show_airtime_by_imdb_id
 
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     trakt_client_id = get_setting('Trakt', 'client_id')
@@ -249,6 +249,8 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 else:
                     poster_path = None
                     media_meta = (None, '', [], 0, '')
+
+            logging.info(f"Genres for {result['title']}: {media_meta[2]}")
 
             detailed_result = {
                 "id": tmdb_id,
@@ -535,7 +537,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     logging.info(f"Adjusted scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
                  f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
 
-    genres = [genre['name'] for genre in genres if 'name' in genre]
+    logging.info(f"Genres: {genres}")
 
     # Call the scraper function with the version parameter
     scrape_results, filtered_out_results = scrape(imdb_id, str(tmdb_id), title, int(year), movie_or_episode, version, season, episode, multi, genres)
@@ -577,23 +579,33 @@ def get_available_versions():
     return list(scraping_versions.keys())
 
 def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    logging.info(f"Fetching media details for ID: {media_id}, Type: {media_type}")
 
-    headers = {
-        'X-Api-Key': overseerr_api_key,
-        'Accept': 'application/json'
-    }
+    # If media_id is a TMDB ID, convert it to IMDb ID
+    if media_type == 'movie':
+        imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id)})
+    else:
+        imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id)})
 
-    details_url = f"{overseerr_url}/api/v1/{media_type}/{media_id}"
-
-    try:
-        response = api.get(details_url, headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching media details: {e}")
+    if not imdb_id:
+        logging.error(f"Could not find IMDb ID for TMDB ID: {media_id}")
         return {}
+
+    # Fetch metadata using the IMDb ID
+    metadata = get_metadata(imdb_id=imdb_id, item_media_type=media_type)
+
+    if not metadata:
+        logging.error(f"Could not fetch metadata for IMDb ID: {imdb_id}")
+        return {}
+
+    # Add additional details that might be needed
+    metadata['media_type'] = media_type
+    if media_type == 'tv':
+        metadata['seasons'] = get_all_season_episode_counts(imdb_id)
+        metadata['airtime'] = get_show_airtime_by_imdb_id(imdb_id)
+
+    logging.info(f"Successfully fetched media details for {metadata.get('title', 'Unknown Title')}")
+    return metadata
 
 def parse_season_episode(search_term: str) -> Tuple[int, int, bool]:
     # Match patterns like "S01E01", "s01e01", "S01", "s01"
