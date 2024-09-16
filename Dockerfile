@@ -5,13 +5,13 @@ FROM python:3.11-alpine
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache gcc musl-dev linux-headers g++
+RUN apk add --no-cache gcc musl-dev linux-headers
 
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements.txt .
 
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir --only-binary=grpcio --platform manylinux_2_17_aarch64 --platform manylinux2014_aarch64 -r requirements.txt
+RUN pip install --no-cache-dir --only-binary=grpcio --platform manylinux_2_17_aarch64 -r requirements.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
