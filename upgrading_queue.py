@@ -15,7 +15,7 @@ class UpgradingQueue:
         self.last_checked: Dict[str, datetime] = {}
         self.added_time: Dict[str, datetime] = {}
         self.collected_time: Dict[str, datetime] = {}
-        self.queue_file = 'user/db_content/upgrading_queue.json'
+        self.queue_file = '/user/db_content/upgrading_queue.json'
         self.load_queue()
 
     def generate_identifier(self, item: Dict[str, Any]) -> str:
