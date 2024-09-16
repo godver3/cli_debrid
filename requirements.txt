@@ -3,6 +3,7 @@ babelfish==0.6.1
 beautifulsoup4==4.12.3
 bencode.py==4.0.0
 bencodepy==0.9.5
+flask_session==0.8.0
 Flask==3.0.3
 Flask_Cors==5.0.0
 Flask_Login==0.6.3
@@ -18,3 +19,4 @@ SQLAlchemy==2.0.31
 tenacity==9.0.0
 urwid==2.6.15
 Werkzeug==3.0.4
+pytrakt==3.4.32
