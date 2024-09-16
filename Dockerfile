@@ -1,20 +1,17 @@
 # Use Python 3 as the base image
-FROM python:3.11-alpine
+FROM python:3.11-slim
 
 # Set the working directory in the container
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache gcc musl-dev linux-headers
+RUN apt-get update && apt-get install -y gcc
 
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements.txt .
 
-# Install grpcio separately
-RUN pip install --no-cache-dir --only-binary=:all: --platform manylinux_2_17_aarch64 --no-deps grpcio==1.66.1
-
-# Install the rest of the requirements
-RUN pip install --no-cache-dir $(grep -v "^grpcio==" requirements.txt)
+# Install the requirements
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
