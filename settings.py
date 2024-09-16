@@ -5,7 +5,7 @@ import json
 import ast
 from settings_schema import SETTINGS_SCHEMA
 
-CONFIG_FILE = './config/config.json'
+CONFIG_FILE = '/user/config/config.json'
 
 def load_config():
     #logging.debug("Starting load_config()")

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import logging
 
 def get_upgrading_db_connection():
-    conn = sqlite3.connect('db_content/upgrading_items.db')
+    conn = sqlite3.connect('/user/db_content/upgrading_items.db')
     conn.row_factory = sqlite3.Row
     return conn
 

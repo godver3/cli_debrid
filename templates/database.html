@@ -288,14 +288,6 @@ document.addEventListener('DOMContentLoaded', function() {
         params.content_type = params.content_type || currentContentType;
         params.letter = params.letter || currentLetter;
 
-        // Reset to default values when clearing filters
-        if (params.content_type && !params.letter) {
-            params.letter = 'A';
-        }
-        if (params.letter && !params.content_type) {
-            params.content_type = 'movie';
-        }
-
         // Add default sort parameters if not present
         if (!params.sort_column) params.sort_column = '{{ sort_column }}';
         if (!params.sort_order) params.sort_order = '{{ sort_order }}';
@@ -396,7 +388,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var contentType = this.getAttribute('data-content-type');
                 clearFilter();
-                updateContent('{{ url_for('database.index') }}', { content_type: contentType, letter: 'A' });
+                updateContent('{{ url_for('database.index') }}', { content_type: contentType });
             });
         });
 
@@ -405,7 +397,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var letter = this.getAttribute('data-letter');
                 clearFilter();
-                updateContent('{{ url_for('database.index') }}', { letter: letter, content_type: 'movie' });
+                updateContent('{{ url_for('database.index') }}', { letter: letter });
             });
         });
     }
