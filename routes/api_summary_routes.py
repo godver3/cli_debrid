@@ -11,7 +11,7 @@ import logging
 api_summary_bp = Blueprint('api_summary', __name__)
 real_time_api_bp = Blueprint('real_time_api', __name__)
 
-CACHE_FILE = 'db_content/api_summary_cache.pkl'
+CACHE_FILE = 'user/db_content/api_summary_cache.pkl'
 
 def load_cache():
     if os.path.exists(CACHE_FILE):
@@ -44,7 +44,7 @@ except Exception as e:
 
 def update_cache_with_new_entries():
     global cache
-    log_path = 'logs/api_calls.log'
+    log_path = 'user/logs/api_calls.log'
     last_processed_line = cache['last_processed_line']
     
     logging.debug(f"Updating cache from line {last_processed_line}")
@@ -161,7 +161,7 @@ def clear_api_summary_cache():
 
 def get_latest_api_calls(limit=100):
     calls = []
-    with open('logs/api_calls.log', 'r') as log_file:
+    with open('user/logs/api_calls.log', 'r') as log_file:
         for line in reversed(list(log_file)):
             parts = line.strip().split(' - ', 1)
             if len(parts) == 2:
