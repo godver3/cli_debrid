@@ -7,6 +7,8 @@ import os
 import sys
 from flask import current_app
 import traceback
+from api_tracker import api
+import logging
 
 trakt_bp = Blueprint('trakt', __name__)
 
@@ -32,8 +34,8 @@ def trakt_auth():
             'device_code': device_code_response['device_code']
         })
     except Exception as e:
-        current_app.logger.error(f"Error in trakt_auth: {str(e)}")
-        current_app.logger.error(traceback.format_exc())
+        logging.error(f"Error in trakt_auth: {str(e)}")
+        logging.error(traceback.format_exc())
         return jsonify({'error': f'Unable to start authorization process: {str(e)}'}), 500
 
 @trakt_bp.route('/trakt_auth_status', methods=['POST'])
@@ -71,7 +73,7 @@ def trakt_auth_status():
             # Push the new auth data to the battery
             push_result = push_trakt_auth_to_battery()
             if push_result.status_code != 200:
-                current_app.logger.warning(f"Failed to push Trakt auth to battery: {push_result.json().get('message')}")
+                logging.warning(f"Failed to push Trakt auth to battery: {push_result.json().get('message')}")
 
             return jsonify({
                 'status': 'authorized', 
@@ -125,7 +127,7 @@ def push_trakt_auth_to_battery():
             'OAUTH_EXPIRES_AT': trakt_config.get('OAUTH_EXPIRES_AT')
         }
 
-        response = requests.post(f"{battery_url}/receive_trakt_auth", json=auth_data)
+        response = api.post(f"{battery_url}/receive_trakt_auth", json=auth_data)
         
         if response.status_code == 200:
             return jsonify({'status': 'success', 'message': 'Trakt auth pushed to battery successfully'})
@@ -133,5 +135,5 @@ def push_trakt_auth_to_battery():
             return jsonify({'status': 'error', 'message': f'Failed to push Trakt auth to battery: {response.text}'}), 500
 
     except Exception as e:
-        logger.error(f"Error pushing Trakt auth to battery: {str(e)}")
+        logging.error(f"Error pushing Trakt auth to battery: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
