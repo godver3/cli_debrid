@@ -11,7 +11,7 @@ RUN apk add --no-cache gcc musl-dev linux-headers g++
 COPY requirements.txt .
 
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir --only-binary=grpcio -r requirements.txt
+RUN pip install --no-cache-dir --only-binary=grpcio --platform manylinux_2_17_aarch64 --platform manylinux2014_aarch64 -r requirements.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
