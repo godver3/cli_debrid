@@ -22,7 +22,7 @@ class TestMainFunctions(unittest.TestCase):
         main.setup_logging()
 
         # Assertions
-        mock_makedirs.assert_called_once_with('logs')
+        mock_makedirs.assert_called_once_with('user/logs')
         self.assertGreaterEqual(mock_open.call_count, 3)  # Ensure at least three log files are created
         mock_logger.setLevel.assert_any_call(logging.WARNING)
 
@@ -33,7 +33,7 @@ class TestMainFunctions(unittest.TestCase):
 
         main.setup_directories()
 
-        mock_makedirs.assert_called_once_with('db_content')
+        mock_makedirs.assert_called_once_with('user/db_content')
 
     @patch('shutil.copy2')
     @patch('os.path.exists')
@@ -41,10 +41,10 @@ class TestMainFunctions(unittest.TestCase):
     @patch('logging.warning')
     def test_backup_config(self, mock_warning, mock_info, mock_exists, mock_copy2):
         # Test when config exists
-        mock_exists.side_effect = lambda x: True if 'config/config.json' in x else False
+        mock_exists.side_effect = lambda x: True if 'user/config/config.json' in x else False
         main.backup_config()
-        mock_copy2.assert_called_once_with('config/config.json', 'config/config_backup.json')
-        mock_info.assert_called_once_with('Backup of config.json created: config/config_backup.json')
+        mock_copy2.assert_called_once_with('user/config/config.json', 'user/config/config_backup.json')
+        mock_info.assert_called_once_with('Backup of config.json created: user/config/config_backup.json')
 
         # Test when config does not exist
         mock_copy2.reset_mock()

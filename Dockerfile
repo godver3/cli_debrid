@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create necessary directories and files
-RUN mkdir -p logs db_content config && \
-    touch logs/debug.log logs/info.log logs/queue.log
+RUN mkdir -p logs user/db_content user/config && \
+    touch user/logs/debug.log user/logs/info.log user/logs/queue.log
 
 # Make the entrypoint script executable (if it exists)
 RUN if [ -f entrypoint.sh ]; then chmod +x entrypoint.sh; fi
