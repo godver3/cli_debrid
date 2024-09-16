@@ -68,8 +68,14 @@ def trakt_auth_status():
             
             # TODO: - Purge and reload Trakt auth
 
+            # Push the new auth data to the battery
+            push_result = push_trakt_auth_to_battery()
+            if push_result.status_code != 200:
+                current_app.logger.warning(f"Failed to push Trakt auth to battery: {push_result.json().get('message')}")
+
             return jsonify({
                 'status': 'authorized', 
+                'battery_push_status': 'success' if push_result.status_code == 200 else 'failed'
             })
         elif response.status_code == 400:
             return jsonify({'status': 'pending'})
@@ -101,3 +107,31 @@ def update_trakt_config(key, value):
     config = get_trakt_config()
     config[key] = value
     save_trakt_config(config)
+
+@trakt_bp.route('/push_trakt_auth_to_battery', methods=['POST'])
+def push_trakt_auth_to_battery():
+    try:
+        trakt_config = get_trakt_config()
+        battery_url = get_setting('Metadata Battery', 'url')
+
+        if not battery_url:
+            return jsonify({'error': 'Battery URL not set in settings'}), 400
+
+        auth_data = {
+            'CLIENT_ID': trakt_config.get('CLIENT_ID'),
+            'CLIENT_SECRET': trakt_config.get('CLIENT_SECRET'),
+            'OAUTH_TOKEN': trakt_config.get('OAUTH_TOKEN'),
+            'OAUTH_REFRESH': trakt_config.get('OAUTH_REFRESH'),
+            'OAUTH_EXPIRES_AT': trakt_config.get('OAUTH_EXPIRES_AT')
+        }
+
+        response = requests.post(f"{battery_url}/receive_trakt_auth", json=auth_data)
+        
+        if response.status_code == 200:
+            return jsonify({'status': 'success', 'message': 'Trakt auth pushed to battery successfully'})
+        else:
+            return jsonify({'status': 'error', 'message': f'Failed to push Trakt auth to battery: {response.text}'}), 500
+
+    except Exception as e:
+        logger.error(f"Error pushing Trakt auth to battery: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
