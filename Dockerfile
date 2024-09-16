@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create necessary directories and files
-RUN mkdir -p logs user/db_content user/config && \
+RUN mkdir -p user/db_content user/config user/logs && \
     touch user/logs/debug.log user/logs/info.log user/logs/queue.log
 
 # Make the entrypoint script executable (if it exists)
