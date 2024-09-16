@@ -4,14 +4,16 @@ FROM python:3.11-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y gcc
+# Install build dependencies and pip-tools
+RUN apt-get update && apt-get install -y gcc && \
+    pip install --no-cache-dir pip-tools
 
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements.txt .
 
-# Install the requirements
-RUN pip install --no-cache-dir -r requirements.txt
+# Generate constraints file and install requirements
+RUN pip-compile requirements.txt --generate-hashes --output-file constraints.txt && \
+    pip install --no-cache-dir --no-build-isolation -r requirements.txt -c constraints.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
