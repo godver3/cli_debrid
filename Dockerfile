@@ -11,9 +11,8 @@ RUN apt-get update && apt-get install -y gcc && \
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements.txt .
 
-# Generate constraints file and install requirements
-RUN pip-compile requirements.txt --generate-hashes --output-file constraints.txt && \
-    pip install --no-cache-dir --no-build-isolation -r requirements.txt -c constraints.txt
+# Install requirements without generating hashes
+RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
