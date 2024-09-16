@@ -142,7 +142,7 @@ def select_media():
         details = get_media_details(media_id, media_type)
 
         # Extract keywords and genres
-        genres = details.get('keywords', [])
+        genres = details.get('genres', [])
 
         logging.info(f"Retrieved genres: {genres}")
 
