@@ -283,7 +283,7 @@ def get_cached_files(hash_):
 @rate_limited_request
 def get(url):
     api_key = get_api_key()
-    print(api_key)
+    #print(api_key)
     headers = {
         'User-Agent': 'Mozilla/5.0',
         'Authorization': f'Bearer {api_key}'
