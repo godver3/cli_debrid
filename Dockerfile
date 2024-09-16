@@ -5,7 +5,7 @@ FROM python:3.11-alpine
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache gcc musl-dev linux-headers
+RUN apk add --no-cache gcc musl-dev linux-headers g++
 
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements.txt .
