@@ -9,6 +9,7 @@ from run_program import ProgramRunner
 from flask_login import login_required
 from requests.exceptions import RequestException
 from api_tracker import api
+import logging
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -29,11 +30,13 @@ def start_server():
     server_thread.start()
 
 def check_service_connectivity():
-    logger = current_app.logger
     plex_url = get_setting('Plex', 'url')
     plex_token = get_setting('Plex', 'token')
     rd_api_key = get_setting('RealDebrid', 'api_key')
     metadata_battery_url = get_setting('Metadata Battery', 'url')
+    
+    # Update this line in your settings to use:
+    # metadata_battery_url = "http://cli_battery_app:5001"
 
     services_reachable = True
 
@@ -41,35 +44,36 @@ def check_service_connectivity():
     try:
         response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
         response.raise_for_status()
-        logger.info("Plex server is reachable.")
+        logging.info("Plex server is reachable.")
     except RequestException as e:
-        logger.error(f"Failed to connect to Plex server: {str(e)}")
+        logging.error(f"Failed to connect to Plex server: {str(e)}")
         services_reachable = False
 
     # Check Real Debrid connectivity
     try:
         response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {rd_api_key}"}, timeout=5)
         response.raise_for_status()
-        logger.info("Real Debrid API is reachable.")
+        logging.info("Real Debrid API is reachable.")
     except RequestException as e:
-        logger.error(f"Failed to connect to Real Debrid API: {str(e)}")
+        logging.error(f"Failed to connect to Real Debrid API: {str(e)}")
         services_reachable = False
 
     # Check Metadata Battery connectivity and Trakt authorization
     try:
-        response = api.post(f"{metadata_battery_url}/trakt_auth_status", timeout=5)
+        response = api.get(f"{metadata_battery_url}/check_trakt_auth", timeout=5)
         response.raise_for_status()
         trakt_status = response.json().get('status')
         if trakt_status == 'authorized':
-            logger.info("Metadata Battery is reachable and authorized with Trakt.")
-        elif trakt_status == 'pending':
-            logger.warning("Metadata Battery is reachable, but Trakt authorization is pending.")
-            services_reachable = False
+            logging.info("Metadata Battery is reachable and authorized with Trakt.")
         else:
-            logger.error("Metadata Battery is reachable, but Trakt is not authorized.")
+            logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
             services_reachable = False
     except RequestException as e:
-        logger.error(f"Failed to connect to Metadata Battery: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            logging.error(f"Failed to connect to Metadata Battery: {e.response.status_code} {e.response.reason}")
+            logging.error(f"Response content: {e.response.text}")
+        else:
+            logging.error(f"Failed to connect to Metadata Battery: {str(e)}")
         services_reachable = False
 
     return services_reachable
