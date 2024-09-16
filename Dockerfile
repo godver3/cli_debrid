@@ -10,8 +10,11 @@ RUN apk add --no-cache gcc musl-dev linux-headers
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements.txt .
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir --only-binary=grpcio --platform manylinux_2_17_aarch64 -r requirements.txt
+# Install grpcio separately
+RUN pip install --no-cache-dir --only-binary=:all: --platform manylinux_2_17_aarch64 grpcio==1.66.1
+
+# Install the rest of the requirements
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
