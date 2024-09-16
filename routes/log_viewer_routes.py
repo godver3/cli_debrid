@@ -38,7 +38,7 @@ def api_logs():
         return jsonify({'error': 'An error occurred while fetching logs'}), 500
 
 def get_recent_logs(n, since=None):
-    log_path = 'user/logs/debug.log'
+    log_path = '/user/logs/debug.log'
     if not os.path.exists(log_path):
         return []
     with open(log_path, 'r') as f:

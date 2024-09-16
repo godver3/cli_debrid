@@ -24,7 +24,7 @@ app.secret_key = '9683650475'
 
 queue_manager = QueueManager()
 
-db_directory = os.path.join(app.root_path, 'user/db_content')
+db_directory = os.path.join(app.root_path, '/user/db_content')
 os.makedirs(db_directory, exist_ok=True)
 
 if not os.access(db_directory, os.W_OK):

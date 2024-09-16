@@ -3,7 +3,7 @@ import pickle
 from datetime import datetime, timedelta
 import logging
 
-CACHE_FILE = 'user/db_content/poster_cache.pkl'
+CACHE_FILE = '/user/db_content/poster_cache.pkl'
 CACHE_EXPIRY_DAYS = 7  # Cache expires after 7 days
 
 UNAVAILABLE_POSTER = "UNAVAILABLE"
