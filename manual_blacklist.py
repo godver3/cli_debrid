@@ -4,7 +4,7 @@ import logging
 from typing import Dict
 
 # Update the path to include the db_content folder
-BLACKLIST_FILE = os.path.join('user/db_content', 'manual_blacklist.json')
+BLACKLIST_FILE = os.path.join('/user/db_content', 'manual_blacklist.json')
 
 def load_manual_blacklist():
     os.makedirs(os.path.dirname(BLACKLIST_FILE), exist_ok=True)

@@ -45,20 +45,20 @@ def setup_logging():
     
     # Debug file handler
     debug_handler = logging.handlers.RotatingFileHandler(
-        'user/logs/debug.log', maxBytes=100*1024*1024, backupCount=5)
+        '/user/logs/debug.log', maxBytes=100*1024*1024, backupCount=5)
     debug_handler.setLevel(logging.DEBUG)
     debug_handler.setFormatter(formatter)
     root_logger.addHandler(debug_handler)
     
     # Info file handler
     info_handler = logging.handlers.RotatingFileHandler(
-        'user/logs/info.log', maxBytes=100*1024*1024, backupCount=5)
+        '/user/logs/info.log', maxBytes=100*1024*1024, backupCount=5)
     info_handler.setLevel(logging.INFO)
     info_handler.setFormatter(formatter)
     root_logger.addHandler(info_handler)
     
     # Queue file handler (overwriting on each log)
-    queue_handler = OverwriteFileHandler('user/logs/queue.log')
+    queue_handler = OverwriteFileHandler('/user/logs/queue.log')
     queue_handler.setLevel(logging.INFO)
     queue_handler.setFormatter(formatter)
     
