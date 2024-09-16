@@ -3,7 +3,7 @@ version: '3.8'
 services:
 
   cli_debrid:
-    image: godver3/cli_debrid:dev
+    image: godver3/cli_debrid:batteryintegration
     pull_policy: always
     container_name: cli_debrid_app
     ports:
