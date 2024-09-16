@@ -24,7 +24,7 @@ def romanize_japanese(text):
     return ' '.join([item['hepburn'] for item in result])
 
 def setup_scraper_logger():
-    log_dir = 'logs'
+    log_dir = 'user/logs'
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     

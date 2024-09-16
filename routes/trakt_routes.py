@@ -10,7 +10,7 @@ import traceback
 
 trakt_bp = Blueprint('trakt', __name__)
 
-TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+TRAKT_CONFIG_PATH = 'user/config/.pytrakt.json'
 
 @trakt_bp.route('/trakt_auth', methods=['POST'])
 def trakt_auth():
