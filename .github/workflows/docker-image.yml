@@ -2,7 +2,7 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "dev", "main", "battery integration"]
+    branches: [ "dev", "main", "battery_integration"]
   workflow_dispatch:  # This enables manual triggering
 
 jobs:
