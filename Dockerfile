@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --only-binary=:all: --platform manylinux_2_17_aarch64 grpcio==1.66.1
 
 # Install the rest of the requirements
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir $(grep -v "^grpcio==" requirements.txt)
 
 # Copy the current directory contents into the container at /app
 COPY . .
