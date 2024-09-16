@@ -16,12 +16,6 @@
         <label for="shows_libraries" class="onboarding-label">TV Libraries:</label>
         <input type="text" id="shows_libraries" name="shows_libraries" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}">
 
-        <label for="overseerr_url" class="onboarding-label">Overseerr URL:</label>
-        <input type="text" id="overseerr_url" name="overseerr_url" required class="onboarding-input" value="{{ settings.get('Overseerr', {}).get('url', '') }}">
-
-        <label for="overseerr_api_key" class="onboarding-label">Overseerr API Key:</label>
-        <input type="text" id="overseerr_api_key" name="overseerr_api_key" required class="onboarding-input" value="{{ settings.get('Overseerr', {}).get('api_key', '') }}">
-
         <label for="realdebrid_api_key" class="onboarding-label">Real Debrid API Key:</label>
         <input type="text" id="realdebrid_api_key" name="realdebrid_api_key" required class="onboarding-input" value="{{ settings.get('RealDebrid', {}).get('api_key', '') }}">
 
