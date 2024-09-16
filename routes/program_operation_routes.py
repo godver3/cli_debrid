@@ -1,4 +1,4 @@
-from flask import jsonify, request, current_app, Blueprint
+from flask import jsonify, request, current_app, Blueprint, logging
 from routes import admin_required
 from .database_routes import perform_database_migration 
 from extensions import initialize_app 
@@ -7,6 +7,8 @@ from settings import get_setting
 import threading
 from run_program import ProgramRunner
 from flask_login import login_required
+from requests.exceptions import RequestException
+from api_tracker import api
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -26,10 +28,42 @@ def start_server():
     server_thread.daemon = True
     server_thread.start()
 
+def check_service_connectivity():
+    logger = current_app.logger
+    plex_url = get_setting('Plex', 'url')
+    plex_token = get_setting('Plex', 'token')
+    rd_api_key = get_setting('RealDebrid', 'api_key')
+
+    services_reachable = True
+
+    # Check Plex connectivity
+    try:
+        response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
+        response.raise_for_status()
+        logger.info("Plex server is reachable.")
+    except RequestException as e:
+        logger.error(f"Failed to connect to Plex server: {str(e)}")
+        services_reachable = False
+
+    # Check Real Debrid connectivity
+    try:
+        response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {rd_api_key}"}, timeout=5)
+        response.raise_for_status()
+        logger.info("Real Debrid API is reachable.")
+    except RequestException as e:
+        logger.error(f"Failed to connect to Real Debrid API: {str(e)}")
+        services_reachable = False
+
+    return services_reachable
+
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 def start_program():
     global program_runner
     if program_runner is None or not program_runner.is_running():
+        # Check service connectivity before starting the program
+        if not check_service_connectivity():
+            return jsonify({"status": "error", "message": "Failed to connect to Plex or Real Debrid. Check logs for details."})
+
         program_runner = ProgramRunner()
         # Start the program runner in a separate thread to avoid blocking the Flask server
         threading.Thread(target=program_runner.start).start()
