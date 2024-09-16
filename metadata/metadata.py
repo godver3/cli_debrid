@@ -1,471 +1,284 @@
 import logging
-from api_tracker import api
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta, timezone
+import grpc
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, timedelta
+import sys, os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from settings import get_setting
-from content_checkers.trakt import load_trakt_credentials, ensure_trakt_auth, get_trakt_headers
+import metadata_service_pb2
+import metadata_service_pb2_grpc
+import json
 
 REQUEST_TIMEOUT = 15  # seconds
-TRAKT_API_URL = "https://api.trakt.tv"
 
-def get_overseerr_headers(api_key: str) -> Dict[str, str]:
+def get_metadata_stub():
+    channel = grpc.insecure_channel('localhost:50051')
+    return metadata_service_pb2_grpc.MetadataServiceStub(channel)
+
+def parse_json_string(s):
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return s
+
+def get_metadata_battery_url(endpoint: str) -> str:
+    return f"{get_setting('Metadata Battery', 'url')}/api/{endpoint}"
+
+def api_request(endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    logging.warning("api_request is deprecated and should be replaced with gRPC calls")
+    url = get_metadata_battery_url(endpoint)
+    try:
+        stub = get_metadata_stub()
+        if 'movie/metadata' in endpoint:
+            response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=params['imdb_id']))
+        elif 'show/metadata' in endpoint:
+            response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=params['imdb_id']))
+        elif 'movie/release_dates' in endpoint:
+            response = stub.GetMovieReleaseDates(metadata_service_pb2.IMDbRequest(imdb_id=params['imdb_id']))
+        elif 'show/seasons' in endpoint:
+            response = stub.GetShowSeasons(metadata_service_pb2.IMDbRequest(imdb_id=params['imdb_id']))
+        elif 'tmdb_to_imdb' in endpoint:
+            response = stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id=params['tmdb_id']))
+        else:
+            logging.error(f"Unsupported endpoint: {endpoint}")
+            return {}
+        return {k: parse_json_string(v) for k, v in response.metadata.items()} if hasattr(response, 'metadata') else {'imdb_id': response.imdb_id}
+    except grpc.RpcError as e:
+        logging.error(f"gRPC error fetching data for {endpoint}: {str(e)}")
+        return {}
+
+def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, item_media_type: Optional[str] = None) -> Dict[str, Any]:
+    logging.info(f"Starting metadata retrieval for item: IMDB ID: {imdb_id}, TMDB ID: {tmdb_id}, Media Type: {item_media_type}")
+
+    if not imdb_id and not tmdb_id:
+        raise ValueError("Either imdb_id or tmdb_id must be provided")
+
+    stub = get_metadata_stub()
+
+    # Convert TMDB ID to IMDb ID if necessary
+    if tmdb_id and not imdb_id:
+        logging.info(f"Converting TMDB ID {tmdb_id} to IMDb ID")
+        try:
+            tmdb_response = stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id=str(tmdb_id)))
+            imdb_id = tmdb_response.imdb_id
+            if not imdb_id:
+                logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}")
+                return {}
+            logging.info(f"Converted TMDB ID {tmdb_id} to IMDb ID {imdb_id}")
+        except grpc.RpcError as e:
+            logging.error(f"gRPC error converting TMDB ID to IMDb ID: {str(e)}")
+            return {}
+
+    media_type = item_media_type.lower() if item_media_type else 'movie'
+    logging.info(f"Processing item as {media_type}")
+    
+    try:
+        if media_type == 'movie':
+            logging.info(f"Fetching movie metadata for IMDb ID: {imdb_id}")
+            response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+        else:
+            logging.info(f"Fetching TV show metadata for IMDb ID: {imdb_id}")
+            response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+
+        if not response.metadata:
+            logging.warning(f"No metadata returned for IMDb ID: {imdb_id}")
+            return {}
+
+        metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
+        
+        logging.info("Processing fields")
+        metadata['imdb_id'] = metadata.get('ids', {}).get('imdb') or imdb_id
+        metadata['tmdb_id'] = int(metadata.get('ids', {}).get('tmdb', 0)) or tmdb_id
+        metadata['title'] = metadata.get('title', 'Unknown Title')
+        metadata['year'] = int(metadata.get('year')) if metadata.get('year') else None
+        metadata['genres'] = metadata.get('genres', [])
+        metadata['runtime'] = metadata.get('runtime')
+        
+        logging.info(f"Metadata: {metadata['genres']}")
+        logging.info("Checking for anime genre")
+        is_anime = 'anime' in [genre.lower() for genre in metadata['genres']]
+        metadata['genres'] = ['anime'] if is_anime else metadata['genres']
+
+        if media_type == 'movie':
+            logging.info("Processing release date")
+            metadata['release_date'] = get_release_date(metadata)
+            logging.info(f"Release date: {metadata['release_date']}")
+        elif media_type == 'tv':
+            logging.info("Processing first aired date")
+            metadata['first_aired'] = parse_date(metadata.get('first_aired'))
+            
+            logging.info("Processing seasons data")
+            metadata['seasons'] = metadata.get('seasons', {})
+            logging.info(f"Found {len(metadata['seasons'])} seasons")
+
+        logging.info(f"Completed metadata retrieval for {metadata['title']} ({metadata['year']})")
+        return metadata
+
+    except grpc.RpcError as e:
+        logging.error(f"gRPC error fetching metadata for IMDb ID {imdb_id}: {str(e)}")
+        return {}
+    except Exception as e:
+        logging.error(f"Unexpected error fetching metadata for IMDb ID {imdb_id}: {str(e)}")
+        return {}
+
+def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_number: int, episode_data: Dict[str, Any], is_anime: bool) -> Dict[str, Any]:
     return {
-        'X-Api-Key': api_key,
-        'Accept': 'application/json'
+        'imdb_id': show_item['imdb_id'],
+        'tmdb_id': show_item['tmdb_id'],
+        'title': show_item['title'],
+        'year': show_item['year'],
+        'season_number': int(season_number),
+        'episode_number': int(episode_number),
+        'episode_title': episode_data.get('title', f"Episode {episode_number}"),
+        'release_date': parse_date(episode_data.get('first_aired')) or show_item.get('first_aired'),
+        'media_type': 'episode',
+        'genres': ['anime'] if is_anime else show_item.get('genres', []),
+        'runtime': episode_data.get('runtime') or show_item.get('runtime'),
+        'airtime': show_item.get('airs', {}).get('time', '19:00')
     }
 
-def get_url(base_url: str, endpoint: str) -> str:
-    return f"{base_url}{endpoint}"
+def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    processed_items = {'movies': [], 'episodes': []}
+    stub = get_metadata_stub()
 
-def get_year_from_imdb_id(imdb_id: str) -> Optional[int]:
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
+    for index, item in enumerate(media_items, 1):
+        logging.debug(f"Processing item: {item}")
 
-    if not overseerr_url or not overseerr_api_key:
-        logging.error("Overseerr URL or API key not set. Please configure in settings.")
-        return None
+        try:
+            metadata = get_metadata(imdb_id=item.get('imdb_id'), tmdb_id=item.get('tmdb_id'), item_media_type=item.get('media_type'))
+            if not metadata:
+                logging.warning(f"Could not fetch metadata for item: {item}")
+                continue
 
-    # Check the content type and convert IMDb ID to TMDB ID
-    tmdb_id, media_type = get_tmdb_id_and_media_type(overseerr_url, overseerr_api_key, imdb_id)
-    if not tmdb_id or not media_type:
-        logging.warning(f"Could not determine TMDB ID and media type for IMDb ID {imdb_id}.")
-        return None
+            if item['media_type'].lower() == 'movie':
+                processed_items['movies'].append(metadata)
+            elif item['media_type'].lower() in ['tv', 'show']:
+                is_anime = 'anime' in [genre.lower() for genre in metadata.get('genres', [])]
+                
+                seasons = metadata.get('seasons', {})
+                for season_number, season_data in seasons.items():
+                    episodes = season_data.get('episodes', {})
+                    for episode_number, episode_data in episodes.items():
+                        episode_item = create_episode_item(
+                            metadata, 
+                            int(season_number), 
+                            int(episode_number), 
+                            episode_data,
+                            is_anime
+                        )
+                        processed_items['episodes'].append(episode_item)
 
-    # Fetch details based on the media type
-    if media_type == 'movie':
-        details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, get_overseerr_cookies(overseerr_url))
-    elif media_type == 'tv':
-        details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, get_overseerr_cookies(overseerr_url))
-    else:
-        logging.error(f"Unknown media type: {media_type} for IMDb ID {imdb_id}.")
-        return None
+        except Exception as e:
+            logging.error(f"Error processing item {item}: {str(e)}", exc_info=True)
 
-    if not details:
-        logging.warning(f"Could not fetch details for TMDB ID {tmdb_id} with media type {media_type}.")
-        return None
+    logging.info(f"Processed {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes")
+    return processed_items
 
-    # Extract and return the release year
-    if media_type == 'movie':
-        release_date = parse_date(details.get('releaseDate'))
-    elif media_type == 'tv':
-        release_date = parse_date(details.get('firstAirDate'))
-    else:
-        release_date = None
+def get_release_date(media_details: Dict[str, Any]) -> str:
+    release_dates = media_details.get('release_dates', {})
+    logging.info(f"Processing release dates for IMDb ID: {media_details['imdb_id']}")
 
-    if release_date:
-        return release_date.year
-    else:
-        logging.warning(f"No release date found for item with TMDB ID {tmdb_id}.")
-        return None
+    logging.debug(f"Release dates: {release_dates}")
+    
+    current_date = datetime.now()
+    digital_physical_releases = []
+    theatrical_releases = []
+    all_releases = []
 
-def get_tmdb_id_and_media_type(overseerr_url: str, overseerr_api_key: str, imdb_id: str) -> (Optional[int], Optional[str]):
-    headers = get_overseerr_headers(overseerr_api_key)
-    search_url = f"{overseerr_url}/api/v1/search?query=imdb%3A{imdb_id}"
+    for country, country_releases in release_dates.items():
+        for release in country_releases:
+            release_date_str = release.get('date')
+            if release_date_str:
+                try:
+                    release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
+                    all_releases.append(release_date)
+                    release_type = release.get('type', 'unknown').lower()
+                    if release_type in ['digital', 'physical']:
+                        digital_physical_releases.append(release_date)
+                    elif release_type in ['theatrical', 'premiere']:
+                        theatrical_releases.append(release_date)
+                except ValueError:
+                    logging.warning(f"Invalid date format: {release_date_str}")
 
-    try:
-        response = api.get(search_url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+    if digital_physical_releases:
+        return min(digital_physical_releases).strftime("%Y-%m-%d")
+    
+    old_theatrical_releases = [date for date in theatrical_releases if date < current_date - timedelta(days=180)]
+    if old_theatrical_releases:
+        return max(old_theatrical_releases).strftime("%Y-%m-%d")
 
-        if data['results']:
-            result = data['results'][0]  # Assume the first result is the correct one
-            return result.get('id'), result.get('mediaType')
-        else:
-            logging.warning(f"No results found for IMDb ID: {imdb_id}")
-            return None, None
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error converting IMDb ID to TMDB ID: {e}")
-        return None, None
+    old_releases = [date for date in all_releases if date < current_date - timedelta(days=180)]
+    if old_releases:
+        return max(old_releases).strftime("%Y-%m-%d")
+    
+    if all_releases:
+        return min(all_releases).strftime("%Y-%m-%d")
+    
+    logging.warning(f"No valid release date found for IMDb ID: {media_details['imdb_id']}")
+    return 'Unknown'
 
-def parse_date(date_str: Optional[str]) -> Optional[datetime]:
+def parse_date(date_str: Optional[str]) -> Optional[str]:
     if date_str is None:
         return None
 
     date_formats = [
-        "%Y-%m-%d",
         "%Y-%m-%dT%H:%M:%S.%fZ",
         "%Y-%m-%dT%H:%M:%SZ",
         "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
     ]
 
     for date_format in date_formats:
         try:
-            return datetime.strptime(date_str, date_format)
+            return datetime.strptime(date_str, date_format).strftime("%Y-%m-%d")
         except (ValueError, TypeError):
             continue
 
     logging.warning(f"Unable to parse date: {date_str}")
     return None
 
-def get_release_date(media_details: Dict[str, Any], media_type: str) -> str:
-    if media_details is None:
-        logging.debug("Media details are None.")
-        return 'Unknown'
-    
-    current_date = datetime.now()
-    general_release_date = parse_date(media_details.get('releaseDate'))
-    
-    if media_type == 'movie':
-        releases = media_details.get('releases', {}).get('results', [])
-        type_4_5_us_releases = []
-        type_4_5_global_releases = []
-        type_3_releases = []
-
-        for release in releases:
-            for date in release.get('release_dates', []):
-                parsed_date = parse_date(date.get('release_date'))
-                if parsed_date:
-                    if release.get('iso_3166_1') == 'US' and date.get('type') in [4, 5]:
-                        type_4_5_us_releases.append(parsed_date)
-                    elif date.get('type') in [4, 5]:
-                        type_4_5_global_releases.append(parsed_date)
-                    elif date.get('type') == 3:
-                        type_3_releases.append(parsed_date)
-
-        if type_4_5_us_releases:
-            return min(type_4_5_us_releases).strftime("%Y-%m-%d")
-        elif type_4_5_global_releases:
-            return min(type_4_5_global_releases).strftime("%Y-%m-%d")
-        
-        old_type_3_releases = [date for date in type_3_releases if date < current_date - timedelta(days=180)]
-        if old_type_3_releases:
-            return max(old_type_3_releases).strftime("%Y-%m-%d")
-
-        if general_release_date and general_release_date < current_date - timedelta(days=180):
-            return general_release_date.strftime("%Y-%m-%d")
-        
-        logging.debug("No valid type 4, 5 US or global release or old type 3 release found, marking as Unknown.")
-        return 'Unknown'
-
-    elif media_type == 'tv':
-        air_date = parse_date(media_details.get('airDate'))
-        return air_date.strftime("%Y-%m-%d") if air_date else 'Unknown'
-    
-    else:
-        logging.error(f"Unknown media type: {media_type}")
-        return 'Unknown'
-
-
-def get_overseerr_cookies(overseerr_url: str) -> Optional[api.cookies.RequestsCookieJar]:
-    try:
-        session = api.Session()
-        session.get(overseerr_url, timeout=REQUEST_TIMEOUT)
-        return session.cookies
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error getting Overseerr cookies: {str(e)}")
-        return None
-
-def get_overseerr_show_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Optional[Dict[str, Any]]:
-    url = get_url(overseerr_url, f"/api/v1/tv/{tmdb_id}?language=en")
-    headers = get_overseerr_headers(overseerr_api_key)
-    try:
-        response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching show details for TMDB ID {tmdb_id}: {str(e)}")
-        return None
-
-def get_overseerr_show_episodes(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, season_number: int, cookies: api.cookies.RequestsCookieJar) -> Optional[Dict[str, Any]]:
-    url = get_url(overseerr_url, f"/api/v1/tv/{tmdb_id}/season/{season_number}?language=en")
-    headers = get_overseerr_headers(overseerr_api_key)
-    try:
-        response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching show episodes for TMDB ID {tmdb_id}, season {season_number}: {str(e)}")
-        return None
-
-def get_overseerr_movie_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Optional[Dict[str, Any]]:
-    url = get_url(overseerr_url, f"/api/v1/movie/{tmdb_id}?language=en")
-    headers = get_overseerr_headers(overseerr_api_key)
-    try:
-        response = api.get(url, headers=headers, cookies=cookies, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching movie details for TMDB ID {tmdb_id}: {str(e)}")
-        return None
-
-def get_latest_us_type_3_year(media_details: Dict[str, Any], media_type: str) -> Optional[int]:
-    if media_details is None:
-        return None
-    
-    if media_type == 'movie':
-        releases = media_details.get('releases', {}).get('results', [])
-        us_type_3_releases = []
-        for release in releases:
-            if release.get('iso_3166_1') == 'US':
-                for date in release.get('release_dates', []):
-                    if date.get('type') == 3:
-                        parsed_date = parse_date(date.get('release_date'))
-                        if parsed_date:
-                            us_type_3_releases.append(parsed_date)
-        
-        if us_type_3_releases:
-            return max(us_type_3_releases).year
-    
-    elif media_type == 'tv':
-        first_air_date = parse_date(media_details.get('first_air_date'))
-        if first_air_date:
-            return first_air_date.year
-    
-    return None
-
-def imdb_to_tmdb(overseerr_url: str, overseerr_api_key: str, imdb_id: str, media_type: str) -> Optional[int]:
-    headers = get_overseerr_headers(overseerr_api_key)
-    search_url = f"{overseerr_url}/api/v1/search?query=imdb%3A{imdb_id}"
-    
-    try:
-        response = api.get(search_url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        if data['results']:
-            # Filter results based on media_type
-            matching_results = [result for result in data['results'] if result.get('mediaType') == media_type]
-            
-            if matching_results:
-                return matching_results[0].get('id')  # Return the TMDB ID of the first matching result
-            else:
-                logging.warning(f"No results found for IMDB ID: {imdb_id} with media type: {media_type}")
-                return None
-        else:
-            logging.warning(f"No results found for IMDB ID: {imdb_id}")
-            return None
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error converting IMDB ID to TMDB ID: {e}")
-        return None
-
-def get_imdb_id_if_missing(item: Dict[str, Any], overseerr_url: str, overseerr_api_key: str, cookies: api.cookies.RequestsCookieJar) -> Optional[str]:
+def get_imdb_id_if_missing(item: Dict[str, Any]) -> Optional[str]:
     if 'imdb_id' in item:
         return item['imdb_id']
     
-    if 'tmdb_id' not in item or 'media_type' not in item:
-        logging.warning(f"Cannot retrieve IMDb ID without TMDB ID and media type: {item}")
+    if 'tmdb_id' not in item:
+        logging.warning(f"Cannot retrieve IMDb ID without TMDB ID: {item}")
         return None
     
     tmdb_id = item['tmdb_id']
-    media_type = item['media_type']
     
-    if media_type == 'movie':
-        details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-    elif media_type == 'tv':
-        details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-    else:
-        logging.warning(f"Unknown media type: {media_type}")
-        return None
-    
-    if details:
-        imdb_id = details.get('externalIds', {}).get('imdbId')
-        if imdb_id:
-            item['imdb_id'] = imdb_id
-            logging.debug(f"Retrieved missing IMDb ID: {imdb_id}")
-            return imdb_id
-    
-    logging.warning(f"Could not retrieve IMDb ID for item: {item}")
-    return None
+    stub = get_metadata_stub()
+    tmdb_response = stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id=str(tmdb_id)))
+    return tmdb_response.imdb_id
 
-def get_media_type_if_missing(item: Dict[str, Any], overseerr_url: str, overseerr_api_key: str) -> str:
-    if 'media_type' not in item:
-        item['media_type'] = get_media_type(overseerr_url, overseerr_api_key, item['imdb_id'])
-        logging.debug(f"Retrieved missing media_type: {item['media_type']}")
-    return item['media_type']
-
-def get_tmdb_id_if_missing(item: Dict[str, Any], overseerr_url: str, overseerr_api_key: str) -> int:
-    if 'tmdb_id' not in item:
-        item['tmdb_id'] = imdb_to_tmdb(overseerr_url, overseerr_api_key, item['imdb_id'], item['media_type'])
-        logging.debug(f"Retrieved missing tmdb_id: {item['tmdb_id']}")
-    return item['tmdb_id']
-
-def get_title_if_missing(item: Dict[str, Any], details: Dict[str, Any]) -> str:
-    if 'title' not in item:
-        item['title'] = details.get('title' if item['media_type'] == 'movie' else 'name', 'Unknown Title')
-        logging.debug(f"Retrieved missing title: {item['title']}")
-    return item['title']
-
-def get_year_if_missing(item: Dict[str, Any], details: Dict[str, Any]) -> str:
-    if 'year' not in item:
-        release_date = details.get('releaseDate' if item['media_type'] == 'movie' else 'firstAirDate', '')
-        item['year'] = release_date[:4] if release_date else str(get_latest_us_type_3_year(details, item['media_type']) or '')
-        logging.debug(f"Retrieved missing year: {item['year']}")
-    return item['year']
-
-def get_release_date_if_missing(item: Dict[str, Any], details: Dict[str, Any]) -> str:
-    if 'release_date' not in item:
-        item['release_date'] = get_release_date(details, item['media_type'])
-        logging.debug(f"Retrieved missing release_date: {item['release_date']}")
-    return item['release_date']
-
-def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    from database import get_all_media_items, update_release_date_and_state
-
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    if not overseerr_url or not overseerr_api_key:
-        logging.error("Overseerr URL or API key not set. Please configure in settings.")
-        return {'movies': [], 'episodes': []}
-
-    cookies = get_overseerr_cookies(overseerr_url)
-    processed_items = {'movies': [], 'episodes': []}
-
-    for item in media_items:
-        logging.debug(f"Processing item: {item}")
-
-        if 'tmdb_id' not in item:
-            tmdb_id = get_tmdb_id_if_missing(item, overseerr_url, overseerr_api_key)
-            if not tmdb_id:
-                logging.warning(f"Could not find TMDB ID for item: {item}")
-                continue
-            item['tmdb_id'] = tmdb_id
-
-        if 'imdb_id' not in item:
-            imdb_id = get_imdb_id_if_missing(item, overseerr_url, overseerr_api_key, cookies)
-            if not imdb_id:
-                logging.warning(f"Could not find IMDb ID for item: {item}")
-                continue
-            item['imdb_id'] = imdb_id
-
-        if item['media_type'] == 'movie':
-            details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-            if not details:
-                logging.warning(f"Could not fetch details for movie: {item}")
-                continue
-
-            if 'title' not in item:
-                item['title'] = get_title_if_missing(item, details)
-            if 'year' not in item:
-                item['year'] = get_year_if_missing(item, details)
-            if 'release_date' not in item:
-                item['release_date'] = get_release_date_if_missing(item, details)
-            
-            # Check if the movie is tagged as anime
-            genres = details.get('keywords', [])
-            is_anime = False
-            if isinstance(genres, list):
-                is_anime = any(genre.get('name', '').lower() == 'anime' for genre in genres)
-            else:
-                logging.warning(f"Unexpected 'genres' format for movie {item['title']}: {genres}")
-            
-            item['genres'] = ['anime'] if is_anime else []
-            logging.debug(f"Movie {item['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {item['genres']}")
-            
-            processed_items['movies'].append(item)
-
-        else:  # TV show
-            show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-            if not show_details:
-                logging.warning(f"Could not fetch details for TV show: {item}")
-                continue
-
-            if 'title' not in item:
-                item['title'] = get_title_if_missing(item, show_details)
-            if 'year' not in item:
-                item['year'] = get_year_if_missing(item, show_details)
-
-            # Check if the show is tagged as anime
-            genres = show_details.get('keywords', [])
-            is_anime = False
-            if isinstance(genres, list):
-                is_anime = any(genre.get('name', '').lower() == 'anime' for genre in genres)
-            else:
-                logging.warning(f"Unexpected 'genres' format for show {item['title']}: {genres}")
-            
-            logging.debug(f"Show {item['title']} is{'not' if not is_anime else ''} tagged as anime. Genres: {genres}")
-
-            # Get all season-episode counts
-            season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-
-            # Get existing episodes
-            existing_episodes = get_all_media_items(tmdb_id=item['tmdb_id'], media_type='episode')
-            existing_episode_set = set((ep['season_number'], ep['episode_number']) for ep in existing_episodes)
-
-            logging.debug(f"Processing TV show: {item['title']} (TMDB ID: {item['tmdb_id']})")
-            logging.debug(f"Season-episode counts: {season_episode_counts}")
-
-            absolute_episode_number = 1  # Start from 1
-            for season_number, episode_count in season_episode_counts.items():
-                logging.debug(f"Processing season {season_number} with {episode_count} episodes")
-                season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], season_number, cookies)
-                logging.debug(f"Episode details for season {season_number}: {season_details}")
-                
-                available_episodes = season_details.get('episodes', [])
-                for episode in available_episodes:
-                    episode_number = episode['episodeNumber']
-                    logging.debug(f"Processing S{season_number}E{episode_number} (Absolute: {absolute_episode_number})")
-                    
-                    if (season_number, episode_number) not in existing_episode_set:
-                        logging.debug(f"Episode S{season_number}E{episode_number} not in existing set, processing")
-                        
-                        episode_item = {
-                            'imdb_id': item['imdb_id'],
-                            'tmdb_id': item['tmdb_id'],
-                            'title': item['title'],
-                            'year': item['year'],
-                            'season_number': season_number,
-                            'episode_number': episode_number,
-                            'episode_title': episode.get('name', 'Unknown Episode Title'),
-                            'release_date': get_release_date(episode, 'tv'),
-                            'media_type': 'episode',
-                            'genres': ['anime'] if is_anime else []
-                        }
-                        logging.debug(f"Created episode item: {episode_item}")
-                        processed_items['episodes'].append(episode_item)
-                        logging.debug(f"Added episode: S{season_number}E{episode_number}")
-                    else:
-                        logging.debug(f"Episode S{season_number}E{episode_number} already exists in the database")
-                    
-                    absolute_episode_number += 1
-
-        logging.debug(f"Processed item: {item}")
-
-    logging.info(f"Processed {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes")
-    for movie in processed_items['movies']:
-        logging.debug(f"Processed movie: {movie}")
-
-    for episode in processed_items['episodes']:
-        logging.debug(f"Processed episode: {episode}")
-        
-    return processed_items
-    
 def refresh_release_dates():
     from database import get_all_media_items, update_release_date_and_state
-
     logging.info("Starting refresh_release_dates function")
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    if not overseerr_url or not overseerr_api_key:
-        logging.error("Overseerr URL or API key not set. Please configure in settings.")
-        return
-
-    logging.info("Getting Overseerr cookies")
-    cookies = get_overseerr_cookies(overseerr_url)
     
     logging.info("Fetching items to refresh")
     items_to_refresh = get_all_media_items(state="Unreleased") + get_all_media_items(state="Wanted")
     logging.info(f"Found {len(items_to_refresh)} items to refresh")
 
-    for index, item in enumerate(items_to_refresh, 1):
-        logging.info(f"Processing item {index}/{len(items_to_refresh)}: {item['title']} (Type: {item['type']}, TMDB ID: {item['tmdb_id']})")
-        try:
-            if item['type'] == 'movie':
-                logging.info(f"Fetching movie details for TMDB ID: {item['tmdb_id']}")
-                details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-                media_type = 'movie'
-            else:  # TV show episode
-                logging.info(f"Fetching TV show details for TMDB ID: {item['tmdb_id']}")
-                show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-                logging.info(f"Fetching season details for TMDB ID: {item['tmdb_id']}, Season: {item['season_number']}")
-                season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, item['tmdb_id'], item['season_number'], cookies)
-                logging.info(f"Finding episode details for Episode: {item['episode_number']}")
-                episode_details = next((ep for ep in season_details.get('episodes', []) if ep['episodeNumber'] == item['episode_number']), None)
-                details = episode_details if episode_details else show_details
-                media_type = 'tv'
+    stub = get_metadata_stub()
 
-            if details:
+    for index, item in enumerate(items_to_refresh, 1):
+        logging.info(f"Processing item {index}/{len(items_to_refresh)}: {item['title']} (Type: {item['media_type']}, IMDb ID: {item['imdb_id']})")
+        try:
+            imdb_id = item['imdb_id']
+            media_type = 'movie' if item['media_type'] == 'movie' else 'tv'
+
+            logging.info(f"Fetching metadata for IMDb ID: {imdb_id}")
+            if media_type == 'movie':
+                response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+            else:
+                response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+            metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
+
+            if metadata:
                 logging.info("Getting release date")
-                new_release_date = get_release_date(details, media_type)
+                new_release_date = get_release_date(metadata)
                 logging.info(f"New release date: {new_release_date}")
 
                 if new_release_date == 'Unknown':
@@ -489,100 +302,142 @@ def refresh_release_dates():
                     logging.info("No changes needed for this item")
 
             else:
-                logging.warning(f"Could not fetch details for {item['title']}")
+                logging.warning(f"Could not fetch metadata for {item['title']}")
         except Exception as e:
             logging.error(f"Error processing item {item['title']}: {str(e)}", exc_info=True)
 
     logging.info("Finished refresh_release_dates function")
 
-def get_episode_count_for_seasons(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, seasons: List[int], cookies: api.cookies.RequestsCookieJar) -> int:
-    total_episodes = 0
-    
-    for season_number in seasons:
-        season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, season_number, cookies)
-        if season_details:
-            total_episodes += len(season_details.get('episodes', []))
-        else:
-            logging.warning(f"Could not fetch details for season {season_number} of show with TMDB ID: {tmdb_id}")
+def get_episode_count_for_seasons(imdb_id: str, seasons: List[int]) -> int:
+    stub = get_metadata_stub()
+    show_response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    show_metadata = {k: parse_json_string(v) for k, v in show_response.metadata.items()}
+    all_seasons = show_metadata.get('seasons', {})
+    return sum(all_seasons.get(str(season), {}).get('episode_count', 0) for season in seasons)
 
-    logging.debug(f"Total episodes for TMDB ID {tmdb_id}, seasons {seasons}: {total_episodes}")
-    return total_episodes
-
-def get_all_season_episode_counts(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, cookies: api.cookies.RequestsCookieJar) -> Dict[int, int]:
-    episode_counts = {}
-    show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-    
-    if not show_details:
-        logging.warning(f"Could not fetch show details for TMDB ID: {tmdb_id}")
-        return episode_counts
-
-    for season in show_details.get('seasons', []):
-        season_number = season.get('seasonNumber')
-        if season_number == 0:
-            continue  # Skip special seasons
-
-        season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, season_number, cookies)
-        if season_details:
-            episode_counts[season_number] = len(season_details.get('episodes', []))
-        else:
-            logging.warning(f"Could not fetch details for season {season_number} of show with TMDB ID: {tmdb_id}")
-
-    logging.debug(f"Episode counts for TMDB ID {tmdb_id}: {episode_counts}")
-    return episode_counts
+def get_all_season_episode_counts(imdb_id: str) -> Dict[int, int]:
+    stub = get_metadata_stub()
+    show_response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    show_metadata = {k: parse_json_string(v) for k, v in show_response.metadata.items()}
+    all_seasons = show_metadata.get('seasons', {})
+    return {int(season): data['episode_count'] for season, data in all_seasons.items() if season != '0'}
 
 def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
-    """
-    Get the airtime of a show using its IMDb ID.
-    
-    :param imdb_id: IMDb ID of the show
-    :return: Airtime as a string (e.g., "22:00"), or "19:00" if not available or user isn't logged into Trakt
-    """
     DEFAULT_AIRTIME = "19:00"
+    stub = get_metadata_stub()
+    response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
+    return metadata.get('airs', {}).get('time', DEFAULT_AIRTIME)
 
-    headers = get_trakt_headers()
-    if not headers:
-        logging.warning("Failed to obtain Trakt headers. Using default airtime.")
-        return DEFAULT_AIRTIME
+def test_metadata_processing():
+    test_items = [
+        # Movies
+        {'imdb_id': 'tt0111161', 'media_type': 'movie'},  # The Shawshank Redemption
+        {'imdb_id': 'tt0068646', 'media_type': 'movie'},  # The Godfather
+        {'tmdb_id': 155, 'media_type': 'movie'},  # The Dark Knight
 
-    # First, search for the show using the IMDb ID
-    search_url = f"{TRAKT_API_URL}/search/imdb/{imdb_id}?type=show"
-    try:
-        response = api.get(search_url, headers=headers, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        search_results = response.json()
-        
-        if not search_results:
-            logging.warning(f"No show found for IMDb ID: {imdb_id}. Using default airtime.")
-            return DEFAULT_AIRTIME
-        
-        # Get the Trakt ID of the show
-        trakt_id = search_results[0]['show']['ids']['trakt']
-        
-        # Now fetch the full show data
-        show_url = f"{TRAKT_API_URL}/shows/{trakt_id}?extended=full"
-        show_response = api.get(show_url, headers=headers, timeout=REQUEST_TIMEOUT)
-        show_response.raise_for_status()
-        show_data = show_response.json()
-        
-        # Extract and return the airtime
-        first_aired = show_data.get('first_aired')
-        if first_aired:
-            try:
-                local_now = datetime.now()
-                utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S.000Z")
-                utc = utc.replace(tzinfo=timezone.utc)
-                local_time = (utc.astimezone(local_now.tzname())).strftime('%H:%M')
-                return local_time
-            except ValueError as e:
-                logging.error(f"Error parsing 'first_aired' for show with IMDb ID {imdb_id}: {e}. Using default airtime.")
-                return DEFAULT_AIRTIME
-        else:
-            logging.warning(f"No 'first_aired' data found for show with IMDb ID: {imdb_id}. Using default airtime.")
-            return DEFAULT_AIRTIME
+        # TV Shows
+        {'imdb_id': 'tt0944947', 'media_type': 'tv'},  # Game of Thrones
+        {'imdb_id': 'tt0903747', 'media_type': 'tv'},  # Breaking Bad
+        {'tmdb_id': 1396, 'media_type': 'tv'},  # Breaking Bad (using TMDB ID)
+    ]
+
+    processed_data = process_metadata(test_items)
+
+    print("Processed Movies:")
+    for movie in processed_data['movies']:
+        print(f"- {movie['title']} ({movie['year']}) - IMDb: {movie['imdb_id']}, TMDB: {movie['tmdb_id']}")
+
+    print("\nProcessed TV Show Episodes:")
+    for episode in processed_data['episodes'][:10]:  # Limiting to first 10 episodes for brevity
+        print(f"- {episode['title']} S{episode['season_number']:02d}E{episode['episode_number']:02d}: {episode['episode_title']}")
+
+    print(f"\nTotal movies processed: {len(processed_data['movies'])}")
+    print(f"Total episodes processed: {len(processed_data['episodes'])}")
+
+def get_tmdb_id_and_media_type(imdb_id: str) -> Tuple[Optional[int], Optional[str]]:
+    stub = get_metadata_stub()
     
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching show data from Trakt: {e}. Using default airtime.")
-        return DEFAULT_AIRTIME
-    except Exception as e:
-        logging.error(f"Unexpected error in get_show_airtime_by_imdb_id for IMDb ID {imdb_id}: {e}. Using default airtime.")
-        return DEFAULT_AIRTIME
+    # Try to get movie metadata
+    movie_response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    if movie_response.metadata:
+        movie_data = {k: parse_json_string(v) for k, v in movie_response.metadata.items()}
+        return int(movie_data.get('ids', {}).get('tmdb', 0)), 'movie'
+    
+    # If not a movie, try to get show metadata
+    show_response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    if show_response.metadata:
+        show_data = {k: parse_json_string(v) for k, v in show_response.metadata.items()}
+        return int(show_data.get('ids', {}).get('tmdb', 0)), 'tv'
+    
+    logging.error(f"Could not determine media type for IMDb ID {imdb_id}")
+    return None, None
+    
+def get_runtime(imdb_id: str, media_type: str) -> Optional[int]:
+    stub = get_metadata_stub()
+    
+    if media_type == 'movie':
+        response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    else:
+        response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    
+    metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
+    runtime = metadata.get('runtime')
+    
+    if runtime is not None:
+        try:
+            return int(runtime)
+        except ValueError:
+            logging.warning(f"Invalid runtime value for {imdb_id}: {runtime}")
+    
+    return None
+
+def get_episode_airtime(imdb_id: str) -> Optional[str]:
+    stub = get_metadata_stub()
+    response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    
+    metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
+    airs = metadata.get('airs', {})
+    airtime = airs.get('time')
+    
+    if airtime:
+        try:
+            parsed_time = datetime.strptime(airtime, "%H:%M")
+            return parsed_time.strftime("%H:%M")
+        except ValueError:
+            logging.warning(f"Invalid airtime format for {imdb_id}: {airtime}")
+    
+    return None
+
+def main():
+    stub = get_metadata_stub()
+
+    print("Testing metadata routes:")
+
+    # Test movie metadata
+    print("\n1. Get movie metadata:")
+    movie_imdb_id = "tt0111161"  # The Shawshank Redemption
+    movie_response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=movie_imdb_id))
+    movie_metadata = {k: parse_json_string(v) for k, v in movie_response.metadata.items()}
+    print(f"Movie metadata for {movie_imdb_id}:")
+    print(json.dumps(movie_metadata, indent=2))
+    print(f"Source: {movie_response.source}")
+
+    # Test show metadata
+    print("\n2. Get show metadata:")
+    show_imdb_id = "tt0944947"  # Game of Thrones
+    show_response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=show_imdb_id))
+    show_metadata = {k: parse_json_string(v) for k, v in show_response.metadata.items()}
+    print(f"Show metadata for {show_imdb_id}:")
+    print(json.dumps(show_metadata, indent=2))
+    print(f"Source: {show_response.source}")
+
+    # Test TMDB to IMDB conversion
+    print("\n3. Get IMDb ID from TMDB ID:")
+    tmdb_id = "155"  # The Dark Knight
+    tmdb_response = stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id=tmdb_id))
+    print(f"IMDb ID for TMDB ID {tmdb_id}: {tmdb_response.imdb_id}")
+    print(f"Source: {tmdb_response.source}")
+
+if __name__ == "__main__":
+    main()

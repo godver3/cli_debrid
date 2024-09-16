@@ -2,7 +2,7 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "dev", "main" ]
+    branches: [ "dev", "main", "battery_integration"]
   workflow_dispatch:  # This enables manual triggering
 
 jobs:
@@ -34,9 +34,12 @@ jobs:
         if [ "${{ github.ref_name }}" = "dev" ]; then
           echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }}" >> $GITHUB_ENV
           echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:dev-arm64,godver3/cli_debrid:dev-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
-        else
+        elif [ "${{ github.ref_name }}" = "main" ]; then
           echo "DOCKER_TAGS=godver3/cli_debrid:main,godver3/cli_debrid:main-${{ env.VERSION }}" >> $GITHUB_ENV
           echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:main-arm64,godver3/cli_debrid:main-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
+        else
+          echo "DOCKER_TAGS=godver3/cli_debrid:batteryintegration,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}" >> $GITHUB_ENV
+          echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:batteryintegration-arm64,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}-arm64" >> $GITHUB_ENV    
         fi
 
     - name: Build and push amd64 image

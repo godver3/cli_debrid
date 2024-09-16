@@ -86,31 +86,23 @@ def add_collected_items(media_items_batch, recent=False):
                         if item_type == 'movie':
                             cursor = conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres, filled_by_file)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres, filled_by_file, runtime)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), 'unknown', collected_at, genres, filename
+                                datetime.now(), datetime.now(), 'unknown', collected_at, genres, filename, item.get('runtime')
                             ))
                         else:
-                            if imdb_id not in airtime_cache:
-                                airtime_cache[imdb_id] = get_existing_airtime(conn, imdb_id)
-                                if airtime_cache[imdb_id] is None:
-                                    airtime_cache[imdb_id] = get_show_airtime_by_imdb_id(imdb_id)
-                                if not airtime_cache[imdb_id]:
-                                    airtime_cache[imdb_id] = '19:00'
-                            
-                            airtime = airtime_cache[imdb_id]
                             cursor = conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres, filled_by_file)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres, filled_by_file, runtime)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), 'unknown', airtime, collected_at, genres, filename
+                                datetime.now(), datetime.now(), 'unknown', item.get('airtime'), collected_at, genres, filename, item.get('runtime')
                             ))
                         logging.info(f"Added new item as Collected: {normalized_title} (ID: {cursor.lastrowid})")
                 

@@ -13,12 +13,12 @@ def setup_logging():
     logging.getLogger('asyncio').setLevel(logging.WARNING)
 
     # Ensure logs directory exists
-    if not os.path.exists('logs'):
-        os.makedirs('logs')
+    if not os.path.exists('/user/logs'):
+        os.makedirs('/user/logs')
 
     # Ensure log files exist
     for log_file in ['debug.log', 'info.log', 'queue.log']:
-        log_path = os.path.join('logs', log_file)
+        log_path = os.path.join('/user/logs', log_file)
         if not os.path.exists(log_path):
             with open(log_path, 'w'):
                 pass
@@ -28,13 +28,13 @@ def setup_logging():
 
 def setup_directories():
     # Ensure db_content directory exists
-    if not os.path.exists('db_content'):
-        os.makedirs('db_content')
+    if not os.path.exists('/user/db_content'):
+        os.makedirs('/user/db_content')
 
 def backup_config():
-    config_path = 'config/config.json'
+    config_path = '/user/config/config.json'
     if os.path.exists(config_path):
-        backup_path = f'config/config_backup.json'
+        backup_path = f'/user/config/config_backup.json'
         shutil.copy2(config_path, backup_path)
         logging.info(f"Backup of config.json created: {backup_path}")
     else:
