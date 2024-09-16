@@ -166,24 +166,10 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
    mkdir -p ${HOME}/cli_debrid
    ```
 
-2. Create a `docker-compose.yml` file in the cli_debrid directory with the following content:
-   ```yaml
-   services:
-     cli_debrid:
-       image: godver3/cli_debrid:latest
-       pull_policy: always
-       container_name: cli_debrid
-       ports:
-         - "5000:5000"
-       volumes:
-         - ./cli_debrid/db_content:/app/db_content
-         - ./cli_debrid/config:/app/config
-         - ./cli_debrid/logs:/app/logs
-       environment:
-         - TZ=America/Edmonton
-       restart: unless-stopped
-       tty: true
-       stdin_open: true
+2. Download the `docker-compose.yml` file from the repository:
+   ```
+   cd ${HOME}/cli_debrid
+   curl -O https://raw.githubusercontent.com/godver3/cli_debrid/main/docker-compose.yml
    ```
 
 3. Start the container:
@@ -209,7 +195,7 @@ Ctrl-P then Ctrl-Q to detach from the container rather than exiting the script.
 
 ### Post-Setup
 
-- Monitor the logs at `${HOME}/cli_debrid/logs` - shout out to "lnav" as a great log viewer
+- Monitor the logs at `${HOME}/cli_debrid/user/logs` - shout out to "lnav" as a great log viewer
 - Check the content of your queues in the webUI
 - Use the web interface to monitor queue status and statistics. The statistics screen is essentially nonsense right now, but it's fun to look at
 - Adjust settings as needed to scrape for exactly the results you want
