@@ -7,8 +7,8 @@ import os
 import shutil
 from datetime import datetime
 
-CONFIG_LOCK_FILE = 'user/config/config.lock'
-CONFIG_FILE = 'user/config/config.json'
+CONFIG_LOCK_FILE = '/user/config/config.lock'
+CONFIG_FILE = '/user/config/config.json'
 
 def log_config_state(message, config):
     content_sources = config.get('Content Sources', {})

@@ -1,60 +1,83 @@
 import logging
-from api_tracker import api
-from typing import List, Dict, Any, Optional
+import grpc
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from settings import get_setting
-from typing import Tuple
+import metadata_service_pb2
+import metadata_service_pb2_grpc
+import json
 
 REQUEST_TIMEOUT = 15  # seconds
+
+def get_metadata_stub():
+    channel = grpc.insecure_channel('localhost:50051')
+    return metadata_service_pb2_grpc.MetadataServiceStub(channel)
+
+def parse_json_string(s):
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return s
 
 def get_metadata_battery_url(endpoint: str) -> str:
     return f"{get_setting('Metadata Battery', 'url')}/api/{endpoint}"
 
 def api_request(endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    logging.warning("api_request is deprecated and should be replaced with gRPC calls")
     url = get_metadata_battery_url(endpoint)
     try:
-        response = api.get(url, params=params, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching data from {url}: {str(e)}")
+        stub = get_metadata_stub()
+        if 'movie/metadata' in endpoint:
+            response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=params['imdb_id']))
+        elif 'show/metadata' in endpoint:
+            response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=params['imdb_id']))
+        elif 'movie/release_dates' in endpoint:
+            response = stub.GetMovieReleaseDates(metadata_service_pb2.IMDbRequest(imdb_id=params['imdb_id']))
+        elif 'show/seasons' in endpoint:
+            response = stub.GetShowSeasons(metadata_service_pb2.IMDbRequest(imdb_id=params['imdb_id']))
+        elif 'tmdb_to_imdb' in endpoint:
+            response = stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id=params['tmdb_id']))
+        else:
+            logging.error(f"Unsupported endpoint: {endpoint}")
+            return {}
+        return {k: parse_json_string(v) for k, v in response.metadata.items()} if hasattr(response, 'metadata') else {'imdb_id': response.imdb_id}
+    except grpc.RpcError as e:
+        logging.error(f"gRPC error fetching data for {endpoint}: {str(e)}")
         return {}
 
 def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, item_media_type: Optional[str] = None) -> Dict[str, Any]:
     if not imdb_id and not tmdb_id:
         raise ValueError("Either imdb_id or tmdb_id must be provided")
 
+    stub = get_metadata_stub()
+
     if tmdb_id and not imdb_id:
-        imdb_data = api_request(f"tmdb_to_imdb/{tmdb_id}")
-        imdb_id = imdb_data.get('imdb_id')
+        tmdb_response = stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id=str(tmdb_id)))
+        imdb_id = tmdb_response.imdb_id
         if not imdb_id:
             logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}")
             return {}
 
     media_type = item_media_type.lower() if item_media_type else 'movie'
-    endpoint = 'show/metadata' if media_type == 'tv' else 'movie/metadata'
-    data = api_request(f"{endpoint}/{imdb_id}")
-    logging.debug(f"API response for IMDb ID {imdb_id}: {data}")
+    if media_type == 'tv':
+        response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    else:
+        response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
 
-    metadata = data.get('data', {}).get('metadata', {})
+    metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
+    logging.debug(f"API response for IMDb ID {imdb_id}: {metadata}")
 
     # Process common fields
     metadata['imdb_id'] = metadata.get('ids', {}).get('imdb') or imdb_id
     metadata['tmdb_id'] = int(metadata.get('ids', {}).get('tmdb', 0)) or tmdb_id
-    metadata['title'] = data.get('data', {}).get('title') or metadata.get('title', 'Unknown Title')
+    metadata['title'] = metadata.get('title', 'Unknown Title')
     
     # Update the year handling
-    year = data.get('data', {}).get('year')
-    if year is not None:
-        try:
-            metadata['year'] = int(year)
-        except ValueError:
-            metadata['year'] = None
-    else:
-        metadata['year'] = None
+    year = metadata.get('year')
+    metadata['year'] = int(year) if year is not None else None
     
     metadata['genres'] = metadata.get('genres', [])
-    metadata['runtime'] = metadata.get('runtime')  # Extract runtime from metadata
+    metadata['runtime'] = metadata.get('runtime')
 
     is_anime = 'anime' in [genre.lower() for genre in metadata.get('genres', [])]
     metadata['genres'] = ['anime'] if is_anime else []
@@ -64,13 +87,8 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         metadata['release_date'] = get_release_date(metadata)
     elif media_type == 'tv':
         metadata['first_aired'] = parse_date(metadata.get('first_aired'))
-        seasons_data = api_request(f"show/seasons/{imdb_id}")
-        logging.debug(f"Seasons data for IMDb ID {imdb_id}: {seasons_data}")
-        if isinstance(seasons_data, list) and len(seasons_data) > 0 and isinstance(seasons_data[0], dict):
-            metadata['seasons'] = seasons_data[0]
-        else:
-            logging.error(f"Unexpected seasons_data format for IMDb ID {imdb_id}: {seasons_data}")
-            metadata['seasons'] = {}
+        seasons_response = stub.GetShowSeasons(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+        metadata['seasons'] = {season.season_number: {"episode_count": season.episode_count} for season in seasons_response.seasons}
 
     logging.debug(f"Extracted metadata: {metadata}")
     return metadata
@@ -93,6 +111,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
 
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     processed_items = {'movies': [], 'episodes': []}
+    stub = get_metadata_stub()
 
     for item in media_items:
         logging.debug(f"Processing item: {item}")
@@ -106,11 +125,16 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             if item['media_type'].lower() == 'movie':
                 processed_items['movies'].append(metadata)
             elif item['media_type'].lower() in ['tv', 'show']:
-                seasons = metadata.get('seasons', {})
-                for season_number, season_data in seasons.items():
-                    episodes = season_data.get('episodes', {})
-                    for episode_number, episode_data in episodes.items():
-                        episode_item = create_episode_item(metadata, season_number, episode_number, episode_data, metadata['genres'])
+                seasons_response = stub.GetShowSeasons(metadata_service_pb2.IMDbRequest(imdb_id=metadata['imdb_id']))
+                for season in seasons_response.seasons:
+                    for episode_number in range(1, season.episode_count + 1):
+                        episode_response = stub.GetEpisodeMetadata(metadata_service_pb2.EpisodeRequest(
+                            imdb_id=metadata['imdb_id'],
+                            season_number=season.season_number,
+                            episode_number=episode_number
+                        ))
+                        episode_data = {k: parse_json_string(v) for k, v in episode_response.metadata.items()}
+                        episode_item = create_episode_item(metadata, season.season_number, episode_number, episode_data, metadata['genres'])
                         processed_items['episodes'].append(episode_item)
 
         except Exception as e:
@@ -120,11 +144,13 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     return processed_items
 
 def get_release_date(media_details: Dict[str, Any]) -> str:
+    stub = get_metadata_stub()
     imdb_id = media_details.get('imdb_id')
     media_type = media_details.get('media_type', 'movie').lower()
 
     if media_type == 'movie':
-        release_dates = api_request(f"movie/release_dates/{imdb_id}")
+        release_dates_response = stub.GetMovieReleaseDates(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+        release_dates = json.loads(release_dates_response.release_dates)
         logging.debug(f"Release dates for IMDb ID {imdb_id}: {release_dates}")
         
         current_date = datetime.now()
@@ -149,19 +175,14 @@ def get_release_date(media_details: Dict[str, Any]) -> str:
             elif isinstance(release, str) and release != "battery":
                 logging.warning(f"Unexpected release format: {release}")
 
-        # Handle the specific API response format
-        if isinstance(release_dates, list) and len(release_dates) > 0:
-            for item in release_dates:
-                if isinstance(item, dict):
-                    for country_releases in item.values():
-                        if isinstance(country_releases, list):
-                            for release in country_releases:
-                                process_release(release)
-                elif isinstance(item, str) and item != "battery" and item != "trakt":
-                    logging.warning(f"Unexpected item in release_dates: {item}")
-        else:
-            logging.error(f"Unexpected release_dates format: {release_dates}")
-            return 'Unknown'
+        for item in release_dates:
+            if isinstance(item, dict):
+                for country_releases in item.values():
+                    if isinstance(country_releases, list):
+                        for release in country_releases:
+                            process_release(release)
+            elif isinstance(item, str) and item != "battery" and item != "trakt":
+                logging.warning(f"Unexpected item in release_dates: {item}")
 
         # Prioritize release dates
         if digital_physical_releases:
@@ -219,29 +240,10 @@ def get_imdb_id_if_missing(item: Dict[str, Any]) -> Optional[str]:
     
     tmdb_id = item['tmdb_id']
     
-    imdb_data = api_request(f"tmdb_to_imdb/{tmdb_id}")
-    return imdb_data.get('imdb_id')
+    stub = get_metadata_stub()
+    tmdb_response = stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id=str(tmdb_id)))
+    return tmdb_response.imdb_id
 
-def parse_date(date_str: Optional[str]) -> Optional[str]:
-    if date_str is None:
-        return None
-
-    date_formats = [
-        "%Y-%m-%dT%H:%M:%S.%fZ",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d",
-    ]
-
-    for date_format in date_formats:
-        try:
-            return datetime.strptime(date_str, date_format).strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
-            continue
-
-    logging.warning(f"Unable to parse date: {date_str}")
-    return None
-    
 def refresh_release_dates():
     from database import get_all_media_items, update_release_date_and_state
     logging.info("Starting refresh_release_dates function")
@@ -250,6 +252,8 @@ def refresh_release_dates():
     items_to_refresh = get_all_media_items(state="Unreleased") + get_all_media_items(state="Wanted")
     logging.info(f"Found {len(items_to_refresh)} items to refresh")
 
+    stub = get_metadata_stub()
+
     for index, item in enumerate(items_to_refresh, 1):
         logging.info(f"Processing item {index}/{len(items_to_refresh)}: {item['title']} (Type: {item['media_type']}, IMDb ID: {item['imdb_id']})")
         try:
@@ -257,7 +261,11 @@ def refresh_release_dates():
             media_type = 'movie' if item['media_type'] == 'movie' else 'tv'
 
             logging.info(f"Fetching metadata for IMDb ID: {imdb_id}")
-            metadata = get_metadata(imdb_id=imdb_id)
+            if media_type == 'movie':
+                response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+            else:
+                response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+            metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
 
             if metadata:
                 logging.info("Getting release date")
@@ -292,18 +300,22 @@ def refresh_release_dates():
     logging.info("Finished refresh_release_dates function")
 
 def get_episode_count_for_seasons(imdb_id: str, seasons: List[int]) -> int:
-    seasons_data = api_request(f"episode/seasons/{imdb_id}")
-    all_seasons = seasons_data.get('episode/seasons', {})
-    return sum(all_seasons.get(str(season), {}).get('episode_count', 0) for season in seasons)
+    stub = get_metadata_stub()
+    seasons_response = stub.GetShowSeasons(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    all_seasons = {season.season_number: season.episode_count for season in seasons_response.seasons}
+    return sum(all_seasons.get(season, 0) for season in seasons)
 
 def get_all_season_episode_counts(imdb_id: str) -> Dict[int, int]:
-    seasons_data = api_request(f"episode/seasons/{imdb_id}")
-    return {int(season): data['episode_count'] for season, data in seasons_data.get('episode/seasons', {}).items() if season != '0'}
+    stub = get_metadata_stub()
+    seasons_response = stub.GetShowSeasons(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    return {season.season_number: season.episode_count for season in seasons_response.seasons if season.season_number != 0}
 
 def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
     DEFAULT_AIRTIME = "19:00"
-    metadata = api_request(f"metadata/{imdb_id}")
-    return metadata.get('metadata', {}).get('airs', {}).get('time', DEFAULT_AIRTIME)
+    stub = get_metadata_stub()
+    response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
+    return metadata.get('airs', {}).get('time', DEFAULT_AIRTIME)
 
 def test_metadata_processing():
     test_items = [
@@ -336,38 +348,32 @@ if __name__ == "__main__":
     test_metadata_processing()
 
 def get_tmdb_id_and_media_type(imdb_id: str) -> Tuple[Optional[int], Optional[str]]:
-    # First, try to get the TMDB ID
-    tmdb_data = api_request(f"imdb_to_tmdb/{imdb_id}")
-    tmdb_id = tmdb_data.get('tmdb_id')
+    stub = get_metadata_stub()
     
-    if not tmdb_id:
-        logging.error(f"Could not find TMDB ID for IMDb ID {imdb_id}")
-        return None, None
-
-    # Now, let's determine the media type by checking both movie and show endpoints
-    movie_data = api_request(f"movie/metadata/{imdb_id}")
-    show_data = api_request(f"show/metadata/{imdb_id}")
-
-    if movie_data.get('data'):
-        return int(tmdb_id), 'movie'
-    elif show_data.get('data'):
-        return int(tmdb_id), 'tv'
-    else:
-        logging.error(f"Could not determine media type for IMDb ID {imdb_id}")
-        return int(tmdb_id), None
+    # Try to get movie metadata
+    movie_response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    if movie_response.metadata:
+        movie_data = {k: parse_json_string(v) for k, v in movie_response.metadata.items()}
+        return int(movie_data.get('ids', {}).get('tmdb', 0)), 'movie'
+    
+    # If not a movie, try to get show metadata
+    show_response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    if show_response.metadata:
+        show_data = {k: parse_json_string(v) for k, v in show_response.metadata.items()}
+        return int(show_data.get('ids', {}).get('tmdb', 0)), 'tv'
+    
+    logging.error(f"Could not determine media type for IMDb ID {imdb_id}")
+    return None, None
     
 def get_runtime(imdb_id: str, media_type: str) -> Optional[int]:
-    """
-    Get the runtime for a movie or episode.
+    stub = get_metadata_stub()
     
-    :param imdb_id: IMDb ID of the movie or show
-    :param media_type: 'movie' or 'episode'
-    :return: Runtime in minutes, or None if not available
-    """
-    endpoint = 'movie/metadata' if media_type == 'movie' else 'show/metadata'
-    data = api_request(f"{endpoint}/{imdb_id}")
+    if media_type == 'movie':
+        response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+    else:
+        response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
     
-    metadata = data.get('data', {}).get('metadata', {})
+    metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
     runtime = metadata.get('runtime')
     
     if runtime is not None:
@@ -379,20 +385,14 @@ def get_runtime(imdb_id: str, media_type: str) -> Optional[int]:
     return None
 
 def get_episode_airtime(imdb_id: str) -> Optional[str]:
-    """
-    Get the airtime for an episode.
+    stub = get_metadata_stub()
+    response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
     
-    :param imdb_id: IMDb ID of the show
-    :return: Airtime in HH:MM format, or None if not available
-    """
-    data = api_request(f"show/metadata/{imdb_id}")
-    
-    metadata = data.get('data', {}).get('metadata', {})
+    metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
     airs = metadata.get('airs', {})
     airtime = airs.get('time')
     
     if airtime:
-        # Ensure the airtime is in HH:MM format
         try:
             parsed_time = datetime.strptime(airtime, "%H:%M")
             return parsed_time.strftime("%H:%M")

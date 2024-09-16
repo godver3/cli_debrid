@@ -147,7 +147,7 @@ def set_compact_preference():
 def index():
     logging.debug(f"Statistics request: {request.url}")
 
-    os.makedirs('user/db_content', exist_ok=True)
+    os.makedirs('/user/db_content', exist_ok=True)
 
     start_time = time.time()
 
