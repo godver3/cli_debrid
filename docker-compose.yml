@@ -3,9 +3,9 @@ version: '3.8'
 services:
 
   cli_debrid:
-    image: godver3/cli_debrid:latest
+    image: godver3/cli_debrid:dev
     pull_policy: always
-    container_name: cli_debrid
+    container_name: cli_debrid_app
     ports:
       - "5000:5000"
     volumes:
@@ -31,7 +31,7 @@ services:
       - cli_network
 
   cli_battery:
-    build: .
+    image: godver3/cli_battery:main
     container_name: cli_battery_app
     environment:
       - DATABASE_URL=postgresql://cli_debrid:cli_debrid@db:5432/cli_battery_database
