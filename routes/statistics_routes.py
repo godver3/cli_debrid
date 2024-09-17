@@ -13,6 +13,7 @@ import time
 from database import get_recently_added_items, get_poster_url, get_collected_counts
 from debrid.real_debrid import get_active_downloads, check_daily_usage
 import logging
+from metadata.metadata import get_show_airtime_by_imdb_id
 
 statistics_bp = Blueprint('statistics', __name__)
 
@@ -89,7 +90,7 @@ def get_recently_aired_and_airing_soon():
     two_days_ago = now - timedelta(days=2)
     
     query = """
-    SELECT DISTINCT title, season_number, episode_number, release_date, airtime
+    SELECT DISTINCT title, season_number, episode_number, release_date, airtime, imdb_id
     FROM media_items
     WHERE type = 'episode' AND release_date >= ? AND release_date <= ?
     ORDER BY release_date, airtime
@@ -104,20 +105,36 @@ def get_recently_aired_and_airing_soon():
     airing_soon = []
     
     for result in results:
-        title, season, episode, release_date, airtime = result
-        air_datetime = datetime.combine(datetime.fromisoformat(release_date), datetime.strptime(airtime, '%H:%M').time())
-        
-        item = {
-            'title': title,
-            'season': season,
-            'episode': episode,
-            'air_datetime': air_datetime
-        }
-        
-        if air_datetime <= now:
-            recently_aired.append(item)
-        else:
-            airing_soon.append(item)
+        title, season, episode, release_date, airtime, imdb_id = result
+        try:
+            release_date = datetime.fromisoformat(release_date)
+            
+            if airtime is None or airtime == '':
+                # If airtime is None or empty, fetch it from metadata
+                airtime = get_show_airtime_by_imdb_id(imdb_id)
+            
+            try:
+                airtime = datetime.strptime(airtime, '%H:%M').time()
+            except ValueError:
+                logging.warning(f"Invalid airtime format for {title}: {airtime}. Using default.")
+                airtime = datetime.strptime("19:00", '%H:%M').time()
+            
+            air_datetime = datetime.combine(release_date.date(), airtime)
+            
+            item = {
+                'title': title,
+                'season': season,
+                'episode': episode,
+                'air_datetime': air_datetime
+            }
+            
+            if air_datetime <= now:
+                recently_aired.append(item)
+            else:
+                airing_soon.append(item)
+        except ValueError as e:
+            logging.error(f"Error parsing date/time for {title}: {e}")
+            continue
     
     return recently_aired, airing_soon
 

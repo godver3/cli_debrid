@@ -4,7 +4,7 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 
-{% for section in ['Plex', 'RealDebrid', 'Metadata Battery'] %}
+{% for section in ['Plex', 'RealDebrid', 'Metadata Battery', 'Trakt'] %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -29,3 +29,22 @@
         </div>
     </div>
 {% endfor %}
+
+<!-- Trakt Authorization Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Trakt Authorization</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <p class="settings-description">Click the button below to authorize Trakt. You must first enter your Client ID and Client Secret. These can be retrieved by creating an app at 
+            <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a>
+        </p>
+        <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
+        <div id="trakt-auth-status" class="trakt-status"></div>
+        <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
+            <p>Your authorization code is: <strong id="trakt-code"></strong></p>
+            <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
+        </div>
+    </div>
+</div>

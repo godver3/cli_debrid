@@ -8,7 +8,7 @@ from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_
 from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
-from not_wanted_magnets import task_purge_not_wanted_magnets_file
+from not_wanted_magnets import purge_not_wanted_magnets_file
 import traceback
 from datetime import datetime, timedelta
 from database import get_db_connection
@@ -51,6 +51,7 @@ class ProgramRunner:
             'task_refresh_release_dates': 3600,
             'task_purge_not_wanted_magnets_file': 604800,
             'task_generate_airtime_report': 3600,
+            'task_check_service_connectivity': 60,
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -67,7 +68,8 @@ class ProgramRunner:
             'task_plex_full_scan', 
             'task_debug_log', 
             'task_refresh_release_dates',
-            'task_generate_airtime_report'
+            'task_generate_airtime_report',
+            'task_check_service_connectivity'
         }
         
         # Add this line to store content sources
@@ -128,10 +130,58 @@ class ProgramRunner:
         if task_name not in self.enabled_tasks:
             return False
         current_time = time.time()
-        if current_time - self.last_run_times[task_name] >= self.task_intervals[task_name]:
+        time_since_last_run = current_time - self.last_run_times[task_name]
+        should_run = time_since_last_run >= self.task_intervals[task_name]
+        if should_run:
             self.last_run_times[task_name] = current_time
-            return True
-        return False
+        return should_run
+
+    def task_check_service_connectivity(self):
+        logging.debug("Checking service connectivity")
+        from routes.program_operation_routes import check_service_connectivity
+        if check_service_connectivity():
+            logging.debug("Service connectivity check passed")
+        else:
+            logging.error("Service connectivity check failed")
+            self.handle_connectivity_failure()
+
+    def handle_connectivity_failure(self):
+        from routes.program_operation_routes import stop_program, check_service_connectivity
+
+        logging.warning("Pausing program queue due to connectivity failure")
+        self.pause_queue()
+
+        retry_count = 0
+        max_retries = 5  # 5 minutes (5 * 60 seconds)
+
+        while retry_count < max_retries:
+            time.sleep(60)  # Wait for 1 minute
+            retry_count += 1
+
+            if check_service_connectivity():
+                logging.info("Service connectivity restored")
+                self.resume_queue()
+                return
+
+            logging.warning(f"Service connectivity check failed. Retry {retry_count}/{max_retries}")
+
+        logging.error("Service connectivity not restored after 5 minutes. Stopping the program.")
+        stop_result = stop_program()
+        logging.info(f"Program stop result: {stop_result}")
+
+    def pause_queue(self):
+        from queue_manager import QueueManager
+
+        QueueManager().pause_queue()
+        self.queue_paused = True
+        logging.info("Queue paused")
+
+    def resume_queue(self):
+        from queue_manager import QueueManager
+
+        QueueManager().resume_queue()
+        self.queue_paused = False
+        logging.info("Queue resumed")
 
     # Update this method to use the cached content sources
     def process_queues(self):
@@ -147,7 +197,13 @@ class ProgramRunner:
             self.task_refresh_release_dates()
         if self.should_run_task('task_debug_log'):
             self.task_debug_log()
-
+        if self.should_run_task('task_check_service_connectivity'):
+            self.task_check_service_connectivity()
+        if self.should_run_task('task_purge_not_wanted_magnets_file'):
+            self.task_purge_not_wanted_magnets_file()
+        if self.should_run_task('task_generate_airtime_report'):
+            self.task_generate_airtime_report()
+            
         # Process content source tasks
         for source, data in self.get_content_sources().items():
             task_name = f'task_{source}_wanted'
@@ -177,57 +233,68 @@ class ProgramRunner:
 
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()
-
+        
     def process_content_source(self, source, data):
         source_type = source.split('_')[0]
         versions = data.get('versions', {})
 
         logging.debug(f"Processing content source: {source} (type: {source_type})")
 
-        wanted_content = []
-        if source_type == 'Overseerr':
-            wanted_content = get_wanted_from_overseerr()
-        elif source_type == 'MDBList':
-            mdblist_urls = data.get('urls', '').split(',')
-            for mdblist_url in mdblist_urls:
-                mdblist_url = mdblist_url.strip()
-                wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
-        elif source_type == 'Trakt Watchlist':
-            wanted_content = get_wanted_from_trakt_watchlist()
-        elif source_type == 'Trakt Lists':
-            trakt_lists = data.get('trakt_lists', '').split(',')
-            for trakt_list in trakt_lists:
-                trakt_list = trakt_list.strip()
-                wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
-        elif source_type == 'Collected':
-            wanted_content = get_wanted_from_collected()
-        else:
-            logging.warning(f"Unknown source type: {source_type}")
-            return
-
-        logging.debug(f"Retrieved wanted content from {source}: {len(wanted_content)} items")
-
-        if wanted_content:
-            total_items = 0
-            if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
-                # Handle list of tuples
-                for items, item_versions in wanted_content:
-                    processed_items = process_metadata(items)
-                    if processed_items:
-                        all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                        add_wanted_items(all_items, item_versions or versions)
-                        total_items += len(all_items)
+        try:
+            wanted_content = []
+            if source_type == 'Overseerr':
+                wanted_content = get_wanted_from_overseerr()
+            elif source_type == 'MDBList':
+                mdblist_urls = data.get('urls', '').split(',')
+                for mdblist_url in mdblist_urls:
+                    mdblist_url = mdblist_url.strip()
+                    wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
+            elif source_type == 'Trakt Watchlist':
+                wanted_content = get_wanted_from_trakt_watchlist()
+            elif source_type == 'Trakt Lists':
+                trakt_lists = data.get('trakt_lists', '').split(',')
+                for trakt_list in trakt_lists:
+                    trakt_list = trakt_list.strip()
+                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+            elif source_type == 'Collected':
+                wanted_content = get_wanted_from_collected()
             else:
-                # Handle single list of items
-                processed_items = process_metadata(wanted_content)
-                if processed_items:
-                    all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                    add_wanted_items(all_items, versions)
-                    total_items += len(all_items)
-            
-            logging.info(f"Added {total_items} wanted items from {source}")
-        else:
-            logging.warning(f"No wanted content retrieved from {source}")
+                logging.warning(f"Unknown source type: {source_type}")
+                return
+
+            logging.debug(f"Retrieved wanted content from {source}: {len(wanted_content)} items")
+
+            if wanted_content:
+                total_items = 0
+                if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
+                    # Handle list of tuples
+                    for items, item_versions in wanted_content:
+                        try:
+                            processed_items = process_metadata(items)
+                            if processed_items:
+                                all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                                add_wanted_items(all_items, item_versions or versions)
+                                total_items += len(all_items)
+                        except Exception as e:
+                            logging.error(f"Error processing items from {source}: {str(e)}")
+                else:
+                    # Handle single list of items
+                    try:
+                        processed_items = process_metadata(wanted_content)
+                        if processed_items:
+                            all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                            add_wanted_items(all_items, versions)
+                            total_items += len(all_items)
+                    except Exception as e:
+                        logging.error(f"Error processing items from {source}: {str(e)}")
+                
+                logging.info(f"Added {total_items} wanted items from {source}")
+            else:
+                logging.warning(f"No wanted content retrieved from {source}")
+
+        except Exception as e:
+            logging.error(f"Error processing content source {source}: {str(e)}")
+            logging.error(traceback.format_exc())
 
     def get_wanted_content(self, source_type, data):
         versions = data.get('versions', {})
@@ -268,9 +335,9 @@ class ProgramRunner:
 
     def task_refresh_release_dates(self):
         refresh_release_dates()
-        
-    def task_refresh_release_dates(self):
-        task_purge_not_wanted_magnets_file()
+    
+    def task_purge_not_wanted_magnets_file(self):
+        purge_not_wanted_magnets_file()
 
     def task_generate_airtime_report(self):
         generate_airtime_report()
