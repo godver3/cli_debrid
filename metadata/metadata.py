@@ -10,15 +10,22 @@ from settings import get_setting
 import metadata_service_pb2
 import metadata_service_pb2_grpc
 import json
+import re
 
 REQUEST_TIMEOUT = 15  # seconds
 
 def get_metadata_stub():
     grpc_url = get_setting('Metadata Battery', 'url')
+    
+    # Remove leading "http://" or "https://"
+    grpc_url = re.sub(r'^https?://', '', grpc_url)
+    
     # Remove trailing ":5000" or ":5000/" if present
-    grpc_url = grpc_url.rstrip('/').removesuffix(':5000')
+    grpc_url = grpc_url.rstrip('/').removesuffix(':5001')
+    
     # Append ":50051"
     grpc_url += ':50051'
+    
     channel = grpc.insecure_channel(grpc_url)
     return metadata_service_pb2_grpc.MetadataServiceStub(channel)
 

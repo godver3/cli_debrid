@@ -56,7 +56,7 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "url": {
             "type": "string",
-            "description": "Metadata Battery URL. Leave as default (http://cli_battery_app:50051) unless you have set up the Metadata Battery in a different location.",
+            "description": "Metadata Battery URL. Leave as default unless you have set up the Metadata Battery in a different location.",
             "default": "http://cli_battery_app:50051"
         }
     },
@@ -138,7 +138,7 @@ SETTINGS_SCHEMA = {
         }
     },
     "Trakt": {
-        "tab": "Additional Settings",
+        "tab": "Required Settings",
         "client_id": {
             "type": "string",
             "description": "Trakt client ID",
