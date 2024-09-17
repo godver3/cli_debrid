@@ -15,7 +15,7 @@ from database import add_wanted_items, get_db_connection, bulk_delete_by_id, cre
 import os
 from api_tracker import api 
 import time
-from metadata.metadata import get_metadata, get_tmdb_id_and_media_type
+from metadata.metadata import get_metadata, get_tmdb_id_and_media_type, refresh_release_dates
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -38,6 +38,12 @@ def bulk_delete_by_imdb():
         return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} items with {id_type.upper()}: {id_value}'})
     else:
         return jsonify({'success': False, 'error': f'No items found with {id_type.upper()}: {id_value}'})
+
+@debug_bp.route('/refresh_release_dates', methods=['POST'])
+@admin_required
+def refresh_release_dates_route():
+    refresh_release_dates()
+    return jsonify({'success': True, 'message': 'Release dates refreshed successfully'})
 
 @debug_bp.route('/delete_database', methods=['POST'])
 @admin_required
