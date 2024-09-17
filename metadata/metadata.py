@@ -14,7 +14,12 @@ import json
 REQUEST_TIMEOUT = 15  # seconds
 
 def get_metadata_stub():
-    channel = grpc.insecure_channel('localhost:50051')
+    grpc_url = get_setting('Metadata Battery', 'url')
+    # Remove trailing ":5000" or ":5000/" if present
+    grpc_url = grpc_url.rstrip('/').removesuffix(':5000')
+    # Append ":50051"
+    grpc_url += ':50051'
+    channel = grpc.insecure_channel(grpc_url)
     return metadata_service_pb2_grpc.MetadataServiceStub(channel)
 
 def parse_json_string(s):
