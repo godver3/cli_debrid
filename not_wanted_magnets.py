@@ -26,7 +26,7 @@ def is_magnet_not_wanted(magnet):
     not_wanted = load_not_wanted_magnets()
     return magnet in not_wanted
 
-def task_purge_not_wanted_magnets_file():
+def purge_not_wanted_magnets_file():
     # Purge the contents of the file by overwriting it with an empty set
     with open('/user/db_content/not_wanted_magnets.pkl', 'wb') as f:
         pickle.dump(set(), f)

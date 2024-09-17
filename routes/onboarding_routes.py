@@ -5,6 +5,8 @@ from settings import load_config, get_setting, save_config
 from settings_schema import SETTINGS_SCHEMA
 from config_manager import add_scraper, add_content_source, load_config
 import logging
+from routes.trakt_routes import check_trakt_auth_status
+import json
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
@@ -21,13 +23,20 @@ def get_next_onboarding_step():
         ('Plex', 'url'),
         ('Plex', 'token'),
         ('RealDebrid', 'api_key'),
-        ('Metadata Battery', 'url')
+        ('Metadata Battery', 'url'),
+        ('Trakt', 'client_id'),
+        ('Trakt', 'client_secret')
     ]
     
     for category, key in required_settings:
         if not get_setting(category, key):
             return 2
     
+    # Check if Trakt is authorized
+    trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
+    if trakt_status['status'] != 'authorized':
+        return 2
+
     # Step 3: Check if at least one scraper is configured
     if 'Scrapers' not in config or not config['Scrapers']:
         return 3
@@ -87,9 +96,10 @@ def onboarding_step(step):
             ('Plex', 'token'),
             ('Plex', 'shows_libraries'),
             ('Plex', 'movie_libraries'),
-            ('Overseerr', 'url'),
-            ('Overseerr', 'api_key'),
-            ('RealDebrid', 'api_key')
+            ('Metadata Battery', 'url'),
+            ('RealDebrid', 'api_key'),
+            ('Trakt', 'client_id'),
+            ('Trakt', 'client_secret')
         ]
 
         if request.method == 'POST':
@@ -101,12 +111,15 @@ def onboarding_step(step):
                     'shows_libraries': request.form['shows_libraries'],
                     'movie_libraries': request.form['movie_libraries']
                 }
-                config['Overseerr'] = {
-                    'url': request.form['overseerr_url'],
-                    'api_key': request.form['overseerr_api_key']
-                }
                 config['RealDebrid'] = {
                     'api_key': request.form['realdebrid_api_key']
+                }
+                config['Metadata Battery'] = {
+                    'url': request.form['metadata_battery_url']
+                }
+                config['Trakt'] = {
+                    'client_id': request.form['trakt_client_id'],
+                    'client_secret': request.form['trakt_client_secret']
                 }
                 save_config(config)
                 
