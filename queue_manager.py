@@ -34,6 +34,7 @@ class QueueManager:
             "Blacklisted": BlacklistedQueue(),
             "Pending Uncached": PendingUncachedQueue()
         }
+        self.paused = False
 
     def update_all_queues(self):
         logging.debug("Updating all queues")
@@ -64,29 +65,53 @@ class QueueManager:
         return None  # or raise an exception if the item should always be in a queue
         
     def process_checking(self):
-        self.queues["Checking"].process(self)
-        self.queues["Checking"].clean_up_checking_times()
+        if not self.paused:
+            self.queues["Checking"].process(self)
+            self.queues["Checking"].clean_up_checking_times()
+        else:
+            logging.debug("Skipping Checking queue processing: Queue is paused")
 
     def process_wanted(self):
-        self.queues["Wanted"].process(self)
-        
+        if not self.paused:
+            self.queues["Wanted"].process(self)
+        else:
+            logging.debug("Skipping Wanted queue processing: Queue is paused")
+
     def process_scraping(self):
-        self.queues["Scraping"].process(self)
-        
+        if not self.paused:
+            self.queues["Scraping"].process(self)
+        else:
+            logging.debug("Skipping Scraping queue processing: Queue is paused")
+
     def process_adding(self):
-        self.queues["Adding"].process(self)
-        
+        if not self.paused:
+            self.queues["Adding"].process(self)
+        else:
+            logging.debug("Skipping Adding queue processing: Queue is paused")
+
     def process_unreleased(self):
-        self.queues["Unreleased"].process(self)
-        
+        if not self.paused:
+            self.queues["Unreleased"].process(self)
+        else:
+            logging.debug("Skipping Unreleased queue processing: Queue is paused")
+
     def process_sleeping(self):
-        self.queues["Sleeping"].process(self)
-        
+        if not self.paused:
+            self.queues["Sleeping"].process(self)
+        else:
+            logging.debug("Skipping Sleeping queue processing: Queue is paused")
+
     def process_blacklisted(self):
-        self.queues["Blacklisted"].process(self)
+        if not self.paused:
+            self.queues["Blacklisted"].process(self)
+        else:
+            logging.debug("Skipping Blacklisted queue processing: Queue is paused")
 
     def process_pending_uncached(self):
-        self.queues["Pending Uncached"].process(self)
+        if not self.paused:
+            self.queues["Pending Uncached"].process(self)
+        else:
+            logging.debug("Skipping Pending Uncached queue processing: Queue is paused")
 
     def blacklist_item(self, item: Dict[str, Any], from_queue: str):
         self.queues["Blacklisted"].blacklist_item(item, self)
@@ -206,5 +231,22 @@ class QueueManager:
 
     def get_wake_count(self, item_id):
         return wake_count_manager.get_wake_count(item_id)
+
+    def pause_queue(self):
+        if not self.paused:
+            self.paused = True
+            logging.info("Queue processing paused")
+        else:
+            logging.warning("Queue is already paused")
+
+    def resume_queue(self):
+        if self.paused:
+            self.paused = False
+            logging.info("Queue processing resumed")
+        else:
+            logging.warning("Queue is not paused")
+
+    def is_paused(self):
+        return self.paused
 
     # Add other methods as needed
