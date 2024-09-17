@@ -188,9 +188,9 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     logging.info(f"Processed {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes")
     return processed_items
 
-def get_release_date(media_details: Dict[str, Any]) -> str:
+def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = None) -> str:
     release_dates = media_details.get('release_dates', {})
-    logging.info(f"Processing release dates for IMDb ID: {media_details['imdb_id']}")
+    logging.info(f"Processing release dates for IMDb ID: {imdb_id}")
 
     logging.debug(f"Release dates: {release_dates}")
     
@@ -216,7 +216,7 @@ def get_release_date(media_details: Dict[str, Any]) -> str:
 
     if digital_physical_releases:
         return min(digital_physical_releases).strftime("%Y-%m-%d")
-    
+
     old_theatrical_releases = [date for date in theatrical_releases if date < current_date - timedelta(days=180)]
     if old_theatrical_releases:
         return max(old_theatrical_releases).strftime("%Y-%m-%d")
@@ -224,12 +224,11 @@ def get_release_date(media_details: Dict[str, Any]) -> str:
     old_releases = [date for date in all_releases if date < current_date - timedelta(days=180)]
     if old_releases:
         return max(old_releases).strftime("%Y-%m-%d")
-    
-    if all_releases:
-        return min(all_releases).strftime("%Y-%m-%d")
-    
-    logging.warning(f"No valid release date found for IMDb ID: {media_details['imdb_id']}")
-    return 'Unknown'
+
+    # If we've reached this point, all releases are in the future
+    # We should either return None or a placeholder date
+    logging.warning(f"No valid release date found for IMDb ID: {imdb_id}. All releases are in the future.")
+    return "Unknown"
 
 def parse_date(date_str: Optional[str]) -> Optional[str]:
     if date_str is None:
@@ -276,10 +275,26 @@ def refresh_release_dates():
     stub = get_metadata_stub()
 
     for index, item in enumerate(items_to_refresh, 1):
-        logging.info(f"Processing item {index}/{len(items_to_refresh)}: {item['title']} (Type: {item['media_type']}, IMDb ID: {item['imdb_id']})")
         try:
-            imdb_id = item['imdb_id']
-            media_type = 'movie' if item['media_type'] == 'movie' else 'tv'
+            # Access items using column names as indices
+            title = item['title'] if 'title' in item.keys() else 'Unknown Title'
+            media_type = item['type'] if 'type' in item.keys() else 'Unknown Type'
+            imdb_id = item['imdb_id'] if 'imdb_id' in item.keys() else None
+
+            # Log item details, including any missing information
+            log_message = f"Processing item {index}/{len(items_to_refresh)}:"
+            log_message += f" Title: {title}"
+            log_message += f" Type: {media_type}"
+            log_message += f" IMDb ID: {imdb_id}"
+            logging.info(log_message)
+            
+            # Check for missing essential information
+            if not imdb_id:
+                logging.warning(f"Skipping item {index} due to missing imdb_id")
+                continue
+
+            # Determine the actual media type
+            media_type = 'movie' if item['type'].lower() == 'movie' else 'tv'
 
             logging.info(f"Fetching metadata for IMDb ID: {imdb_id}")
             if media_type == 'movie':
@@ -290,7 +305,7 @@ def refresh_release_dates():
 
             if metadata:
                 logging.info("Getting release date")
-                new_release_date = get_release_date(metadata)
+                new_release_date = get_release_date(metadata, imdb_id)
                 logging.info(f"New release date: {new_release_date}")
 
                 if new_release_date == 'Unknown':
@@ -309,14 +324,16 @@ def refresh_release_dates():
                 if new_state != item['state'] or new_release_date != item['release_date']:
                     logging.info("Updating release date and state in database")
                     update_release_date_and_state(item['id'], new_release_date, new_state)
-                    logging.info(f"Updated: {item['title']} has a release date of: {new_release_date}")
+                    logging.info(f"Updated: {title} has a release date of: {new_release_date}")
                 else:
                     logging.info("No changes needed for this item")
 
             else:
-                logging.warning(f"Could not fetch metadata for {item['title']}")
+                logging.warning(f"Could not fetch metadata for {title}")
+
         except Exception as e:
-            logging.error(f"Error processing item {item['title']}: {str(e)}", exc_info=True)
+            logging.error(f"Error processing item {index}: {str(e)}", exc_info=True)
+            continue
 
     logging.info("Finished refresh_release_dates function")
 

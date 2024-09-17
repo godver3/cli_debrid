@@ -473,7 +473,7 @@ h2.episode-title {
     background-color: rgba(41, 36, 36, 0.849);
     padding: 20px;
     border-radius: 5px;
-    max-width: 80%;
+    max-width: 90%;
     max-height: 80%;
     overflow-y: auto;
 }

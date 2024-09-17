@@ -126,6 +126,12 @@
             </div>
             <button id="refresh-rate-limits">Refresh Rate Limits</button>
         </div>
+        <div class="debug_item">
+            <h3>Refresh Release Dates</h3>
+            <form action="{{ url_for('debug.refresh_release_dates_route') }}" method="POST" id="refresh-release-dates-form">
+                <button type="submit">Refresh Release Dates</button>
+            </form>
+        </div>
     </div>
 </div>
 
