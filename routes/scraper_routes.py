@@ -10,8 +10,14 @@ from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
 from web_scraper import search_trakt
 from database.database_reading import get_all_season_episode_counts
+from metadata.metadata import get_imdb_id_if_missing
 
 scraper_bp = Blueprint('scraper', __name__)
+
+@scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
+def convert_tmdb_to_imdb(tmdb_id):
+    imdb_id = get_imdb_id_if_missing({'tmdb_id': tmdb_id})
+    return jsonify({'imdb_id': imdb_id or 'N/A'})
 
 @scraper_bp.route('/add_to_real_debrid', methods=['POST'])
 def add_torrent_to_real_debrid():
