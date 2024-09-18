@@ -22,6 +22,7 @@ def get_metadata_stub():
     
     # Remove trailing ":5000" or ":5000/" if present
     grpc_url = grpc_url.rstrip('/').removesuffix(':5001')
+    grpc_url = grpc_url.rstrip('/').removesuffix(':50051')
     
     # Append ":50051"
     grpc_url += ':50051'
