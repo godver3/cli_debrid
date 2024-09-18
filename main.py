@@ -79,6 +79,7 @@ def check_metadata_service():
     
     # Remove trailing ":5000" or ":5000/" if present
     grpc_url = grpc_url.rstrip('/').removesuffix(':5001')
+    grpc_url = grpc_url.rstrip('/').removesuffix(':50051')
     
     # Append ":50051"
     grpc_url += ':50051'
@@ -92,16 +93,18 @@ def check_metadata_service():
         return grpc_url
     except grpc.RpcError:
         logging.warning(f"Failed to connect to {grpc_url}, falling back to localhost")
-        fallback_url = 'localhost:50051'
-        try:
-            channel = grpc.insecure_channel(fallback_url)
-            stub = metadata_service_pb2_grpc.MetadataServiceStub(channel)
-            stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id="1"), timeout=5)
-            logging.info(f"Successfully connected to metadata service at {fallback_url}")
-            return fallback_url
-        except grpc.RpcError:
-            logging.error("Failed to connect to metadata service on localhost")
-            return None
+        fallback_urls = ['localhost:50051', 'cli_battery_app:50051']
+        for url in fallback_urls:
+            try:
+                channel = grpc.insecure_channel(url)
+                stub = metadata_service_pb2_grpc.MetadataServiceStub(channel)
+                stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id="1"), timeout=5)
+                logging.info(f"Successfully connected to metadata service at {url}")
+                return url
+            except grpc.RpcError:
+                logging.warning(f"Failed to connect to metadata service at {url}")
+        logging.error("Failed to connect to metadata service on all fallback options")
+        return None
 
 def main():
     global program_runner
