@@ -67,6 +67,9 @@ def login():
         logging.debug("User already authenticated, redirecting to statistics.index")
         return redirect(url_for('statistics.index'))
 
+    # Check if there are any non-default users
+    show_login_reminder = User.query.filter_by(is_default=False).count() == 0
+
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -81,7 +84,7 @@ def login():
         else:
             flash('Please check your login details and try again.')
     
-    return render_template('login.html')
+    return render_template('login.html', show_login_reminder=show_login_reminder)
 
 @auth_bp.route('/logout')
 @login_required
