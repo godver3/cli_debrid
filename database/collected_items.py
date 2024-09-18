@@ -4,6 +4,7 @@ import logging
 import os
 from datetime import datetime
 import json
+from .database_writing import add_to_collected_notifications
 
 def add_collected_items(media_items_batch, recent=False):
     conn = get_db_connection()
@@ -81,6 +82,13 @@ def add_collected_items(media_items_batch, recent=False):
                             WHERE id = ?
                         ''', ('Collected', datetime.now(), collected_at, item_id))
                         logging.info(f"Updated existing item to Collected: {normalized_title} (ID: {item_id})")
+
+                        # Fetch the updated item
+                        updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+                        
+                        # Add notification for collected item
+                        add_to_collected_notifications(dict(updated_item))
+                        
                     else:
                         # Insert new item
                         if item_type == 'movie':

@@ -597,3 +597,30 @@ def update_required_settings(form_data):
     config['RealDebrid']['api_key'] = form_data.get('realdebrid_api_key')
     config['Metadata Battery']['url'] = form_data.get('metadata_battery_url')
     save_config(config)
+
+@settings_bp.route('/notifications/enabled', methods=['GET'])
+def get_enabled_notifications():
+    try:
+        config = load_config()
+        notifications = config.get('Notifications', {})
+        
+        enabled_notifications = {}
+        for notification_id, notification_config in notifications.items():
+            if notification_config.get('enabled', False):
+                notification_type = notification_config.get('type', '')
+                enabled_notifications[notification_id] = {
+                    'type': notification_type,
+                    'title': notification_config.get('title', ''),
+                    'config': {
+                        key: value for key, value in notification_config.items()
+                        if key not in ['enabled', 'type', 'title']
+                    }
+                }
+        
+        return jsonify({
+            'success': True,
+            'enabled_notifications': enabled_notifications
+        })
+    except Exception as e:
+        logging.error(f"Error getting enabled notifications: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500

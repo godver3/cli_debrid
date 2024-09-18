@@ -111,12 +111,24 @@ class BlacklistedQueue:
         return related_items
 
     def is_item_old(self, item: Dict[str, Any]) -> bool:
-        if 'release_date' not in item or item['release_date'] == 'Unknown':
-            logging.info(f"Item {self.generate_identifier(item)} has no release date or unknown release date. Considering it as old.")
+        if 'release_date' not in item or item['release_date'] is None or item['release_date'] == 'Unknown':
+            logging.info(f"Item {self.generate_identifier(item)} has no release date, None, or unknown release date. Considering it as old.")
             return True
         try:
             release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
-            return (datetime.now().date() - release_date).days > 7
+            days_since_release = (datetime.now().date() - release_date).days
+            
+            # Define thresholds for considering items as old
+            movie_threshold = 7  # Consider movies old after 30 days
+            episode_threshold = 7  # Consider episodes old after 7 days
+            
+            if item['type'] == 'movie':
+                return days_since_release > movie_threshold
+            elif item['type'] == 'episode':
+                return days_since_release > episode_threshold
+            else:
+                logging.warning(f"Unknown item type: {item['type']}. Considering it as old.")
+                return True
         except ValueError as e:
             logging.error(f"Error parsing release date for item {self.generate_identifier(item)}: {str(e)}")
             return True  # Consider items with unparseable dates as old
