@@ -159,6 +159,10 @@
                 `;
             }
 
+            if (queueName === 'Wanted' && item.formatted_scrape_time) {
+                itemContent += ` - Scrape Time: ${item.formatted_scrape_time}`;
+            }
+
             itemContent += `</div>`;
             return itemContent;
         }).join('');
@@ -170,39 +174,48 @@
             .then(data => {
                 let queueContents = document.getElementById('queue-contents');
                 if (queueContents) {
-                    queueContents.innerHTML = '';
-                    const queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
-                    
-                    let hasContent = false;
-                    queueOrder.forEach(queueName => {
-                        if (data[queueName] && data[queueName].length > 0) {
-                            hasContent = true;
-                            let queueDiv = document.createElement('div');
-                            queueDiv.className = 'queue';
-                            let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
+                    if (data.program_running) {
+                        if (data.program_initializing) {
+                            queueContents.innerHTML = '<p>Program is currently initializing...</p>';
+                        } else {
+                            let hasContent = false;
+                            let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
                             
-                            queueDiv.innerHTML = `
-                                <div class="queue-title" onclick="toggleQueue(this)">
-                                    <span>${queueName}</span>
-                                    ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
-                                    <span class="queue-count">${data[queueName].length} items</span>
-                                </div>
-                                <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
-                                    ${queueName === 'Blacklisted' ? generateConsolidatedItems(data[queueName], 'Blacklisted') :
-                                      queueName === 'Unreleased' ? generateConsolidatedItems(data[queueName], 'Unreleased') :
-                                      generateRegularItems(queueName, data[queueName])}
-                                </div>
-                            `;
-                            queueContents.appendChild(queueDiv);
+                            queueContents.innerHTML = ''; // Clear existing content
+
+                            queueOrder.forEach(queueName => {
+                                if (data.contents[queueName] && data.contents[queueName].length > 0) {
+                                    hasContent = true;
+                                    let queueDiv = document.createElement('div');
+                                    queueDiv.className = 'queue';
+                                    let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
+                                    
+                                    queueDiv.innerHTML = `
+                                        <div class="queue-title" onclick="toggleQueue(this)">
+                                            <span>${queueName}</span>
+                                            ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
+                                            <span class="queue-count">${data.contents[queueName].length} items</span>
+                                        </div>
+                                        <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
+                                            ${queueName === 'Blacklisted' ? generateConsolidatedItems(data.contents[queueName], 'Blacklisted') :
+                                              queueName === 'Unreleased' ? generateConsolidatedItems(data.contents[queueName], 'Unreleased') :
+                                              generateRegularItems(queueName, data.contents[queueName])}
+                                        </div>
+                                    `;
+                                    queueContents.appendChild(queueDiv);
+                                }
+                            });
+
+                            if (!hasContent) {
+                                queueContents.innerHTML = '<p>Program is currently idle.</p>';
+                            }
+
+                            // Update filename visibility after refreshing
+                            updateFilenameVisibility();
                         }
-                    });
-
-                    if (!hasContent) {
-                        queueContents.innerHTML = '<p>Program is currently idle.</p>';
+                    } else {
+                        queueContents.innerHTML = '<p>Program is not running.</p>';
                     }
-
-                    // Update filename visibility after refreshing
-                    updateFilenameVisibility();
                 }
             })
             .catch(error => console.error('Error fetching queue contents:', error));
