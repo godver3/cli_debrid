@@ -235,6 +235,12 @@
         margin: 0 0 10px 0;
         font-size: 1em;
         font-weight: bold;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-height: 3em; /* Adjust this value based on your font size and line height */
     }
 
     .truncate {
@@ -505,6 +511,14 @@
         }
     }
 
+    .tmdb-info {
+        margin-top: 10px;
+        padding: 10px;
+        color: #be1600;
+        font-style: italic;
+        text-align: center;
+    }
+
 </style>
 
 <div class="statistics-wrapper">
@@ -611,6 +625,11 @@
         </div>
 
         <div class="recently-added">
+            {% if not compact_view and not stats.tmdb_api_key_set %}
+            <div class="tmdb-info">
+                <p>To load movie and TV show posters, please set your TMDB API key in the settings.</p>
+            </div>
+            {% endif %}
             <div class="stats-box recently-added-section" data-tooltip="home.recently_added_movies">
                 <h4>Recently Added Movies</h4>
                 {% if stats.recently_added_movies %}
@@ -621,7 +640,7 @@
                                 <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="card-img">
                             {% endif %}
                             <div class="card-content">
-                                <h5 class="truncate">{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
+                                <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
                             </div>
                             <div class="card-hover-content">
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
@@ -644,7 +663,7 @@
                                 <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="card-img">
                             {% endif %}
                             <div class="card-content">
-                                <h5 class="truncate">{{ show.title }}</h5>
+                                <h5>{{ show.title }}</h5>
                             </div>
                             <div class="card-hover-content">
                                 <h5>{{ show.title }}</h5>
@@ -663,6 +682,9 @@
         </div>
     </div>
 </div>
+
+
+
 <script>
 // Use the server-side preference to set the initial state
 let use24HourFormat = {{ 'true' if stats.use_24hour_format else 'false' }};
@@ -903,23 +925,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 const formattedDate = `${collectedDate.toLocaleDateString()} ${collectedDate.getHours().toString().padStart(2, '0')}:${collectedDate.getMinutes().toString().padStart(2, '0')}`;
 
                 let additionalInfo = '';
-                if (type === 'TV Shows' && item.seasons && item.latest_episode) {
-                    additionalInfo = ` | Seasons: ${item.seasons.join(', ')} | Latest: S${item.latest_episode[0]}E${item.latest_episode[1]}`;
+                if (type === 'Recently Added Shows' && item.seasons && item.latest_episode) {
+                    additionalInfo = `
+                        <p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
+                        <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>
+                    `;
                 }
 
                 return `
                     <div class="card">
                         ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
                         <div class="card-content">
-                            <h5 class="truncate">${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                            <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
                         </div>
                         <div class="card-hover-content">
                             <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
                             <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${formattedDate}</p>
                             <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
-                            ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
-                                `<p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
-                                <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
+                            ${additionalInfo}
                             <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
                         </div>
                     </div>
