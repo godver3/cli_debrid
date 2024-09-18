@@ -88,6 +88,7 @@
             <thead>
                 <tr>
                     <th>Delete</th>
+                    <th>Rescrape</th>
                     {% for column in selected_columns %}
                         <th>{{ column }}</th>
                     {% endfor %}
@@ -98,6 +99,9 @@
                     <tr>
                         <td>
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
+                        </td>
+                        <td>
+                            <button class="rescrape-item" data-item-id="{{ item['id'] }}">↻</button>
                         </td>
                         {% for column in selected_columns %}
                             <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
@@ -261,6 +265,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderTable(items, selectedColumns) {
         let tableHTML = '<table><thead><tr>';
         tableHTML += '<th>Delete</th>'; // Add delete column header
+        tableHTML += '<th>Rescrape</th>'; // Add rescrape column header
         selectedColumns.forEach(column => {
             tableHTML += `<th>${column}</th>`;
         });
@@ -269,6 +274,7 @@ document.addEventListener('DOMContentLoaded', function() {
         items.forEach(item => {
             tableHTML += '<tr>';
             tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`; // Add delete button
+            tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`; // Add rescrape button
             selectedColumns.forEach(column => {
                 let cellContent = item[column];
                 if (cellContent === null || cellContent === undefined || cellContent === '') {
@@ -340,6 +346,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Reattach event listeners
                 attachEventListeners();
                 attachDeleteListeners();
+                attachRescrapeListeners();
 
                 // Reinitialize tooltips after content update
                 initializeTooltips();
@@ -412,6 +419,16 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function attachRescrapeListeners() {
+        document.querySelectorAll('.rescrape-item').forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                const itemId = this.getAttribute('data-item-id');
+                showRescrapeConfirmation(itemId);
+            });
+        });
+    }
+
     function showDeleteConfirmation(itemId) {
         showPopup({
             type: POPUP_TYPES.CONFIRM,
@@ -420,6 +437,18 @@ document.addEventListener('DOMContentLoaded', function() {
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => deleteItem(itemId),
+            onCancel: () => {} // Do nothing on cancel
+        });
+    }
+
+    function showRescrapeConfirmation(itemId) {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Rescrape',
+            message: 'Are you sure you want to move this item back to the Wanted queue for rescraping?',
+            confirmText: 'Rescrape',
+            cancelText: 'Cancel',
+            onConfirm: () => rescrapeItem(itemId),
             onCancel: () => {} // Do nothing on cancel
         });
     }
@@ -466,6 +495,48 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function rescrapeItem(itemId) {
+        fetch('{{ url_for('debug.rescrape_item') }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ item_id: itemId })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                // Remove the row from the table
+                const row = document.querySelector(`button[data-item-id="${itemId}"]`).closest('tr');
+                row.remove();
+                // Show success popup
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: 'Item moved to Wanted queue for rescraping',
+                    autoClose: 3000 // Close after 3 seconds
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            // Show error popup
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'An error occurred while moving the item to the Wanted queue: ' + error.message,
+                autoClose: 5000 // Close after 5 seconds
+            });
+        });
+    }
+
     function clearFilter() {
         const filterColumn = document.getElementById('filter-column');
         const filterValue = document.getElementById('filter-value');
@@ -476,6 +547,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial attachment of event listeners
     attachEventListeners();
     attachDeleteListeners();
+    attachRescrapeListeners();
 
     // Initialize tooltips
     initializeTooltips();
