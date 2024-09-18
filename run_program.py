@@ -14,8 +14,8 @@ from datetime import datetime, timedelta
 from database import get_db_connection
 import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
-from pathlib import Path
-import pickle
+from notifications import send_notifications
+import requests
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -218,7 +218,7 @@ class ProgramRunner:
                 self.process_content_source(source, data)
 
     def task_send_notifications(self):
-        notifications_file = Path("data/collected_notifications.pkl")
+        notifications_file = Path("/user/db_content/collected_notifications.pkl")
         
         if notifications_file.exists():
             try:
@@ -226,15 +226,21 @@ class ProgramRunner:
                     notifications = pickle.load(f)
                 
                 if notifications:
-                    # Placeholder: Call the function to send notifications
-                    from notifications import send_notifications
-                    send_notifications(notifications)
-                    
-                    # Clear the notifications file
-                    with open(notifications_file, "wb") as f:
-                        pickle.dump([], f)
-                    
-                    logging.info(f"Sent {len(notifications)} notifications and cleared the notifications file")
+                    # Fetch enabled notifications
+                    response = requests.get('http://localhost:5000/settings/notifications/enabled')
+                    if response.status_code == 200:
+                        enabled_notifications = response.json().get('enabled_notifications', {})
+                        
+                        # Send notifications
+                        send_notifications(notifications, enabled_notifications)
+                        
+                        # Clear the notifications file
+                        with open(notifications_file, "wb") as f:
+                            pickle.dump([], f)
+                        
+                        logging.info(f"Sent {len(notifications)} notifications and cleared the notifications file")
+                    else:
+                        logging.error(f"Failed to fetch enabled notifications: {response.text}")
                 else:
                     logging.debug("No notifications to send")
             except Exception as e:
