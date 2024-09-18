@@ -145,7 +145,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'season_number': int(season_number),
         'episode_number': int(episode_number),
         'episode_title': episode_data.get('title', f"Episode {episode_number}"),
-        'release_date': parse_date(episode_data.get('first_aired')) or show_item.get('first_aired'),
+        'release_date': parse_date(episode_data.get('first_aired')) or 'Unknown',
         'media_type': 'episode',
         'genres': ['anime'] if is_anime else show_item.get('genres', []),
         'runtime': episode_data.get('runtime') or show_item.get('runtime'),
@@ -455,7 +455,7 @@ def main():
 
     # Test show metadata
     print("\n2. Get show metadata:")
-    show_imdb_id = "tt0944947"  # Game of Thrones
+    show_imdb_id = "tt1190634"  
     show_response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=show_imdb_id))
     show_metadata = {k: parse_json_string(v) for k, v in show_response.metadata.items()}
     print(f"Show metadata for {show_imdb_id}:")
