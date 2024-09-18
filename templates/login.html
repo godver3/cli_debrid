@@ -97,7 +97,9 @@
         <input type="password" name="password" placeholder="Password" required>
         <input type="submit" value="Login">
     </form>
+    {% if show_login_reminder %}
     <p class="login-reminder">Initial login: username <strong>admin</strong>, password <strong>admin</strong></p>
+    {% endif %}
 </div>
 <div class="flash-messages">
 {% with messages = get_flashed_messages(with_categories=true) %}
