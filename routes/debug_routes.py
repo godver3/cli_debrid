@@ -16,6 +16,7 @@ import os
 from api_tracker import api 
 import time
 from metadata.metadata import get_metadata, get_tmdb_id_and_media_type, refresh_release_dates
+from datetime import datetime
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -341,3 +342,38 @@ def get_rate_limit_info():
         }
     
     return jsonify(rate_limit_info)
+
+@debug_bp.route('/rescrape_item', methods=['POST'])
+def rescrape_item():
+    item_id = request.json.get('item_id')
+    if not item_id:
+        return jsonify({'success': False, 'error': 'Item ID is required'}), 400
+
+    try:
+        move_item_to_wanted(item_id)
+        return jsonify({'success': True, 'message': 'Item moved to Wanted queue for rescraping'}), 200
+    except Exception as e:
+        logging.error(f"Error moving item to Wanted queue: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+def move_item_to_wanted(item_id):
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE media_items 
+            SET state = 'Wanted', 
+                filled_by_file = NULL, 
+                filled_by_title = NULL, 
+                filled_by_magnet = NULL, 
+                filled_by_torrent_id = NULL, 
+                collected_at = NULL,
+                last_updated = ?
+            WHERE id = ?
+        ''', (datetime.now(), item_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()

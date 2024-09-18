@@ -237,3 +237,22 @@
             padding: 4px;
         }
     }
+
+    .rescrape-item {
+        background-color: #4c6baf;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 25px;
+        height: 25px;
+        font-size: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding-right: 1px;
+    }
+
+    .rescrape-item:hover {
+        background-color: #6176a3;
+    }
