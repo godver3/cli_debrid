@@ -165,13 +165,38 @@ def send_notifications(notifications, enabled_notifications):
     logging.info(f"Notification process completed")
 
 def send_discord_notification(webhook_url, content):
-    try:
-        payload = {"content": content}
+    MAX_LENGTH = 1900  # Leave some room for formatting
+
+    def send_chunk(chunk):
+        payload = {"content": chunk}
         response = requests.post(webhook_url, json=payload)
         response.raise_for_status()
+        logging.info(f"Discord notification chunk sent successfully")
+
+    try:
+        if len(content) <= MAX_LENGTH:
+            send_chunk(content)
+        else:
+            chunks = []
+            current_chunk = ""
+            for line in content.split('\n'):
+                if len(current_chunk) + len(line) + 1 > MAX_LENGTH:
+                    if current_chunk:
+                        chunks.append(current_chunk)
+                        current_chunk = ""
+                current_chunk += line + '\n'
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            for i, chunk in enumerate(chunks, 1):
+                chunk_content = f"Message part {i}/{len(chunks)}:\n\n{chunk}"
+                send_chunk(chunk_content)
+
         logging.info(f"Discord notification sent successfully")
     except Exception as e:
         logging.error(f"Failed to send Discord notification: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            logging.error(f"Response content: {e.response.content}")
 
 def send_email_notification(smtp_config, content):
     try:

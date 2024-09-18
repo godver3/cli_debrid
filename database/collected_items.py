@@ -75,20 +75,30 @@ def add_collected_items(media_items_batch, recent=False):
                         existing_item = existing_file_map[filename]
                         item_id = existing_item['id']
                         
-                        # Update the existing item
-                        conn.execute('''
-                            UPDATE media_items
-                            SET state = ?, last_updated = ?, collected_at = ?
-                            WHERE id = ?
-                        ''', ('Collected', datetime.now(), collected_at, item_id))
-                        logging.info(f"Updated existing item to Collected: {normalized_title} (ID: {item_id})")
+                        # Check if the item is currently in "Checking" state
+                        if existing_item['state'] == 'Checking':
+                            # Update the existing item
+                            conn.execute('''
+                                UPDATE media_items
+                                SET state = ?, last_updated = ?, collected_at = ?
+                                WHERE id = ?
+                            ''', ('Collected', datetime.now(), collected_at, item_id))
+                            logging.info(f"Updated existing item from Checking to Collected: {normalized_title} (ID: {item_id})")
 
-                        # Fetch the updated item
-                        updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
-                        
-                        # Add notification for collected item
-                        add_to_collected_notifications(dict(updated_item))
-                        
+                            # Fetch the updated item
+                            updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+                            
+                            # Add notification for collected item
+                            add_to_collected_notifications(dict(updated_item))
+                        else:
+                            # If it's not in "Checking" state, just update without adding a notification
+                            conn.execute('''
+                                UPDATE media_items
+                                SET last_updated = ?, collected_at = ?
+                                WHERE id = ?
+                            ''', (datetime.now(), collected_at, item_id))
+                            logging.debug(f"Updated existing Collected item: {normalized_title} (ID: {item_id})")
+
                     else:
                         # Insert new item
                         if item_type == 'movie':
