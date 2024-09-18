@@ -7,6 +7,12 @@ import time
 from api_tracker import api
 from settings import get_setting
 import requests
+import grpc
+import metadata_service_pb2
+import metadata_service_pb2_grpc
+import re
+from settings import set_setting
+
 
 def setup_logging():
     logging.getLogger('selector').setLevel(logging.WARNING)
@@ -65,6 +71,38 @@ def update_web_ui_state(state):
     except api.exceptions.RequestException:
         logging.error("Failed to update web UI state")
 
+def check_metadata_service():
+    grpc_url = get_setting('Metadata Battery', 'url')
+    
+    # Remove leading "http://" or "https://"
+    grpc_url = re.sub(r'^https?://', '', grpc_url)
+    
+    # Remove trailing ":5000" or ":5000/" if present
+    grpc_url = grpc_url.rstrip('/').removesuffix(':5001')
+    
+    # Append ":50051"
+    grpc_url += ':50051'
+    
+    try:
+        channel = grpc.insecure_channel(grpc_url)
+        stub = metadata_service_pb2_grpc.MetadataServiceStub(channel)
+        # Try to make a simple call to check connectivity
+        stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id="1"), timeout=5)
+        logging.info(f"Successfully connected to metadata service at {grpc_url}")
+        return grpc_url
+    except grpc.RpcError:
+        logging.warning(f"Failed to connect to {grpc_url}, falling back to localhost")
+        fallback_url = 'localhost:50051'
+        try:
+            channel = grpc.insecure_channel(fallback_url)
+            stub = metadata_service_pb2_grpc.MetadataServiceStub(channel)
+            stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id="1"), timeout=5)
+            logging.info(f"Successfully connected to metadata service at {fallback_url}")
+            return fallback_url
+        except grpc.RpcError:
+            logging.error("Failed to connect to metadata service on localhost")
+            return None
+
 def main():
     global program_runner
     setup_logging()
@@ -100,6 +138,14 @@ def main():
     print(f"The web UI is available at http://{ip_address}:5000")
     print("Use the web UI to control the program.")
     print("Press Ctrl+C to stop the program.")
+
+    # Check metadata service connectivity
+    metadata_url = check_metadata_service()
+    if metadata_url:
+        set_setting('Metadata Battery', 'url', metadata_url)
+    else:
+        print("Failed to connect to metadata service. Please check your configuration.")
+        sys.exit(1)
 
     if get_setting('Debug', 'auto_run_program'):
         # Call the start_program route
