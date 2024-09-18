@@ -273,6 +273,7 @@
                 .then(response => response.json())
                 .then(data => {
                     const isRunning = data.running;
+                    isRunning = false;
                     const buttons = document.querySelectorAll('button[type="submit"]');
                     buttons.forEach(button => {
                         button.disabled = isRunning;
