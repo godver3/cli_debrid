@@ -277,58 +277,56 @@ def refresh_release_dates():
 
     for index, item in enumerate(items_to_refresh, 1):
         try:
-            # Access items using column names as indices
-            title = item['title'] if 'title' in item.keys() else 'Unknown Title'
-            media_type = item['type'] if 'type' in item.keys() else 'Unknown Type'
-            imdb_id = item['imdb_id'] if 'imdb_id' in item.keys() else None
-
-            # Log item details, including any missing information
-            log_message = f"Processing item {index}/{len(items_to_refresh)}:"
-            log_message += f" Title: {title}"
-            log_message += f" Type: {media_type}"
-            log_message += f" IMDb ID: {imdb_id}"
-            logging.info(log_message)
+            # Convert sqlite3.Row to dict
+            item_dict = dict(item)
             
-            # Check for missing essential information
+            title = item_dict.get('title', 'Unknown Title')
+            media_type = item_dict.get('type', 'Unknown Type').lower()
+            imdb_id = item_dict.get('imdb_id')
+            season_number = item_dict.get('season_number')
+            episode_number = item_dict.get('episode_number')
+
+            logging.info(f"Processing item {index}/{len(items_to_refresh)}: {title} ({media_type}) - IMDb ID: {imdb_id}")
+            
             if not imdb_id:
                 logging.warning(f"Skipping item {index} due to missing imdb_id")
                 continue
 
-            # Determine the actual media type
-            media_type = 'movie' if item['type'].lower() == 'movie' else 'tv'
-
-            logging.info(f"Fetching metadata for IMDb ID: {imdb_id}")
             if media_type == 'movie':
                 response = stub.GetMovieMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
             else:
                 response = stub.GetShowMetadata(metadata_service_pb2.IMDbRequest(imdb_id=imdb_id))
+            
             metadata = {k: parse_json_string(v) for k, v in response.metadata.items()}
 
             if metadata:
                 logging.info("Getting release date")
-                new_release_date = get_release_date(metadata, imdb_id)
+                logging.info(f"Metadata: {metadata}")
+                if media_type == 'movie':
+                    new_release_date = get_release_date(metadata, imdb_id)
+                else:
+                    if season_number is not None and episode_number is not None:
+                        episode_data = metadata.get('seasons', {}).get(str(season_number), {}).get('episodes', {}).get(str(episode_number), {})
+                        new_release_date = parse_date(episode_data.get('first_aired'))
+                    else:
+                        new_release_date = parse_date(metadata.get('first_aired'))
                 logging.info(f"New release date: {new_release_date}")
 
-                if new_release_date == 'Unknown':
+                if new_release_date == "Unknown" or new_release_date is None:
                     new_state = "Wanted"
                 else:
                     release_date = datetime.strptime(new_release_date, "%Y-%m-%d").date()
                     today = datetime.now().date()
-
-                    if release_date <= today:
-                        new_state = "Wanted"
-                    else:
-                        new_state = "Unreleased"
+                    new_state = "Wanted" if release_date <= today else "Unreleased"
 
                 logging.info(f"New state: {new_state}")
 
-                if new_state != item['state'] or new_release_date != item['release_date']:
+                if new_state != item_dict['state'] or new_release_date != item_dict['release_date']:
                     logging.info("Updating release date and state in database")
-                    update_release_date_and_state(item['id'], new_release_date, new_state)
+                    update_release_date_and_state(item_dict['id'], new_release_date, new_state)
                     logging.info(f"Updated: {title} has a release date of: {new_release_date}")
                 else:
                     logging.info("No changes needed for this item")
-
             else:
                 logging.warning(f"Could not fetch metadata for {title}")
 
