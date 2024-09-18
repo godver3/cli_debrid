@@ -60,6 +60,12 @@ def check_service_connectivity():
 
     # Check Metadata Battery connectivity and Trakt authorization
     try:
+        # Remove trailing ":5000" or ":5000/" if present
+        metadata_battery_url = metadata_battery_url.rstrip('/').removesuffix(':5001')
+        metadata_battery_url = metadata_battery_url.rstrip('/').removesuffix(':50051')
+        
+        # Append ":50051"
+        metadata_battery_url += ':5001'
         response = api.get(f"{metadata_battery_url}/check_trakt_auth", timeout=5)
         response.raise_for_status()
         trakt_status = response.json().get('status')
@@ -122,11 +128,16 @@ def update_program_state():
 def program_status():
     global program_runner
     is_running = program_runner.is_running() if program_runner else False
-    return jsonify({"running": is_running})
+    is_initializing = program_runner.is_initializing() if program_runner else False
+    return jsonify({"running": is_running, "initializing": is_initializing})
 
 def program_is_running():
     global program_runner
     return program_runner.is_running() if program_runner else False
+
+def program_is_initializing():  # Add this function
+    global program_runner
+    return program_runner.is_initializing() if program_runner else False
 
 @program_operation_bp.route('/api/check_program_conditions')
 @login_required

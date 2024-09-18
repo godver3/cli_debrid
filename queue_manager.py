@@ -136,7 +136,7 @@ class QueueManager:
             
             self.queues["Wanted"].add_item(wanted_item)
             self.queues[from_queue].remove_item(item)
-            logging.debug(f"Successfully moved item {wanted_item_identifier} to Wanted queue (Wake count: {wake_count})")
+            logging.debug(f"Successfully moved item {item_identifier} to Wanted queue")
         else:
             logging.error(f"Failed to retrieve wanted item for ID: {item['id']}")
 
@@ -159,7 +159,9 @@ class QueueManager:
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
             self.queues["Adding"].add_item(updated_item)
-            self.queues[from_queue].remove_item(item)
+            # Remove the item from the Scraping queue, but not from the Wanted queue
+            if from_queue == "Scraping":
+                self.queues[from_queue].remove_item(item)
             logging.info(f"Moved item {item_identifier} to Adding queue")
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
@@ -167,12 +169,14 @@ class QueueManager:
     def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Checking: {item_identifier}")
-               
+           
         update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
             self.queues["Checking"].add_item(updated_item)
-            self.queues[from_queue].remove_item(item)
+            # Remove the item from the Adding queue and the Wanted queue
+            if from_queue in ["Adding", "Wanted"]:
+                self.queues[from_queue].remove_item(item)
             logging.info(f"Moved item {item_identifier} to Checking queue")
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
@@ -187,6 +191,7 @@ class QueueManager:
         update_media_item_state(item['id'], 'Sleeping')
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
+            updated_item['wake_count'] = wake_count
             self.queues["Sleeping"].add_item(updated_item)
             self.queues[from_queue].remove_item(item)
             logging.debug(f"Successfully moved item {item_identifier} to Sleeping queue (Wake count: {wake_count})")

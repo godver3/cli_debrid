@@ -32,6 +32,7 @@ class ProgramRunner:
             return
         self._initialized = True
         self.running = False
+        self.initializing = False  # Add this line
         
         from queue_manager import QueueManager
 
@@ -355,13 +356,18 @@ class ProgramRunner:
         logging.info("Time until next task run:\n" + "\n".join(debug_info))
 
     def run_initialization(self):
+        self.initializing = True
         logging.info("Running initialization...")
         skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
         
         disable_initialization = get_setting('Debug', 'disable_initialization', '')
         if not disable_initialization:
             initialize(skip_initial_plex_update)
-        logging.info("Initialization complete")
+            logging.info("Initialization complete")
+        else:
+            logging.info("Initialization disabled, skipping...")
+        
+        self.initializing = False
 
     def start(self):
         if not self.running:
@@ -370,9 +376,13 @@ class ProgramRunner:
 
     def stop(self):
         self.running = False
+        self.initializing = False  # Add this line
 
     def is_running(self):
         return self.running
+
+    def is_initializing(self):  # Add this method
+        return self.initializing
 
     def run(self):
         self.run_initialization()
