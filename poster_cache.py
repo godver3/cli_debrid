@@ -9,15 +9,21 @@ CACHE_EXPIRY_DAYS = 7  # Cache expires after 7 days
 UNAVAILABLE_POSTER = "UNAVAILABLE"
 
 def load_cache():
-    if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, 'rb') as f:
-            return pickle.load(f)
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'rb') as f:
+                return pickle.load(f)
+    except (EOFError, pickle.UnpicklingError, FileNotFoundError) as e:
+        logging.warning(f"Error loading cache: {e}. Creating a new cache.")
     return {}
 
 def save_cache(cache):
-    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-    with open(CACHE_FILE, 'wb') as f:
-        pickle.dump(cache, f)
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, 'wb') as f:
+            pickle.dump(cache, f)
+    except Exception as e:
+        logging.error(f"Error saving cache: {e}")
 
 def get_cached_poster_url(tmdb_id, media_type):
     cache = load_cache()
@@ -60,7 +66,6 @@ def get_cached_media_meta(tmdb_id, media_type):
     if cache_item:
         media_meta, timestamp = cache_item
         if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
-            #logging.info(f"Cache hit for media meta {cache_key}")
             return media_meta
         else:
             logging.info(f"Cache expired for media meta {cache_key}")
