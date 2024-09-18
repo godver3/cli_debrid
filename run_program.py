@@ -16,6 +16,8 @@ import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
 from notifications import send_notifications
 import requests
+from pathlib import Path
+import pickle
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
