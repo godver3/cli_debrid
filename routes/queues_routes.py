@@ -3,6 +3,7 @@ from .models import user_required, onboarding_required
 from datetime import datetime
 from queue_manager import QueueManager
 import logging
+from .program_operation_routes import program_is_running, program_is_initializing  # Add this import
 
 queues_bp = Blueprint('queues', __name__)
 
@@ -13,6 +14,9 @@ queue_manager = QueueManager()
 @onboarding_required
 def index():
     queue_contents = queue_manager.get_queue_contents()
+    program_running = program_is_running()
+    program_initializing = program_is_initializing()  # Add this line
+    
     for queue_name, items in queue_contents.items():
         if queue_name == 'Upgrading':
             for item in items:
@@ -32,14 +36,31 @@ def index():
 
 
     upgrading_queue = queue_contents.get('Upgrading', [])
-    return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue)
+    return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_running=program_running, program_initializing=program_initializing)
 
 @queues_bp.route('/api/queue_contents')
 def api_queue_contents():
     contents = queue_manager.get_queue_contents()
-    # Ensure wake counts are included for Sleeping queue items
-    if 'Sleeping' in contents:
-        for item in contents['Sleeping']:
-            item['wake_count'] = queue_manager.get_wake_count(item['id'])
+    program_running = program_is_running()
+    program_initializing = program_is_initializing()
 
-    return jsonify(contents)
+    # Format scrape_time for Wanted queue items and ensure wake_count is present for Sleeping queue items
+    for queue_name, items in contents.items():
+        if queue_name == 'Wanted':
+            for item in items:
+                if 'scrape_time' in item:
+                    if item['scrape_time'] != "Unknown" and item['scrape_time'] != "Invalid date":
+                        scrape_time = datetime.strptime(item['scrape_time'], '%Y-%m-%d %H:%M:%S')
+                        item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
+                    else:
+                        item['formatted_scrape_time'] = item['scrape_time']
+        elif queue_name == 'Sleeping':
+            for item in items:
+                if 'wake_count' not in item or item['wake_count'] is None:
+                    item['wake_count'] = wake_count_manager.get_wake_count(item['id'])
+
+    return jsonify({
+        "contents": contents,
+        "program_running": program_running,
+        "program_initializing": program_initializing
+    })
