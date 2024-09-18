@@ -228,6 +228,10 @@ def index():
     daily_usage_end = time.time()
     logging.debug(f"Time for check_daily_usage: {daily_usage_end - daily_usage_start:.2f} seconds")
 
+    # Check if TMDB API key is set
+    tmdb_api_key = get_setting('TMDB', 'api_key', '')
+    tmdb_api_key_set = bool(tmdb_api_key)
+
     stats = {
         'uptime': uptime,
         'total_movies': collected_counts['total_movies'],
@@ -249,7 +253,8 @@ def index():
         'active_downloads': active_downloads, 
         'limit_downloads': limit_downloads,
         'daily_usage': daily_usage['used'],
-        'daily_limit': daily_usage['limit']
+        'daily_limit': daily_usage['limit'],
+        'tmdb_api_key_set': tmdb_api_key_set
     }
     
     compact_view = request.cookies.get('compact_view', 'false').lower() == 'true'

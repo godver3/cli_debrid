@@ -94,8 +94,10 @@ def index():
             return jsonify({'results': results})  # Wrap results in a dictionary here
         else:
             return jsonify({'error': 'No search term provided'})
-    
-    return render_template('scraper.html', versions=versions)
+        # Check if TMDB API key is set
+    tmdb_api_key = get_setting('TMDB', 'api_key', '')
+    tmdb_api_key_set = bool(tmdb_api_key)
+    return render_template('scraper.html', versions=versions, tmdb_api_key_set=tmdb_api_key_set)
 
 @scraper_bp.route('/select_season', methods=['GET', 'POST'])
 def select_season():

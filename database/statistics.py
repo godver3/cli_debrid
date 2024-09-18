@@ -4,6 +4,9 @@ import asyncio
 import aiohttp
 from .poster_management import get_poster_url
 from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
+from settings import get_setting
+from flask import request, url_for
+from urllib.parse import urlparse
 
 def get_collected_counts():
     conn = get_db_connection()
@@ -159,6 +162,25 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     item['poster_url'] = result
                     cache_poster_url(item['tmdb_id'], media_type, result)
                 else:
+                    logging.info(f"get_setting('TMDB', 'api_key'): {get_setting('TMDB', 'api_key')}")
+                    if get_setting('TMDB', 'api_key') == "":
+                        logging.warning("TMDB API key not set, using placeholder images")
+                        
+                        # Generate the placeholder URL
+                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        
+                        # Check if the request is secure (HTTPS)
+                        if request.is_secure:
+                            # If it's secure, ensure the URL uses HTTPS
+                            parsed_url = urlparse(placeholder_url)
+                            placeholder_url = parsed_url._replace(scheme='https').geturl()
+                        else:
+                            # If it's not secure, use HTTP
+                            parsed_url = urlparse(placeholder_url)
+                            placeholder_url = parsed_url._replace(scheme='http').geturl()
+                        
+                        item['poster_url'] = placeholder_url
+                    
                     logging.warning(f"No poster URL found for {media_type} with TMDB ID {item['tmdb_id']}")
         
         # Convert consolidated_movies dict to list and sort

@@ -53,7 +53,7 @@ function displaySearchResults(results, version) {
         searchResDiv.className = 'sresult';
         searchResDiv.innerHTML = `
             <button>${item.media_type === 'show' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-            <img src="${item.poster_path ? 'https://image.tmdb.org/t/p/w600_and_h900_bestv2' + item.poster_path : '/static/noimage-cli.png'}" alt="${item.title}" style="width: 100%; height: auto;">
+            <img src="${item.poster_path ? 'https://image.tmdb.org/t/p/w600_and_h900_bestv2' + item.poster_path : '/static/image/placeholder-horizontal.png'}" alt="${item.title}" style="width: 100%; height: auto;">
             <div class="searchresult-info">
                 <h2 class="searchresult-item">${item.title} (${item.year || 'N/A'})</h2>
             </div></button>                
@@ -116,7 +116,7 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
     `;
 }
 
-function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview) {
+function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview, tmdb_api_key_set) {
     const resultsDiv = document.getElementById('seasonResults');
     const dropdown = document.getElementById('seasonDropdown');
     const seasonPackButton = document.getElementById('seasonPackButton');
@@ -152,7 +152,11 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
 
             dropdown.addEventListener('change', function() {
                 const selectedItem = JSON.parse(this.value);
-                displaySeasonInfo(selectedItem.title, selectedItem.season_num, selectedItem.air_date, selectedItem.season_overview, selectedItem.poster_path, genre_ids, vote_average, backdrop_path, show_overview);
+                if (tmdb_api_key_set) {
+                    displaySeasonInfo(selectedItem.title, selectedItem.season_num, selectedItem.air_date, selectedItem.season_overview, selectedItem.poster_path, genre_ids, vote_average, backdrop_path, show_overview);
+                } else {
+                    displaySeasonInfoTextOnly(selectedItem.title, selectedItem.season_num);
+                }
                 selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
             });
 
@@ -174,6 +178,16 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
         console.error('Error:', error);
         displayError('An error occurred while selecting media.');
     });
+}
+
+// New function to display season info as text-only
+function displaySeasonInfoTextOnly(title, season_num) {
+    const seasonInfo = document.getElementById('season-info');
+    seasonInfo.innerHTML = `
+        <div class="season-info-container text-only">
+            <h2>${title} - Season ${season_num}</h2>
+        </div>
+    `;
 }
 
 function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) {
@@ -364,7 +378,7 @@ function displayEpisodeResults(episodeResults, title, year) {
         var date  = new Date(item.air_date);
         episodeDiv.innerHTML = `        
             <button><span class="episode-rating">${(item.vote_average).toFixed(1)}</span>
-            <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : `/static/noimage-cli.png`}" alt="${item.episode_title}" style="width: 100%; height: auto;">
+            <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : `/static/image/placeholder-horizontal.png`}" alt="${item.episode_title}" style="width: 100%; height: auto;">
             <div class="episode-info">
                 <h2 class="episode-title">${item.episode_num}. ${item.episode_title}</h2>
                 <p class="episode-sub">${date.toLocaleDateString("en-US", options)}</p>
@@ -588,7 +602,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         `;
         movieElement.onclick = function() {
-            selectSeason(data.tmdb_id, data.title, data.year, 'tv', 'null', 'null', 'True', data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview)
+            selectSeason(data.tmdb_id, data.title, data.year, 'tv', 'null', 'null', 'True', data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview, data.tmdb_api_key_set)
         };
         return movieElement;
     }
