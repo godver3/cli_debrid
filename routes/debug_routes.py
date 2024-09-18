@@ -128,37 +128,72 @@ def get_queue_contents():
 @debug_bp.route('/manual_blacklist', methods=['GET', 'POST'])
 @admin_required
 def manual_blacklist():
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    
-    if not overseerr_url or not overseerr_api_key:
-        flash('Overseerr URL or API key not set. Please configure in settings.', 'error')
-        return redirect(url_for('settings'))
-
     if request.method == 'POST':
         action = request.form.get('action')
         imdb_id = request.form.get('imdb_id')
 
         if action == 'add':
-            tmdb_id, media_type = get_tmdb_id_and_media_type(imdb_id)
-            
-            if tmdb_id and media_type:
-                # Fetch details based on media type
-                if media_type == 'movie':
-                    details = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
-                else:  # TV show
-                    details = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
-                
-                if details:
-                    title = details.get('title') if media_type == 'movie' else details.get('name')
-                    year = details.get('releaseDate', '')[:4] if media_type == 'movie' else details.get('firstAirDate', '')[:4]
-                    
-                    add_to_manual_blacklist(imdb_id, media_type, title, year)
-                    flash(f'Added {imdb_id}: {title} ({year}) to manual blacklist as {media_type}', 'success')
-                else:
-                    flash(f'Could not fetch details for {imdb_id}', 'error')
+            details = None
+            media_type = None
+            tmdb_id = None
+
+            # Try to get TMDB ID and media type
+            try:
+                tmdb_id, media_type = get_tmdb_id_and_media_type(imdb_id)
+                logging.info(f"Retrieved TMDB ID: {tmdb_id}, Media Type: {media_type}")
+            except Exception as e:
+                logging.error(f"Error in get_tmdb_id_and_media_type: {str(e)}")
+
+            # If we have media_type, try to fetch metadata
+            if media_type:
+                try:
+                    details = get_metadata(imdb_id=imdb_id, tmdb_id=tmdb_id, item_media_type=media_type)
+                except Exception as e:
+                    logging.error(f"Error fetching metadata for {imdb_id}: {str(e)}")
+
+            # If we still don't have details, try a basic IMDB lookup
+            if not details:
+                try:
+                    from imdb import IMDb
+                    ia = IMDb()
+                    movie = ia.get_movie(imdb_id[2:])  # Remove 'tt' prefix
+                    details = {
+                        'title': movie.get('title'),
+                        'year': movie.get('year'),
+                    }
+                    logging.info(f"Retrieved basic details from IMDb: {details}")
+                except Exception as e:
+                    logging.error(f"Error fetching basic details from IMDb: {str(e)}")
+
+            # If we still don't have details, log an error and flash a message
+            if not details:
+                error_msg = f"Could not fetch details for IMDb ID: {imdb_id}"
+                logging.error(error_msg)
+                flash(error_msg, 'error')
+                return redirect(url_for('debug.manual_blacklist'))
+
+            # Process the details and add to blacklist
+            title = details.get('title')
+            year = details.get('year')
+                        
+            # After retrieving tmdb_id and media_type
+            if media_type is None or media_type == 'None' or media_type.lower() == 'none':
+                media_type = 'TV Show'
+                logging.info(f"Media type was None or 'None', setting to 'TV Show' for IMDb ID: {imdb_id}")
+
+            # Then proceed with fetching metadata and adding to blacklist
+            if media_type:
+                try:
+                    details = get_metadata(imdb_id=imdb_id, tmdb_id=tmdb_id, item_media_type=media_type)
+                except Exception as e:
+                    logging.error(f"Error fetching metadata for {imdb_id}: {str(e)}")
+                    details = None
+
+            if title and year:
+                add_to_manual_blacklist(imdb_id, media_type, title, str(year))
+                flash(f'Added {imdb_id}: {title} ({year}) to manual blacklist as {media_type or "unknown"}', 'success')
             else:
-                flash(f'Could not determine TMDB ID and media type for IMDb ID {imdb_id}', 'error')
+                flash(f'Incomplete details for {imdb_id}. Title: {title}, Year: {year}', 'error')
         
         elif action == 'remove':
             remove_from_manual_blacklist(imdb_id)
