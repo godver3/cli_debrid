@@ -18,7 +18,7 @@ async def get_poster_url(session, tmdb_id, media_type):
         return None
     
     # Use the correct endpoints for TV shows and movies
-    if media_type == 'tv':
+    if media_type == 'tv' or media_type == 'show':
         url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/images?api_key={tmdb_api_key}"
     else:
         url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/images?api_key={tmdb_api_key}"
@@ -28,7 +28,7 @@ async def get_poster_url(session, tmdb_id, media_type):
             if response.status == 200:
                 data = await response.json()
                 posters = data.get('posters', [])
-                
+                logging.info(f"Posters: {posters}")
                 # First, try to find an English poster
                 english_posters = [p for p in posters if p.get('iso_639_1') == 'en']
                 
