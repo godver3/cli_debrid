@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from database import get_db_connection
 import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
+from pathlib import Path
+import pickle
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -53,6 +55,7 @@ class ProgramRunner:
             'task_purge_not_wanted_magnets_file': 604800,
             'task_generate_airtime_report': 3600,
             'task_check_service_connectivity': 60,
+            'task_send_notifications': 300,  # Run every 5 minutes (300 seconds)
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -70,7 +73,8 @@ class ProgramRunner:
             'task_debug_log', 
             'task_refresh_release_dates',
             'task_generate_airtime_report',
-            'task_check_service_connectivity'
+            'task_check_service_connectivity',
+            'task_send_notifications'
         }
         
         # Add this line to store content sources
@@ -204,12 +208,39 @@ class ProgramRunner:
             self.task_purge_not_wanted_magnets_file()
         if self.should_run_task('task_generate_airtime_report'):
             self.task_generate_airtime_report()
+        if self.should_run_task('task_send_notifications'):
+            self.task_send_notifications()
             
         # Process content source tasks
         for source, data in self.get_content_sources().items():
             task_name = f'task_{source}_wanted'
             if self.should_run_task(task_name):
                 self.process_content_source(source, data)
+
+    def task_send_notifications(self):
+        notifications_file = Path("data/collected_notifications.pkl")
+        
+        if notifications_file.exists():
+            try:
+                with open(notifications_file, "rb") as f:
+                    notifications = pickle.load(f)
+                
+                if notifications:
+                    # Placeholder: Call the function to send notifications
+                    from notifications import send_notifications
+                    send_notifications(notifications)
+                    
+                    # Clear the notifications file
+                    with open(notifications_file, "wb") as f:
+                        pickle.dump([], f)
+                    
+                    logging.info(f"Sent {len(notifications)} notifications and cleared the notifications file")
+                else:
+                    logging.debug("No notifications to send")
+            except Exception as e:
+                logging.error(f"Error processing notifications: {str(e)}")
+        else:
+            logging.debug("No notifications file found")
 
     def safe_process_queue(self, queue_name: str):
         try:

@@ -2,6 +2,8 @@ from .core import get_db_connection, retry_on_db_lock
 import logging
 from datetime import datetime
 import json
+import pickle
+from pathlib import Path
 
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
@@ -126,3 +128,23 @@ def remove_from_media_items(item_id):
         logging.error(f"Error removing item (ID: {item_id}) from media items: {str(e)}")
     finally:
         conn.close()
+
+def add_to_collected_notifications(media_item):
+    notifications_file = Path("/user/db_content/collected_notifications.pkl")
+    
+    try:
+        if notifications_file.exists():
+            with open(notifications_file, "rb") as f:
+                notifications = pickle.load(f)
+        else:
+            notifications = []
+        
+        notifications.append(media_item)
+        
+        with open(notifications_file, "wb") as f:
+            pickle.dump(notifications, f)
+        
+        logging.debug(f"Added notification for collected item: {media_item['title']} (ID: {media_item['id']})")
+    except Exception as e:
+        logging.error(f"Error adding notification for collected item (ID: {media_item['id']}): {str(e)}")
+
