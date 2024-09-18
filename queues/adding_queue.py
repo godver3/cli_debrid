@@ -365,8 +365,8 @@ class AddingQueue:
             queue_manager.move_to_sleeping(item, from_queue)
 
     def is_item_old(self, item: Dict[str, Any]) -> bool:
-        if 'release_date' not in item or item['release_date'] == 'Unknown':
-            logging.info(f"Item {self.generate_identifier(item)} has no release date or unknown release date. Considering it as old.")
+        if 'release_date' not in item or not item['release_date']:
+            logging.info(f"Item {self.generate_identifier(item)} has no release date. Considering it as old.")
             return True
         try:
             release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
