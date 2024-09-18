@@ -9,6 +9,9 @@ import re
 from fuzzywuzzy import fuzz
 from poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
 from metadata.metadata import get_metadata, get_imdb_id_if_missing, get_all_season_episode_counts, get_show_airtime_by_imdb_id
+import asyncio
+import aiohttp
+from database.poster_management import get_poster_url
 
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     trakt_client_id = get_setting('Trakt', 'client_id')
@@ -103,12 +106,10 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         return cached_media_meta
 
     # Use the correct endpoints for TV shows and movies
-    if media_type == 'show':
+    if media_type == 'tv' or media_type == 'show':
         details_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
-        images_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/images?api_key={tmdb_api_key}"
     else:
         details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
-        images_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/images?api_key={tmdb_api_key}"
     
     try:
         # Fetch details
@@ -116,20 +117,13 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         details_response.raise_for_status()
         details_data = details_response.json()
 
-        # Fetch images
-        images_response = api.get(images_url)
-        images_response.raise_for_status()
-        images_data = images_response.json()
-        
-        # Get the first poster path from the images data
-        posters = images_data.get('posters', [])
-        poster_path = posters[0]['file_path'] if posters else None
-        
-        if poster_path:
-            poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
-        else:
-            poster_url = None
+        # Use asyncio to run the async get_poster_url function
+        async def fetch_poster_url():
+            async with aiohttp.ClientSession() as session:
+                return await get_poster_url(session, tmdb_id, media_type)
 
+        poster_url = asyncio.run(fetch_poster_url())
+        
         overview = details_data.get('overview', '')
         genres = [genre['name'] for genre in details_data.get('genres', [])]
         vote_average = details_data.get('vote_average', 0)
@@ -210,6 +204,10 @@ def parse_search_term(search_term: str) -> Tuple[str, Optional[int], Optional[in
         return base_title, season, episode, year, multi
     return search_term_without_year, None, None, year, True  # Default to multi=True if no season/episode specified
 
+async def fetch_poster_url(tmdb_id, media_type):
+    async with aiohttp.ClientSession() as session:
+        return await get_poster_url(session, tmdb_id, media_type)
+
 def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
     logging.info(f"Starting web scrape for search term: {search_term}, version: {version}")
     
@@ -242,7 +240,7 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 logging.info(f"Fetching data for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
                 media_meta = get_media_meta(tmdb_id, media_type)
                 if media_meta:
-                    poster_path = media_meta[0]
+                    poster_path = asyncio.run(fetch_poster_url(tmdb_id, media_type))
                     cache_poster_url(tmdb_id, media_type, poster_path)
                     cache_media_meta(tmdb_id, media_type, media_meta)
                     logging.info(f"Cached poster and metadata for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
@@ -280,7 +278,7 @@ def get_tmdb_data(tmdb_id: int, media_type: str, season: Optional[int] = None, e
         return {}
 
     base_url = "https://api.themoviedb.org/3"
-    if media_type == 'tv':
+    if media_type == 'tv' or media_type == 'show':
         if season is not None and episode is not None:
             url = f"{base_url}/tv/{tmdb_id}/season/{season}/episode/{episode}?api_key={tmdb_api_key}"
         elif season is not None:
@@ -526,7 +524,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         logging.error(f"Could not find IMDB ID for TMDB ID {tmdb_id}")
         return []
 
-    movie_or_episode = 'episode' if media_type == 'tv' else 'movie'
+    movie_or_episode = 'episode' if media_type == 'tv' or media_type == 'show' else 'movie'
 
     # Adjust multi flag based on season and episode
     if movie_or_episode == 'movie':
