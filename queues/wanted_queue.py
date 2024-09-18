@@ -11,6 +11,31 @@ class WantedQueue:
 
     def update(self):
         self.items = [dict(row) for row in get_all_media_items(state="Wanted")]
+        self._calculate_scrape_times()
+
+    def _calculate_scrape_times(self):
+        for item in self.items:
+            if not item['release_date'] or item['release_date'].lower() == "unknown":
+                item['scrape_time'] = "Unknown"
+                continue
+
+            try:
+                release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+                
+                if item['type'] == 'movie':
+                    movie_airtime_offset = float(get_setting("Queue", "movie_airtime_offset", "19")) * 60
+                    airtime_cutoff = (datetime.combine(release_date, datetime.min.time()) + timedelta(minutes=movie_airtime_offset)).time()
+                elif item['type'] == 'episode':
+                    episode_airtime_offset = float(get_setting("Queue", "episode_airtime_offset", "0")) * 60
+                    airtime = datetime.strptime(item.get('airtime', "19:00"), '%H:%M').time()
+                    airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(minutes=episode_airtime_offset)).time()
+                else:
+                    airtime_cutoff = datetime.now().time()
+
+                scrape_time = datetime.combine(release_date, airtime_cutoff)
+                item['scrape_time'] = scrape_time.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                item['scrape_time'] = "Invalid date"
 
     def get_contents(self):
         return self.items
@@ -23,123 +48,67 @@ class WantedQueue:
 
     def process(self, queue_manager):
         logging.debug("Processing wanted queue")
-        current_date = datetime.now().date()
-        current_time = datetime.now().time()
-        seasons_in_queues = set()
-
-        # Get seasons already in Scraping or Adding queue
-        for queue_name in ["Scraping", "Adding"]:
-            for item in queue_manager.queues[queue_name].get_contents():
-                if item['type'] == 'episode':
-                    seasons_in_queues.add((item['imdb_id'], item['season_number'], item['version']))
+        current_datetime = datetime.now()
+        items_to_move_scraping = []
+        items_to_move_unreleased = []
         
-        items_to_move = []
-        items_to_unreleased = []
-        
-        # Process each item in the Wanted queue
-        for item in list(self.items):
-            logging.debug(f"Processing item in Wanted queue: {item}")
+        for item in self.items:
             item_identifier = queue_manager.generate_identifier(item)
+            release_date_str = item.get('release_date')
+            airtime_str = item.get('airtime')
+
+            if not release_date_str or release_date_str.lower() == 'unknown':
+                logging.info(f"Item {item_identifier} has no scrape time. Moving to Unreleased queue.")
+                items_to_move_unreleased.append(item)
+
             try:
-                # Determine airtime offset based on content type
-                if item['type'] == 'movie':
-                    movie_airtime_offset_str = get_setting("Queue", "movie_airtime_offset", "19")
+                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                
+                # Handle case where airtime is None or invalid
+                if airtime_str:
                     try:
-                        movie_airtime_offset = float(movie_airtime_offset_str) * 60
-                    except ValueError:
-                        logging.warning(f"Invalid movie_airtime_offset setting: '{movie_airtime_offset_str}'. Using default value of 19.")
-                        movie_airtime_offset = 19 * 60
-                    airtime_offset = movie_airtime_offset
-                    airtime_cutoff = (datetime.combine(current_date, datetime.min.time()) + timedelta(hours=airtime_offset)).time()
-                elif item['type'] == 'episode':
-                    episode_airtime_offset_str = get_setting("Queue", "episode_airtime_offset", "0")
-                    try:
-                        episode_airtime_offset = float(episode_airtime_offset_str) * 60
-                    except ValueError:
-                        logging.warning(f"Invalid episode_airtime_offset setting: '{episode_airtime_offset_str}'. Using default value of 0.")
-                        episode_airtime_offset = 0
-                    airtime_offset = episode_airtime_offset
-                    
-                    # Get the airtime from the database
-                    conn = get_db_connection()
-                    cursor = conn.execute('SELECT airtime FROM media_items WHERE id = ?', (item['id'],))
-                    result = cursor.fetchone()
-                    conn.close()
-
-                    if result and result['airtime']:
-                        airtime_str = result['airtime']
                         airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                    else:
-                        # Default to 19:00 if no airtime is set
-                        airtime = datetime.strptime("19:00", '%H:%M').time()
-
-                    # Apply the offset to the airtime
-                    airtime_cutoff = (datetime.combine(current_date, airtime) + timedelta(minutes=airtime_offset)).time()
+                    except ValueError:
+                        logging.warning(f"Invalid airtime format for item {item_identifier}: {airtime_str}. Using default.")
+                        airtime = datetime.strptime("00:00", '%H:%M').time()
                 else:
-                    airtime_offset = 0
-                    airtime_cutoff = current_time  # No delay for unknown types
+                    logging.debug(f"No airtime set for item {item_identifier}. Using default.")
+                    airtime = datetime.strptime("00:00", '%H:%M').time()
 
-                logging.debug(f"Processing item: {item_identifier}, Type: {item['type']}, Airtime offset: {airtime_offset}, Airtime cutoff: {airtime_cutoff}")
+                release_datetime = datetime.combine(release_date, airtime)
 
-                # Check if release_date is None, empty string, or "Unknown"
-                if not item['release_date'] or item['release_date'].lower() == "unknown":
-                    logging.debug(f"Release date is missing or unknown for item: {item_identifier}. Moving to Unreleased state.")
-                    items_to_unreleased.append(item)
-                    continue
+                # Apply airtime offset
+                if item['type'] == 'movie':
+                    offset = float(get_setting("Queue", "movie_airtime_offset", "19"))
+                else:  # episode
+                    offset = float(get_setting("Queue", "episode_airtime_offset", "0"))
                 
-                try:
-                    release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
-                except ValueError as e:
-                    logging.error(f"Error parsing release date for item {item_identifier}: {str(e)}")
-                    logging.error(f"Item details: {item}")
-                    items_to_unreleased.append(item)
-                    continue
+                release_datetime += timedelta(hours=offset)
 
-                logging.debug(f"Item: {item_identifier}, Release date: {release_date}, Current date: {current_date}")
+                time_until_release = release_datetime - current_datetime
 
-                # Calculate the release datetime with airtime offset
-                release_datetime = datetime.combine(release_date, airtime_cutoff)
-                current_datetime = datetime.now()
+                if time_until_release <= timedelta():
+                    logging.info(f"Item {item_identifier} has met its airtime requirement. Moving to Scraping queue.")
+                    items_to_move_scraping.append(item)
+                elif time_until_release > timedelta(hours=24):
+                    logging.info(f"Item {item_identifier} is more than 24 hours away. Moving to Unreleased queue.")
+                    items_to_move_unreleased.append(item)
+                else:
+                    logging.debug(f"Item {item_identifier} will be ready for scraping in {time_until_release}. Keeping in Wanted queue.")
 
-                if current_datetime < release_datetime:
-                    time_until_release = release_datetime - current_datetime
-                    logging.info(f"Item {item_identifier} is not released yet. Moving to Unreleased state.")
-                    logging.debug(f"Will start scraping for {item_identifier} at {release_datetime}, time until: {time_until_release}")
-                    items_to_unreleased.append(item)
-                    continue
-                
-                # Check if we've reached the scraping cap
-                scraping_cap = int(get_setting("Queue", "scraping_cap", 5))
-                current_scraping_count = len(queue_manager.queues["Scraping"].get_contents()) + len(items_to_move)
-                logging.debug(f"Current scraping count: {current_scraping_count}, Scraping cap: {scraping_cap}")
-                if current_scraping_count >= scraping_cap:
-                    logging.debug(f"Scraping cap reached. Keeping {item_identifier} in Wanted queue.")
-                    break  # Exit the loop as we've reached the cap
-                
-                # Check if we're already processing an item from this season
-                if item['type'] == 'episode':
-                    season_key = (item['imdb_id'], item['season_number'], item['version'])
-                    if season_key in seasons_in_queues:
-                        logging.debug(f"Already processing an item from {item_identifier}. Keeping in Wanted queue.")
-                        continue
-                logging.info(f"Item {item_identifier} has been released and meets airtime offset. Marking for move to Scraping.")
-                items_to_move.append(item)
-                if item['type'] == 'episode':
-                    seasons_in_queues.add(season_key)
+            except ValueError as e:
+                logging.error(f"Error processing item {item_identifier}: {str(e)}")
             except Exception as e:
                 logging.error(f"Unexpected error processing item {item_identifier}: {str(e)}", exc_info=True)
-                logging.error(f"Item details: {item}")
-                # Move to Unreleased state if there's an unexpected error
-                items_to_unreleased.append(item)
-        
+
         # Move marked items to Scraping queue
-        for item in items_to_move:
+        for item in items_to_move_scraping:
             queue_manager.move_to_scraping(item, "Wanted")
         
-        # Move items to Unreleased state and remove from Wanted queue
-        for item in items_to_unreleased:
+        # Move marked items to Unreleased queue
+        for item in items_to_move_unreleased:
             queue_manager.move_to_unreleased(item, "Wanted")
         
-        logging.debug(f"Wanted queue processing complete. Items moved to Scraping queue: {len(items_to_move)}")
-        logging.debug(f"Items moved to Unreleased state and removed from Wanted queue: {len(items_to_unreleased)}")
+        logging.debug(f"Wanted queue processing complete. Items moved to Scraping queue: {len(items_to_move_scraping)}")
+        logging.debug(f"Items moved to Unreleased queue: {len(items_to_move_unreleased)}")
         logging.debug(f"Remaining items in Wanted queue: {len(self.items)}")

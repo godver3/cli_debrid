@@ -38,40 +38,15 @@ class UnreleasedQueue:
 
             try:
                 release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                
-                # Determine airtime offset based on content type
-                if item['type'] == 'movie':
-                    airtime_offset = int(get_setting("Queue", "movie_airtime_offset", "19"))
-                    airtime_cutoff = (datetime.combine(release_date, datetime.min.time()) + timedelta(hours=airtime_offset)).time()
-                elif item['type'] == 'episode':
-                    airtime_offset = int(get_setting("Queue", "episode_airtime_offset", "0"))
-                    
-                    # Get the airtime from the database
-                    conn = get_db_connection()
-                    cursor = conn.execute('SELECT airtime FROM media_items WHERE id = ?', (item['id'],))
-                    result = cursor.fetchone()
-                    conn.close()
-
-                    if result and result['airtime']:
-                        airtime_str = result['airtime']
-                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                    else:
-                        # Default to 19:00 if no airtime is set
-                        airtime = datetime.strptime("19:00", '%H:%M').time()
-
-                    # Apply the offset to the airtime
-                    airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(minutes=airtime_offset)).time()
-                else:
-                    airtime_cutoff = datetime.min.time()  # No delay for unknown types
-
-                release_datetime = datetime.combine(release_date, airtime_cutoff)
-
-                if current_datetime >= release_datetime:
-                    logging.info(f"Item {item_identifier} is now released. Moving to Wanted queue.")
+                release_datetime = datetime.combine(release_date, datetime.min.time())
+                logging.info(f"Item {item_identifier} release date: {release_datetime}")
+                # Check if the item should be moved to Wanted queue (24 hours before release)
+                if current_datetime >= release_datetime - timedelta(hours=24):
+                    logging.info(f"Item {item_identifier} is within 24 hours of release. Moving to Wanted queue.")
                     items_to_move.append(item)
                 else:
                     time_until_release = release_datetime - current_datetime
-                    logging.debug(f"Item {item_identifier} will be released in {time_until_release}. Will start scraping at {release_datetime}")
+                    logging.debug(f"Item {item_identifier} will be released in {time_until_release}. Keeping in Unreleased queue.")
                     unreleased_report.append((item_identifier, release_datetime, time_until_release))
             except ValueError:
                 logging.error(f"Invalid release date format for item {item_identifier}: {release_date_str}")
@@ -86,7 +61,7 @@ class UnreleasedQueue:
             if unreleased_report:
                 logging.debug("Hourly unreleased items report:")
                 for item_id, release_time, time_until in unreleased_report:
-                    logging.debug(f"  {item_id}: Start scraping at {release_time}, time until: {time_until}")
+                    logging.debug(f"  {item_id}: Move to Wanted at {release_time - timedelta(hours=24)}, time until: {time_until - timedelta(hours=24)}")
             self.last_report_time = current_datetime
 
         logging.debug(f"Unreleased queue processing complete. Items moved to Wanted queue: {len(items_to_move)}")
