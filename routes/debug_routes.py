@@ -17,6 +17,9 @@ from api_tracker import api
 import time
 from metadata.metadata import get_metadata, get_tmdb_id_and_media_type, refresh_release_dates
 from datetime import datetime
+from notifications import send_notifications
+import requests
+from datetime import datetime, timedelta
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -377,3 +380,117 @@ def move_item_to_wanted(item_id):
         raise e
     finally:
         conn.close()
+
+
+@debug_bp.route('/send_test_notification', methods=['POST'])
+@admin_required
+def send_test_notification():
+    try:
+        # Create test notification items
+        now = datetime.now()
+        test_notifications = [
+            {
+                'type': 'movie',
+                'title': 'Test Movie 1',
+                'year': 2023,
+                'tmdb_id': '123456',
+                'collected_at': now.isoformat(),
+                'version': 'Default'
+            },
+            {
+                'type': 'movie',
+                'title': 'Test Movie 1',
+                'year': 2023,
+                'tmdb_id': '123456',
+                'collected_at': (now + timedelta(hours=1)).isoformat(),
+                'version': 'Extended'
+            },
+            {
+                'type': 'movie',
+                'title': 'Test Movie 2',
+                'year': 2023,
+                'tmdb_id': '234567',
+                'collected_at': (now + timedelta(hours=2)).isoformat(),
+                'version': 'Default'
+            },
+            {
+                'type': 'show',
+                'title': 'Test TV Show 1',
+                'year': 2023,
+                'tmdb_id': '345678',
+                'collected_at': (now + timedelta(hours=3)).isoformat(),
+                'version': 'Default'
+            },
+            {
+                'type': 'season',
+                'title': 'Test TV Show 1',
+                'year': 2023,
+                'tmdb_id': '345678',
+                'season_number': 1,
+                'collected_at': (now + timedelta(hours=4)).isoformat(),
+                'version': 'Default'
+            },
+            {
+                'type': 'season',
+                'title': 'Test TV Show 1',
+                'year': 2023,
+                'tmdb_id': '345678',
+                'season_number': 2,
+                'collected_at': (now + timedelta(hours=5)).isoformat(),
+                'version': 'Default'
+            },
+            {
+                'type': 'episode',
+                'title': 'Test TV Show 1',
+                'year': 2023,
+                'tmdb_id': '345678',
+                'season_number': 1,
+                'episode_number': 1,
+                'collected_at': (now + timedelta(hours=6)).isoformat(),
+                'version': 'Default'
+            },
+            {
+                'type': 'episode',
+                'title': 'Test TV Show 1',
+                'year': 2023,
+                'tmdb_id': '345678',
+                'season_number': 1,
+                'episode_number': 2,
+                'collected_at': (now + timedelta(hours=7)).isoformat(),
+                'version': 'Extended'
+            },
+            {
+                'type': 'show',
+                'title': 'Test TV Show 2',
+                'year': 2023,
+                'tmdb_id': '456789',
+                'collected_at': (now + timedelta(hours=8)).isoformat(),
+                'version': 'Default'
+            },
+            {
+                'type': 'episode',
+                'title': 'Test TV Show 2',
+                'year': 2023,
+                'tmdb_id': '456789',
+                'season_number': 1,
+                'episode_number': 1,
+                'collected_at': (now + timedelta(hours=9)).isoformat(),
+                'version': 'Default'
+            }
+        ]
+
+        # Fetch enabled notifications
+        response = requests.get('http://localhost:5000/settings/notifications/enabled')
+        if response.status_code == 200:
+            enabled_notifications = response.json().get('enabled_notifications', {})
+            
+            # Send test notifications
+            send_notifications(test_notifications, enabled_notifications)
+            
+            return jsonify({'success': True, 'message': 'Test notification sent successfully'}), 200
+        else:
+            return jsonify({'success': False, 'error': 'Failed to fetch enabled notifications'}), 500
+
+    except Exception as e:
+        logging.error(f"Error sending test notification: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500

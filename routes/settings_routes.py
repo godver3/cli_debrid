@@ -607,15 +607,26 @@ def get_enabled_notifications():
         enabled_notifications = {}
         for notification_id, notification_config in notifications.items():
             if notification_config.get('enabled', False):
-                notification_type = notification_config.get('type', '')
-                enabled_notifications[notification_id] = {
-                    'type': notification_type,
-                    'title': notification_config.get('title', ''),
-                    'config': {
-                        key: value for key, value in notification_config.items()
-                        if key not in ['enabled', 'type', 'title']
-                    }
-                }
+                # Only include notifications that are enabled and have non-empty required fields
+                if notification_config['type'] == 'Discord':
+                    if notification_config.get('webhook_url'):
+                        enabled_notifications[notification_id] = notification_config
+                elif notification_config['type'] == 'Email':
+                    if all([
+                        notification_config.get('smtp_server'),
+                        notification_config.get('smtp_port'),
+                        notification_config.get('smtp_username'),
+                        notification_config.get('smtp_password'),
+                        notification_config.get('from_address'),
+                        notification_config.get('to_address')
+                    ]):
+                        enabled_notifications[notification_id] = notification_config
+                elif notification_config['type'] == 'Telegram':
+                    if all([
+                        notification_config.get('bot_token'),
+                        notification_config.get('chat_id')
+                    ]):
+                        enabled_notifications[notification_id] = notification_config
         
         return jsonify({
             'success': True,
