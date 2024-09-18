@@ -27,7 +27,8 @@ class WantedQueue:
                     airtime_cutoff = (datetime.combine(release_date, datetime.min.time()) + timedelta(minutes=movie_airtime_offset)).time()
                 elif item['type'] == 'episode':
                     episode_airtime_offset = float(get_setting("Queue", "episode_airtime_offset", "0")) * 60
-                    airtime = datetime.strptime(item.get('airtime', "19:00"), '%H:%M').time()
+                    airtime_str = item.get('airtime') or "19:00"  # Use "19:00" if airtime is None
+                    airtime = datetime.strptime(airtime_str, '%H:%M').time()
                     airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(minutes=episode_airtime_offset)).time()
                 else:
                     airtime_cutoff = datetime.now().time()
