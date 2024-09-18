@@ -132,6 +132,12 @@
                 <button type="submit">Refresh Release Dates</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Send Test Notification</h3>
+            <form id="send-test-notification-form" action="{{ url_for('debug.send_test_notification') }}" method="POST">
+                <button type="submit">Send Test Notification</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -488,6 +494,16 @@
 
         // Add event listener for the refresh button
         document.getElementById('refresh-rate-limits').addEventListener('click', fetchRateLimitInfo);
+
+        if (sendTestNotificationForm) {
+            sendTestNotificationForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const url = this.action;
+                const method = this.method;
+                submitForm(url, method, new FormData(this));
+
+            });
+        }
     });
 </script>
 {% endblock %}
