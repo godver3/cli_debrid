@@ -12,6 +12,8 @@ from metadata.metadata import get_metadata, get_imdb_id_if_missing, get_all_seas
 import asyncio
 import aiohttp
 from database.poster_management import get_poster_url
+from flask import request, url_for
+from urllib.parse import urlparse
 
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     trakt_client_id = get_setting('Trakt', 'client_id')
@@ -433,7 +435,27 @@ def trending_movies():
                     cache_media_meta(tmdb_id, 'movie', media_meta)
                     logging.info(f"Cached poster and metadata for movie {result['movie']['title']} (TMDB ID: {tmdb_id})")
                 else:
-                    poster_path = None
+                    if get_setting('TMDB', 'api_key') == "":
+                        logging.warning("TMDB API key not set, using placeholder images")
+                        
+                        # Generate the placeholder URL
+                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        
+                        # Check if the request is secure (HTTPS)
+                        if request.is_secure:
+                            # If it's secure, ensure the URL uses HTTPS
+                            parsed_url = urlparse(placeholder_url)
+                            placeholder_url = parsed_url._replace(scheme='https').geturl()
+                        else:
+                            # If it's not secure, use HTTP
+                            parsed_url = urlparse(placeholder_url)
+                            placeholder_url = parsed_url._replace(scheme='http').geturl()
+                        
+                        poster_path = placeholder_url
+
+            # Check if TMDB API key is set
+            tmdb_api_key = get_setting('TMDB', 'api_key', '')
+            tmdb_api_key_set = bool(tmdb_api_key)
 
             trending_movies.append({
                 "title": result['movie']['title'],
@@ -446,7 +468,8 @@ def trending_movies():
                 "movie_overview": media_meta[1] if media_meta else '',
                 "genre_ids": media_meta[2] if media_meta else [],
                 "vote_average": media_meta[3] if media_meta else 0,
-                "backdrop_path": media_meta[4] if media_meta else ''
+                "backdrop_path": media_meta[4] if media_meta else '',
+                "tmdb_api_key_set": tmdb_api_key_set
             })
 
         return {"trendingMovies": trending_movies}
@@ -491,7 +514,27 @@ def trending_shows():
                     cache_media_meta(tmdb_id, 'tv', media_meta)
                     logging.info(f"Cached poster and metadata for show {result['show']['title']} (TMDB ID: {tmdb_id})")
                 else:
-                    poster_path = None
+                    if get_setting('TMDB', 'api_key') == "":
+                        logging.warning("TMDB API key not set, using placeholder images")
+                        
+                        # Generate the placeholder URL
+                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        
+                        # Check if the request is secure (HTTPS)
+                        if request.is_secure:
+                            # If it's secure, ensure the URL uses HTTPS
+                            parsed_url = urlparse(placeholder_url)
+                            placeholder_url = parsed_url._replace(scheme='https').geturl()
+                        else:
+                            # If it's not secure, use HTTP
+                            parsed_url = urlparse(placeholder_url)
+                            placeholder_url = parsed_url._replace(scheme='http').geturl()
+                        
+                        poster_path = placeholder_url
+                    
+            # Check if TMDB API key is set
+            tmdb_api_key = get_setting('TMDB', 'api_key', '')
+            tmdb_api_key_set = bool(tmdb_api_key)
 
             trending_shows.append({
                 "title": result['show']['title'],
@@ -504,7 +547,8 @@ def trending_shows():
                 "show_overview": media_meta[1] if media_meta else '',
                 "genre_ids": media_meta[2] if media_meta else [],
                 "vote_average": media_meta[3] if media_meta else 0,
-                "backdrop_path": media_meta[4] if media_meta else ''
+                "backdrop_path": media_meta[4] if media_meta else '',
+                "tmdb_api_key_set": tmdb_api_key_set
             })
 
         return {"trendingShows": trending_shows}

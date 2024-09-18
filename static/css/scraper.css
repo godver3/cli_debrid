@@ -150,6 +150,10 @@ form#search-form input, select, button {
     padding-top: 10px;
 }
 
+.no-tmdb-api .media-title {
+    opacity: 1;
+}
+
 .media-poster:hover .media-poster-img {
     transform: scale(1.1);
 }

@@ -9,8 +9,17 @@
         color: #888;
         text-align: center;
     }
+
+    .tmdb-info {
+        margin-top: 10px;
+        margin-bottom: 0px;
+        padding: 10px;
+        color: #be1600;
+        font-style: italic;
+        text-align: center;
+    }
 </style>
-    <div id="scraper-container">
+    <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
         <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">
             <input type="text" name="search_term" placeholder="Enter search term" required>
             <select name="version" id="version-select">
@@ -20,6 +29,11 @@
             </select>
             <button id="searchformButton" type="submit">Search</button>
         </form>
+        {% if not compact_view and not tmdb_api_key_set %}
+        <div class="tmdb-info">
+            <p>To load movie and TV show posters, please set your TMDB API key in the settings.</p>
+        </div>
+        {% endif %}
         <div class="trending-container" id="trendingContainer">
             <div class="trending-movies">
                 <div class="trending-header">
