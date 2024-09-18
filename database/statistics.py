@@ -29,9 +29,9 @@ def get_collected_counts():
         ''')
         total_shows = cursor.fetchone()[0]
 
-        # Count total collected episodes
+        # Count unique collected episodes
         cursor.execute('''
-            SELECT COUNT(*) 
+            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number) 
             FROM media_items 
             WHERE type = 'episode' AND state = 'Collected'
         ''')
