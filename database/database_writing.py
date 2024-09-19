@@ -86,11 +86,6 @@ def update_media_item_state(item_id, state, **kwargs):
                     value = json.dumps(value) if value else None
                 params.append(value)
 
-        # Update collected_at if the state is changing to 'Collected'
-        if state == 'Collected':
-            query += ", collected_at = ?"
-            params.append(datetime.now())
-
         # Complete the query
         query += " WHERE id = ?"
         params.append(item_id)
