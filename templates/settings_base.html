@@ -349,6 +349,7 @@
         <option value="additional">Additional Settings</option>
         <option value="debug">Debug Settings</option>
         <option value="notifications">Notifications</option>
+        <option value="reverse-parser">Reverse Parser</option>
     </select>
     <div class="settings-tabs settings-tabs-desktop">
         <button type="button" class="btn btn-secondary settings-tab-button active" data-tab="required">Required Settings</button>
@@ -358,6 +359,7 @@
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="additional">Additional Settings</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="debug">Debug Settings</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="notifications">Notifications</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="reverse-parser">Reverse Parser</button>
     </div>
     
     <div id="settingsForm">
@@ -378,6 +380,9 @@
         </div>
         <div id="notifications" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/notifications.html' %}
+        </div>
+        <div id="reverse-parser" class="settings-tab-content" style="display: none;">
+            {% include 'settings_tabs/reverse_parser.html' %}
         </div>
     </div>
 
