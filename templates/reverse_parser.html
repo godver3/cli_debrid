@@ -3,7 +3,7 @@
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/reverse_parser.css') }}">
 <div class="container">
-    <h2>Reverse Parser Settings</h2>
+    <h2>Reverse Parser Tester</h2>
 
     <div class="settings-section">
         <div class="settings-section-header">
@@ -37,7 +37,7 @@
             </button>
         </div>
     </div>
-
+    <button type="button" id="applyParsedVersionsButton" class="save-button">Apply Parsed Versions</button>
     <button type="button" id="saveSettingsButton" class="save-button">Save Settings</button>
     
     <h3>Collected Items</h3>
@@ -47,7 +47,9 @@
                 <thead>
                     <tr>
                         {% for column in selected_columns %}
-                            <th>{{ column|title }}</th>
+                            {% if column != 'version' %}
+                                <th>{{ column|title }}</th>
+                            {% endif %}
                         {% endfor %}
                         <th>Assigned Version</th>
                     </tr>
@@ -56,7 +58,9 @@
                     {% for item in items %}
                         <tr>
                             {% for column in selected_columns %}
-                                <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                                {% if column != 'version' %}
+                                    <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                                {% endif %}
                             {% endfor %}
                             <td class="assigned-version" data-parsed-version="{{ item['parsed_version'] }}"></td>
                         </tr>
@@ -80,6 +84,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const defaultVersionSelect = document.getElementById('default-version');
     const saveSettingsButton = document.getElementById('saveSettingsButton');
     const filterDefaultButton = document.getElementById('filterDefaultButton');
+    const applyParsedVersionsButton = document.getElementById('applyParsedVersionsButton');
 
     let currentDefaultVersion;
     let isFilteringDefault = {{ 'true' if filter_default else 'false' }};
@@ -88,7 +93,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeTooltips();
     setupEventListeners();
     loadVersionData();
-
+    
     // Event Listeners Setup
     function setupEventListeners() {
         if (saveSettingsButton) {
@@ -97,6 +102,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (filterDefaultButton) {
             filterDefaultButton.addEventListener('click', handleFilterDefault);
+        }
+
+        if (applyParsedVersionsButton) {
+            applyParsedVersionsButton.addEventListener('click', handleApplyParsedVersions);
         }
     }
 
@@ -409,6 +418,41 @@ document.addEventListener('DOMContentLoaded', function() {
             rowsHTML += `<td class="assigned-version" data-parsed-version="${item.parsed_version || ''}"></td></tr>`;
         });
         return rowsHTML;
+    }
+
+    function handleApplyParsedVersions() {
+        fetch('{{ url_for('database.apply_parsed_versions') }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: 'Parsed versions have been applied to all items.'
+                });
+                // Refresh the content to show updated versions
+                updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 });
+            } else {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Failed to apply parsed versions: ' + data.error
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error applying parsed versions:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'An error occurred while applying parsed versions.'
+            });
+        });
     }
 
     function updateUIForCurrentState(data) {
