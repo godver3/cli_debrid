@@ -8,6 +8,7 @@ from extensions import db
 from database import remove_from_media_items
 from settings import get_setting
 import json
+from reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
 
 database_bp = Blueprint('database', __name__)
 
@@ -229,11 +230,10 @@ def reverse_parser():
 
         logging.debug(f"page: {page}, items_per_page: {items_per_page}, filter_default: {filter_default}")
 
-        # Fetch reverse parser settings from config
-        reverse_parser_settings = get_setting('Reverse Parser')
-        default_version = reverse_parser_settings.get('default_version', '')
-        version_terms = reverse_parser_settings.get('version_terms', {})
-        version_order = reverse_parser_settings.get('version_order', [])
+        # Fetch the latest settings every time
+        version_terms = get_version_settings()
+        default_version = get_default_version()
+        version_order = get_version_order()
 
         # Construct the base query
         query = f"""
@@ -271,6 +271,12 @@ def reverse_parser():
         conn.close()
 
         items = [dict(zip(['id'] + data['selected_columns'], item)) for item in items]
+
+        # Parse versions using parse_filename_for_version function
+        for item in items:
+            parsed_version = parse_filename_for_version(item['filled_by_file'])
+            item['parsed_version'] = parsed_version
+            logging.debug(f"Filename: {item['filled_by_file']}, Parsed Version: {parsed_version}")
 
         data.update({
             'items': items,
