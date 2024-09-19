@@ -786,7 +786,8 @@
                     ('settings.index', 'Settings'),
                     ('database.index', 'Database'),
                     ('scraper.scraper_tester', 'Tester'),
-                    ('debug.debug_functions', 'Debug')
+                    ('debug.debug_functions', 'Debug'),
+                    ('database.reverse_parser', 'R. Parser')
                 ] %}
                 
                 {% if is_user_system_enabled() %}
@@ -811,14 +812,14 @@
             {% if is_user_system_enabled() %}
                 {% if current_user.is_authenticated %}
                     <div class="action-controls">
-                        <a href="{{ url_for('auth.logout') }}" class="icon-button">
+                        <a href="{{ url_for('auth.logout') }}" class="icon-button" id="logout_button">
                             <i class="fas fa-sign-out-alt"></i>
                             <span class="button-text">Logout</span>
-                        </a>
+                        </a>                        
                         {% if current_user.role == 'admin' %}
                             <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
                                 <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
-                                <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
+                                <span class="button-text" id="program-control-button">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                             </button>
                         {% endif %}
                     </div>

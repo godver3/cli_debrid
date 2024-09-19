@@ -1,0 +1,393 @@
+{% extends "base.html" %}
+{% block title %}Reverse Parser Settings{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/reverse_parser.css') }}">
+<div class="container">
+    <h2>Reverse Parser Settings</h2>
+
+    <div class="settings-section">
+        <div class="settings-section-header">
+            <h4>Version Terms</h4>
+        </div>
+        <div class="settings-section-content">
+            <div id="version-terms-container" class="version-terms-container">
+                <!-- Version terms will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+
+    <div class="settings-section default-version-container">
+        <div class="settings-section-header">
+            <h4>Default Version</h4>
+        </div>
+        <div class="settings-section-content">
+            <select id="default-version" name="Reverse Parser.default_version" class="settings-input">
+                <!-- Options will be dynamically populated -->
+            </select>
+        </div>
+    </div>
+
+    <div class="settings-section">
+        <div class="settings-section-header">
+            <h4>Filter Options</h4>
+        </div>
+        <div class="settings-section-content">
+            <button id="filterDefaultButton" class="filter-button">
+                {{ 'Show All' if filter_default else 'Show Only Default Version' }}
+            </button>
+        </div>
+    </div>
+
+    <button type="button" id="saveSettingsButton" class="save-button">Save Settings</button>
+    
+    <h3>Collected Items</h3>
+    <div class="table-container">
+        {% if items %}
+            <table id="items-table">
+                <thead>
+                    <tr>
+                        {% for column in selected_columns %}
+                            <th>{{ column|title }}</th>
+                        {% endfor %}
+                        <th>Assigned Version</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                        <tr>
+                            {% for column in selected_columns %}
+                                <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                            {% endfor %}
+                            <td class="assigned-version"></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p>No collected items found in the database.</p>
+        {% endif %}
+    </div>
+</div>
+
+<script type="module">
+import { initializeTooltips, setUpdatingContent } from '/static/js/tooltips.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log("DOMContentLoaded event fired");
+
+    // DOM Elements
+    const versionTermsContainer = document.getElementById('version-terms-container');
+    const defaultVersionSelect = document.getElementById('default-version');
+    const saveSettingsButton = document.getElementById('saveSettingsButton');
+    const filterDefaultButton = document.getElementById('filterDefaultButton');
+
+    let currentDefaultVersion;
+    let isFilteringDefault = {{ 'true' if filter_default else 'false' }};
+
+    // Initialization
+    initializeTooltips();
+    setupEventListeners();
+    loadVersionData();
+
+    // Event Listeners Setup
+    function setupEventListeners() {
+        if (saveSettingsButton) {
+            saveSettingsButton.addEventListener('click', handleSaveSettings);
+        }
+
+        if (filterDefaultButton) {
+            filterDefaultButton.addEventListener('click', handleFilterDefault);
+        }
+    }
+
+    // Event Handlers
+    function handleSaveSettings() {
+        if (typeof updateSettings === 'function') {
+            updateSettings();
+        } else {
+            console.error('updateSettings function not found. Make sure it is exported from settings.js');
+        }
+    }
+
+    function handleFilterDefault() {
+        isFilteringDefault = !isFilteringDefault;
+        console.log("Filtering default:", isFilteringDefault);
+        updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 });
+    }
+
+    // Version Management
+    function loadVersionData() {
+        Promise.all([
+            fetch('/settings/get_scraping_versions').then(response => response.json()),
+            fetch('/settings/api/reverse_parser_settings').then(response => response.json())
+        ]).then(([versionsData, reverseParserData]) => {
+            setupVersions(versionsData.versions, reverseParserData);
+        }).catch(error => {
+            console.error("Error loading version data:", error);
+        });
+    }
+
+    function setupVersions(allVersions, reverseParserData) {
+        const versionTerms = reverseParserData.version_terms || {};
+        const versionOrder = reverseParserData.version_order || [];
+        
+        const allVersionsSet = new Set(allVersions);
+        
+        versionOrder.forEach(version => {
+            if (allVersionsSet.has(version)) {
+                createVersionTermsInput(version, versionTerms[version] || []);
+                allVersionsSet.delete(version);
+            }
+        });
+        
+        allVersions.forEach(version => {
+            if (allVersionsSet.has(version)) {
+                createVersionTermsInput(version, versionTerms[version] || []);
+            }
+        });
+        
+        updateMoveButtons();
+        updateDefaultVersionOptions();
+        currentDefaultVersion = reverseParserData.default_version || versionOrder[0] || allVersions[0] || '';
+        defaultVersionSelect.value = currentDefaultVersion;
+
+        assignVersions();
+
+        setupVersionInputListeners();
+    }
+
+    function createVersionTermsInput(version, terms) {
+        const div = document.createElement('div');
+        div.className = 'version-terms-input';
+        div.setAttribute('data-version', version);
+        div.innerHTML = `
+            <span class="version-name">${version}</span>
+            <input type="text" class="settings-input version-terms" value="${terms.join(', ')}" placeholder="Enter terms separated by commas">
+            <button type="button" class="move-btn move-up" title="Move Up">↑</button>
+            <button type="button" class="move-btn move-down" title="Move Down">↓</button>
+        `;
+        versionTermsContainer.appendChild(div);
+
+        div.querySelector('.move-up').addEventListener('click', () => moveVersion(div, 'up'));
+        div.querySelector('.move-down').addEventListener('click', () => moveVersion(div, 'down'));
+    }
+
+    function moveVersion(versionDiv, direction) {
+        const sibling = direction === 'up' ? versionDiv.previousElementSibling : versionDiv.nextElementSibling;
+        if (sibling) {
+            const moveUp = direction === 'up';
+            versionDiv.style.zIndex = '2';
+            sibling.style.zIndex = '1';
+
+            versionDiv.classList.add(moveUp ? 'moving-up' : 'moving-down');
+            sibling.classList.add(moveUp ? 'moving-down' : 'moving-up');
+
+            setTimeout(() => {
+                versionDiv.classList.remove(moveUp ? 'moving-up' : 'moving-down');
+                sibling.classList.remove(moveUp ? 'moving-down' : 'moving-up');
+                
+                versionDiv.style.transform = moveUp ? 'translateY(-100%)' : 'translateY(100%)';
+                sibling.style.transform = moveUp ? 'translateY(100%)' : 'translateY(-100%)';
+                
+                setTimeout(() => {
+                    versionDiv.style.transition = 'none';
+                    sibling.style.transition = 'none';
+                    versionDiv.style.transform = '';
+                    sibling.style.transform = '';
+                    versionDiv.style.zIndex = '';
+                    sibling.style.zIndex = '';
+
+                    if (moveUp) {
+                        sibling.parentNode.insertBefore(versionDiv, sibling);
+                    } else {
+                        sibling.parentNode.insertBefore(sibling, versionDiv);
+                    }
+
+                    setTimeout(() => {
+                        versionDiv.style.transition = '';
+                        sibling.style.transition = '';
+                        updateMoveButtons();
+                        updateDefaultVersionOptions();
+                    }, 0);
+                }, 300);
+            }, 300);
+        }
+    }
+
+    function updateMoveButtons() {
+        const versionDivs = versionTermsContainer.querySelectorAll('.version-terms-input');
+        versionDivs.forEach((div, index) => {
+            div.querySelector('.move-up').disabled = index === 0;
+            div.querySelector('.move-down').disabled = index === versionDivs.length - 1;
+        });
+    }
+
+    function updateDefaultVersionOptions() {
+        const versions = Array.from(document.querySelectorAll('.version-terms-input')).map(div => div.getAttribute('data-version'));
+        const currentSelection = defaultVersionSelect.value;
+        defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
+        
+        // Restore the previously selected default version
+        if (currentSelection && versions.includes(currentSelection)) {
+            defaultVersionSelect.value = currentSelection;
+        } else if (currentDefaultVersion && versions.includes(currentDefaultVersion)) {
+            defaultVersionSelect.value = currentDefaultVersion;
+        }
+    }
+
+    function setupVersionInputListeners() {
+        const versionInputs = document.querySelectorAll('.version-terms');
+        versionInputs.forEach(input => {
+            input.addEventListener('input', () => updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 }));
+        });
+
+        if (defaultVersionSelect) {
+            defaultVersionSelect.addEventListener('change', function() {
+                currentDefaultVersion = this.value;
+                updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 });
+            });
+        }
+    }
+
+    function assignVersions() {
+        let versionTerms = [];
+        const versionDivs = document.querySelectorAll('.version-terms-input');
+
+        versionDivs.forEach((div) => {
+            const version = div.getAttribute('data-version');
+            const termsInput = div.querySelector('.version-terms');
+            if (termsInput) {
+                const terms = termsInput.value.split(',').map(term => term.trim().toLowerCase()).filter(term => term !== '');
+                if (terms.length > 0) {
+                    versionTerms.push({ version, terms });
+                }
+            }
+        });
+
+        const defaultVersionSelect = document.getElementById('default-version');
+        const defaultVersion = defaultVersionSelect ? defaultVersionSelect.value : null;
+
+        const rows = document.querySelectorAll('#items-table tbody tr');
+
+        rows.forEach((row) => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 2) {
+                return;
+            }
+
+            const filledByFile = cells[1].textContent.toLowerCase();
+            let assignedVersion = null;
+
+            for (const { version, terms } of versionTerms) {
+                if (terms.some(term => filledByFile.includes(term))) {
+                    assignedVersion = version;
+                    break;
+                }
+            }
+
+            const assignedVersionCell = cells[cells.length - 1]; // Last cell
+            if (assignedVersionCell) {
+                if (assignedVersion) {
+                    assignedVersionCell.textContent = assignedVersion;
+                    row.classList.add('matched');
+                    row.classList.remove('default-version');
+                } else {
+                    assignedVersionCell.textContent = defaultVersion || 'No default version';
+                    row.classList.remove('matched');
+                    row.classList.add('default-version');
+                }
+            }
+        });
+    }
+
+    // Content Update
+    function updateContent(url, params = {}) {
+        // Add default sort parameters if not present
+        if (!params.sort_column) params.sort_column = '{{ sort_column }}';
+        if (!params.sort_order) params.sort_order = '{{ sort_order }}';
+        if (!params.page) params.page = 1;
+
+        // Add ajax parameter
+        params.ajax = '1';
+
+        const queryString = new URLSearchParams(params).toString();
+        url += '?' + queryString;
+
+        console.log("Fetching URL:", url);
+
+        setUpdatingContent(true);
+
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                console.log("Received data:", data);
+
+                const tableContainer = document.querySelector('.table-container');
+                if (tableContainer) {
+                    if (data.items && data.items.length > 0) {
+                        tableContainer.innerHTML = renderTable(data.items, data.selected_columns);
+                    } else {
+                        tableContainer.innerHTML = '<p>No collected items found in the database.</p>';
+                    }
+                } else {
+                    console.error('Table container not found');
+                }
+
+                updateUIForCurrentState(data);
+                initializeTooltips();
+                assignVersions();
+            })
+            .catch(error => {
+                console.error('Error updating content:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Failed to update database content: ' + error.message
+                });
+            })
+            .finally(() => {
+                setUpdatingContent(false);
+            });
+    }
+
+    function renderTable(items, selectedColumns) {
+        let tableHTML = '<table id="items-table"><thead><tr>';
+        selectedColumns.forEach(column => {
+            tableHTML += `<th>${column.charAt(0).toUpperCase() + column.slice(1)}</th>`;
+        });
+        tableHTML += '<th>Assigned Version</th></tr></thead><tbody>';
+        tableHTML += renderTableRows(items, selectedColumns);
+        tableHTML += '</tbody></table>';
+        return tableHTML;
+    }
+
+    function renderTableRows(items, selectedColumns) {
+        let rowsHTML = '';
+        items.forEach(item => {
+            rowsHTML += '<tr>';
+            selectedColumns.forEach(column => {
+                let cellContent = item[column];
+                if (cellContent === null || cellContent === undefined || cellContent === '') {
+                    cellContent = 'None';
+                }
+                rowsHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
+            });
+            rowsHTML += '<td class="assigned-version"></td></tr>';
+        });
+        return rowsHTML;
+    }
+
+    function updateUIForCurrentState(data) {
+        isFilteringDefault = data.filter_default;
+        if (filterDefaultButton) {
+            filterDefaultButton.textContent = isFilteringDefault ? 'Show All' : 'Show Only Default Version';
+        }
+    }  
+});
+</script>
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}
