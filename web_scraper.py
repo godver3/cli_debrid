@@ -189,22 +189,29 @@ def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[
         return []
     
 def parse_search_term(search_term: str) -> Tuple[str, Optional[int], Optional[int], Optional[int], bool]:
-    # Extract year if present
-    year_match = re.search(r'\b(19\d{2}|20\d{2})\b', search_term)
-    year = int(year_match.group(1)) if year_match else None
-    
-    # Remove year from search term for further parsing
-    search_term_without_year = re.sub(r'\b(19\d{2}|20\d{2})\b', '', search_term).strip()
-    
+    # First, check if the entire search term is a year
+    if re.match(r'^(19\d{2}|20\d{2})$', search_term):
+        return search_term, None, None, None, True
+
+    # Try to match a year at the end of the string
+    year_match = re.search(r'\b(19\d{2}|20\d{2})\b\s*$', search_term)
+    if year_match:
+        year = int(year_match.group(1))
+        base_title = search_term[:year_match.start()].strip()
+    else:
+        year = None
+        base_title = search_term
+
     # Match patterns like "S01E01", "s01e01", "S01", "s01"
-    match = re.search(r'[Ss](\d+)(?:[Ee](\d+))?', search_term_without_year)
+    match = re.search(r'[Ss](\d+)(?:[Ee](\d+))?', base_title)
     if match:
         season = int(match.group(1))
         episode = int(match.group(2)) if match.group(2) else None
-        base_title = re.sub(r'[Ss]\d+(?:[Ee]\d+)?', '', search_term_without_year).strip()
+        base_title = re.sub(r'[Ss]\d+(?:[Ee]\d+)?', '', base_title).strip()
         multi = episode is None  # Set multi to True if only season is specified
         return base_title, season, episode, year, multi
-    return search_term_without_year, None, None, year, True  # Default to multi=True if no season/episode specified
+
+    return base_title, None, None, year, True  # Default to multi=True if no season/episode specified
 
 async def fetch_poster_url(tmdb_id, media_type):
     async with aiohttp.ClientSession() as session:
