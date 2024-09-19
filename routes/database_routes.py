@@ -1,7 +1,7 @@
 from flask import jsonify, request, render_template, session, flash, Blueprint, current_app
 import sqlite3
 import string
-from database import get_db_connection
+from database import get_db_connection, get_all_media_items, update_media_item_state
 import logging
 from sqlalchemy import text, inspect
 from extensions import db
@@ -304,3 +304,29 @@ def reverse_parser():
     else:
         flash(error_message, "error")
         return render_template('reverse_parser.html', **data)
+    
+@database_bp.route('/apply_parsed_versions', methods=['POST'])
+def apply_parsed_versions():
+    try:
+        items = get_all_media_items()
+        updated_count = 0
+        for item in items:
+            if item['filled_by_file']:
+                parsed_version = parse_filename_for_version(item['filled_by_file'])
+                
+                # Only update if the parsed version is different from the current version
+                current_version = item['version'] if 'version' in item.keys() else None
+                if parsed_version != current_version:
+                    try:
+                        update_media_item_state(item['id'], item['state'], version=parsed_version)
+                        updated_count += 1
+                    except Exception as e:
+                        logging.error(f"Error updating item {item['id']}: {str(e)}")
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Parsed versions applied successfully. Updated {updated_count} items.'
+        })
+    except Exception as e:
+        logging.error(f"Error applying parsed versions: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
