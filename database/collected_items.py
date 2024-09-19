@@ -6,8 +6,11 @@ from datetime import datetime
 import json
 from .database_writing import add_to_collected_notifications
 from reverse_parser import parser_approximation
+from settings import get_setting
 
 def add_collected_items(media_items_batch, recent=False):
+    from routes.debug_routes import move_item_to_wanted
+
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
@@ -65,10 +68,6 @@ def add_collected_items(media_items_batch, recent=False):
                 for location in locations:
                     filename = os.path.basename(location)
 
-                    # Use the parser_approximation function
-                    parsed_info = parser_approximation(filename)
-                    version = parsed_info['version']
-
                     added_at = item.get('addedAt')
                     if added_at is not None:
                         collected_at = datetime.fromtimestamp(added_at)
@@ -106,6 +105,10 @@ def add_collected_items(media_items_batch, recent=False):
 
                     else:
 
+                        # Use the parser_approximation function
+                        parsed_info = parser_approximation(filename)
+                        version = parsed_info['version']
+
                         # Insert new item
                         if item_type == 'movie':
                             cursor = conn.execute('''
@@ -139,12 +142,53 @@ def add_collected_items(media_items_batch, recent=False):
             for row in existing_items:
                 item = row_to_dict(row)
                 if item['filled_by_file'] and item['filled_by_file'] not in all_valid_filenames:
-                    conn.execute('''
-                        UPDATE media_items
-                        SET state = ?, last_updated = ?, collected_at = NULL, filled_by_file = NULL
-                        WHERE id = ?
-                    ''', ('Wanted', datetime.now(), item['id']))
-                    logging.info(f"Moved item to Wanted state (file no longer present): {item.get('title', 'Unknown')} (ID: {item['id']})")
+                    if get_setting("Debug", "rescrape_missing_files", default=False):
+                        # TODO: Implement rescrape logic to rescrape based on current content sources
+                        # TODO: Should add an option to mark items as deleted to prevent cli_debrid from re-adding if deleted from Plex
+                        try:
+                            # Check for matching items
+                            if item['type'] == 'movie':
+                                matching_items = conn.execute('''
+                                    SELECT id, version FROM media_items 
+                                    WHERE imdb_id = ? AND type = 'movie' AND state = 'Collected'
+                                ''', (item['imdb_id'],)).fetchall()
+                            else:
+                                matching_items = conn.execute('''
+                                    SELECT id, version FROM media_items 
+                                    WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
+                                ''', (item['imdb_id'], item['season_number'], item['episode_number'])).fetchall()
+                            
+                            current_version = item['version'].strip('*')
+                            matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items)
+                            
+                            if matching_version_exists:
+                                # Delete the item if a matching version exists
+                                conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
+                                logging.info(f"Deleted item (ID: {item['id']}) as matching version exists")
+                            else:
+                                # Move to Wanted state if no matching version exists
+                                conn.execute('''
+                                    UPDATE media_items 
+                                    SET state = 'Wanted', 
+                                        filled_by_file = NULL, 
+                                        filled_by_title = NULL, 
+                                        filled_by_magnet = NULL, 
+                                        filled_by_torrent_id = NULL, 
+                                        collected_at = NULL,
+                                        last_updated = ?,
+                                        version = TRIM(version, '*')
+                                    WHERE id = ?
+                                ''', (datetime.now(), item['id']))
+                                logging.info(f"Moved item to Wanted state (no matching version): {item['title']} (ID: {item['id']})")
+                        except Exception as e:
+                            conn.rollback()
+                            raise e
+                    else:
+                        cursor = conn.execute('''
+                            DELETE FROM media_items
+                            WHERE id = ?
+                        ''', (item['id'],))
+                        logging.info(f"Deleted item (ID: {item['id']}) as file no longer present")
 
         conn.commit()
         logging.debug(f"Collected items processed and database updated. Original batch: {len(media_items_batch)}, Filtered batch: {len(filtered_media_items_batch)}")
