@@ -6,6 +6,8 @@ import logging
 from sqlalchemy import text, inspect
 from extensions import db
 from database import remove_from_media_items
+from settings import get_setting
+import json
 
 database_bp = Blueprint('database', __name__)
 
@@ -208,3 +210,91 @@ def perform_database_migration():
     
     # Commit the changes
     db.session.commit()
+
+@database_bp.route('/reverse_parser', methods=['GET', 'POST'])
+def reverse_parser():
+    logging.debug("Entering reverse_parser function")
+    data = {
+        'selected_columns': ['title', 'filled_by_file', 'version'],
+        'sort_column': 'title',
+        'sort_order': 'asc'
+    }
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        page = int(request.args.get('page', 1))
+        items_per_page = 100
+        filter_default = request.args.get('filter_default', 'false').lower() == 'true'
+
+        logging.debug(f"page: {page}, items_per_page: {items_per_page}, filter_default: {filter_default}")
+
+        # Fetch reverse parser settings from config
+        reverse_parser_settings = get_setting('Reverse Parser')
+        default_version = reverse_parser_settings.get('default_version', '')
+        version_terms = reverse_parser_settings.get('version_terms', {})
+        version_order = reverse_parser_settings.get('version_order', [])
+
+        # Construct the base query
+        query = f"""
+            SELECT id, {', '.join(data['selected_columns'])}
+            FROM media_items
+            WHERE state = 'Collected'
+        """
+        
+        params = []
+
+        # Add filtering logic
+        if filter_default:
+            version_conditions = []
+            for version, terms in version_terms.items():
+                if terms:
+                    term_conditions = " OR ".join(["filled_by_file LIKE ?" for _ in terms])
+                    version_conditions.append(f"({term_conditions})")
+                    params.extend([f"%{term}%" for term in terms])
+            
+            if version_conditions:
+                query += f" AND NOT ({' OR '.join(version_conditions)})"
+
+        # Add sorting and pagination
+        query += f" ORDER BY {data['sort_column']} {data['sort_order']}"
+        query += f" LIMIT {items_per_page} OFFSET {(page - 1) * items_per_page}"
+
+        logging.debug(f"Executing query: {query}")
+        logging.debug(f"Query parameters: {params}")
+
+        cursor.execute(query, params)
+        items = cursor.fetchall()
+
+        logging.debug(f"Fetched {len(items)} items from the database")
+
+        conn.close()
+
+        items = [dict(zip(['id'] + data['selected_columns'], item)) for item in items]
+
+        data.update({
+            'items': items,
+            'page': page,
+            'filter_default': filter_default,
+            'default_version': default_version,
+            'version_terms': version_terms,
+            'version_order': version_order
+        })
+
+        if request.args.get('ajax') == '1':
+            return jsonify(data)
+        else:
+            return render_template('reverse_parser.html', **data)
+        
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in reverse_parser route: {str(e)}")
+        error_message = f"Database error: {str(e)}"
+    except Exception as e:
+        logging.error(f"Unexpected error in reverse_parser route: {str(e)}")
+        error_message = "An unexpected error occurred. Please try again later."
+
+    if request.args.get('ajax') == '1':
+        return jsonify({'error': error_message}), 500
+    else:
+        flash(error_message, "error")
+        return render_template('reverse_parser.html', **data)

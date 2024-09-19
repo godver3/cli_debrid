@@ -285,5 +285,18 @@ SETTINGS_SCHEMA = {
                 "to_address": {"type": "string", "default": ""}
             }
         }
+    },
+    "Reverse Parser": {
+        "tab": "Reverse Parser",
+        "version_terms": {
+            "type": "dict",
+            "description": "Version terms for reverse parsing",
+            "default": {}
+        },
+        "default_version": {
+            "type": "string",
+            "description": "Default version for reverse parsing if no other version is selected",
+            "default": ""
+        }
     }
 }

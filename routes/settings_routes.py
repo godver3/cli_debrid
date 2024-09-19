@@ -391,12 +391,61 @@ def update_settings():
                 source: int(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
             }
         
+        # Handle Reverse Parser settings
+        if 'Reverse Parser' in new_settings:
+            reverse_parser = new_settings['Reverse Parser']
+            config['Reverse Parser'] = {
+                'version_terms': reverse_parser['version_terms'],
+                'default_version': reverse_parser['default_version'],
+                'version_order': reverse_parser['version_order']
+            }
+
         save_config(config)
         
         return jsonify({"status": "success", "message": "Settings updated successfully"})
     except Exception as e:
         logging.error(f"Error updating settings: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@settings_bp.route('/api/reverse_parser_settings', methods=['GET'])
+def get_reverse_parser_settings():
+    config = load_config()
+    reverse_parser_settings = config.get('Reverse Parser', {})
+    
+    # Get all scraping versions
+    all_scraping_versions = set(config.get('Scraping', {}).get('versions', {}).keys())
+    
+    # Get the current version order, or initialize it if it doesn't exist
+    version_order = reverse_parser_settings.get('version_order', [])
+    
+    # Ensure version_terms exists
+    version_terms = reverse_parser_settings.get('version_terms', {})
+    
+    # Create a new ordered version_terms dictionary
+    ordered_version_terms = {}
+    
+    # First, add versions in the order specified by version_order
+    for version in version_order:
+        if version in all_scraping_versions:
+            ordered_version_terms[version] = version_terms.get(version, [])
+            all_scraping_versions.remove(version)
+    
+    # Then, add any remaining versions that weren't in version_order
+    for version in all_scraping_versions:
+        ordered_version_terms[version] = version_terms.get(version, [])
+    
+    # Update version_order to include any new versions
+    version_order = list(ordered_version_terms.keys())
+    
+    # Update the settings
+    reverse_parser_settings['version_terms'] = ordered_version_terms
+    reverse_parser_settings['version_order'] = version_order
+    
+    # Ensure default_version is set and valid
+    if 'default_version' not in reverse_parser_settings or reverse_parser_settings['default_version'] not in ordered_version_terms:
+        reverse_parser_settings['default_version'] = next(iter(ordered_version_terms), None)
+    
+    return jsonify(reverse_parser_settings)
 
 def update_nested_settings(current, new):
     for key, value in new.items():

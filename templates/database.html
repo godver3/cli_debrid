@@ -348,9 +348,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 attachDeleteListeners();
                 attachRescrapeListeners();
 
-                // Reinitialize tooltips after content update
+                // Clean up existing tooltips
+                cleanupExistingTooltips();
+
+                // Reinitialize tooltips
                 initializeTooltips();
-                initializeDatabaseTooltips();
             })
             .catch(error => {
                 console.error('Error updating content:', error);
@@ -551,7 +553,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize tooltips
     initializeTooltips();
-    initializeDatabaseTooltips();
+
+    document.addEventListener('DOMContentLoaded', function() {
+        initializeTooltips();
+        initializeDatabaseTooltips();
+    });
 });
 </script>
 {% endblock %}

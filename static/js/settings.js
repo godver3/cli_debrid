@@ -422,7 +422,27 @@ function updateSettings() {
     settingsData['Debug'] = settingsData['Debug'] || {};
     settingsData['Debug']['content_source_check_period'] = contentSourceCheckPeriods;
 
+    // Handle Reverse Parser settings
+    const reverseParserSettings = {
+        version_terms: {},
+        default_version: document.getElementById('default-version').value,
+        version_order: [] // New array to store the order
+    };
 
+    // Get the container of all version inputs
+    const versionContainer = document.querySelector('#version-terms-container');
+    
+    // Get all version inputs in their current order
+    const versionInputs = Array.from(versionContainer.children);
+    
+    versionInputs.forEach((input, index) => {
+        const version = input.getAttribute('data-version');
+        const terms = input.querySelector('.version-terms').value.split(',').map(term => term.trim()).filter(term => term);
+        reverseParserSettings.version_terms[version] = terms;
+        reverseParserSettings.version_order.push(version); // Add version to order array
+    });
+
+    settingsData['Reverse Parser'] = reverseParserSettings;
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {
@@ -448,9 +468,13 @@ function updateSettings() {
     });
 }
 
-// Update this function to use the loaded settingsData
 function updateContentSourceCheckPeriods() {
     const contentSourcesDiv = document.getElementById('content-source-check-periods');
+    if (!contentSourcesDiv) {
+        console.warn("Element with id 'content-source-check-periods' not found. Skipping update.");
+        return;
+    }
+
     const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);
     
     contentSourcesDiv.innerHTML = '';
@@ -468,7 +492,12 @@ function updateContentSourceCheckPeriods() {
 // Update the DOMContentLoaded event listener
 document.addEventListener('DOMContentLoaded', () => {
     loadSettingsData().then(() => {
-        updateContentSourceCheckPeriods();
+        // Ensure the content-source-check-periods element exists before calling the function
+        if (document.getElementById('content-source-check-periods')) {
+            updateContentSourceCheckPeriods();
+        } else {
+            console.warn("Element with id 'content-source-check-periods' not found. Make sure it exists in your HTML.");
+        }
         // Add any other initialization functions here
     });
 });

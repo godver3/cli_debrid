@@ -59,6 +59,18 @@
         padding: 15px;
     }
 
+    .stats-box.recently-added-section-top{
+        background-color: #444;
+        border-radius: 5px 5px 0 0;
+        padding: 15px;
+    }
+
+    .stats-box.recently-added-section-bottom{
+        background-color: #444;
+        border-radius: 0 0 5px 5px;
+        padding: 15px;
+    }
+
     .stats-box h3 {
         margin-top: 0;
         margin-bottom: 5px;
@@ -522,7 +534,7 @@
 </style>
 
 <div class="statistics-wrapper">
-    <div class="toggle-container" data-tooltip="home.toggle_container">
+    <div class="toggle-container" id="toggle_container">
         <div class="toggle-item">
             <span class="toggle-label"><i class="fas fa-globe"></i> <span id="current-timezone">{{ stats.timezone }}</span></span>
         </div>
@@ -547,7 +559,7 @@
     </div>
 
     <div class="stats-container">
-        <div class="stats-box collection-stats" data-tooltip="home.collection_stats">
+        <div class="stats-box collection-stats" id="collection_stats">
             <div class="stat-items">
                 <div class="stat-item">
                     <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
@@ -565,7 +577,7 @@
         </div>
 
         <div class="top-stats">
-            <div class="stats-box recently-aired" data-tooltip="home.recently_aired">
+            <div class="stats-box recently-aired" id="recently_aired">
                 <h3>Recently Aired</h3>
                 {% if stats.recently_aired %}
                     <ul>
@@ -581,7 +593,7 @@
                 {% endif %}
             </div>
             
-            <div class="stats-box airing-soon" data-tooltip="home.airing_soon">
+            <div class="stats-box airing-soon" id="airing_soon">
                 <h3>Airing Soon</h3>
                 {% if stats.airing_soon %}
                     <ul>
@@ -597,7 +609,7 @@
                 {% endif %}
             </div>
             
-            <div class="stats-box upcoming-releases" data-tooltip="home.upcoming_releases">
+            <div class="stats-box upcoming-releases" id="upcoming_releases">
                 <h3>Upcoming Releases</h3>
                 {% if stats.upcoming_releases %}
                     <ul>
@@ -630,7 +642,7 @@
                 <p>To load movie and TV show posters, please set your TMDB API key in the settings.</p>
             </div>
             {% endif %}
-            <div class="stats-box recently-added-section" data-tooltip="home.recently_added_movies">
+            <div class="stats-box recently-added-section-top" id="recently_added_movies">
                 <h4>Recently Added Movies</h4>
                 {% if stats.recently_added_movies %}
                     <div class="card-container">
@@ -646,14 +658,14 @@
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
                                 <p class="info-line">Added: {{ movie.collected_at }}</p>
                                 <p class="info-line">Versions: {{ movie.versions }}</p>
-                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${movie.filled_by_title}</span></p>
+                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">{{ movie.filled_by_title }}</span></p>
                             </div>
                         </div>
                     {% endfor %}
                     </div>
                 {% endif %}
             </div>
-            <div class="stats-box recently-added-section" data-tooltip="home.recently_added_shows">
+            <div class="stats-box recently-added-section-bottom" id="recently_added_shows">
                 <h4>Recently Added Shows</h4>
                 {% if stats.recently_added_shows %}
                     <div class="card-container">
@@ -671,7 +683,7 @@
                                 <p class="info-line">Versions: {{ show.versions }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
-                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${show.filled_by_title}</span></p>
+                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">{{ show.filled_by_title }}</span></p>
 
                             </div>
                         </div>
@@ -904,14 +916,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateRecentlyAddedSection(type, items) {
-        const sections = document.querySelectorAll('.stats-box.recently-added-section');
-        let section = null;
-        for (let s of sections) {
-            if (s.querySelector('h4').textContent.trim() === type) {
-                section = s;
-                break;
-            }
-        }
+        const sectionClass = type.includes('Movies') ? 'recently-added-section-top' : 'recently-added-section-bottom';
+        const section = document.querySelector(`.stats-box.${sectionClass}`);
         if (!section) {
             console.error(`Section for ${type} not found`);
             return;

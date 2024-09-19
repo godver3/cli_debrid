@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 import json
 from .database_writing import add_to_collected_notifications
+from reverse_parser import parser_approximation
 
 def add_collected_items(media_items_batch, recent=False):
     conn = get_db_connection()
@@ -64,6 +65,10 @@ def add_collected_items(media_items_batch, recent=False):
                 for location in locations:
                     filename = os.path.basename(location)
 
+                    # Use the parser_approximation function
+                    parsed_info = parser_approximation(filename)
+                    version = parsed_info['version']
+
                     added_at = item.get('addedAt')
                     if added_at is not None:
                         collected_at = datetime.fromtimestamp(added_at)
@@ -100,6 +105,7 @@ def add_collected_items(media_items_batch, recent=False):
                             logging.debug(f"Updated existing Collected item: {normalized_title} (ID: {item_id})")
 
                     else:
+
                         # Insert new item
                         if item_type == 'movie':
                             cursor = conn.execute('''
@@ -109,7 +115,7 @@ def add_collected_items(media_items_batch, recent=False):
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), 'unknown', collected_at, genres, filename, item.get('runtime')
+                                datetime.now(), datetime.now(), version, collected_at, genres, filename, item.get('runtime')
                             ))
                         else:
                             cursor = conn.execute('''
@@ -120,13 +126,9 @@ def add_collected_items(media_items_batch, recent=False):
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), 'unknown', item.get('airtime'), collected_at, genres, filename, item.get('runtime')
+                                datetime.now(), datetime.now(), version, item.get('airtime'), collected_at, genres, filename, item.get('runtime')
                             ))
                         logging.info(f"Added new item as Collected: {normalized_title} (ID: {cursor.lastrowid})")
-                
-                # Remove this line:
-                # processed_filenames.add(filename)
-                # (It's redundant now because we're already adding to all_valid_filenames earlier)
 
             except Exception as e:
                 logging.error(f"Error processing item {item.get('title', 'Unknown')}: {str(e)}", exc_info=True)
