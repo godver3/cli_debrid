@@ -443,7 +443,21 @@ function updateSettings() {
     });
 
     settingsData['Reverse Parser'] = reverseParserSettings;
+
+
+    const rescrapeMissingFiles = document.getElementById('debug-rescrape_missing_files');
+    console.log("Rescrape Missing Files element:", rescrapeMissingFiles);
+    
+    if (rescrapeMissingFiles) {
+        settingsData['Debug']['rescrape_missing_files'] = rescrapeMissingFiles.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Rescrape Missing Files checkbox element not found!");
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
+
 
     return fetch('/settings/api/settings', {
         method: 'POST',
