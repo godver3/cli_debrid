@@ -42,6 +42,14 @@ jobs:
           echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:batteryintegration-arm64,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}-arm64" >> $GITHUB_ENV    
         fi
 
+    - name: Notify Discord - Build Started
+      uses: sarisia/actions-status-discord@v1
+      with:
+        webhook: ${{ secrets.DISCORD_TOKEN }}
+        title: "Docker Build Started"
+        description: "Building version ${{ env.VERSION }} for tags: ${{ env.DOCKER_TAGS }}, ${{ env.DOCKER_TAGS_ARM64 }}"
+        color: 0xFFA500
+
     - name: Build and push amd64 image
       uses: docker/build-push-action@v5
       with:
@@ -63,3 +71,11 @@ jobs:
         tags: ${{ env.DOCKER_TAGS_ARM64 }}
         build-args: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+    - name: Notify Discord - Build Completed
+      uses: sarisia/actions-status-discord@v1
+      with:
+        webhook: ${{ secrets.DISCORD_TOKEN }}
+        title: "Docker Build Completed"
+        description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}, ${{ env.DOCKER_TAGS_ARM64 }}"
+        color: 0x00FF00

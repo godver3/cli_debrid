@@ -45,9 +45,8 @@ function showTooltip(event) {
 
     const element = event.currentTarget;
     const tooltipKey = element.dataset.tooltip;
-    const fullContent = element.dataset.fullContent;
     
-    console.log('Preparing to show tooltip for:', tooltipKey || 'database cell');
+    console.log('Preparing to show tooltip for:', tooltipKey);
     
     // Clear any existing timeouts
     if (tooltipTimeout) {
@@ -81,19 +80,9 @@ function showTooltip(event) {
         let tooltipText;
 
         if (tooltipKey) {
-            // Regular tooltip
-            const [page, key] = tooltipKey.split('.');
-            if (tooltips[page] && tooltips[page][key]) {
-                tooltipText = tooltips[page][key];
-            } else {
-                console.log('Tooltip not found for:', tooltipKey);
-                tooltipElement.style.display = 'none';
-                document.removeEventListener('mousemove', updatePosition);
-                return;
-            }
-        } else if (fullContent) {
-            // Database cell tooltip
-            tooltipText = fullContent;
+            const [section, key] = tooltipKey.split('.');
+            tooltipText = tooltips[section][key];
+            console.log(`Showing tooltip for ${section}.${key}: "${tooltipText}"`);
         } else {
             console.log('No tooltip content found');
             tooltipElement.style.display = 'none';
@@ -194,9 +183,9 @@ function showMobileTooltip(tooltipKey, button) {
     mobileTooltipContent = document.createElement('div');
     mobileTooltipContent.className = 'mobile-tooltip-content';
 
-    const [page, key] = tooltipKey.split('.');
-    if (tooltips[page] && tooltips[page][key]) {
-        mobileTooltipContent.innerHTML = `<p>${tooltips[page][key]}</p>`;
+    const [section, key] = tooltipKey.split('.');
+    if (tooltips[section] && tooltips[section][key]) {
+        mobileTooltipContent.innerHTML = `<p>${tooltips[section][key]}</p>`;
     } else {
         mobileTooltipContent.innerHTML = '<p>Tooltip content not found.</p>';
     }
@@ -282,19 +271,26 @@ function removeMobileTooltip() {
 }
 
 function initializeDatabaseTooltips() {
-    const truncatedCells = document.querySelectorAll('.truncate');
-    truncatedCells.forEach(cell => {
-        const fullContent = cell.textContent;
-        if (cell.offsetWidth < cell.scrollWidth) {
-            cell.setAttribute('data-full-content', fullContent);
-            if (isMobileDevice()) {
-                addMobileTooltipButton(cell);
-            }
+    console.log('Initializing database tooltips');
+    const cells = document.querySelectorAll('.truncate');
+    console.log(`Found ${cells.length} database cells`);
+    cells.forEach(cell => {
+        const fullContent = cell.textContent.trim();
+        cell.setAttribute('data-full-content', fullContent);
+        
+        if (isMobileDevice()) {
+            addMobileTooltipButton(cell);
+        } else {
+            // Add desktop event listeners
+            cell.addEventListener('mouseenter', showDatabaseTooltip);
+            cell.addEventListener('mouseleave', hideTooltip);
         }
     });
+    console.log('Database tooltips initialized');
 }
 
 function showDatabaseTooltip(event) {
+    console.log('Showing database tooltip');
     const cell = event.currentTarget;
     const fullContent = cell.getAttribute('data-full-content');
 
@@ -315,7 +311,15 @@ function showDatabaseTooltip(event) {
     tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
     tooltipElement.style.opacity = '1';
 
+    // Remove existing mousemove event listener
+    document.removeEventListener('mousemove', updateTooltipPosition);
+    // Add new mousemove event listener
     document.addEventListener('mousemove', updateTooltipPosition);
+
+    // Clear any existing hide tooltip timeout
+    if (hideTooltipTimeout) {
+        clearTimeout(hideTooltipTimeout);
+    }
 }
 
 function addMobileTooltipButton(cell) {
@@ -368,27 +372,21 @@ function initializeTooltips() {
     console.log('Initializing tooltips');
     console.log('Is mobile device?', isMobileDevice());
 
-    if (isMobileDevice()) {
-        console.log('Mobile device detected. Setting up mobile tooltips.');
-        fetchTooltips().then(() => {
+    fetchTooltips().then(() => {
+        if (isMobileDevice()) {
+            console.log('Mobile device detected. Setting up mobile tooltips.');
             createMobileTooltipButtons();
             console.log('Mobile tooltip buttons created');
-        });
-
-        // Add event listeners for scroll, touch, and click
-        window.addEventListener('scroll', handleInteraction);
-        document.addEventListener('touchstart', handleInteraction);
-        document.addEventListener('click', handleInteraction);
-    } else {
-        console.log('Desktop device detected. Setting up desktop tooltips.');
-        fetchTooltips().then(() => {
-            initializeDesktopTooltips();
+        } else {
+            console.log('Desktop device detected. Setting up desktop tooltips.');
+            const pageName = getPageName();
+            applyTooltipsToPage(pageName);
             console.log('Desktop tooltips initialized');
-        });
-    }
+        }
 
-    // Initialize database tooltips
-    initializeDatabaseTooltips();
+        // Always initialize database tooltips
+        initializeDatabaseTooltips();
+    });
 
     // Close mobile tooltip when tapping outside
     document.addEventListener('click', (event) => {
@@ -408,13 +406,51 @@ function initializeTooltips() {
     });
 }
 
-function initializeDesktopTooltips() {
-    const tooltipElements = document.querySelectorAll('[data-tooltip], .truncate');
-    
-    tooltipElements.forEach(element => {
-        element.addEventListener('mouseenter', showTooltip);
-        element.addEventListener('mouseleave', hideTooltip);
+function applyTooltipsToPage(pageName) {
+    console.log('Applying tooltips for page:', pageName);
+
+    // Apply global tooltips
+    if (tooltips.global) {
+        applyTooltipsForSection('global', tooltips.global);
+    }
+
+    // Apply page-specific tooltips
+    if (tooltips[pageName]) {
+        applyTooltipsForSection(pageName, tooltips[pageName]);
+    } else {
+        console.log('No specific tooltips found for page:', pageName);
+    }
+
+    // Special case for database page
+    if (pageName === 'database') {
+        console.log('Initializing database tooltips');
+        initializeDatabaseTooltips();
+    }
+}
+
+function applyTooltipsForSection(sectionName, sectionTooltips) {
+    Object.entries(sectionTooltips).forEach(([elementId, tooltipText]) => {
+        const element = document.getElementById(elementId);
+        if (element) {
+            console.log(`Adding tooltip to element with ID: ${elementId}`);
+            if (isMobileDevice()) {
+                addMobileTooltipButton(element, tooltipText);
+            } else {
+                element.setAttribute('data-tooltip', `${sectionName}.${elementId}`);
+                element.addEventListener('mouseenter', showTooltip);
+                element.addEventListener('mouseleave', hideTooltip);
+            }
+        } else {
+            console.log(`Element with ID ${elementId} not found for section ${sectionName}`);
+        }
     });
+}
+
+function getPageName() {
+    const path = window.location.pathname.replace(/\/$/, '');  // Remove trailing slash if present
+    const pageName = path.split('/').pop() || 'home';
+    console.log('Detected page name:', pageName);
+    return pageName;
 }
 
 // Add this new function to handle user interactions
