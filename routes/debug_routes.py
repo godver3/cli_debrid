@@ -371,7 +371,8 @@ def move_item_to_wanted(item_id):
                 filled_by_magnet = NULL, 
                 filled_by_torrent_id = NULL, 
                 collected_at = NULL,
-                last_updated = ?
+                last_updated = ?,
+                version = TRIM(version, '*')
             WHERE id = ?
         ''', (datetime.now(), item_id))
         conn.commit()

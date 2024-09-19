@@ -30,6 +30,7 @@ def parse_term(term, filename):
         return result
 
 def parse_filename_for_version(filename):
+    logging.info(f"Parsing filename: {filename}")
     version_settings = get_version_settings()
     default_version = get_default_version()
     version_order = get_version_order()
