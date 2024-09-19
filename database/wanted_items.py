@@ -40,7 +40,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                 items_skipped += 1
                 continue
 
-            normalized_title = normalize_string(item.get('title', 'Unknown'))
+            normalized_title = normalize_string(str(item.get('title', 'Unknown')))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
             # Check if any version of the item is already collected
