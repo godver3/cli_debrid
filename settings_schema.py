@@ -192,9 +192,15 @@ SETTINGS_SCHEMA = {
             "type": "integer",
             "description": "Checking queue max period (in minutes) before moving items back to Wanted queue",
             "default": 3600
+        },
+        "rescrape_missing_files": {
+            "type": "boolean",
+            "description": "Rescrape items that are missing their associated file (i.e. if Plex Library cleanup is enabled)",
+            "default": False
         }
     },
     "Scrapers": {
+
         "tab": "Scrapers",
         "type": "dict",
         "description": "Scraper configurations",
