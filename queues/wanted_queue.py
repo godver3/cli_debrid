@@ -58,9 +58,10 @@ class WantedQueue:
             release_date_str = item.get('release_date')
             airtime_str = item.get('airtime')
 
-            if not release_date_str or release_date_str.lower() == 'unknown':
+            if not release_date_str or (isinstance(release_date_str, str) and release_date_str.lower() == 'unknown'):
                 logging.info(f"Item {item_identifier} has no scrape time. Moving to Unreleased queue.")
                 items_to_move_unreleased.append(item)
+                continue  # Skip further processing for this item
 
             try:
                 release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()

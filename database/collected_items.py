@@ -17,7 +17,7 @@ def add_collected_items(media_items_batch, recent=False):
         
         # Fetch all existing collected items from the database
         existing_items = conn.execute('''
-            SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file 
+            SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, release_date 
             FROM media_items 
             WHERE state IN ('Collected', 'Checking')
         ''').fetchall()
@@ -81,13 +81,24 @@ def add_collected_items(media_items_batch, recent=False):
                         
                         # Check if the item is currently in "Checking" state
                         if existing_item['state'] == 'Checking':
+                            logging.info(f"Existing item in Checking state: {normalized_title} (ID: {item_id})")
+                            logging.info(f"Release date: {existing_item['release_date']}")
+                            # Check if the release date is within the past 7 days
+                            release_date = datetime.strptime(existing_item['release_date'], '%Y-%m-%d').date()
+                            days_since_release = (datetime.now().date() - release_date).days
+
+                            if days_since_release <= 7:
+                                new_state = 'Upgrading'
+                            else:
+                                new_state = 'Collected'
+
                             # Update the existing item
                             conn.execute('''
                                 UPDATE media_items
-                                SET state = ?, last_updated = ?, collected_at = ?
+                                SET state = ?, last_updated = ?, collected_at = ?, original_collected_at = ?
                                 WHERE id = ?
-                            ''', ('Collected', datetime.now(), collected_at, item_id))
-                            logging.info(f"Updated existing item from Checking to Collected: {normalized_title} (ID: {item_id})")
+                            ''', (new_state, datetime.now(), collected_at, collected_at, item_id))
+                            logging.info(f"Updated existing item from Checking to {new_state}: {normalized_title} (ID: {item_id})")
 
                             # Fetch the updated item
                             updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()

@@ -15,12 +15,22 @@ queue_manager = QueueManager()
 def index():
     queue_contents = queue_manager.get_queue_contents()
     program_running = program_is_running()
-    program_initializing = program_is_initializing()  # Add this line
+    program_initializing = program_is_initializing()
     
     for queue_name, items in queue_contents.items():
         if queue_name == 'Upgrading':
             for item in items:
-                item['time_added'] = item.get('time_added', datetime.now())
+                upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
+                if upgrade_info:
+                    time_added = upgrade_info.get('time_added')
+                    if isinstance(time_added, str):
+                        item['time_added'] = time_added
+                    elif isinstance(time_added, datetime):
+                        item['time_added'] = time_added.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        item['time_added'] = str(time_added)
+                else:
+                    item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 item['upgrades_found'] = item.get('upgrades_found', 0)
         elif queue_name == 'Checking':
             for item in items:
@@ -34,6 +44,12 @@ def index():
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['magnet_link'] = item.get('magnet_link', 'Unknown')
 
+    for queue_name, items in queue_contents.items():
+        if queue_name == 'Unreleased':
+            for item in items:
+                if item['release_date'] is None:
+                    item['release_date'] = "Unknown"
+
 
     upgrading_queue = queue_contents.get('Upgrading', [])
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_running=program_running, program_initializing=program_initializing)
@@ -44,9 +60,22 @@ def api_queue_contents():
     program_running = program_is_running()
     program_initializing = program_is_initializing()
 
-    # Format scrape_time for Wanted queue items and ensure wake_count is present for Sleeping queue items
     for queue_name, items in contents.items():
-        if queue_name == 'Wanted':
+        if queue_name == 'Upgrading':
+            for item in items:
+                upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
+                if upgrade_info:
+                    time_added = upgrade_info.get('time_added')
+                    if isinstance(time_added, str):
+                        item['time_added'] = time_added
+                    elif isinstance(time_added, datetime):
+                        item['time_added'] = time_added.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        item['time_added'] = str(time_added)
+                else:
+                    item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                item['upgrades_found'] = item.get('upgrades_found', 0)
+        elif queue_name == 'Wanted':
             for item in items:
                 if 'scrape_time' in item:
                     if item['scrape_time'] != "Unknown" and item['scrape_time'] != "Invalid date":

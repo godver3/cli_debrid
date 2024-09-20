@@ -11,28 +11,39 @@ def create_database():
 def migrate_schema():
     conn = get_db_connection()
     try:
-        # Add new columns if they don't exist
-        conn.execute('ALTER TABLE media_items ADD COLUMN runtime INTEGER')
-        conn.execute('ALTER TABLE media_items ADD COLUMN alternate_title TEXT')
-        conn.execute('ALTER TABLE media_items ADD COLUMN airtime TIMESTAMP')
+        # Check if the column exists
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(media_items)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        if 'original_collected_at' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN original_collected_at TIMESTAMP')
+            logging.info("Successfully added original_collected_at column to media_items table.")
+        if 'runtime' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN runtime INTEGER')
+            logging.info("Successfully added runtime column to media_items table.")
+        if 'alternate_title' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN alternate_title TEXT')
+            logging.info("Successfully added alternate_title column to media_items table.")
+        if 'airtime' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN airtime TIMESTAMP')
+            logging.info("Successfully added airtime column to media_items table.")
+
         logging.info("Successfully added new columns to media_items table.")
 
-        # Update the unique index
+        # Remove the existing index if it exists
         conn.execute('DROP INDEX IF EXISTS unique_media_item_file')
+
+        # Don't recreate the unique index
+        # Instead, you might want to create a non-unique index for performance
         conn.execute('''
-            CREATE UNIQUE INDEX IF NOT EXISTS unique_media_item_file 
+            CREATE INDEX IF NOT EXISTS media_item_file_index 
             ON media_items (imdb_id, tmdb_id, title, year, season_number, episode_number, version, filled_by_file)
             WHERE filled_by_file IS NOT NULL
         ''')
-        logging.info("Successfully updated unique index.")
 
         conn.commit()
-        logging.info("Schema migration completed successfully.")
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" in str(e):
-            logging.info("One or more columns already exist. Skipping addition.")
-        else:
-            logging.error(f"Error during schema migration: {str(e)}")
+        logging.info("Schema migration completed successfully. Unique constraint removed.")
     except Exception as e:
         conn.rollback()
         logging.error(f"Unexpected error during schema migration: {str(e)}")
@@ -50,18 +61,7 @@ def verify_database():
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='media_items'")
     if not cursor.fetchone():
         logging.error("media_items table does not exist!")
-    
-    # Verify runtime column
-    cursor.execute("PRAGMA table_info(media_items)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if 'runtime' not in columns:
-        logging.error("runtime column does not exist in media_items table!")
-    
-    # Verify unique index
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='unique_media_item_file'")
-    if not cursor.fetchone():
-        logging.error("unique_media_item_file index does not exist!")
-    
+        
     conn.close()
     
     logging.info("Database verification complete.")
@@ -84,6 +84,7 @@ def create_tables():
                 season_number INTEGER,
                 episode_number INTEGER,
                 collected_at TIMESTAMP,
+                original_collected_at TIMESTAMP,
                 filled_by_file TEXT,
                 filled_by_title TEXT,
                 filled_by_magnet TEXT,
@@ -143,70 +144,3 @@ def purge_database(content_type=None, state=None):
     finally:
         conn.close()
     create_tables()
-
-def migrate_media_items_table():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # Step 1: Create a new table with the desired structure
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS media_items_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                imdb_id TEXT,
-                tmdb_id TEXT,
-                title TEXT,
-                year INTEGER,
-                release_date DATE,
-                state TEXT,
-                type TEXT,
-                episode_title TEXT,
-                season_number INTEGER,
-                episode_number INTEGER,
-                filled_by_file TEXT,
-                filled_by_title TEXT,
-                filled_by_magnet TEXT,
-                filled_by_torrent_id TEXT,
-                last_updated TIMESTAMP,
-                metadata_updated TIMESTAMP,
-                airtime TIMESTAMP,
-                sleep_cycles INTEGER DEFAULT 0,
-                last_checked TIMESTAMP,
-                scrape_results TEXT,
-                version TEXT,
-                collected_at TIMESTAMP,
-                genres TEXT,
-                UNIQUE(imdb_id, tmdb_id, title, year, season_number, episode_number, version)
-            )
-        ''')
-
-        # Step 2: Copy data from the old table to the new one
-        cursor.execute('''
-            INSERT INTO media_items_new 
-            (imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
-             season_number, episode_number, filled_by_file, filled_by_title, filled_by_magnet, 
-             last_updated, metadata_updated, airtime, sleep_cycles, last_checked, scrape_results, version,
-             collected_at, genres)
-            SELECT 
-                imdb_id, tmdb_id, title, year, release_date, state, type, episode_title, 
-                season_number, episode_number, filled_by_file, filled_by_title, filled_by_magnet, 
-                last_updated, metadata_updated, sleep_cycles, last_checked, scrape_results, 
-                COALESCE(version, 'default'),
-                CASE WHEN state = 'Collected' THEN last_updated ELSE NULL END,
-                genres
-            FROM media_items
-        ''')
-
-        # Step 3: Drop the old table
-        cursor.execute('DROP TABLE media_items')
-
-        # Step 4: Rename the new table to the original name
-        cursor.execute('ALTER TABLE media_items_new RENAME TO media_items')
-
-        conn.commit()
-        logging.info("Successfully migrated media_items table to include collected_at column.")
-    except Exception as e:
-        conn.rollback()
-        logging.error(f"Error during media_items table migration: {str(e)}")
-    finally:
-        conn.close()
