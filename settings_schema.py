@@ -47,7 +47,7 @@ SETTINGS_SCHEMA = {
         "tab": "Additional Settings",
         "api_key": {
             "type": "string",
-            "description": "TMDB Read Access Token",
+            "description": "TMDB API key - used for Poster URL retrieval",
             "default": "",
             "sensitive": True
         }

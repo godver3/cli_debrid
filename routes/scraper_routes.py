@@ -11,6 +11,7 @@ from utilities.manual_scrape import get_details
 from web_scraper import search_trakt
 from database.database_reading import get_all_season_episode_counts
 from metadata.metadata import get_imdb_id_if_missing
+import re
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -19,6 +20,19 @@ def convert_tmdb_to_imdb(tmdb_id):
     imdb_id = get_imdb_id_if_missing({'tmdb_id': tmdb_id})
     return jsonify({'imdb_id': imdb_id or 'N/A'})
 
+def obfuscate_magnet_link(magnet_link: str) -> str:
+    """
+    Obfuscate the magnet link by hiding the domain and API key if present.
+    """
+    # Check if the magnet link contains 'jackett_apikey'
+    if 'jackett_apikey' in magnet_link:
+        # Use regex to find and replace the domain and API key
+        # Replace the domain (e.g., http://192.168.1.51:9117) with '***'
+        magnet_link = re.sub(r'^http:\/\/[^\/]+', '***', magnet_link)
+        # Replace the jackett_apikey value with '***'
+        magnet_link = re.sub(r'jackett_apikey=[^&]+', 'jackett_apikey=***', magnet_link)
+    return magnet_link
+
 @scraper_bp.route('/add_to_real_debrid', methods=['POST'])
 def add_torrent_to_real_debrid():
     try:
@@ -26,9 +40,14 @@ def add_torrent_to_real_debrid():
         if not magnet_link:
             return jsonify({'error': 'No magnet link provided'}), 400
 
+        # Obfuscate the magnet link for logging
+        obfuscated_magnet_link = obfuscate_magnet_link(magnet_link)
+        logging.info(f"Magnet link: {obfuscated_magnet_link}")
+
         result = add_to_real_debrid(magnet_link)
         logging.info(f"Torrent result: {result}")
-        logging.info(f"Magnet link: {magnet_link}")
+        logging.info(f"Magnet link: {obfuscated_magnet_link}")
+        
         if result:
             if isinstance(result, dict):
                 status = result.get('status', '').lower()

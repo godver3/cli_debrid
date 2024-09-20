@@ -12,6 +12,7 @@ from queues.sleeping_queue import SleepingQueue
 from queues.unreleased_queue import UnreleasedQueue
 from queues.blacklisted_queue import BlacklistedQueue
 from queues.pending_uncached_queue import PendingUncachedQueue
+from queues.upgrading_queue import UpgradingQueue
 from wake_count_manager import wake_count_manager
 
 class QueueManager:
@@ -32,7 +33,8 @@ class QueueManager:
             "Sleeping": SleepingQueue(),
             "Unreleased": UnreleasedQueue(),
             "Blacklisted": BlacklistedQueue(),
-            "Pending Uncached": PendingUncachedQueue()
+            "Pending Uncached": PendingUncachedQueue(),
+            "Upgrading": UpgradingQueue()
         }
         self.paused = False
 
@@ -113,6 +115,13 @@ class QueueManager:
         else:
             logging.debug("Skipping Pending Uncached queue processing: Queue is paused")
 
+    def process_upgrading(self):
+        if not self.paused:
+            self.queues["Upgrading"].process(self)
+            self.queues["Upgrading"].clean_up_upgrade_times()
+        else:
+            logging.debug("Skipping Upgrading queue processing: Queue is paused")
+            
     def blacklist_item(self, item: Dict[str, Any], from_queue: str):
         self.queues["Blacklisted"].blacklist_item(item, self)
         self.queues[from_queue].remove_item(item)
