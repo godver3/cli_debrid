@@ -73,7 +73,7 @@ class AddingQueue:
                 self.handle_failed_item(queue_manager, item, "Adding")
         else:
             logging.debug("Adding queue is empty")
-
+    
     def process_item(self, queue_manager, item, scrape_results, mode):
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Processing {mode} mode for item: {item_identifier}")
@@ -86,8 +86,8 @@ class AddingQueue:
         if get_setting('Debug', 'sort_by_uncached_status'):
             scrape_results = self.sort_results_by_cache_status(scrape_results)
     
-        uncached_result = None
-        cached_successfully_processed = False  # Add this line
+        uncached_results = []  # Initialize the list of uncached results
+        cached_successfully_processed = False
         for index, result in enumerate(scrape_results):
             title = result.get('title', '')
             link = result.get('magnet', '')
@@ -129,10 +129,10 @@ class AddingQueue:
                         logging.info(f"Found cached result {index + 1} for {item_identifier}")
                         success = self.process_result(queue_manager, item, result, current_hash, is_cached=True, scrape_results=scrape_results)
                         if success:
-                            cached_successfully_processed = True  # Set the flag here
+                            cached_successfully_processed = True
                             return True
-                    elif not uncached_result:
-                        uncached_result = (result, current_hash)
+                    else:
+                        uncached_results.append((result, current_hash))
                     continue
     
                 logging.info(f"Processing result {index + 1} for {item_identifier}. Cached: {is_cached}")
@@ -151,17 +151,17 @@ class AddingQueue:
                 logging.error(f"Error processing result {index + 1} for {item_identifier}: {str(e)}")
                 continue
     
-        # If we're in hybrid mode and found an uncached result but no cached results
-        if mode == 'hybrid' and not cached_successfully_processed and uncached_result:
-            result, current_hash = uncached_result
-            logging.info(f"No acceptable cached results found for {item_identifier}. Processing best uncached result.")
-            success = self.process_result(queue_manager, item, result, current_hash, is_cached=False, scrape_results=scrape_results)
-            if success:
-                return True
-
+        # If we're in hybrid mode and found uncached results but no cached results were successfully processed
+        if mode == 'hybrid' and not cached_successfully_processed and uncached_results:
+            logging.info(f"No acceptable cached results found for {item_identifier}. Processing uncached results.")
+            for result, current_hash in uncached_results:
+                success = self.process_result(queue_manager, item, result, current_hash, is_cached=False, scrape_results=scrape_results)
+                if success:
+                    return True  # Successfully processed an uncached result
+    
         # If we reach here, no results were successfully processed
         logging.warning(f"No valid results found for {item_identifier}")
-
+    
         # For episodes, try individual episode scraping
         if item['type'] == 'episode':
             logging.info(f"Attempting individual episode scraping for {item_identifier}")
@@ -174,7 +174,7 @@ class AddingQueue:
                     return True
                 else:
                     logging.debug(f"Failed to process individual result {index + 1} for {item_identifier}")
-
+    
         logging.warning(f"No results successfully processed for {item_identifier}")
         self.handle_failed_item(queue_manager, item, "Adding")
         return False
