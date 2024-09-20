@@ -1,14 +1,18 @@
 import logging
 from typing import Dict, Any
 from datetime import datetime, timedelta
-from database import get_all_media_items, update_media_item_state
+from database import get_all_media_items, update_media_item, get_media_item_by_id, add_to_collected_notifications
 from queues.scraping_queue import ScrapingQueue
+from queues.adding_queue import AddingQueue
+from settings import get_setting
+from utilities.plex_functions import remove_file_from_plex
 
 class UpgradingQueue:
     def __init__(self):
         self.items = []
         self.upgrade_times = {}
         self.last_scrape_times = {}
+        self.upgrades_found = {}  # New dictionary to track upgrades found
         self.scraping_queue = ScrapingQueue()
 
     def update(self):
@@ -41,6 +45,7 @@ class UpgradingQueue:
             'time_added': collected_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(collected_at, datetime) else str(collected_at)
         }
         self.last_scrape_times[item['id']] = datetime.now()
+        self.upgrades_found[item['id']] = 0  # Initialize upgrades found count
 
     def remove_item(self, item: Dict[str, Any]):
         self.items = [i for i in self.items if i['id'] != item['id']]
@@ -48,6 +53,8 @@ class UpgradingQueue:
             del self.upgrade_times[item['id']]
         if item['id'] in self.last_scrape_times:
             del self.last_scrape_times[item['id']]
+        if item['id'] in self.upgrades_found:
+            del self.upgrades_found[item['id']]
 
     def clean_up_upgrade_times(self):
         for item_id in list(self.upgrade_times.keys()):
@@ -56,6 +63,9 @@ class UpgradingQueue:
                 if item_id in self.last_scrape_times:
                     del self.last_scrape_times[item_id]
                 logging.debug(f"Cleaned up upgrade time for item ID: {item_id}")
+        for item_id in list(self.upgrades_found.keys()):
+            if item_id not in [item['id'] for item in self.items]:
+                del self.upgrades_found[item_id]
 
     def process(self, queue_manager=None):
         current_time = datetime.now()
@@ -69,10 +79,7 @@ class UpgradingQueue:
                 # Check if the item has been in the queue for more than 24 hours
                 if time_in_queue > timedelta(hours=24):
                     logging.info(f"Item {item_id} has been in the Upgrading queue for over 24 hours.")
-                    
-                    # Update the item's state to "Collected" in the database
-                    update_media_item_state(item_id, "Collected")
-                    
+                                        
                     # Remove the item from the queue
                     self.remove_item(item)
                     
@@ -98,18 +105,101 @@ class UpgradingQueue:
 
         is_multi_pack = self.check_multi_pack(item)
 
+        # Perform scraping
         results, filtered_out = self.scraping_queue.scrape_with_fallback(item, is_multi_pack, queue_manager or self)
 
         if results:
-            best_result = results[0]
-            logging.info(f"Found new result for {item_identifier}: {best_result['title']}")
-            # Here you can implement logic to compare the new result with the existing one
-            # and decide whether to update the item or not
-            # For example:
-            # if self.is_better_quality(best_result, item['current_quality']):
-            #     self.update_item_with_new_result(item, best_result)
+            # Find the position of the current item's 'filled_by_magnet' in the results
+            current_title = item.get('filled_by_title')
+            current_position = next((index for index, result in enumerate(results) if result.get('title') == current_title), None)
+
+            if current_position is not None:
+                logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the scrape results")
+            else:
+                logging.info(f"Current item {item_identifier} not found in scrape results, skipping upgrade")
+                pass
+
+            # If the current item is not the top result, attempt to upgrade
+            if current_position > 0:
+                logging.info(f"Found a potential upgrade for {item_identifier}")
+
+                # Use AddingQueue to attempt the upgrade
+                adding_queue = AddingQueue()
+                uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
+                success = adding_queue.process_item(queue_manager, item, results, uncached_handling)
+
+                if success:
+                    logging.info(f"Successfully upgraded item {item_identifier}")
+                    
+                    # Increment the upgrades found count
+                    self.upgrades_found[item['id']] = self.upgrades_found.get(item['id'], 0) + 1
+                    
+                    if get_setting('Scraping', 'enable_upgrading_cleanup', False):  
+                        # Remove original item from Plex
+                        self.remove_original_item_from_plex(item)
+                        # Remove original item from account
+                        self.remove_original_item_from_account(item)
+
+                    # Update the item in the database with new values from the upgrade
+                    self.update_item_with_upgrade(item, adding_queue)
+
+                    # Remove the item from the Upgrading queue
+                    self.remove_item(item)
+
+                    logging.info(f"Maintained item {item_identifier} in Upgrading state after successful upgrade.")
+                else:
+                    logging.info(f"Failed to upgrade item {item_identifier}")
+            else:
+                logging.info(f"No upgrade needed for {item_identifier}")
         else:
             logging.info(f"No new results found for {item_identifier} during hourly scrape")
+
+    def remove_original_item_from_plex(self, item: Dict[str, Any]):
+        item_identifier = self.generate_identifier(item)
+        logging.info(f"Removing original file from Plex: {item_identifier}")
+
+        # Get the file path and title of the original item
+        original_file_path = item.get('location')
+        original_title = item.get('title')
+
+        if original_file_path and original_title:
+            # Use the updated remove_file_from_plex function
+            success = remove_file_from_plex(original_title, original_file_path)
+            if success:
+                logging.info(f"Successfully removed file from Plex: {item_identifier}")
+            else:
+                logging.warning(f"Failed to remove file from Plex: {item_identifier}")
+        else:
+            logging.warning(f"No file path or title found for item: {item_identifier}")
+
+    def remove_original_item_from_account(self, item: Dict[str, Any]):
+        item_identifier = self.generate_identifier(item)
+        logging.info(f"Removing original item from account: {item_identifier}")
+
+        # Retrieve the original torrent ID from the item
+        original_torrent_id = item.get('filled_by_torrent_id')
+
+        if original_torrent_id:
+            # Use AddingQueue's remove_unwanted_torrent method
+            adding_queue = AddingQueue()
+            adding_queue.remove_unwanted_torrent(original_torrent_id)
+            logging.info(f"Removed original torrent with ID {original_torrent_id} from account")
+        else:
+            logging.warning(f"No original torrent ID found for {item_identifier}")
+
+    def update_item_with_upgrade(self, item: Dict[str, Any], adding_queue: AddingQueue):
+        # Fetch the new values from the adding queue
+        new_values = adding_queue.get_new_item_values(item)
+
+        if new_values:
+            # Update the item in the database with new values
+            update_media_item(item['id'], **new_values)
+            logging.info(f"Updated item in database with new values for {self.generate_identifier(item)}")
+
+            # Optionally, add to collected notifications
+            add_to_collected_notifications(item)
+        else:
+            logging.warning(f"No new values obtained for item {self.generate_identifier(item)}")
 
     def check_multi_pack(self, item: Dict[str, Any]) -> bool:
         if item['type'] != 'episode':

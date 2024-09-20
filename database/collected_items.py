@@ -19,7 +19,7 @@ def add_collected_items(media_items_batch, recent=False):
         existing_items = conn.execute('''
             SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, release_date 
             FROM media_items 
-            WHERE state IN ('Collected', 'Checking')
+            WHERE state IN ('Collected', 'Checking', 'Upgrading')
         ''').fetchall()
         
         # Create a set of existing filenames in 'Collected' state
@@ -88,7 +88,10 @@ def add_collected_items(media_items_batch, recent=False):
                             days_since_release = (datetime.now().date() - release_date).days
 
                             if days_since_release <= 7:
-                                new_state = 'Upgrading'
+                                if get_setting("Scraping", "enable_upgrading", default=False): 
+                                    new_state = 'Upgrading'
+                                else:
+                                    new_state = 'Collected'
                             else:
                                 new_state = 'Collected'
 

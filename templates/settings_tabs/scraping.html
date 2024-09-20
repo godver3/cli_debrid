@@ -314,8 +314,20 @@
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         <input type="{{ 'number' if value is number else 'text' }}" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input">
                     {% endif %}
+                    {% if key == 'enable_upgrading' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
+                        <p class="settings-description">Enable upgrading of items in the queue.</p>
+                    {% endif %}
+                    {% if key == 'enable_upgrading_cleanup' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
+                        <p class="settings-description">Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid).</p>
+                    {% endif %}
                 </div>
+                
             {% endif %}
+
         {% endfor %}
         
         <div class="filter-section">
