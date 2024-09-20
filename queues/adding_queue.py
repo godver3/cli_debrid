@@ -82,11 +82,12 @@ class AddingQueue:
         for result in scrape_results:
             logging.info(f"Index: {index} - Scrape result: {result['title']}")
             index += 1
-
+    
         if get_setting('Debug', 'sort_by_uncached_status'):
             scrape_results = self.sort_results_by_cache_status(scrape_results)
-
+    
         uncached_result = None
+        cached_successfully_processed = False  # Add this line
         for index, result in enumerate(scrape_results):
             title = result.get('title', '')
             link = result.get('magnet', '')
@@ -96,7 +97,7 @@ class AddingQueue:
                 if not link:
                     logging.warning(f"No magnet link found for result {index + 1}: {item_identifier}")
                     continue
-
+    
                 if link.startswith('magnet:'):
                     current_hash = extract_hash_from_magnet(link)
                 else:
@@ -106,11 +107,11 @@ class AddingQueue:
                         logging.info(f"URL {link} for {item_identifier} is in not_wanted_urls. Skipping.")
                         continue
                     current_hash, temp_file_path = self.download_and_extract_hash(link)
-
+    
                 if not current_hash:
                     logging.warning(f"Failed to extract hash from link for result {index + 1}: {item_identifier}")
                     continue
-
+    
                 cache_status = is_cached_on_rd(current_hash)
                 logging.debug(f"Cache status for result {index + 1}: {cache_status}")
                 
@@ -118,21 +119,22 @@ class AddingQueue:
                 is_cached = any(status for status in cache_status.values())
                 
                 logging.debug(f"Is cached: {is_cached}")
-
+    
                 if mode == 'none' and not is_cached:
                     logging.debug(f"Skipping uncached result {index + 1} for {item_identifier}")
                     continue
-
+    
                 if mode == 'hybrid':
                     if is_cached:
                         logging.info(f"Found cached result {index + 1} for {item_identifier}")
                         success = self.process_result(queue_manager, item, result, current_hash, is_cached=True, scrape_results=scrape_results)
                         if success:
+                            cached_successfully_processed = True  # Set the flag here
                             return True
                     elif not uncached_result:
                         uncached_result = (result, current_hash)
                     continue
-
+    
                 logging.info(f"Processing result {index + 1} for {item_identifier}. Cached: {is_cached}")
                 if temp_file_path:  
                     success = self.process_result(queue_manager, item, result, current_hash, is_cached=is_cached, scrape_results=scrape_results, temp_file_path=temp_file_path)
@@ -144,15 +146,15 @@ class AddingQueue:
                     add_to_not_wanted_urls(link)
                     logging.info(f"Added to not_wanted_url {link} for {item_identifier}")
                     return True
-
+    
             except Exception as e:
                 logging.error(f"Error processing result {index + 1} for {item_identifier}: {str(e)}")
                 continue
-
+    
         # If we're in hybrid mode and found an uncached result but no cached results
-        if mode == 'hybrid' and uncached_result:
+        if mode == 'hybrid' and not cached_successfully_processed and uncached_result:
             result, current_hash = uncached_result
-            logging.info(f"No cached results found for {item_identifier}. Processing best uncached result.")
+            logging.info(f"No acceptable cached results found for {item_identifier}. Processing best uncached result.")
             success = self.process_result(queue_manager, item, result, current_hash, is_cached=False, scrape_results=scrape_results)
             if success:
                 return True
