@@ -673,7 +673,7 @@
                             </div>
                             <div class="card-hover-content">
                                 <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
-                                <p class="info-line">Added: {{ movie.collected_at }}</p>
+                                <p class="info-line">Added: {{ movie.formatted_collected_at }}</p>
                                 <p class="info-line">Versions: {{ movie.versions }}</p>
                                 <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">{{ movie.filled_by_title }}</span></p>
                             </div>
@@ -696,7 +696,7 @@
                             </div>
                             <div class="card-hover-content">
                                 <h5>{{ show.title }}</h5>
-                                <p class="info-line">Added: {{ show.collected_at }}</p>
+                                <p class="info-line">Added: {{ show.formatted_collected_at }}</p>
                                 <p class="info-line">Versions: {{ show.versions }}</p>
                                 <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
                                 <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
@@ -749,12 +749,80 @@ function updateAllTimes(data) {
         upcomingReleasesList.innerHTML = data.upcoming_releases.map(item => `
             <li>
                 <span>${item.titles.join(', ')}</span>
-                <span class="release-date">
-                    ${item.release_date ? new Date(item.release_date).toISOString().split('T')[0] : 'Date unknown'}
-                </span>
+                <span class="release-date">${item.formatted_time}</span>
             </li>
         `).join('');
     }
+
+    // Update recently added sections
+    if (data.recently_added) {
+        updateRecentlyAddedSection('Recently Added Movies', data.recently_added.movies);
+        updateRecentlyAddedSection('Recently Added Shows', data.recently_added.shows);
+    }
+}
+
+function updateRecentlyAddedSection(type, items) {
+    const sectionClass = type.includes('Movies') ? 'recently-added-section-top' : 'recently-added-section-bottom';
+    const section = document.querySelector(`.stats-box.${sectionClass}`);
+    if (!section) {
+        console.error(`Section for ${type} not found`);
+        return;
+    }
+    const container = section.querySelector('.card-container') || document.createElement('div');
+    container.className = 'card-container';
+    if (Array.isArray(items) && items.length > 0) {
+        container.innerHTML = items.map(item => {
+            let additionalInfo = '';
+            if (type === 'Recently Added Shows' && item.seasons && item.latest_episode) {
+                additionalInfo = `
+                    <p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
+                    <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>
+                `;
+            }
+
+            return `
+                <div class="card">
+                    ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
+                    <div class="card-content">
+                        <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                    </div>
+                    <div class="card-hover-content">
+                        <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                        <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${item.formatted_collected_at}</p>
+                        <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
+                        ${additionalInfo}
+                        <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } else {
+        container.innerHTML = `<p>No recent additions</p>`;
+    }
+    if (!section.contains(container)) {
+        section.appendChild(container);
+    }
+}
+
+function refreshRecentlyAdded() {
+    fetch('/statistics/recently_added?ajax=1', {
+        method: 'GET',
+        credentials: 'include'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.recently_added) {
+            if (data.recently_added.movies) {
+                updateRecentlyAddedSection('Recently Added Movies', data.recently_added.movies);
+            }
+            if (data.recently_added.shows) {
+                updateRecentlyAddedSection('Recently Added Shows', data.recently_added.shows);
+            }
+        }
+    })
+    .catch(error => {
+        console.error('Error fetching recently added items:', error);
+    });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -763,7 +831,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const statisticsWrapper = document.querySelector('.statistics-wrapper');
     const tmdbInfo = document.querySelector('.tmdb-info');
     
-    // Replace the existing time format toggle event listener with this:
     timeFormatToggle.addEventListener('change', function() {
         use24HourFormat = this.checked;
         
@@ -940,53 +1007,6 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('Recently added shows:', shows);
         updateRecentlyAddedSection('Recently Added Movies', movies);
         updateRecentlyAddedSection('Recently Added Shows', shows);
-    }
-
-    function updateRecentlyAddedSection(type, items) {
-        const sectionClass = type.includes('Movies') ? 'recently-added-section-top' : 'recently-added-section-bottom';
-        const section = document.querySelector(`.stats-box.${sectionClass}`);
-        if (!section) {
-            console.error(`Section for ${type} not found`);
-            return;
-        }
-        const container = section.querySelector('.card-container') || document.createElement('div');
-        container.className = 'card-container';
-        if (Array.isArray(items) && items.length > 0) {
-            container.innerHTML = items.map(item => {
-                // Format the collected_at date
-                const collectedDate = new Date(item.collected_at);
-                const formattedDate = `${collectedDate.toLocaleDateString()} ${collectedDate.getHours().toString().padStart(2, '0')}:${collectedDate.getMinutes().toString().padStart(2, '0')}`;
-
-                let additionalInfo = '';
-                if (type === 'Recently Added Shows' && item.seasons && item.latest_episode) {
-                    additionalInfo = `
-                        <p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
-                        <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>
-                    `;
-                }
-
-                return `
-                    <div class="card">
-                        ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
-                        <div class="card-content">
-                            <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                        </div>
-                        <div class="card-hover-content">
-                            <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                            <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${formattedDate}</p>
-                            <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
-                            ${additionalInfo}
-                            <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        } else {
-            container.innerHTML = `<p>No recent additions</p>`;
-        }
-        if (!section.contains(container)) {
-            section.appendChild(container);
-        }
     }
 
     // Update statistics every 5 minutes

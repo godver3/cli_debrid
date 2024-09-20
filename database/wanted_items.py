@@ -66,6 +66,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                 if not enabled:
                     continue
 
+                # TODO: Add missing versions instead of just skipping add
                 # Check if item exists for this version
                 if item_type == 'movie':
                     existing_item = conn.execute('''
