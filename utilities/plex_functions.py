@@ -5,6 +5,10 @@ from settings import get_setting
 import time
 from typing import Dict, List, Any
 import ast
+from metadata.metadata import get_metadata, get_release_date
+import plexapi.server
+import plexapi.exceptions
+import os
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -143,15 +147,14 @@ async def process_movies_chunk(session: aiohttp.ClientSession, plex_url: str, he
 async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
-    logging.info(f"Movie: {movie['title']}, All genres: {genres}, Filtered genres: {filtered_genres}")
+    logging.info(f"Movie: {movie['title']}")
 
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
-        'addedAt': movie.get('addedAt', None),  # Use None as default if 'addedAt' is missing
+        'addedAt': movie.get('addedAt', None),
         'guid': movie.get('guid'),
         'ratingKey': movie['ratingKey'],
-        'release_date': movie.get('originallyAvailableAt'),
         'imdb_id': None,
         'tmdb_id': None,
         'type': 'movie',
@@ -161,15 +164,27 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     if 'addedAt' not in movie:
         logger.warning(f"'addedAt' field missing for movie: {movie['title']}. Movie data: {movie}")
 
-    #logger.debug(f"Movie: {movie_data['title']}, All genres: {genres}")
-    
     if 'Guid' in movie:
         for guid in movie['Guid']:
             if guid['id'].startswith('imdb://'):
                 movie_data['imdb_id'] = guid['id'].split('://')[1]
             elif guid['id'].startswith('tmdb://'):
                 movie_data['tmdb_id'] = guid['id'].split('://')[1]
-    
+
+    if not movie_data['imdb_id'] and not movie_data['tmdb_id']:
+        logging.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Skipping metadata retrieval.")
+        return []
+
+    try:
+        metadata = get_metadata(imdb_id=movie_data['imdb_id'], tmdb_id=movie_data['tmdb_id'], item_media_type='movie')
+        if metadata:
+            movie_data['release_date'] = get_release_date(metadata, movie_data['imdb_id'])
+        else:
+            movie_data['release_date'] = None
+    except ValueError as e:
+        logging.error(f"Error retrieving metadata for {movie_data['title']}: {str(e)}")
+        return []
+
     movie_entries = []
     if 'Media' in movie and movie['Media']:
         for media in movie['Media']:
@@ -398,10 +413,9 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     movie_data = {
         'title': movie['title'],
         'year': movie.get('year'),
-        'addedAt': movie.get('addedAt', None),  # Use None as default if 'addedAt' is missing
+        'addedAt': movie.get('addedAt', None),
         'guid': movie.get('guid'),
         'ratingKey': movie['ratingKey'],
-        'release_date': movie.get('originallyAvailableAt'),
         'imdb_id': None,
         'tmdb_id': None,
         'type': 'movie',
@@ -417,6 +431,21 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                 movie_data['imdb_id'] = guid['id'].split('://')[1]
             elif guid['id'].startswith('tmdb://'):
                 movie_data['tmdb_id'] = guid['id'].split('://')[1]
+
+    if not movie_data['imdb_id'] and not movie_data['tmdb_id']:
+        logger.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Skipping metadata retrieval.")
+        movie_data['release_date'] = None
+    else:
+        try:
+            # Get metadata and release date from metadata.py
+            metadata = get_metadata(imdb_id=movie_data['imdb_id'], tmdb_id=movie_data['tmdb_id'], item_media_type='movie')
+            if metadata:
+                movie_data['release_date'] = get_release_date(metadata, movie_data['imdb_id'])
+            else:
+                movie_data['release_date'] = None
+        except ValueError as e:
+            logger.error(f"Error retrieving metadata for {movie_data['title']}: {str(e)}")
+            movie_data['release_date'] = None
 
     movie_entries = []
     if 'Media' in movie:
@@ -516,3 +545,59 @@ async def run_get_recent_from_plex():
 
 def sync_run_get_recent_from_plex():
     return asyncio.run(run_get_recent_from_plex())
+
+def remove_file_from_plex(item_title, item_path):
+    try:
+        plex_url = get_setting('Plex', 'url').rstrip('/')
+        plex_token = get_setting('Plex', 'token')
+        
+        logger.info(f"Connecting to Plex server at {plex_url}")
+        plex = plexapi.server.PlexServer(plex_url, plex_token)
+        
+        logger.info(f"Searching for item with title: {item_title} and file name: {item_path}")
+        
+        sections = plex.library.sections()
+        file_deleted = False
+        
+        for section in sections:
+            logger.info(f"Searching in library section: {section.title}")
+            try:
+                # Search for items by title
+                items = section.search(title=item_title)
+                
+                for item in items:
+                    if hasattr(item, 'media'):
+                        for media in item.media:
+                            for part in media.parts:
+                                # Compare the base filenames
+                                if os.path.basename(part.file) == os.path.basename(item_path):
+                                    logger.info(f"Found matching file in item: {item.title} in section {section.title}")
+                                    try:
+                                        # Delete the specific Media object
+                                        media.delete()
+                                        logger.info(f"Successfully deleted media containing file: {part.file} from item: {item.title}")
+                                        file_deleted = True
+                                        # Return after deleting the media
+                                        return True
+                                    except plexapi.exceptions.PlexApiException as e:
+                                        logger.error(f"Failed to delete media for item {item.title}: {str(e)}")
+                    else:
+                        logger.warning(f"No media found for item: {item.title}")
+                if not file_deleted:
+                    logger.warning(f"No matching files found in section {section.title} for title: {item_title} and file name: {item_path}")
+            except Exception as e:
+                logger.error(f"Unexpected error in section {section.title}: {str(e)}", exc_info=True)
+        
+        if not file_deleted:
+            logger.warning(f"No matching files found in any Plex library section for title: {item_title} and file name: {item_path}")
+            return False
+        
+    except plexapi.exceptions.Unauthorized:
+        logger.error("Unauthorized: Please check your Plex token")
+        return False
+    except plexapi.exceptions.NotFound:
+        logger.error(f"Plex server not found at {plex_url}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error removing file from Plex: {str(e)}", exc_info=True)
+        return False
