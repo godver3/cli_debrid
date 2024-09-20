@@ -107,8 +107,20 @@ SETTINGS_SCHEMA = {
             "description": "If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available",
             "default": False
         },
+        "enable_upgrading": {
+            "type": "boolean",
+            "description": "Enable upgrading of items in the queue",
+            "default": False
+        },
+        "enable_upgrading_cleanup": {
+            "type": "boolean",
+            "description": "Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid)",
+            "default": False
+        },
         "versions": {
             "type": "dict",
+
+
             "description": "Scraping versions configuration",
             "default": {},
             "schema": {

@@ -74,7 +74,7 @@ def api_queue_contents():
                         item['time_added'] = str(time_added)
                 else:
                     item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                item['upgrades_found'] = item.get('upgrades_found', 0)
+                item['upgrades_found'] = queue_manager.queues['Upgrading'].upgrades_found.get(item['id'], 0)
         elif queue_name == 'Wanted':
             for item in items:
                 if 'scrape_time' in item:

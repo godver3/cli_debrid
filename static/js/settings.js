@@ -456,8 +456,29 @@ function updateSettings() {
         console.warn("Rescrape Missing Files checkbox element not found!");
     }
 
-    console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
+    const enableUpgrading = document.getElementById('debug-enable_upgrading'); 
+    console.log("Enable Upgrading element:", enableUpgrading);
+    
+    if (enableUpgrading) {
+        settingsData['Debug']['enable_upgrading'] = enableUpgrading.checked;
 
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Enable Upgrading checkbox element not found!");
+    }
+
+    const enableUpgradingCleanup = document.getElementById('debug-enable_upgrading_cleanup');
+    console.log("Enable Upgrading Cleanup element:", enableUpgradingCleanup);
+    
+    if (enableUpgradingCleanup) {
+        settingsData['Debug']['enable_upgrading_cleanup'] = enableUpgradingCleanup.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Enable Upgrading Cleanup checkbox element not found!");
+    }
+
+    console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {
         method: 'POST',

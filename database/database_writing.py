@@ -143,3 +143,26 @@ def add_to_collected_notifications(media_item):
     except Exception as e:
         logging.error(f"Error adding notification for collected item (ID: {media_item['id']}): {str(e)}")
 
+def update_media_item(item_id: int, **kwargs):
+    conn = get_db_connection()
+    try:
+        # Build the SET clause dynamically from kwargs
+        set_clause = ', '.join(f"{key} = ?" for key in kwargs.keys())
+        params = list(kwargs.values())
+        params.append(datetime.now())  # For 'last_updated'
+        params.append(item_id)
+
+        query = f'''
+            UPDATE media_items
+            SET {set_clause}, last_updated = ?
+            WHERE id = ?
+        '''
+
+        conn.execute(query, params)
+        conn.commit()
+
+        logging.info(f"Updated media item ID {item_id} with values: {kwargs}")
+    except Exception as e:
+        logging.error(f"Error updating media item ID {item_id}: {str(e)}")
+    finally:
+        conn.close()

@@ -105,13 +105,13 @@ def get_queue_contents():
         cursor.execute('''
             SELECT id, title, state, type, season_number, episode_number, year
             FROM media_items
-            WHERE state IN ('Adding', 'Blacklisted', 'Checking', 'Scraping', 'Sleeping', 'Unreleased', 'Wanted')
+            WHERE state IN ('Adding', 'Blacklisted', 'Checking', 'Scraping', 'Sleeping', 'Unreleased', 'Wanted', 'Pending Uncached', 'Upgrading')
         ''')
         items = cursor.fetchall()
 
         queue_contents = {
             'Adding': [], 'Blacklisted': [], 'Checking': [], 'Scraping': [],
-            'Sleeping': [], 'Unreleased': [], 'Wanted': []
+            'Sleeping': [], 'Unreleased': [], 'Wanted': [], 'Pending Uncached': [], 'Upgrading': []
         }
         
         for item in items:
