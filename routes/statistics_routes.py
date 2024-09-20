@@ -217,6 +217,19 @@ def index():
     for item in upcoming_releases:
         item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
 
+    # Format times for recently added items
+    for item in recently_added['movies'] + recently_added['shows']:
+        if 'collected_at' in item:
+            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+            item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
+        else:
+            item['formatted_collected_at'] = 'Unknown'
+
+    logging.debug(f"use_24hour_format: {use_24hour_format}")
+    for item in recently_added['movies'] + recently_added['shows']:
+        logging.debug(f"Item collected_at: {item.get('collected_at')}")
+        logging.debug(f"Item formatted_collected_at: {item.get('formatted_collected_at')}")
+
     # Timing for daily_usage
     daily_usage_start = time.time()
     try:
@@ -268,7 +281,7 @@ def index():
         return jsonify(stats)
     else:
         logging.debug("Rendering HTML template")
-        return render_template('statistics.html', stats=stats, compact_view=compact_view)
+        return render_template('statistics.html', stats=stats, compact_view=compact_view, recently_added=recently_added)
         
 @statistics_bp.route('/set_time_preference', methods=['POST'])
 def set_time_preference():
@@ -285,12 +298,22 @@ def set_time_preference():
     for item in upcoming_releases:
         item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
     
+    # Get recently added items and format their times
+    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
+    for item in recently_added['movies'] + recently_added['shows']:
+        if 'collected_at' in item:
+            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+            item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
+        else:
+            item['formatted_collected_at'] = 'Unknown'
+    
     response = make_response(jsonify({
         'status': 'OK', 
         'use24HourFormat': use_24hour_format,
         'recently_aired': recently_aired,
         'airing_soon': airing_soon,
-        'upcoming_releases': upcoming_releases
+        'upcoming_releases': upcoming_releases,
+        'recently_added': recently_added
     }))
     response.set_cookie('use24HourFormat', 
                         str(use_24hour_format).lower(), 
@@ -298,6 +321,28 @@ def set_time_preference():
                         path='/',  # Ensure cookie is available for entire site
                         httponly=False)  # Allow JavaScript access
     return response
+
+@statistics_bp.route('/recently_added')
+@user_required
+@onboarding_required
+def recently_added():
+    cookie_value = request.cookies.get('use24HourFormat')
+    use_24hour_format = cookie_value == 'true' if cookie_value is not None else True
+
+    recently_added_start = time.time()
+    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
+    recently_added_end = time.time()
+    logging.debug(f"Time for get_recently_added_items: {recently_added_end - recently_added_start:.2f} seconds")
+
+    # Format times for recently added items
+    for item in recently_added['movies'] + recently_added['shows']:
+        if 'collected_at' in item:
+            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+            item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
+        else:
+            item['formatted_collected_at'] = 'Unknown'
+
+    return jsonify({'recently_added': recently_added})
 
 async def get_recent_from_plex(movie_limit=5, show_limit=5):
     plex_url = get_setting('Plex', 'url', '').rstrip('/')
@@ -336,10 +381,11 @@ async def get_recent_from_plex(movie_limit=5, show_limit=5):
                             if tmdb_id:
                                 tmdb_id = tmdb_id.split('://')[1]
                                 poster_url = await get_poster_url(session, tmdb_id, 'movie')
+                                added_at = datetime.fromtimestamp(int(item['addedAt']))
                                 recent_movies.append({
                                     'title': item['title'],
                                     'year': item.get('year'),
-                                    'added_at': datetime.fromtimestamp(int(item['addedAt'])).strftime('%Y-%m-%d %H:%M:%S'),
+                                    'added_at': added_at,
                                     'poster_url': poster_url
                                 })
             elif section['type'] == 'show':
@@ -356,9 +402,10 @@ async def get_recent_from_plex(movie_limit=5, show_limit=5):
                                     if tmdb_id:
                                         tmdb_id = tmdb_id.split('://')[1]
                                         poster_url = await get_poster_url(session, tmdb_id, 'tv')
+                                        added_at = datetime.fromtimestamp(int(item['addedAt']))
                                         recent_shows[show_title] = {
                                             'title': show_title,
-                                            'added_at': datetime.fromtimestamp(int(item['addedAt'])).strftime('%Y-%m-%d %H:%M:%S'),
+                                            'added_at': added_at,
                                             'poster_url': poster_url,
                                             'seasons': set()
                                         }
@@ -366,7 +413,7 @@ async def get_recent_from_plex(movie_limit=5, show_limit=5):
                                 recent_shows[show_title]['seasons'].add(item['parentIndex'])
                                 recent_shows[show_title]['added_at'] = max(
                                     recent_shows[show_title]['added_at'],
-                                    datetime.fromtimestamp(int(item['addedAt'])).strftime('%Y-%m-%d %H:%M:%S')
+                                    datetime.fromtimestamp(int(item['addedAt']))
                                 )
                             if len(recent_shows) == show_limit:
                                 break
