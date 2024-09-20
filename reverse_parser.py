@@ -13,21 +13,119 @@ def get_version_order():
     return get_setting('Reverse Parser', 'version_order', [])
 
 def parse_term(term, filename):
+    """
+    Parses a single term against the filename.
+    Supports AND, OR logical operations and regex patterns.
+    
+    Args:
+        term (str): The term to parse. Can be a simple string, or AND/OR expressions.
+        filename (str): The filename to parse against.
+    
+    Returns:
+        bool: True if the term condition is satisfied, False otherwise.
+    """
+    term = term.strip()
     logging.debug(f"Parsing term: {term}")
+    
+    # Handle AND/OR expressions
     if term.startswith('AND(') and term.endswith(')'):
-        sub_terms = term[4:-1].split(',')
-        result = all(t.strip().lower() in filename.lower() for t in sub_terms)
+        sub_terms = split_terms(term[4:-1])
+        result = all(evaluate_sub_term(sub_term, filename) for sub_term in sub_terms)
         logging.debug(f"AND condition: {sub_terms}, result: {result}")
         return result
     elif term.startswith('OR(') and term.endswith(')'):
-        sub_terms = term[3:-1].split(',')
-        result = any(t.strip().lower() in filename.lower() for t in sub_terms)
+        sub_terms = split_terms(term[3:-1])
+        result = any(evaluate_sub_term(sub_term, filename) for sub_term in sub_terms)
         logging.debug(f"OR condition: {sub_terms}, result: {result}")
         return result
     else:
-        result = term.strip().lower() in filename.lower()
-        logging.debug(f"Simple term: {term}, result: {result}")
+        # Single term
+        return evaluate_sub_term(term, filename)
+
+def evaluate_sub_term(sub_term, filename):
+    """
+    Evaluates a sub-term against the filename.
+    
+    Args:
+        sub_term (str): The sub-term to evaluate.
+        filename (str): The filename to parse against.
+    
+    Returns:
+        bool: True if the sub-term condition is satisfied, False otherwise.
+    """
+    sub_term = sub_term.strip()
+    
+    # Check if the term is a regex pattern
+    if is_regex(sub_term):
+        pattern = extract_regex(sub_term)
+        try:
+            match = re.search(pattern, filename, re.IGNORECASE)
+            result = bool(match)
+            logging.debug(f"Regex term: /{pattern}/, match: {match}, result: {result}")
+            return result
+        except re.error as e:
+            logging.error(f"Invalid regex pattern '{pattern}': {e}")
+            return False
+    else:
+        # Simple substring match
+        result = sub_term.lower() in filename.lower()
+        logging.debug(f"Simple term: {sub_term}, result: {result}")
         return result
+
+def is_regex(term):
+    """
+    Determines if a term is a regex pattern based on delimiters.
+    
+    Args:
+        term (str): The term to check.
+    
+    Returns:
+        bool: True if term is a regex pattern, False otherwise.
+    """
+    return term.startswith('/') and term.endswith('/')
+
+def extract_regex(term):
+    """
+    Extracts the regex pattern from a term.
+    
+    Args:
+        term (str): The term containing the regex pattern.
+    
+    Returns:
+        str: The extracted regex pattern.
+    """
+    return term[1:-1]
+
+def split_terms(terms_str):
+    """
+    Splits a string of terms separated by commas, respecting parentheses and regex delimiters.
+    
+    Args:
+        terms_str (str): The string containing multiple terms separated by commas.
+    
+    Returns:
+        list: A list of individual terms.
+    """
+    terms = []
+    current_term = ''
+    in_regex = False
+    escape = False
+    
+    for char in terms_str:
+        if char == '/' and not escape:
+            in_regex = not in_regex
+        if char == ',' and not in_regex:
+            terms.append(current_term.strip())
+            current_term = ''
+            continue
+        if char == '\\' and not escape:
+            escape = True
+        else:
+            escape = False
+        current_term += char
+    if current_term:
+        terms.append(current_term.strip())
+    return terms
 
 def parse_filename_for_version(filename):
     logging.info(f"Parsing filename: {filename}")
@@ -45,29 +143,12 @@ def parse_filename_for_version(filename):
     for version in version_order:
         terms = version_settings.get(version, [])
         if terms:
-            # Join all terms into a single string and then split by comma,
-            # unless it's within parentheses
             joined_terms = ','.join(terms)
-            term_list = []
-            current_term = ''
-            paren_count = 0
-            for char in joined_terms:
-                if char == '(' and current_term.startswith(('AND', 'OR')):
-                    paren_count += 1
-                elif char == ')':
-                    paren_count -= 1
-                
-                if char == ',' and paren_count == 0:
-                    term_list.append(current_term.strip())
-                    current_term = ''
-                else:
-                    current_term += char
-            
-            if current_term:
-                term_list.append(current_term.strip())
-            
+            # Find all matches based on the regex pattern
+            term_list = [match.strip() for match in re.findall(r'(AND\([^()]+\)|OR\([^()]+\)|[^,]+)', joined_terms)]
+
             logging.debug(f"Checking version {version} with terms: {term_list}")
-            
+
             # Check if all terms match the filename
             if all(parse_term(term, filename) for term in term_list):
                 logging.debug(f"Match found: Version {version}")
