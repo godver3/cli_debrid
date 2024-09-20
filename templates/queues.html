@@ -137,13 +137,22 @@
                 itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
             }
 
-            if (queueName === 'Upgrading') {
+            if (queueName === 'Upgrading' || queueName === 'Pending Uncached') {
+                let formattedTime = 'N/A';
+                if (item.time_added) {
+                    // Convert the timestamp to a Date object and format it
+                    formattedTime = new Date(item.time_added).toLocaleString();
+                }
                 itemContent += `
-                    - Current Quality: ${item.current_quality || 'N/A'}
-                    - Target Quality: ${item.target_quality || 'N/A'}
-                    - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
-                    - Upgrades Found: ${item.upgrades_found || 0}
+                    - Time Added: ${formattedTime}
                 `;
+                
+                if (queueName === 'Upgrading') {
+                    itemContent += `- Upgrades Found: ${item.upgrades_found || 0}`;
+                }
+                if (queueName === 'Pending Uncached') {
+                    itemContent += `- Magnet Link: ${item.magnet_link || 'Unknown'}`;
+                }
             }
 
             if (queueName === 'Sleeping') {

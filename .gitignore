@@ -77,3 +77,4 @@ utilities/nohup.out
 flask_session
 *.lock
 config/*.json
+.aider*

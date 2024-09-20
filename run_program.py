@@ -51,6 +51,7 @@ class ProgramRunner:
             'unreleased': 3600,
             'blacklisted': 3600,
             'pending_uncached': 3600,
+            'upgrading': 3600,
             'task_plex_full_scan': 3600,
             'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
@@ -71,6 +72,7 @@ class ProgramRunner:
             'unreleased', 
             'blacklisted',
             'pending_uncached',
+            'upgrading',
             'task_plex_full_scan', 
             'task_debug_log', 
             'task_refresh_release_dates',
@@ -194,7 +196,7 @@ class ProgramRunner:
     def process_queues(self):
         self.queue_manager.update_all_queues()
 
-        for queue_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached']:
+        for queue_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached', 'upgrading']:
             if self.should_run_task(queue_name):
                 self.safe_process_queue(queue_name)
 
