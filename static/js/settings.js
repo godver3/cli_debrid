@@ -456,7 +456,7 @@ function updateSettings() {
         console.warn("Rescrape Missing Files checkbox element not found!");
     }
 
-    const enableUpgrading = document.getElementById('debug-enable_upgrading'); 
+    const enableUpgrading = document.getElementById('scraping-enable_upgrading'); 
     console.log("Enable Upgrading element:", enableUpgrading);
     
     if (enableUpgrading) {
@@ -467,7 +467,7 @@ function updateSettings() {
         console.warn("Enable Upgrading checkbox element not found!");
     }
 
-    const enableUpgradingCleanup = document.getElementById('debug-enable_upgrading_cleanup');
+    const enableUpgradingCleanup = document.getElementById('scraping-enable_upgrading_cleanup');
     console.log("Enable Upgrading Cleanup element:", enableUpgradingCleanup);
     
     if (enableUpgradingCleanup) {
