@@ -460,7 +460,7 @@ function updateSettings() {
     console.log("Enable Upgrading element:", enableUpgrading);
     
     if (enableUpgrading) {
-        settingsData['Debug']['enable_upgrading'] = enableUpgrading.checked;
+        settingsData['Scraping']['enable_upgrading'] = enableUpgrading.checked;
 
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
@@ -471,7 +471,7 @@ function updateSettings() {
     console.log("Enable Upgrading Cleanup element:", enableUpgradingCleanup);
     
     if (enableUpgradingCleanup) {
-        settingsData['Debug']['enable_upgrading_cleanup'] = enableUpgradingCleanup.checked;
+        settingsData['Scraping']['enable_upgrading_cleanup'] = enableUpgradingCleanup.checked;
 
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
