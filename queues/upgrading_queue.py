@@ -115,42 +115,43 @@ class UpgradingQueue:
 
             if current_position is not None:
                 logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the scrape results")
+                
+                # Only consider results that are in higher positions than the current item
+                better_results = results[:current_position]
+                
+                if better_results:
+                    logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier}")
+
+                    # Use AddingQueue to attempt the upgrade
+                    adding_queue = AddingQueue()
+                    uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
+                    success = adding_queue.process_item(queue_manager, item, better_results, uncached_handling)
+
+                    if success:
+                        logging.info(f"Successfully upgraded item {item_identifier}")
+                        
+                        # Increment the upgrades found count
+                        self.upgrades_found[item['id']] = self.upgrades_found.get(item['id'], 0) + 1
+                        
+                        if get_setting('Scraping', 'enable_upgrading_cleanup', False):  
+                            # Remove original item from Plex
+                            self.remove_original_item_from_plex(item)
+                            # Remove original item from account
+                            self.remove_original_item_from_account(item)
+
+                        # Update the item in the database with new values from the upgrade
+                        self.update_item_with_upgrade(item, adding_queue)
+
+                        # Remove the item from the Upgrading queue
+                        self.remove_item(item)
+
+                        logging.info(f"Maintained item {item_identifier} in Upgrading state after successful upgrade.")
+                    else:
+                        logging.info(f"Failed to upgrade item {item_identifier}")
+                else:
+                    logging.info(f"No better results found for {item_identifier}")
             else:
                 logging.info(f"Current item {item_identifier} not found in scrape results, skipping upgrade")
-                pass
-
-            # If the current item is not the top result, attempt to upgrade
-            if current_position > 0:
-                logging.info(f"Found a potential upgrade for {item_identifier}")
-
-                # Use AddingQueue to attempt the upgrade
-                adding_queue = AddingQueue()
-                uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
-                success = adding_queue.process_item(queue_manager, item, results, uncached_handling)
-
-                if success:
-                    logging.info(f"Successfully upgraded item {item_identifier}")
-                    
-                    # Increment the upgrades found count
-                    self.upgrades_found[item['id']] = self.upgrades_found.get(item['id'], 0) + 1
-                    
-                    if get_setting('Scraping', 'enable_upgrading_cleanup', False):  
-                        # Remove original item from Plex
-                        self.remove_original_item_from_plex(item)
-                        # Remove original item from account
-                        self.remove_original_item_from_account(item)
-
-                    # Update the item in the database with new values from the upgrade
-                    self.update_item_with_upgrade(item, adding_queue)
-
-                    # Remove the item from the Upgrading queue
-                    self.remove_item(item)
-
-                    logging.info(f"Maintained item {item_identifier} in Upgrading state after successful upgrade.")
-                else:
-                    logging.info(f"Failed to upgrade item {item_identifier}")
-            else:
-                logging.info(f"No upgrade needed for {item_identifier}")
         else:
             logging.info(f"No new results found for {item_identifier} during hourly scrape")
 
