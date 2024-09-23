@@ -28,6 +28,9 @@ def migrate_schema():
         if 'airtime' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN airtime TIMESTAMP')
             logging.info("Successfully added airtime column to media_items table.")
+        if 'original_collected_at' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN original_collected_at TIMESTAMP')
+            logging.info("Successfully added original_collected_at column to media_items table.")
 
         logging.info("Successfully added new columns to media_items table.")
 

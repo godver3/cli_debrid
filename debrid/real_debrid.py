@@ -74,6 +74,11 @@ def rate_limited_request(func):
         return func(*args, **kwargs)
     return wrapper
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_exception_type((requests.exceptions.RequestException, Exception))
+)
 @rate_limited_request
 def add_to_real_debrid(magnet_link, temp_file_path=None):
     api_key = get_api_key()
