@@ -115,6 +115,7 @@ class UpgradingQueue:
 
             if current_position is not None:
                 logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the scrape results")
+                logging.info(f"Current item title: {current_title}")
                 
                 # Only consider results that are in higher positions than the current item
                 better_results = results[:current_position]
@@ -160,8 +161,10 @@ class UpgradingQueue:
         logging.info(f"Removing original file from Plex: {item_identifier}")
 
         # Get the file path and title of the original item
-        original_file_path = item.get('location')
+        original_file_path = item.get('filled_by_file')
         original_title = item.get('title')
+        logging.info(f"Original file path: {original_file_path}")
+        logging.info(f"Original title: {original_title}")
 
         if original_file_path and original_title:
             # Use the updated remove_file_from_plex function
