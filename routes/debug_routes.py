@@ -386,6 +386,7 @@ def move_item_to_wanted(item_id):
 @debug_bp.route('/send_test_notification', methods=['POST'])
 @admin_required
 def send_test_notification():
+    current_app.logger.info("Entering send_test_notification function")
     try:
         # Create test notification items
         now = datetime.now()
@@ -481,17 +482,13 @@ def send_test_notification():
         ]
 
         # Fetch enabled notifications
-        response = requests.get('http://localhost:5000/settings/notifications/enabled')
-        if response.status_code == 200:
-            enabled_notifications = response.json().get('enabled_notifications', {})
-            
-            # Send test notifications
-            send_notifications(test_notifications, enabled_notifications)
-            
-            return jsonify({'success': True, 'message': 'Test notification sent successfully'}), 200
-        else:
-            return jsonify({'success': False, 'error': 'Failed to fetch enabled notifications'}), 500
+        enabled_notifications = get_all_settings().get('Notifications', {})
+        
+        # Send test notifications
+        send_notifications(test_notifications, enabled_notifications)
+        
+        return jsonify({'success': True, 'message': 'Test notification sent successfully'}), 200
 
     except Exception as e:
-        logging.error(f"Error sending test notification: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        current_app.logger.error(f"Error sending test notification: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'An error occurred while sending the test notification. Please check the server logs for more details.'}), 500

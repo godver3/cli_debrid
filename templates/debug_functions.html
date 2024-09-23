@@ -136,7 +136,7 @@
         </div>
         <div class="debug_item">
             <h3>Send Test Notification</h3>
-            <form id="send-test-notification-form" action="{{ url_for('debug.send_test_notification') }}" method="POST">
+            <form id="send-test-notification-form">
                 <button type="submit">Send Test Notification</button>
             </form>
         </div>
@@ -157,44 +157,46 @@
         const bulkActionForm = document.getElementById('bulk-queue-action-form');
         
         forms.forEach(form => {
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                const url = form.action;
-                const method = form.method;
+            if (form.id !== 'send-test-notification-form') {
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    const url = form.action;
+                    const method = form.method;
 
-                if (form.id === 'download-logs-form') {
-                    downloadLogs();
-                    return;
-                }
-
-                let confirmMessage = 'Are you sure you want to perform this action?';
-                if (form.id === 'delete-database-form') {
-                    const confirmDelete = document.getElementById('confirm_delete').value;
-                    if (confirmDelete !== 'DELETE') {
-                        showPopup({
-                            type: POPUP_TYPES.ERROR,
-                            message: 'Please type DELETE to confirm database deletion',
-                            title: 'Error'
-                        });
+                    if (form.id === 'download-logs-form') {
+                        downloadLogs();
                         return;
                     }
-                    confirmMessage = 'Are you sure you want to delete the entire database? This action cannot be undone.';
-                } else if (form.id === 'get-collected-form') {
-                    confirmMessage = 'Are you sure you want to get collected items from Plex?';
-                } else if (form.id === 'get-wanted-form') {
-                    confirmMessage = 'Are you sure you want to get wanted items from the selected source?';
-                }
 
-                showPopup({
-                    type: POPUP_TYPES.CONFIRM,
-                    message: confirmMessage,
-                    title: 'Confirmation',
-                    onConfirm: () => {
-                        loading.style.display = 'flex';
-                        submitForm(url, method, new FormData(form));
+                    let confirmMessage = 'Are you sure you want to perform this action?';
+                    if (form.id === 'delete-database-form') {
+                        const confirmDelete = document.getElementById('confirm_delete').value;
+                        if (confirmDelete !== 'DELETE') {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Please type DELETE to confirm database deletion',
+                                title: 'Error'
+                            });
+                            return;
+                        }
+                        confirmMessage = 'Are you sure you want to delete the entire database? This action cannot be undone.';
+                    } else if (form.id === 'get-collected-form') {
+                        confirmMessage = 'Are you sure you want to get collected items from Plex?';
+                    } else if (form.id === 'get-wanted-form') {
+                        confirmMessage = 'Are you sure you want to get wanted items from the selected source?';
                     }
+
+                    showPopup({
+                        type: POPUP_TYPES.CONFIRM,
+                        message: confirmMessage,
+                        title: 'Confirmation',
+                        onConfirm: () => {
+                            loading.style.display = 'flex';
+                            submitForm(url, method, new FormData(form));
+                        }
+                    });
                 });
-            });
+            }
         });
 
         // Keep only this listener for the bulk action form
@@ -280,8 +282,7 @@
             fetch('/program_operation/api/program_status')
                 .then(response => response.json())
                 .then(data => {
-                    const isRunning = data.running;
-                    isRunning = false;
+                    const isRunning = false;
                     const buttons = document.querySelectorAll('button[type="submit"]');
                     buttons.forEach(button => {
                         button.disabled = isRunning;
@@ -497,13 +498,61 @@
         // Add event listener for the refresh button
         document.getElementById('refresh-rate-limits').addEventListener('click', fetchRateLimitInfo);
 
+        const sendTestNotificationForm = document.getElementById('send-test-notification-form');
         if (sendTestNotificationForm) {
             sendTestNotificationForm.addEventListener('submit', function(e) {
                 e.preventDefault();
-                const url = this.action;
-                const method = this.method;
-                submitForm(url, method, new FormData(this));
+                sendTestNotification();
+            });
+        }
 
+        function sendTestNotification() {
+            console.log('sendTestNotification function called');
+            const url = '/debug/send_test_notification';
+            console.log('Sending request to:', url);
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({})  // Send an empty object as body
+            })
+            .then(response => {
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                return response.text().then(text => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
+                    }
+                    try {
+                        return JSON.parse(text);
+                    } catch (e) {
+                        console.error('Error parsing JSON:', e);
+                        throw new Error(`Invalid JSON response: ${text}`);
+                    }
+                });
+            })
+            .then(data => {
+                if (data.success) {
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: data.message || 'Test notification sent successfully',
+                        title: 'Success'
+                    });
+                } else {
+                    throw new Error(data.error || 'An error occurred while sending the test notification');
+                }
+            })
+            .catch(error => {
+                console.error('Error details:', error);
+                console.error('Error name:', error.name);
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: `An error occurred: ${error.message}. Please check the server logs for more details.`,
+                    title: 'Error'
+                });
             });
         }
     });

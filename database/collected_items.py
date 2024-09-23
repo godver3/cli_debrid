@@ -10,6 +10,8 @@ from settings import get_setting
 
 def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
+    from datetime import datetime, timedelta
+    from settings import get_setting
 
     conn = get_db_connection()
     try:
@@ -79,7 +81,6 @@ def add_collected_items(media_items_batch, recent=False):
                         existing_item = existing_file_map[filename]
                         item_id = existing_item['id']
                         
-                        # Check if the item is currently in "Checking" state
                         if existing_item['state'] == 'Checking':
                             logging.info(f"Existing item in Checking state: {normalized_title} (ID: {item_id})")
                             logging.info(f"Release date: {existing_item['release_date']}")
@@ -95,19 +96,28 @@ def add_collected_items(media_items_batch, recent=False):
                             else:
                                 new_state = 'Collected'
 
+                            # Determine if this is an upgrade or initial collection
+                            is_upgrade = existing_item.get('original_collected_at') is not None
+                            
                             # Update the existing item
                             conn.execute('''
                                 UPDATE media_items
-                                SET state = ?, last_updated = ?, collected_at = ?, original_collected_at = ?
+                                SET state = ?, last_updated = ?, collected_at = ?, 
+                                    original_collected_at = COALESCE(original_collected_at, ?)
                                 WHERE id = ?
                             ''', (new_state, datetime.now(), collected_at, collected_at, item_id))
+                            
                             logging.info(f"Updated existing item from Checking to {new_state}: {normalized_title} (ID: {item_id})")
 
                             # Fetch the updated item
                             updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
                             
-                            # Add notification for collected item
-                            add_to_collected_notifications(dict(updated_item))
+                            # Add notification for collected/upgraded item
+                            updated_item_dict = dict(updated_item)
+                            updated_item_dict['is_upgrade'] = is_upgrade
+                            # Ensure original_collected_at is always set
+                            updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at', collected_at)
+                            add_to_collected_notifications(updated_item_dict)
                         else:
                             # If it's not in "Checking" state, just update without adding a notification
                             conn.execute('''
