@@ -85,7 +85,7 @@ def handle_https():
 @app.before_request
 def check_user_system():
     # Exclude the webhook route, its subpaths, and static files
-    if request.path.startswith('/webhook') or request.path.startswith('/static'):
+    if request.path.startswith('/webhook') or request.path.startswith('/static') or request.path.startswith('/debug'):
         return    
 
     # Remove any specific handling for statistics.index here
