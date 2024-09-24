@@ -134,7 +134,6 @@ class DatabaseManager:
                         session.add(metadata)
 
             session.commit()
-            logger.debug(f"Metadata for {imdb_id} updated in battery")
 
     @staticmethod
     def get_item(imdb_id):
