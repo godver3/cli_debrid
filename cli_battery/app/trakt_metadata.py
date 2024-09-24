@@ -30,31 +30,24 @@ class TraktMetadata:
     def __init__(self):
         self.settings = Settings()
         self.base_url = "https://api.trakt.tv"
+        self.trakt_auth = TraktAuth()
         self.client_id = self.settings.Trakt.get('client_id')
         self.client_secret = self.settings.Trakt.get('client_secret')
         self.redirect_uri = "http://192.168.1.51:5001/trakt_callback"
-        self.access_token = self.settings.Trakt.get('access_token')
-        self.refresh_token = self.settings.Trakt.get('refresh_token')
-        self.expires_at = self.settings.Trakt.get('expires_at')
 
     def _make_request(self, url):
         logger.info(f"_make_request called from: {traceback.extract_stack()[-2][2]}")
 
-        if not trakt_auth.is_authenticated():
-            if not trakt_auth.refresh_access_token():
+        if not self.trakt_auth.is_authenticated():
+            if not self.trakt_auth.refresh_access_token():
                 logger.error("Failed to authenticate with Trakt.")
                 return None
-            else:
-                # Update instance variables with new tokens
-                self.access_token = self.settings.Trakt.get('access_token')
-                self.refresh_token = self.settings.Trakt.get('refresh_token')
-                self.expires_at = self.settings.Trakt.get('expires_at')
 
         headers = {
             'Content-Type': 'application/json',
             'trakt-api-version': '2',
             'trakt-api-key': self.client_id,
-            'Authorization': f'Bearer {self.access_token}'
+            'Authorization': f'Bearer {self.trakt_auth.access_token}'
         }
         try:
             response = requests.get(url, headers=headers, timeout=10)
