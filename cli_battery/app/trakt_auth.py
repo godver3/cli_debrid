@@ -20,28 +20,22 @@ class TraktAuth:
     def __init__(self):
         self.settings = Settings()
         self.base_url = TRAKT_API_URL
-        self.client_id = get_setting('Trakt', 'client_id', '')
-        self.client_secret = get_setting('Trakt', 'client_secret', '')
-        self.redirect_uri = "http://192.168.1.51:5001/trakt_callback"
-        self.pytrakt_file = '/user/config/.pytrakt.json'
+        self.client_id = self.settings.Trakt['client_id']
+        self.client_secret = self.settings.Trakt['client_secret']
+        self.redirect_uri = self.settings.Trakt['redirect_uri']
+        self.pytrakt_file = os.path.expanduser('~/.pytrakt.json')
         self.load_auth()
         
         # Add debug logging
         logger.debug(f"TraktAuth initialized: access_token={bool(self.access_token)}, refresh_token={bool(self.refresh_token)}, expires_at={self.expires_at}")
 
     def load_auth(self):
-        self.access_token = self.settings.Trakt.get('access_token')
-        self.refresh_token = self.settings.Trakt.get('refresh_token')
-        self.expires_at = self.settings.Trakt.get('expires_at')
-
-        # If not found in settings, try to load from .pytrakt.json
-        if not self.access_token or not self.refresh_token:
-            self.load_from_pytrakt()
-
-        logger.info("Trakt authentication loaded.")
+        self.access_token = self.settings.Trakt['access_token']
+        self.refresh_token = self.settings.Trakt['refresh_token']
+        self.expires_at = self.settings.Trakt['expires_at']
         
-        # Add debug logging
-        logger.debug(f"Loaded auth: access_token={bool(self.access_token)}, refresh_token={bool(self.refresh_token)}, expires_at={self.expires_at}")
+        if not self.access_token:
+            self.load_from_pytrakt()
 
     def load_from_pytrakt(self):
         if os.path.exists(self.pytrakt_file):
