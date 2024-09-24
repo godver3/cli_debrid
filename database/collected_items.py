@@ -7,6 +7,7 @@ import json
 from .database_writing import add_to_collected_notifications
 from reverse_parser import parser_approximation
 from settings import get_setting
+from typing import Dict, Any, List
 
 def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
@@ -19,7 +20,7 @@ def add_collected_items(media_items_batch, recent=False):
         
         # Fetch all existing collected items from the database
         existing_items = conn.execute('''
-            SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, release_date 
+            SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, collected_at, release_date, upgrading_from
             FROM media_items 
             WHERE state IN ('Collected', 'Checking', 'Upgrading')
         ''').fetchall()
@@ -42,10 +43,15 @@ def add_collected_items(media_items_batch, recent=False):
                 filename = os.path.basename(location)
                 if filename and filename not in existing_collected_files:
                     new_locations.append(location)
+                else:
+                    logging.info(f"Filtered out: {item.get('title', 'Unknown')} - {filename} (already collected)")
             
             if new_locations:
                 item['location'] = new_locations
                 filtered_media_items_batch.append(item)
+            else:
+                logging.info(f"Completely filtered out: {item.get('title', 'Unknown')} (all locations already collected)")
+
 
         # Process all items, including existing ones
         all_valid_filenames = set()
@@ -97,15 +103,34 @@ def add_collected_items(media_items_batch, recent=False):
                                 new_state = 'Collected'
 
                             # Determine if this is an upgrade or initial collection
-                            is_upgrade = existing_item.get('original_collected_at') is not None
-                            
+                            is_upgrade = existing_item.get('collected_at') is not None
+
+                            logging.info(f"existing_item: {existing_item}")
+                            logging.info(f"collected_at: {existing_item.get('collected_at')}")
+                            logging.info(f"is_upgrade: {is_upgrade}")
+                                                    
+                            if is_upgrade and get_setting("Scraping", "enable_upgrading_cleanup", default=False):
+                                # Create a new dictionary with all the necessary information
+                                upgrade_item = {
+                                    'type': existing_item['type'],
+                                    'title': existing_item['title'],
+                                    'imdb_id': existing_item['imdb_id'],
+                                    'upgrading_from': existing_item['upgrading_from'],
+                                    'filled_by_torrent_id': existing_item.get('filled_by_torrent_id')
+                                }
+                                remove_original_item_from_plex(upgrade_item)
+                                remove_original_item_from_account(upgrade_item)
+                                remove_original_item_from_results(upgrade_item, media_items_batch)
+
+
+
                             # Update the existing item
                             conn.execute('''
                                 UPDATE media_items
                                 SET state = ?, last_updated = ?, collected_at = ?, 
                                     original_collected_at = COALESCE(original_collected_at, ?)
                                 WHERE id = ?
-                            ''', (new_state, datetime.now(), collected_at, collected_at, item_id))
+                            ''', (new_state, datetime.now(), collected_at, existing_item.get('collected_at', collected_at), item_id))
                             
                             logging.info(f"Updated existing item from Checking to {new_state}: {normalized_title} (ID: {item_id})")
 
@@ -116,7 +141,7 @@ def add_collected_items(media_items_batch, recent=False):
                             updated_item_dict = dict(updated_item)
                             updated_item_dict['is_upgrade'] = is_upgrade
                             # Ensure original_collected_at is always set
-                            updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at', collected_at)
+                            updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at', existing_item.get('collected_at', collected_at))
                             add_to_collected_notifications(updated_item_dict)
                         else:
                             # If it's not in "Checking" state, just update without adding a notification
@@ -222,3 +247,88 @@ def add_collected_items(media_items_batch, recent=False):
         raise
     finally:
         conn.close()
+
+def remove_original_item_from_plex(item: Dict[str, Any]):
+    from utilities.plex_functions import remove_file_from_plex
+
+    item_identifier = f"{item['type']}_{item['title']}_{item['imdb_id']}"
+    logging.info(f"Removing original file from Plex: {item_identifier}")
+
+    original_file_path = item.get('upgrading_from')
+    original_title = item.get('title')
+    logging.info(f"Original file path: {original_file_path}")
+    logging.info(f"Original title: {original_title}")
+
+    if original_file_path and original_title:
+        success = remove_file_from_plex(original_title, original_file_path)
+        if success:
+            logging.info(f"Successfully removed file from Plex: {item_identifier}")
+        else:
+            logging.warning(f"Failed to remove file from Plex: {item_identifier}")
+    else:
+        logging.warning(f"No file path or title found for item: {item_identifier}")
+
+
+def remove_original_item_from_account(item: Dict[str, Any]):
+    from queues.adding_queue import AddingQueue
+    item_identifier = f"{item['type']}_{item['title']}_{item['imdb_id']}"
+    logging.info(f"Removing original item from account: {item_identifier}")
+
+    original_torrent_id = item.get('filled_by_torrent_id')
+
+    if original_torrent_id:
+        adding_queue = AddingQueue()
+        adding_queue.remove_unwanted_torrent(original_torrent_id)
+        logging.info(f"Removed original torrent with ID {original_torrent_id} from account")
+    else:
+        logging.warning(f"No original torrent ID found for {item_identifier}")
+
+def remove_original_item_from_cli_debrid(item: Dict[str, Any]):
+    item_identifier = generate_identifier(item)
+    logging.info(f"Removing original item from cli_debrid database: {item_identifier}")
+
+    original_file_path = item.get('filled_by_file')
+    if original_file_path:
+        conn = get_db_connection()
+        try:
+            cursor = conn.execute('''
+                DELETE FROM media_items
+                WHERE filled_by_file = ?
+            ''', (original_file_path,))
+            if cursor.rowcount > 0:
+                logging.info(f"Removed {cursor.rowcount} item(s) with filled_by_file {original_file_path} from cli_debrid database")
+            else:
+                logging.info(f"No items found with filled_by_file {original_file_path} in cli_debrid database")
+            conn.commit()
+        except Exception as e:
+            logging.error(f"Error removing item from cli_debrid database: {str(e)}", exc_info=True)
+            conn.rollback()
+        finally:
+            conn.close()
+    else:
+        logging.warning(f"No original file path found for {item_identifier}")
+
+def remove_original_item_from_results(item: Dict[str, Any], media_items_batch: List[Dict[str, Any]]):
+    item_identifier = generate_identifier(item)
+    logging.info(f"Removing original item from results: {item_identifier}")
+
+    original_file_path = item.get('upgrading_from')
+    logging.info(f"original_file_path: {original_file_path}")
+    if original_file_path:
+        # Remove items from media_items_batch that match the filename in upgrading_from
+        original_filename = os.path.basename(original_file_path)
+        media_items_batch[:] = [batch_item for batch_item in media_items_batch 
+                                if not any(os.path.basename(loc) == original_filename 
+                                           for loc in batch_item.get('location', [])
+                                           if isinstance(loc, str))]
+        logging.info(f"Removed items with filename {original_filename} from media_items_batch")
+    else:
+        logging.warning(f"No original file path found for {item_identifier}")
+
+
+
+def generate_identifier(item: Dict[str, Any]) -> str:
+    if item.get('type') == 'movie':
+        return f"{item.get('title')} ({item.get('year')})"
+    else:
+        return f"{item.get('title')} S{item.get('season_number', '00'):02d}E{item.get('episode_number', '00'):02d}"

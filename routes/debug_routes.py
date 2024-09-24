@@ -492,3 +492,31 @@ def send_test_notification():
     except Exception as e:
         current_app.logger.error(f"Error sending test notification: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': 'An error occurred while sending the test notification. Please check the server logs for more details.'}), 500
+    
+@debug_bp.route('/move_to_upgrading', methods=['POST'])
+@admin_required
+def move_to_upgrading():
+    item_id = request.form.get('item_id')
+    if not item_id:
+        return jsonify({'success': False, 'error': 'Item ID is required'}), 400
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE media_items 
+            SET state = 'Upgrading',
+                last_updated = ?
+            WHERE id = ? AND state = 'Collected'
+        ''', (datetime.now(), item_id))
+        conn.commit()
+        
+        if cursor.rowcount > 0:
+            return jsonify({'success': True, 'message': f'Item {item_id} moved to Upgrading state'}), 200
+        else:
+            return jsonify({'success': False, 'error': f'Item {item_id} not found or not in Collected state'}), 404
+    except Exception as e:
+        logging.error(f"Error moving item to Upgrading state: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
