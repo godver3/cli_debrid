@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<style>
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+    }
+
+    .stat-card {
+        background-color: #515151;
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .stat-card h3 {
+        margin-bottom: 10px;
+        font-size: 1.2em;
+        color: #cecece;
+    }
+
+    .stat-value {
+        font-size: 1.5em;
+        font-weight: bold;
+        color: #3496ff;
+    }
+
+    .stat-icon {
+        font-size: 2em;
+        margin-bottom: 10px;
+        color: #cecece;
+    }
+</style>
+
+<h2>CLI Battery Dashboard</h2>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <i class="fas fa-database stat-icon"></i>
+        <h3>Total Items</h3>
+        <p class="stat-value">{{ stats.total_items }}</p>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-tags stat-icon"></i>
+        <h3>Total Metadata</h3>
+        <p class="stat-value">{{ stats.total_metadata }}</p>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-plug stat-icon"></i>
+        <h3>Total Providers</h3>
+        <p class="stat-value">{{ stats.total_providers }}</p>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-clock stat-icon"></i>
+        <h3>Last Update</h3>
+        <p class="stat-value">{{ stats.last_update }}</p>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-sync stat-icon"></i>
+        <h3>Staleness Threshold</h3>
+        <p class="stat-value">{{ stats.staleness_threshold }}</p>
+    </div>
+</div>
+
+<style>
+    @media (max-width: 768px) {
+        .stats-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .stat-card {
+            padding: 15px;
+        }
+
+        .stat-icon {
+            font-size: 1.5em;
+        }
+
+        .stat-value {
+            font-size: 1.2em;
+        }
+    }
+</style>
+
+{% endblock %}

@@ -52,6 +52,14 @@ SETTINGS_SCHEMA = {
             "sensitive": True
         }
     },
+    "Staleness Threshold": {
+        "tab": "Additional Settings",
+        "staleness_threshold": {
+            "type": "integer",
+            "description": "Staleness threshold for metadata (in days)",
+            "default": 7
+        }
+    },
     "Metadata Battery": {
         "tab": "Required Settings",
         "url": {
