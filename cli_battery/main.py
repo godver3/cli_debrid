@@ -5,7 +5,6 @@ import time
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError
 import threading
-from app.grpc_service import serve as grpc_serve
 from app.logger_config import logger
 import sys
 
@@ -41,10 +40,6 @@ def initialize_database(app):
 
     return None
 
-def run_grpc_server():
-    logger.info("Starting gRPC server")
-    grpc_serve()
-
 def main():
     logger.info("Starting cli_battery")
     
@@ -59,11 +54,6 @@ def main():
     except Exception as e:
         logger.exception("Error initializing database")
         sys.exit(1)
-
-    # Start gRPC server in a separate thread
-    grpc_thread = threading.Thread(target=run_grpc_server, daemon=True)
-    grpc_thread.start()
-    logger.info("gRPC server thread started")
 
     # Run Flask server
     logger.info("Starting Flask server")
