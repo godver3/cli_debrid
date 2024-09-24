@@ -122,7 +122,11 @@ def add_collected_items(media_items_batch, recent=False):
                                 remove_original_item_from_account(upgrade_item)
                                 remove_original_item_from_results(upgrade_item, media_items_batch)
 
-
+                            # Before the UPDATE statement, ensure `collected_at` is set
+                            if existing_item.get('collected_at') is None:
+                                existing_collected_at = collected_at
+                            else:
+                                existing_collected_at = existing_item.get('collected_at')
 
                             # Update the existing item
                             conn.execute('''
@@ -130,7 +134,7 @@ def add_collected_items(media_items_batch, recent=False):
                                 SET state = ?, last_updated = ?, collected_at = ?, 
                                     original_collected_at = COALESCE(original_collected_at, ?)
                                 WHERE id = ?
-                            ''', (new_state, datetime.now(), collected_at, existing_item.get('collected_at', collected_at), item_id))
+                            ''', (new_state, datetime.now(), collected_at, existing_collected_at, item_id))
                             
                             logging.info(f"Updated existing item from Checking to {new_state}: {normalized_title} (ID: {item_id})")
 
@@ -158,28 +162,28 @@ def add_collected_items(media_items_batch, recent=False):
                         parsed_info = parser_approximation(filename)
                         version = parsed_info['version']
 
-                        # Insert new item
-                        if item_type == 'movie':
-                            cursor = conn.execute('''
-                                INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, genres, filled_by_file, runtime)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                            ''', (
-                                imdb_id, tmdb_id, normalized_title, item.get('year'),
-                                item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), version, collected_at, genres, filename, item.get('runtime')
-                            ))
-                        else:
-                            cursor = conn.execute('''
-                                INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, genres, filled_by_file, runtime)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                            ''', (
-                                imdb_id, tmdb_id, normalized_title, item.get('year'),
-                                item.get('release_date'), 'Collected', 'episode',
-                                item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, item.get('airtime'), collected_at, genres, filename, item.get('runtime')
-                            ))
+                        # For movies
+                        cursor = conn.execute('''
+                            INSERT OR REPLACE INTO media_items
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        ''', (
+                            imdb_id, tmdb_id, normalized_title, item.get('year'),
+                            item.get('release_date'), 'Collected', 'movie',
+                            datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime')
+                        ))
+
+                        # For episodes
+                        cursor = conn.execute('''
+                            INSERT OR REPLACE INTO media_items
+                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        ''', (
+                            imdb_id, tmdb_id, normalized_title, item.get('year'),
+                            item.get('release_date'), 'Collected', 'episode',
+                            item['season_number'], item['episode_number'], item.get('episode_title', ''),
+                            datetime.now(), datetime.now(), version, item.get('airtime'), collected_at, collected_at, genres, filename, item.get('runtime')
+                        ))
                         logging.info(f"Added new item as Collected: {normalized_title} (ID: {cursor.lastrowid})")
 
             except Exception as e:

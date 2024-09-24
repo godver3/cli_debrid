@@ -40,6 +40,7 @@ class UpgradingQueue:
     def add_item(self, item: Dict[str, Any]):
         self.items.append(item)
         collected_at = item.get('original_collected_at', datetime.now())
+        logging.info(f"collected_at: {collected_at}")
         self.upgrade_times[item['id']] = {
             'start_time': datetime.now(),
             'time_added': collected_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(collected_at, datetime) else str(collected_at)
