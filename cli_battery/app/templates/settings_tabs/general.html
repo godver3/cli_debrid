@@ -1,0 +1,12 @@
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>General Settings</h4>
+    </div>
+    <div class="settings-section-content active">
+        <div class="settings-form-group">
+            <label for="staleness_threshold" class="settings-title">Staleness Threshold (days):</label>
+            <input type="number" id="staleness_threshold" name="staleness_threshold" class="settings-input" value="{{ settings.staleness_threshold }}">
+            <p class="settings-description">Days after which metadata is considered stale and should be updated on a new request.</p>
+        </div>
+    </div>
+</div>

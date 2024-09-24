@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}Debug{% endblock %}
+
+{% block content %}
+<h2>Debug - Database Content</h2>
+
+<h3>Items</h3>
+<table id="itemTable">
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Year</th>
+            <th>IMDB ID</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for item in items %}
+        <tr>
+            <td data-label="Title">{{ item.title }}</td>
+            <td data-label="Year">
+                {{ item.display_year or 'N/A' }}
+            </td>
+            <td data-label="IMDB ID">{{ item.imdb_id }}</td>
+            <td data-label="Actions">
+                <button class="toggleDetails" data-imdb-id="{{ item.imdb_id }}">Show Details</button>
+                <button class="deleteItem" data-imdb-id="{{ item.imdb_id }}">Delete</button>
+            </td>
+        </tr>
+        <tr class="details" style="display: none;">
+            <td colspan="4">
+                <h4>Metadata:</h4>
+                <ul>
+                {% for metadata in item.item_metadata %}
+                    <li>{{ metadata.key }}: {{ metadata.value }} ({{ metadata.provider }})</li>
+                {% endfor %}
+                </ul>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<style>
+    #itemTable {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    #itemTable th, #itemTable td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+        background-color: #000000;
+    }
+    #itemTable th {
+        background-color: #b2b2b2;
+    }
+    .details {
+        background-color: #f9f9f9;
+    }
+    .toggleDetails, .deleteItem {
+        margin-right: 5px;
+    }
+    @media (max-width: 768px) {
+        #itemTable {
+            font-size: 14px;
+        }
+
+        #itemTable th {
+            display: none;
+        }
+
+        #itemTable td {
+            display: block;
+            position: relative;
+            padding-left: 50%;
+            text-align: right;
+        }
+
+        #itemTable td:before {
+            content: attr(data-label);
+            position: absolute;
+            left: 6px;
+            width: 45%;
+            padding-right: 10px;
+            white-space: nowrap;
+            text-align: left;
+            font-weight: bold;
+        }
+
+        .toggleDetails, .deleteItem {
+            display: inline-block;
+            width: calc(50% - 5px);
+            margin: 5px 0;
+            padding: 8px 0;
+            text-align: center;
+        }
+    }
+</style>
+
+<script>
+document.querySelectorAll('.deleteItem').forEach(button => {
+    button.addEventListener('click', function() {
+        const imdbId = this.getAttribute('data-imdb-id');
+        if (confirm('Are you sure you want to delete this item?')) {
+            fetch(`/debug/delete_item/${imdbId}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('Error deleting item');
+                }
+            });
+        }
+    });
+});
+
+document.querySelectorAll('.toggleDetails').forEach(button => {
+    button.addEventListener('click', function() {
+        const imdbId = this.getAttribute('data-imdb-id');
+        const detailsRow = this.closest('tr').nextElementSibling;
+        if (detailsRow.style.display === 'none') {
+            detailsRow.style.display = 'table-row';
+            this.textContent = 'Hide Details';
+        } else {
+            detailsRow.style.display = 'none';
+            this.textContent = 'Show Details';
+        }
+    });
+});
+</script>
+{% endblock %}
