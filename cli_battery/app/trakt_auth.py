@@ -23,7 +23,7 @@ class TraktAuth:
         self.client_id = self.settings.Trakt['client_id']
         self.client_secret = self.settings.Trakt['client_secret']
         self.redirect_uri = self.settings.Trakt['redirect_uri']
-        self.pytrakt_file = os.path.expanduser('~/.pytrakt.json')
+        self.pytrakt_file = os.path.expanduser('/user/config/.pytrakt.json')
         self.load_auth()
         
         # Add debug logging
