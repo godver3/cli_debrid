@@ -12,7 +12,8 @@ import metadata_service_pb2
 import metadata_service_pb2_grpc
 import re
 from settings import set_setting
-
+import subprocess
+import threading
 
 def setup_logging():
     logging.getLogger('selector').setLevel(logging.WARNING)
@@ -106,6 +107,32 @@ def check_metadata_service():
         logging.error("Failed to connect to metadata service on all fallback options")
         return None
 
+def run_secondary_app_process():
+    secondary_app_path = os.path.join(os.path.dirname(__file__), 'cli_battery', 'main.py')
+    try:
+        process = subprocess.Popen([sys.executable, secondary_app_path], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE,
+                                   universal_newlines=True)
+        logging.info(f"Secondary app started with PID: {process.pid}")
+        
+        # Log output from the secondary app
+        while True:
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                logging.info(f"Secondary app: {output.strip()}")
+        
+        # Log any errors
+        for line in process.stderr:
+            logging.error(f"Secondary app error: {line.strip()}")
+        
+        return_code = process.poll()
+        logging.info(f"Secondary app exited with return code: {return_code}")
+    except Exception as e:
+        logging.error(f"Failed to start or run secondary app: {e}")
+
 def main():
     global program_runner
     setup_logging()
@@ -143,12 +170,12 @@ def main():
     print("Press Ctrl+C to stop the program.")
 
     # Check metadata service connectivity
-    metadata_url = check_metadata_service()
+    '''metadata_url = check_metadata_service()
     if metadata_url:
         set_setting('Metadata Battery', 'url', metadata_url)
     else:
         print("Failed to connect to metadata service. Please check your configuration.")
-        sys.exit(1)
+        sys.exit(1)'''
 
     if get_setting('Debug', 'auto_run_program'):
         # Call the start_program route
@@ -165,9 +192,20 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Keep the script running
-    while True:
-        time.sleep(1)
+    # Start the secondary app as a separate process in a new thread
+    secondary_app_thread = threading.Thread(target=run_secondary_app_process, daemon=True)
+    secondary_app_thread.start()
+    logging.info("Secondary app thread started")
+
+    # Continue with the primary application's operations
+    try:
+        while True:
+            # Primary application's tasks
+            #print("Primary application is running")
+            time.sleep(5)
+    except KeyboardInterrupt:
+        print("Primary application is stopping")
+        # Optionally terminate the secondary app process if needed
 
 if __name__ == "__main__":
     from api_tracker import setup_api_logging

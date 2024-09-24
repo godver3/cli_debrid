@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<style>
+    /* CSS styles from the provided example */
+    .settings-container {
+        width: 95%; 
+        max-width: 1200px;
+        margin: 0 auto; 
+        padding: 20px;
+    }
+
+    .btn {
+        border: none;
+        color: white;
+        padding: 5px 10px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background-color 0.3s;
+    }
+
+    .btn-primary { background-color: #4CAF50; }
+    .btn-primary:hover { background-color: #45a049; }
+    .btn-secondary { background-color: #555; }
+    .btn-secondary:hover { background-color: #777; }
+
+    .settings-tabs {
+        display: flex;
+        justify-content: flex-start;
+        background-color: #444;
+        border-radius: 5px;
+        padding: 5px;
+        margin-bottom: 20px;
+    }
+
+    .settings-tab-button {
+        margin-right: 5px;
+        background-color: #555;
+        border: none;
+        color: #fff;
+        padding: 15px 15px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        border-radius: 3px;
+    }
+
+    .settings-tab-button.active { background-color: #777; }
+
+    .settings-section {
+        background-color: #444;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        overflow: hidden;
+    }
+
+    .settings-section-header {
+        background-color: #1a1a1a;
+        padding: 10px 15px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 1.1em;
+    }
+
+    .settings-section-header h4 {
+        margin: 0;
+        color: #fff;
+        text-align: left;
+        flex-grow: 1;
+    }
+
+    .settings-section-content {
+        padding: 15px;
+        display: none;
+        background-color: #333;
+    }
+
+    .settings-section-content.active {
+        display: block;
+    }
+
+    .settings-form-group {
+        margin-bottom: 15px;
+    }
+
+    .settings-title {
+        font-weight: bold;
+        color: #fff;
+        margin-bottom: 5px;
+    }
+
+    .settings-input {
+        width: 100%;
+        padding: 8px;
+        background-color: #444;
+        border: 1px solid #666;
+        color: #fff;
+        border-radius: 3px;
+        box-sizing: border-box;
+        font-family: inherit;
+        font-size: 16px; /* Prevents zoom on iOS */
+    }
+
+    .settings-description {
+        margin-top: 5px;
+        font-style: italic;
+        color: #aaa;
+        font-size: 0.9em;
+    }
+
+    /* Responsive styles */
+    @media screen and (max-width: 768px) {
+        .settings-tabs {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .settings-tab-button {
+            margin-right: 0;
+            margin-bottom: 5px;
+            padding: 10px;
+        }
+
+        .settings-section-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .settings-section-header h4 {
+            margin-bottom: 5px;
+        }
+
+        .settings-input {
+            font-size: 16px; /* Prevents zoom on iOS */
+        }
+    }
+</style>
+
+<div class="settings-container">
+    <h2>Settings</h2>
+    <div class="settings-tabs">
+        <button type="button" class="btn btn-secondary settings-tab-button active" data-tab="general">General</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="trakt">Trakt</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="advanced">Advanced</button>
+    </div>
+    
+    <form id="settingsForm">
+        <div id="general" class="settings-tab-content active">
+            {% include 'settings_tabs/general.html' %}
+        </div>
+        <div id="trakt" class="settings-tab-content" style="display: none;">
+            {% include 'settings_tabs/trakt.html' %}
+        </div>
+        <div id="advanced" class="settings-tab-content" style="display: none;">
+            {% include 'settings_tabs/advanced.html' %}
+        </div>
+    </form>
+
+    <button type="button" id="saveSettingsButton" class="btn btn-primary">Save Settings</button>
+    
+    <div id="saveStatus"></div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const tabButtons = document.querySelectorAll('.settings-tab-button');
+        const tabContents = document.querySelectorAll('.settings-tab-content');
+        
+        tabButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const tabName = this.getAttribute('data-tab');
+                openTab(tabName);
+            });
+        });
+
+        function openTab(tabName) {
+            tabContents.forEach(content => content.style.display = 'none');
+            tabButtons.forEach(button => button.classList.remove('active'));
+            
+            document.getElementById(tabName).style.display = 'block';
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+        }
+
+        const saveSettingsButton = document.getElementById('saveSettingsButton');
+        saveSettingsButton.addEventListener('click', function() {
+            saveSettings();
+        });
+    });
+
+    function saveSettings() {
+        const form = document.getElementById('settingsForm');
+        const formData = new FormData(form);
+        
+        fetch('/save_settings', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('saveStatus').textContent = 'Settings saved successfully!';
+            } else {
+                document.getElementById('saveStatus').textContent = 'Error saving settings: ' + data.error;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('saveStatus').textContent = 'Error saving settings: ' + error.message;
+        });
+    }
+</script>
+{% endblock %}

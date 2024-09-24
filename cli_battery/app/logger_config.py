@@ -1,0 +1,34 @@
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+
+def setup_logger():
+    log_dir = '/user/logs'
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Create a logger
+    logger = logging.getLogger('app')
+    logger.setLevel(logging.INFO)
+
+    # Clear any existing handlers
+    logger.handlers.clear()
+
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s - %(levelname)s - %(message)s')
+
+    # Add console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # Add file handler
+    file_handler = RotatingFileHandler('/user/logs/debug.log', maxBytes=1024 * 1024, backupCount=10)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return logger
+
+# Create and configure the logger
+logger = setup_logger()
