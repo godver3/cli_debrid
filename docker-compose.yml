@@ -8,6 +8,7 @@ services:
     container_name: cli_debrid_app
     ports:
       - "5000:5000"
+      - "5001:5001"
     volumes:
       - cli_debrid_data:/user
     environment:

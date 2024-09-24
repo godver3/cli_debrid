@@ -23,7 +23,6 @@ def get_next_onboarding_step():
         ('Plex', 'url'),
         ('Plex', 'token'),
         ('RealDebrid', 'api_key'),
-        ('Metadata Battery', 'url'),
         ('Trakt', 'client_id'),
         ('Trakt', 'client_secret')
     ]
@@ -96,7 +95,6 @@ def onboarding_step(step):
             ('Plex', 'token'),
             ('Plex', 'shows_libraries'),
             ('Plex', 'movie_libraries'),
-            ('Metadata Battery', 'url'),
             ('RealDebrid', 'api_key'),
             ('Trakt', 'client_id'),
             ('Trakt', 'client_secret')
@@ -113,9 +111,6 @@ def onboarding_step(step):
                 }
                 config['RealDebrid'] = {
                     'api_key': request.form['realdebrid_api_key']
-                }
-                config['Metadata Battery'] = {
-                    'url': request.form['metadata_battery_url']
                 }
                 config['Trakt'] = {
                     'client_id': request.form['trakt_client_id'],

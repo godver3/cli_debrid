@@ -139,6 +139,8 @@ def main():
     from settings import ensure_settings_file
     from database import verify_database
     
+    set_setting('Metadata Battery', 'url', 'http://localhost:50051')
+    
     ensure_settings_file()
     verify_database()
     
