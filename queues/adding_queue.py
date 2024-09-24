@@ -512,6 +512,16 @@ class AddingQueue:
                     "files": torrent_files.get('cached_files', []) if torrent_files else [],
                     "torrent_id": torrent_info.get('id') if torrent_info else None
                 }
+            elif isinstance(result, dict) and result.get('status') == 'downloaded':  # New case for downloaded torrent
+                logging.info(f"Added downloaded content for {item_identifier}")
+                return {
+                    "success": True,
+                    "message": "Downloaded torrent added successfully",
+                    "status": "downloaded",
+                    "links": result.get('links', []),
+                    "files": result.get('files', []),
+                    "torrent_id": result.get('torrent_id')
+                }
             elif result in ['downloading', 'queued']:  # Uncached torrent
                 logging.info(f"Added uncached content for {item_identifier}. Status: {result}")
     

@@ -31,6 +31,9 @@ def migrate_schema():
         if 'original_collected_at' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN original_collected_at TIMESTAMP')
             logging.info("Successfully added original_collected_at column to media_items table.")
+        if 'upgrading_from' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN upgrading_from TEXT')
+            logging.info("Successfully added upgrading_from column to media_items table.")
 
         logging.info("Successfully added new columns to media_items table.")
 
@@ -102,7 +105,8 @@ def create_tables():
                 genres TEXT,
                 file_path TEXT,
                 runtime INTEGER,  -- Add the runtime column
-                alternate_title TEXT
+                alternate_title TEXT,
+                upgrading_from TEXT
             )
         ''')
 
