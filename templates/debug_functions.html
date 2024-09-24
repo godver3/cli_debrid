@@ -140,6 +140,16 @@
                 <button type="submit">Send Test Notification</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Move Item ID to Upgrading</h3>
+            <form action="{{ url_for('debug.move_to_upgrading') }}" method="POST" id="move-to-upgrading-form">
+                <div class="form-group">
+                    <label for="item_id">Item ID:</label>
+                    <input type="text" id="item_id" name="item_id" required>
+                </div>
+                <button type="submit">Move to Upgrading</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -198,6 +208,15 @@
                 });
             }
         });
+
+        function moveToUpgrading() {
+            const itemId = document.getElementById('item_id').value;
+            const url = '/debug/move_to_upgrading';
+            const method = 'POST';
+            const formData = new FormData();
+            formData.append('id', itemId);
+            submitForm(url, method, formData);
+        }
 
         // Keep only this listener for the bulk action form
         if (bulkActionForm) {

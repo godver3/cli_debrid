@@ -6,7 +6,7 @@ from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
 from settings import get_setting
 from utilities.plex_functions import remove_file_from_plex
-
+import os
 class UpgradingQueue:
     def __init__(self):
         self.items = []
@@ -99,6 +99,20 @@ class UpgradingQueue:
             return True
         return (current_time - last_scrape_time) >= timedelta(hours=1)
 
+    def log_upgrade(self, item: Dict[str, Any]):
+        log_file = "/user/db_content/upgrades.log"
+        item_identifier = self.generate_identifier(item)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"{timestamp} - Upgraded: {item_identifier}\n"
+
+        # Create the log file if it doesn't exist
+        if not os.path.exists(log_file):
+            open(log_file, 'w').close()
+
+        # Append the log entry to the file
+        with open(log_file, 'a') as f:
+            f.write(log_entry)
+
     def hourly_scrape(self, item: Dict[str, Any], queue_manager=None):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Performing hourly scrape for {item_identifier}")
@@ -129,16 +143,16 @@ class UpgradingQueue:
                     success = adding_queue.process_item(queue_manager, item, better_results, uncached_handling)
 
                     if success:
-                        logging.info(f"Successfully upgraded item {item_identifier}")
+                        logging.info(f"Successfully initiated upgrade for item {item_identifier}")
                         
                         # Increment the upgrades found count
                         self.upgrades_found[item['id']] = self.upgrades_found.get(item['id'], 0) + 1
-                        
-                        if get_setting('Scraping', 'enable_upgrading_cleanup', False):  
-                            # Remove original item from Plex
-                            self.remove_original_item_from_plex(item)
-                            # Remove original item from account
-                            self.remove_original_item_from_account(item)
+                    
+                        item['upgrading_from'] = item['filled_by_file'] 
+                        logging.info(f"Item {item_identifier} is upgrading from {item['upgrading_from']}")
+
+                        # Log the upgrade
+                        self.log_upgrade(item)
 
                         # Update the item in the database with new values from the upgrade
                         self.update_item_with_upgrade(item, adding_queue)
@@ -156,46 +170,14 @@ class UpgradingQueue:
         else:
             logging.info(f"No new results found for {item_identifier} during hourly scrape")
 
-    def remove_original_item_from_plex(self, item: Dict[str, Any]):
-        item_identifier = self.generate_identifier(item)
-        logging.info(f"Removing original file from Plex: {item_identifier}")
-
-        # Get the file path and title of the original item
-        original_file_path = item.get('filled_by_file')
-        original_title = item.get('title')
-        logging.info(f"Original file path: {original_file_path}")
-        logging.info(f"Original title: {original_title}")
-
-        if original_file_path and original_title:
-            # Use the updated remove_file_from_plex function
-            success = remove_file_from_plex(original_title, original_file_path)
-            if success:
-                logging.info(f"Successfully removed file from Plex: {item_identifier}")
-            else:
-                logging.warning(f"Failed to remove file from Plex: {item_identifier}")
-        else:
-            logging.warning(f"No file path or title found for item: {item_identifier}")
-
-    def remove_original_item_from_account(self, item: Dict[str, Any]):
-        item_identifier = self.generate_identifier(item)
-        logging.info(f"Removing original item from account: {item_identifier}")
-
-        # Retrieve the original torrent ID from the item
-        original_torrent_id = item.get('filled_by_torrent_id')
-
-        if original_torrent_id:
-            # Use AddingQueue's remove_unwanted_torrent method
-            adding_queue = AddingQueue()
-            adding_queue.remove_unwanted_torrent(original_torrent_id)
-            logging.info(f"Removed original torrent with ID {original_torrent_id} from account")
-        else:
-            logging.warning(f"No original torrent ID found for {item_identifier}")
-
     def update_item_with_upgrade(self, item: Dict[str, Any], adding_queue: AddingQueue):
         # Fetch the new values from the adding queue
         new_values = adding_queue.get_new_item_values(item)
 
         if new_values:
+            # Add the upgrading_from value to new_values
+            new_values['upgrading_from'] = item['filled_by_file']
+
             # Update the item in the database with new values
             update_media_item(item['id'], **new_values)
             logging.info(f"Updated item in database with new values for {self.generate_identifier(item)}")
