@@ -7,9 +7,6 @@ import time
 from api_tracker import api
 from settings import get_setting
 import requests
-import grpc
-import metadata_service_pb2
-import metadata_service_pb2_grpc
 import re
 from settings import set_setting
 import subprocess

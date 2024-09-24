@@ -21,3 +21,6 @@ urwid==2.6.15
 Werkzeug==3.0.4
 pytrakt==3.4.32
 plexapi==4.15.15
+colorlog==6.8.2
+iso8601==2.1.0
+Pillow==10.4.0
