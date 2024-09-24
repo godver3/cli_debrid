@@ -65,7 +65,7 @@ SETTINGS_SCHEMA = {
         "url": {
             "type": "string",
             "description": "Metadata Battery URL. Leave as default unless you have set up the Metadata Battery in a different location.",
-            "default": "http://cli_battery_app:50051"
+            "default": "http://localhost:50051"
         }
     },
     "Queue": {
