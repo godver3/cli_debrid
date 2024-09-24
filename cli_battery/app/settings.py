@@ -3,6 +3,7 @@ from .logger_config import logger
 import os
 import sys
 from datetime import timedelta
+from functools import cached_property
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -19,14 +20,26 @@ class Settings:
         self.staleness_threshold = get_setting('Staleness Threshold', 'staleness_threshold', 7)  # in days
         self.max_entries = 1000  # default value, adjust as needed
         self.log_level = 'INFO'
-        self.Trakt = {
-            'client_id': get_setting('Trakt', 'client_id', ''),
-            'client_secret': get_setting('Trakt', 'client_secret', ''),
-            'access_token': '',
-            'refresh_token': '',
-            'expires_at': None
-        }
+        self._trakt = None
         self.load()
+
+    @cached_property
+    def Trakt(self):
+        if self._trakt is None:
+            self._trakt = {
+                'client_id': get_setting('Trakt', 'client_id', ''),
+                'client_secret': get_setting('Trakt', 'client_secret', ''),
+                'access_token': get_setting('Trakt', 'access_token', ''),
+                'refresh_token': get_setting('Trakt', 'refresh_token', ''),
+                'expires_at': get_setting('Trakt', 'expires_at', None),
+                'redirect_uri': get_setting('Trakt', 'redirect_uri', 'http://localhost:5001/trakt_callback')
+            }
+        return self._trakt
+
+    def invalidate_trakt_cache(self):
+        if 'Trakt' in self.__dict__:
+            del self.__dict__['Trakt']
+        self._trakt = None
 
     def save(self):
         config = {
@@ -51,11 +64,6 @@ class Settings:
             self.staleness_threshold = get_setting('General', 'staleness_threshold', 7)
             self.max_entries = config.get('max_entries', 1000)
             self.log_level = config.get('log_level', 'INFO')
-            self.Trakt['client_id'] = get_setting('Trakt', 'client_id', '')
-            self.Trakt['client_secret'] = get_setting('Trakt', 'client_secret', '')
-            self.Trakt['access_token'] = config.get('Trakt', {}).get('access_token', '')
-            self.Trakt['refresh_token'] = config.get('Trakt', {}).get('refresh_token', '')
-            self.Trakt['expires_at'] = config.get('Trakt', {}).get('expires_at', None)
             
             # Add debug logging
             logger.debug(f"Loaded settings: Trakt={self.Trakt}")
@@ -84,15 +92,12 @@ class Settings:
                 provider['api_key'] = api_key
 
         # Update Trakt settings
-        if 'Trakt[client_id]' in new_settings:
-            self.Trakt['client_id'] = new_settings['Trakt[client_id]']
-        if 'Trakt[client_secret]' in new_settings:
-            self.Trakt['client_secret'] = new_settings['Trakt[client_secret]']
-
-        # Update other Trakt settings if needed
-        self.Trakt['access_token'] = new_settings.get('trakt_access_token', self.Trakt.get('access_token', ''))
-        self.Trakt['refresh_token'] = new_settings.get('trakt_refresh_token', self.Trakt.get('refresh_token', ''))
-        self.Trakt['expires_at'] = new_settings.get('trakt_expires_at', self.Trakt.get('expires_at', 0))
+        if any(key.startswith('Trakt[') for key in new_settings):
+            self.invalidate_trakt_cache()
+            for key, value in new_settings.items():
+                if key.startswith('Trakt['):
+                    trakt_key = key[6:-1]  # Remove 'Trakt[' and ']'
+                    self.Trakt[trakt_key] = value
 
         # Save settings to file
         self.save()
