@@ -338,43 +338,6 @@ class ProgramRunner:
             logging.error(f"Error processing content source {source}: {str(e)}")
             logging.error(traceback.format_exc())
 
-    def get_wanted_content(self, source_type, data):
-        versions = data.get('versions', {})
-        logging.debug(f"Getting wanted content for {source_type} with versions: {versions}")
-        
-        if source_type == 'Overseerr':
-            content = get_wanted_from_overseerr()
-            return [(content, versions)] if content else []
-        elif source_type == 'MDBList':
-            mdblist_urls = data.get('urls', '').split(',')
-            result = []
-            for url in mdblist_urls:
-                content = get_wanted_from_mdblists(url.strip(), versions)
-                if isinstance(content, list) and len(content) > 0 and isinstance(content[0], tuple):
-                    result.extend(content)
-                else:
-                    result.append((content, versions))
-            return result
-        elif source_type == 'Collected':
-            content = get_wanted_from_collected()
-            return [(content, versions)] if content else []
-        elif source_type == 'Trakt Watchlist':
-            content = get_wanted_from_trakt_watchlist()
-            return [(content, versions)] if content else []
-        elif source_type == 'Trakt Lists':
-            trakt_lists = data.get('trakt_lists', '').split(',')
-            result = []
-            for url in trakt_lists:
-                content = get_wanted_from_trakt_lists(url.strip(), versions)
-                if isinstance(content, list) and len(content) > 0 and isinstance(content[0], tuple):
-                    result.extend(content)
-                else:
-                    result.append((content, versions))
-            return result
-        else:
-            logging.warning(f"Unknown source type: {source_type}")
-            return []
-
     def task_refresh_release_dates(self):
         refresh_release_dates()
     

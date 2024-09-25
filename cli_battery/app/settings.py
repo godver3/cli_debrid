@@ -18,6 +18,8 @@ class Settings:
             # Add more providers here as they become available
         ]
         self.staleness_threshold = get_setting('Staleness Threshold', 'staleness_threshold', 7)  # in days
+        logger.debug(f"Initialized staleness threshold: {self.staleness_threshold}")
+        print(f"Staleness threshold: {self.staleness_threshold}")
         self.max_entries = 1000  # default value, adjust as needed
         self.log_level = 'INFO'
         self._trakt = None
@@ -45,8 +47,6 @@ class Settings:
         config = {
             'active_provider': self.active_provider,
             'providers': self.providers,
-            'trakt_client_id': self.trakt_client_id,
-            'trakt_client_secret': self.trakt_client_secret,
             'staleness_threshold': self.staleness_threshold,
             'max_entries': self.max_entries,
             'log_level': self.log_level,
@@ -61,7 +61,8 @@ class Settings:
                 config = json.load(f)
             self.active_provider = config.get('active_provider', 'none')
             self.providers = config.get('providers', self.providers)
-            self.staleness_threshold = get_setting('General', 'staleness_threshold', 7)
+            self.staleness_threshold = get_setting('Staleness Threshold', 'staleness_threshold', 7)
+            logger.debug(f"Loaded staleness threshold: {self.staleness_threshold}")
             self.max_entries = config.get('max_entries', 1000)
             self.log_level = config.get('log_level', 'INFO')
             
@@ -81,6 +82,7 @@ class Settings:
 
     def update(self, new_settings):
         self.staleness_threshold = int(new_settings.get('staleness_threshold', self.staleness_threshold))
+        logger.debug(f"Updated staleness threshold: {self.staleness_threshold}")
         self.max_entries = int(new_settings.get('max_entries', self.max_entries))
         self.log_level = new_settings.get('log_level', self.log_level)
 
@@ -92,12 +94,10 @@ class Settings:
                 provider['api_key'] = api_key
 
         # Update Trakt settings
-        if any(key.startswith('Trakt[') for key in new_settings):
+        if 'Trakt[client_id]' in new_settings or 'Trakt[client_secret]' in new_settings:
             self.invalidate_trakt_cache()
-            for key, value in new_settings.items():
-                if key.startswith('Trakt['):
-                    trakt_key = key[6:-1]  # Remove 'Trakt[' and ']'
-                    self.Trakt[trakt_key] = value
+            self.Trakt['client_id'] = new_settings.get('Trakt[client_id]', self.Trakt['client_id'])
+            self.Trakt['client_secret'] = new_settings.get('Trakt[client_secret]', self.Trakt['client_secret'])
 
         # Save settings to file
         self.save()
@@ -107,6 +107,7 @@ class Settings:
 
     def save_settings(self):
         settings = self.get_all()
+        logger.debug(f"Saving settings: {settings}")
         try:
             # Ensure the directory exists
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)

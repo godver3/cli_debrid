@@ -158,7 +158,8 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         'imdb_id': None,
         'tmdb_id': None,
         'type': 'movie',
-        'genres': filtered_genres
+        'genres': filtered_genres,
+        'release_date': movie.get('originallyAvailableAt', None)
     }
 
     if 'addedAt' not in movie:
@@ -175,7 +176,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         logging.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Skipping metadata retrieval.")
         return []
 
-    try:
+    '''try:
         metadata = get_metadata(imdb_id=movie_data['imdb_id'], tmdb_id=movie_data['tmdb_id'], item_media_type='movie')
         if metadata:
             movie_data['release_date'] = get_release_date(metadata, movie_data['imdb_id'])
@@ -183,7 +184,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
             movie_data['release_date'] = None
     except ValueError as e:
         logging.error(f"Error retrieving metadata for {movie_data['title']}: {str(e)}")
-        return []
+        return []'''
 
     movie_entries = []
     if 'Media' in movie and movie['Media']:
@@ -419,7 +420,8 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         'imdb_id': None,
         'tmdb_id': None,
         'type': 'movie',
-        'genres': filtered_genres
+        'genres': filtered_genres,
+        'release_date': movie.get('originallyAvailableAt', None)
     }
 
     if 'addedAt' not in movie:
@@ -435,7 +437,7 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not movie_data['imdb_id'] and not movie_data['tmdb_id']:
         logger.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Skipping metadata retrieval.")
         movie_data['release_date'] = None
-    else:
+    '''else:
         try:
             # Get metadata and release date from metadata.py
             metadata = get_metadata(imdb_id=movie_data['imdb_id'], tmdb_id=movie_data['tmdb_id'], item_media_type='movie')
@@ -445,7 +447,7 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                 movie_data['release_date'] = None
         except ValueError as e:
             logger.error(f"Error retrieving metadata for {movie_data['title']}: {str(e)}")
-            movie_data['release_date'] = None
+            movie_data['release_date'] = None'''
 
     movie_entries = []
     if 'Media' in movie:

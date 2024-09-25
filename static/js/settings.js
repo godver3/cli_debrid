@@ -478,6 +478,22 @@ function updateSettings() {
         console.warn("Enable Upgrading Cleanup checkbox element not found!");
     }
 
+
+    const stalenessThreshold = document.getElementById('staleness threshold-staleness_threshold');
+    console.log("Staleness Threshold element:", stalenessThreshold);
+    
+    if (stalenessThreshold) {
+        // Ensure 'Staleness Threshold' object exists in settingsData
+        if (!settingsData['Staleness Threshold']) {
+            settingsData['Staleness Threshold'] = {};
+        }
+        settingsData['Staleness Threshold']['staleness_threshold'] = parseInt(stalenessThreshold.value) || 7;
+    
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Staleness Threshold input element not found!");
+    }
+    
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {

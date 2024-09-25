@@ -162,28 +162,29 @@ def add_collected_items(media_items_batch, recent=False):
                         parsed_info = parser_approximation(filename)
                         version = parsed_info['version']
 
-                        # For movies
-                        cursor = conn.execute('''
-                            INSERT OR REPLACE INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        ''', (
-                            imdb_id, tmdb_id, normalized_title, item.get('year'),
-                            item.get('release_date'), 'Collected', 'movie',
-                            datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime')
-                        ))
-
-                        # For episodes
-                        cursor = conn.execute('''
-                            INSERT OR REPLACE INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        ''', (
-                            imdb_id, tmdb_id, normalized_title, item.get('year'),
-                            item.get('release_date'), 'Collected', 'episode',
-                            item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), datetime.now(), version, item.get('airtime'), collected_at, collected_at, genres, filename, item.get('runtime')
-                        ))
+                        if item_type == 'movie':
+                            # For movies
+                            cursor = conn.execute('''
+                                INSERT OR REPLACE INTO media_items
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            ''', (
+                                imdb_id, tmdb_id, normalized_title, item.get('year'),
+                                item.get('release_date'), 'Collected', 'movie',
+                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime')
+                            ))
+                        else:
+                            # For episodes
+                            cursor = conn.execute('''
+                                INSERT OR REPLACE INTO media_items
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            ''', (
+                                imdb_id, tmdb_id, normalized_title, item.get('year'),
+                                item.get('release_date'), 'Collected', 'episode',
+                                item['season_number'], item['episode_number'], item.get('episode_title', ''),
+                                datetime.now(), datetime.now(), version, item.get('airtime'), collected_at, collected_at, genres, filename, item.get('runtime')
+                            ))
                         logging.info(f"Added new item as Collected: {normalized_title} (ID: {cursor.lastrowid})")
 
             except Exception as e:
@@ -203,13 +204,13 @@ def add_collected_items(media_items_batch, recent=False):
                             if item['type'] == 'movie':
                                 matching_items = conn.execute('''
                                     SELECT id, version FROM media_items 
-                                    WHERE imdb_id = ? AND type = 'movie' AND state = 'Collected'
-                                ''', (item['imdb_id'],)).fetchall()
+                                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'movie' AND state = 'Collected'
+                                ''', (item['imdb_id'], item['tmdb_id'])).fetchall()
                             else:
                                 matching_items = conn.execute('''
                                     SELECT id, version FROM media_items 
-                                    WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
-                                ''', (item['imdb_id'], item['season_number'], item['episode_number'])).fetchall()
+                                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
+                                ''', (item['imdb_id'], item['tmdb_id'], item['season_number'], item['episode_number'])).fetchall()
                             
                             current_version = item['version'].strip('*')
                             matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items)
@@ -313,21 +314,23 @@ def remove_original_item_from_cli_debrid(item: Dict[str, Any]):
         logging.warning(f"No original file path found for {item_identifier}")
 
 def remove_original_item_from_results(item: Dict[str, Any], media_items_batch: List[Dict[str, Any]]):
-    item_identifier = generate_identifier(item)
-    logging.info(f"Removing original item from results: {item_identifier}")
+    try:
+        item_identifier = generate_identifier(item)
+        logging.info(f"Removing original item from results: {item_identifier}")
 
-    original_file_path = item.get('upgrading_from')
-    logging.info(f"original_file_path: {original_file_path}")
-    if original_file_path:
-        # Remove items from media_items_batch that match the filename in upgrading_from
-        original_filename = os.path.basename(original_file_path)
-        media_items_batch[:] = [batch_item for batch_item in media_items_batch 
-                                if not any(os.path.basename(loc) == original_filename 
-                                           for loc in batch_item.get('location', [])
-                                           if isinstance(loc, str))]
-        logging.info(f"Removed items with filename {original_filename} from media_items_batch")
-    else:
-        logging.warning(f"No original file path found for {item_identifier}")
+        original_file_path = item.get('upgrading_from')
+        logging.info(f"original_file_path: {original_file_path}")
+        if original_file_path:
+            original_filename = os.path.basename(original_file_path)
+            media_items_batch[:] = [batch_item for batch_item in media_items_batch 
+                                    if not any(os.path.basename(loc) == original_filename 
+                                               for loc in batch_item.get('location', [])
+                                               if isinstance(loc, str))]
+            logging.info(f"Removed items with filename {original_filename} from media_items_batch")
+        else:
+            logging.warning(f"No original file path found for {item_identifier}")
+    except Exception as e:
+        logging.error(f"Error in remove_original_item_from_results: {str(e)}", exc_info=True)
 
 
 
@@ -335,4 +338,18 @@ def generate_identifier(item: Dict[str, Any]) -> str:
     if item.get('type') == 'movie':
         return f"{item.get('title')} ({item.get('year')})"
     else:
-        return f"{item.get('title')} S{item.get('season_number', '00'):02d}E{item.get('episode_number', '00'):02d}"
+        season = item.get('season_number', '00')
+        episode = item.get('episode_number', '00')
+        
+        # Convert to int if possible, otherwise use string formatting
+        try:
+            season = f"{int(season):02d}"
+        except ValueError:
+            season = str(season).zfill(2)
+        
+        try:
+            episode = f"{int(episode):02d}"
+        except ValueError:
+            episode = str(episode).zfill(2)
+        
+        return f"{item.get('title')} S{season}E{episode}"
