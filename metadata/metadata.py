@@ -344,6 +344,9 @@ def get_all_season_episode_counts(imdb_id: str) -> Dict[int, int]:
 def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
     DEFAULT_AIRTIME = "19:00"
     show_metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+    if show_metadata is None:
+        logging.warning(f"Failed to retrieve show metadata for IMDb ID: {imdb_id}")
+        return DEFAULT_AIRTIME
     return show_metadata.get('airs', {}).get('time', DEFAULT_AIRTIME)
 
 def test_metadata_processing():
