@@ -16,6 +16,7 @@ import iso8601
 from collections import defaultdict
 from .settings import Settings
 from datetime import datetime, timezone
+import random
 
 class MetadataManager:
 
@@ -49,18 +50,32 @@ class MetadataManager:
 
     @staticmethod
     def is_metadata_stale(last_updated):
+        settings = Settings()
         if last_updated is None:
             return True
+        
         # Convert last_updated to UTC if it's not already
         if last_updated.tzinfo is None or last_updated.tzinfo.utcoffset(last_updated) is None:
             last_updated = last_updated.replace(tzinfo=timezone.utc)
+        
         now = datetime.now(timezone.utc)
-        stale_threshold = timedelta(days=7)  # Consider metadata stale after 7 days
+        
+        # Add random variation to the staleness threshold
+        variation = random.choice([-5, -3, -1, 1, 3, 5])
+        adjusted_threshold = max(settings.staleness_threshold + variation, 1)
+        
+        stale_threshold = timedelta(days=adjusted_threshold)
         is_stale = (now - last_updated) > stale_threshold
+        
+        logger.debug(f"Base staleness threshold: {settings.staleness_threshold} days")
+        logger.debug(f"Random variation: {variation} days")
+        logger.debug(f"Adjusted staleness threshold: {adjusted_threshold} days")
+        
         if is_stale:
             logger.info(f"Metadata is stale. Last updated: {last_updated}, Current time: {now}")
         else:
             logger.info(f"Metadata is fresh for {stale_threshold - (now - last_updated)} more.")
+        
         return is_stale
 
     @staticmethod
@@ -537,15 +552,19 @@ class MetadataManager:
         with Session() as session:
             cached_mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
             if cached_mapping:
+                logger.info(f"Using cached mapping for TMDB ID {tmdb_id}: IMDB ID = {cached_mapping.imdb_id}")
                 return cached_mapping.imdb_id, 'battery'
 
             trakt = TraktMetadata()
             imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id)
             
             if imdb_id:
+                logger.info(f"Storing new mapping for TMDB ID {tmdb_id}: IMDB ID = {imdb_id}")
                 new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
                 session.add(new_mapping)
                 session.commit()
+            else:
+                logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id}")
             
             return imdb_id, source
                 

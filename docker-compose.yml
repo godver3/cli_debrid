@@ -16,7 +16,13 @@ services:
     restart: unless-stopped
     tty: true
     stdin_open: true
-    network_mode: bridge
+    networks:
+      - cli_debrid
+
+networks:
+  cli_debrid:
+    name: cli_debrid
+    driver: bridge
 
 volumes:
   cli_debrid_data:

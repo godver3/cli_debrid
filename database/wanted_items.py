@@ -47,13 +47,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
             if item_type == 'movie':
                 any_version_collected = conn.execute('''
                     SELECT id FROM media_items
-                    WHERE imdb_id = ? AND type = 'movie' AND state = 'Collected'
-                ''', (item['imdb_id'],)).fetchone()
+                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'movie' AND state = 'Collected'
+                ''', (item.get('imdb_id'), item.get('tmdb_id'))).fetchone()
             else:
                 any_version_collected = conn.execute('''
                     SELECT id FROM media_items
-                    WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
-                ''', (item['imdb_id'], item['season_number'], item['episode_number'])).fetchone()
+                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
+                ''', (item.get('imdb_id'), item.get('tmdb_id'), item['season_number'], item['episode_number'])).fetchone()
 
             if any_version_collected:
                 logging.debug(f"Skipping item as it's already collected in some version: {normalized_title}")
@@ -71,13 +71,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                 if item_type == 'movie':
                     existing_item = conn.execute('''
                         SELECT id, release_date, state FROM media_items
-                        WHERE imdb_id = ? AND type = 'movie' AND version = ?
-                    ''', (item['imdb_id'], version)).fetchone()
+                        WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'movie' AND version = ?
+                    ''', (item.get('imdb_id'), item.get('tmdb_id'), version)).fetchone()
                 else:
                     existing_item = conn.execute('''
                         SELECT id, release_date, state FROM media_items
-                        WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND version = ?
-                    ''', (item['imdb_id'], item['season_number'], item['episode_number'], version)).fetchone()
+                        WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'episode' AND season_number = ? AND episode_number = ? AND version = ?
+                    ''', (item.get('imdb_id'), item.get('tmdb_id'), item['season_number'], item['episode_number'], version)).fetchone()
 
                 if existing_item:
                     # Item exists, check if we need to update
@@ -107,7 +107,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                             (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
-                            item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
+                            item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime')
                         ))
                     else:                     
@@ -116,9 +116,9 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                             (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, runtime, airtime, genres)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
-                            item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
+                            item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Wanted', 'episode',
-                            item['season_number'], item['episode_number'], item.get('episode_title', ''),
+                            item.get('season_number'), item.get('episode_number'), item.get('episode_title', ''),
                             datetime.now(), version, item.get('runtime'), item.get('airtime'), genres
                         ))
                     logging.debug(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} (Version: {version})")
