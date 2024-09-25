@@ -87,7 +87,7 @@ def add_collected_items(media_items_batch, recent=False):
                         existing_item = existing_file_map[filename]
                         item_id = existing_item['id']
                         
-                        if existing_item['state'] == 'Checking':
+                        if existing_item['state'] == 'Checking' or existing_item['state'] == 'Unreleased':
                             logging.info(f"Existing item in Checking state: {normalized_title} (ID: {item_id})")
                             logging.info(f"Release date: {existing_item['release_date']}")
                             # Check if the release date is within the past 7 days

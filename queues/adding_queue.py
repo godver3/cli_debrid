@@ -660,7 +660,7 @@ class AddingQueue:
 
     def get_matching_items_from_queues(self, queue_manager, item):
         matching_items = []
-        for queue_name in ["Wanted", "Scraping", "Sleeping"]:
+        for queue_name in ["Wanted", "Scraping", "Sleeping", "Unreleased"]:
             queue_items = queue_manager.queues[queue_name].get_contents()
             matching_items.extend([
                 wanted_item for wanted_item in queue_items
