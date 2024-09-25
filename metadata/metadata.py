@@ -375,16 +375,56 @@ def test_metadata_processing():
     print(f"\nTotal movies processed: {len(processed_data['movies'])}")
     print(f"Total episodes processed: {len(processed_data['episodes'])}")
 
+def extract_tmdb_id(data):
+    logging.info(f"Extracting TMDB ID from data: {type(data)}")
+    if isinstance(data, dict):
+        ids = data.get('ids')
+        if isinstance(ids, str):
+            try:
+                ids = json.loads(ids.replace("'", '"'))  # Convert single quotes to double quotes
+            except json.JSONDecodeError:
+                logging.error(f"Failed to parse 'ids' string: {ids}")
+                return None
+        elif not isinstance(ids, dict):
+            logging.error(f"Unexpected 'ids' format: {type(ids)}")
+            return None
+        
+        tmdb_id = ids.get('tmdb')
+        logging.info(f"Extracted TMDB ID: {tmdb_id}")
+        return tmdb_id
+    logging.error(f"Unexpected data format for IMDb ID: {type(data)}")
+    return None
+
 def get_tmdb_id_and_media_type(imdb_id: str) -> Tuple[Optional[int], Optional[str]]:
+    def parse_data(data):
+        if isinstance(data, str):
+            try:
+                parsed = json.loads(data)
+                logging.info(f"Successfully parsed string data to: {type(parsed)}")
+                return parsed
+            except json.JSONDecodeError:
+                logging.error(f"Failed to parse data as JSON for IMDb ID {imdb_id}")
+                return None
+        return data
+
     # Try to get movie metadata
     movie_data, _ = DirectAPI.get_movie_metadata(imdb_id)
-    if movie_data:
-        return int(movie_data.get('ids', {}).get('tmdb', 0)), 'movie'
+    movie_data = parse_data(movie_data)
+
+    if movie_data is not None:
+        tmdb_id = extract_tmdb_id(movie_data)
+        if tmdb_id:
+            return int(tmdb_id), 'movie'
     
     # If not a movie, try to get show metadata
     show_data, _ = DirectAPI.get_show_metadata(imdb_id)
-    if show_data:
-        return int(show_data.get('ids', {}).get('tmdb', 0)), 'tv'
+   
+    show_data = parse_data(show_data)
+    if show_data is not None:
+        tmdb_id = extract_tmdb_id(show_data)
+        if tmdb_id:
+            logging.info(f"Found TMDB ID for show: {tmdb_id}")
+            return int(tmdb_id), 'tv'
     
     logging.error(f"Could not determine media type for IMDb ID {imdb_id}")
     return None, None
