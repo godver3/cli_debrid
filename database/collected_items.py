@@ -174,6 +174,14 @@ def add_collected_items(media_items_batch, recent=False):
                                 datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime')
                             ))
                         else:
+                            if imdb_id not in airtime_cache:
+                                airtime_cache[imdb_id] = get_existing_airtime(conn, imdb_id)
+                                if airtime_cache[imdb_id] is None:
+                                    airtime_cache[imdb_id] = get_show_airtime_by_imdb_id(imdb_id)
+                                if not airtime_cache[imdb_id]:
+                                    airtime_cache[imdb_id] = '19:00'
+                            
+                            airtime = airtime_cache[imdb_id]
                             # For episodes
                             cursor = conn.execute('''
                                 INSERT OR REPLACE INTO media_items
@@ -183,7 +191,7 @@ def add_collected_items(media_items_batch, recent=False):
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, item.get('airtime'), collected_at, collected_at, genres, filename, item.get('runtime')
+                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime')
                             ))
                         logging.info(f"Added new item as Collected: {normalized_title} (ID: {cursor.lastrowid})")
 

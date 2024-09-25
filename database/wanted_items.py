@@ -16,6 +16,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
         items_added = 0
         items_updated = 0
         items_skipped = 0
+        airtime_cache = {}
 
         # Handle different types of versions input
         if isinstance(versions, str):
@@ -110,7 +111,23 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                             item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime')
                         ))
-                    else:                     
+                    else:    
+                        # For episodes, get the airtime
+                        if item['imdb_id'] not in airtime_cache:
+                            airtime_cache[item['imdb_id']] = get_existing_airtime(conn, item['imdb_id'])
+                            if airtime_cache[item['imdb_id']] is None:
+                                logging.debug(f"No existing airtime found for show {item['imdb_id']}, fetching from metadata")
+                                airtime_cache[item['imdb_id']] = get_show_airtime_by_imdb_id(item['imdb_id'])
+                            
+                            # Ensure we always have a default airtime
+                            if not airtime_cache[item['imdb_id']]:
+                                airtime_cache[item['imdb_id']] = '19:00'
+                                logging.debug(f"No airtime found, defaulting to 19:00 for show {item['imdb_id']}")
+                            
+                            logging.debug(f"Airtime for show {item['imdb_id']} set to {airtime_cache[item['imdb_id']]}")
+                        
+                        airtime = airtime_cache[item['imdb_id']]
+
                         conn.execute('''
                             INSERT INTO media_items
                             (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, runtime, airtime, genres)
@@ -119,7 +136,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                             item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                             item.get('release_date'), 'Wanted', 'episode',
                             item.get('season_number'), item.get('episode_number'), item.get('episode_title', ''),
-                            datetime.now(), version, item.get('runtime'), item.get('airtime'), genres
+                            datetime.now(), version, item.get('runtime'), airtime, genres
                         ))
                     logging.debug(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} (Version: {version})")
                     items_added += 1
