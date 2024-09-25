@@ -4,7 +4,7 @@ from manual_blacklist import is_blacklisted
 from typing import List, Dict, Any
 import json
 from datetime import datetime
-
+from metadata.metadata import get_tmdb_id_and_media_type
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str, bool]):
     from metadata.metadata import get_show_airtime_by_imdb_id
 
@@ -40,6 +40,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                 logging.debug(f"Skipping blacklisted item: {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
                 items_skipped += 1
                 continue
+
+            if not item.get('tmdb_id'):
+                tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
+                if tmdb_id:
+                    item['tmdb_id'] = tmdb_id
+                else:
+                    logging.warning(f"Unable to retrieve tmdb_id for {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
 
             normalized_title = normalize_string(str(item.get('title', 'Unknown')))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'

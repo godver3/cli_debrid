@@ -44,9 +44,13 @@ def scrape_zilean_instance(instance: str, settings: Dict[str, Any], imdb_id: str
 def parse_zilean_results(data: List[Dict[str, Any]], instance: str) -> List[Dict[str, Any]]:
     results = []
     for item in data:
+        size = item.get('size', 0)
+        # Convert size to float if it's a string, otherwise use as is
+        size_gb = float(size) / (1024 * 1024 * 1024) if isinstance(size, str) else size / (1024 * 1024 * 1024)
+        
         result = {
             'title': item.get('raw_title', 'N/A'),
-            'size': item.get('size', 0) / (1024 * 1024 * 1024),  # Convert to GB
+            'size': round(size_gb, 2),  # Round to 2 decimal places
             'source': f'{instance}',
             'magnet': f"magnet:?xt=urn:btih:{item.get('info_hash', '')}"
         }
