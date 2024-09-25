@@ -99,12 +99,21 @@ def smart_search(pattern, text):
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False) -> float:
+def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False, content_type: str = None) -> float:
     # Normalize titles
     query_title = normalize_title(query_title)
     
     parsed_info = result.get('parsed_info', {})
-    guessit_title = parsed_info.get('title', '')
+    result_title = result.get('title', '')
+    
+    # Prepare query title for guessit
+    guessit_query_title = query_title.replace('.', ' ')
+    
+    # Use guessit with content type and prepared query title
+    guessit_type = 'movie' if content_type.lower() == 'movie' else 'episode'
+    guessit_result = guessit(result_title, {'type': guessit_type, 'expected_title': [guessit_query_title]})
+    
+    guessit_title = guessit_result.get('title', '')
     guessit_title = normalize_title(guessit_title)
 
     logging.debug(f"Comparing cleaned titles - Query: '{query_title}', Guessit: '{guessit_title}'")
@@ -142,8 +151,6 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
     logging.debug(f"Final similarity score: {similarity}")
 
     return similarity  # Already a float between 0 and 1
-
-
 
 def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
     max_similarity = 0
@@ -757,8 +764,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         detected_resolution = parsed_info.get('resolution', 'Unknown')
         
         # Check title similarity
-        title_sim = improved_title_similarity(title, result, is_anime)
-        alternate_title_sim = improved_title_similarity(alternate_title, result, is_anime) if alternate_title else 0
+        title_sim = improved_title_similarity(title, result, is_anime, content_type)
+        alternate_title_sim = improved_title_similarity(alternate_title, result, is_anime, content_type) if alternate_title else 0
         
         if "UFC" in result['title'].upper():
             similarity_threshold = 0.35
