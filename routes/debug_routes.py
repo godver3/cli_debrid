@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 debug_bp = Blueprint('debug', __name__)
 
 @debug_bp.route('/debug_functions')
+@admin_required
 def debug_functions():
     content_sources = get_all_settings().get('Content Sources', {})
     enabled_sources = {source: data for source, data in content_sources.items() if data.get('enabled', False)}
