@@ -10,6 +10,8 @@ from app.trakt_metadata import TraktMetadata  # Add this import at the top of th
 import json
 import time
 import os
+from ..logger_config import logger
+
 
 settings = Settings()
 
@@ -18,6 +20,7 @@ main_bp = Blueprint('main', __name__)
 @main_bp.route('/')
 def home():
     db_stats = MetadataManager.get_stats()
+    logger.debug(f"Current staleness_threshold: {settings.staleness_threshold}")
     stats = {
         'total_providers': len(settings.providers),
         'active_providers': sum(1 for provider in settings.providers if provider['enabled']),
@@ -26,6 +29,7 @@ def home():
         'last_update': db_stats['last_update'].strftime('%Y-%m-%d %H:%M:%S') if db_stats['last_update'] else 'N/A',
         'staleness_threshold': f"{settings.staleness_threshold} days"
     }
+    logger.debug(f"Stats: {stats}")
     return render_template('home.html', stats=stats)
 
 @main_bp.route('/debug')
@@ -89,4 +93,6 @@ def debug_item(imdb_id):
 @main_bp.context_processor
 def inject_stats():
     stats = MetadataManager.get_stats()
+    stats['staleness_threshold'] = f"{settings.staleness_threshold} days"
+    logger.debug(f"Injected stats: {stats}")
     return dict(stats=stats)

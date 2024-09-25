@@ -268,7 +268,14 @@ class TraktMetadata:
         response = self._make_request(url)
         if response and response.status_code == 200:
             data = response.json()
+            logger.info(f"Full Trakt response for TMDB ID {tmdb_id}: {json.dumps(data, indent=2)}")
             if data:
+                for item in data:
+                    if 'movie' in item:
+                        logger.info(f"Found movie: IMDB ID = {item['movie']['ids']['imdb']}")
+                    elif 'show' in item:
+                        logger.info(f"Found show: IMDB ID = {item['show']['ids']['imdb']}")
+                # Return the first item's IMDB ID as before
                 item = data[0]
                 if 'movie' in item:
                     return item['movie']['ids']['imdb'], 'trakt'
