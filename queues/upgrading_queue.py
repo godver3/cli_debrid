@@ -7,6 +7,9 @@ from queues.adding_queue import AddingQueue
 from settings import get_setting
 from utilities.plex_functions import remove_file_from_plex
 import os
+import pickle
+from pathlib import Path
+
 class UpgradingQueue:
     def __init__(self):
         self.items = []
@@ -14,6 +17,18 @@ class UpgradingQueue:
         self.last_scrape_times = {}
         self.upgrades_found = {}  # New dictionary to track upgrades found
         self.scraping_queue = ScrapingQueue()
+        self.upgrades_file = Path("/user/db_content/upgrades.pkl")
+        self.upgrades_data = self.load_upgrades_data()
+
+    def load_upgrades_data(self):
+        if self.upgrades_file.exists():
+            with open(self.upgrades_file, 'rb') as f:
+                return pickle.load(f)
+        return {}
+
+    def save_upgrades_data(self):
+        with open(self.upgrades_file, 'wb') as f:
+            pickle.dump(self.upgrades_data, f)
 
     def update(self):
         self.items = [dict(row) for row in get_all_media_items(state="Upgrading")]
@@ -34,6 +49,11 @@ class UpgradingQueue:
                 item_copy['time_added'] = upgrade_info['time_added']
             else:
                 item_copy['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Add upgrade history information
+            item_copy['upgrades_found'] = self.upgrades_data.get(item['id'], {}).get('count', 0)
+            item_copy['upgrade_history'] = self.upgrades_data.get(item['id'], {}).get('history', [])
+            
             contents.append(item_copy)
         return contents
 
@@ -47,6 +67,12 @@ class UpgradingQueue:
         }
         self.last_scrape_times[item['id']] = datetime.now()
         self.upgrades_found[item['id']] = 0  # Initialize upgrades found count
+        
+        # Ensure the upgrades_data entry is initialized
+        if item['id'] not in self.upgrades_data:
+            self.upgrades_data[item['id']] = {'count': 0, 'history': []}
+        
+        self.save_upgrades_data()
 
     def remove_item(self, item: Dict[str, Any]):
         self.items = [i for i in self.items if i['id'] != item['id']]
@@ -56,6 +82,9 @@ class UpgradingQueue:
             del self.last_scrape_times[item['id']]
         if item['id'] in self.upgrades_found:
             del self.upgrades_found[item['id']]
+        if item['id'] in self.upgrades_data:
+            del self.upgrades_data[item['id']]
+            self.save_upgrades_data()
 
     def clean_up_upgrade_times(self):
         for item_id in list(self.upgrade_times.keys()):
@@ -67,29 +96,37 @@ class UpgradingQueue:
         for item_id in list(self.upgrades_found.keys()):
             if item_id not in [item['id'] for item in self.items]:
                 del self.upgrades_found[item_id]
+        for item_id in list(self.upgrades_data.keys()):
+            if item_id not in [item['id'] for item in self.items]:
+                del self.upgrades_data[item_id]
+        self.save_upgrades_data()
 
     def process(self, queue_manager=None):
         current_time = datetime.now()
         for item in self.items[:]:  # Create a copy of the list to iterate over
-            item_id = item['id']
-            upgrade_info = self.upgrade_times.get(item_id)
-            
-            if upgrade_info:
-                time_in_queue = current_time - upgrade_info['start_time']
+            try:
+                item_id = item['id']
+                upgrade_info = self.upgrade_times.get(item_id)
                 
-                # Check if the item has been in the queue for more than 24 hours
-                if time_in_queue > timedelta(hours=24):
-                    logging.info(f"Item {item_id} has been in the Upgrading queue for over 24 hours.")
-                                        
-                    # Remove the item from the queue
-                    self.remove_item(item)
+                if upgrade_info:
+                    time_in_queue = current_time - upgrade_info['start_time']
                     
-                    logging.info(f"Moved item {item_id} to Collected state after 24 hours in Upgrading queue.")
-                
-                # Check if an hour has passed since the last scrape
-                elif self.should_perform_hourly_scrape(item_id, current_time):
-                    self.hourly_scrape(item, queue_manager)
-                    self.last_scrape_times[item_id] = current_time
+                    # Check if the item has been in the queue for more than 24 hours
+                    if time_in_queue > timedelta(hours=24):
+                        logging.info(f"Item {item_id} has been in the Upgrading queue for over 24 hours.")
+                                            
+                        # Remove the item from the queue
+                        self.remove_item(item)
+                        
+                        logging.info(f"Moved item {item_id} to Collected state after 24 hours in Upgrading queue.")
+                    
+                    # Check if an hour has passed since the last scrape
+                    elif self.should_perform_hourly_scrape(item_id, current_time):
+                        self.hourly_scrape(item, queue_manager)
+                        self.last_scrape_times[item_id] = current_time
+            except Exception as e:
+                logging.error(f"Error processing item {item.get('id', 'unknown')}: {str(e)}")
+                logging.exception("Traceback:")
 
         # Clean up upgrade times for items no longer in the queue
         self.clean_up_upgrade_times()
@@ -100,11 +137,12 @@ class UpgradingQueue:
             return True
         return (current_time - last_scrape_time) >= timedelta(hours=1)
 
-    def log_upgrade(self, item: Dict[str, Any]):
+    def log_upgrade(self, item: Dict[str, Any], adding_queue: AddingQueue):
         log_file = "/user/db_content/upgrades.log"
         item_identifier = self.generate_identifier(item)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_entry = f"{timestamp} - Upgraded: {item_identifier}\n"
+        new_file = adding_queue.get_new_item_values(item)
+        log_entry = f"{timestamp} - Upgraded: {item_identifier} - New File: {new_file['filled_by_file']} - Original File: {item['upgrading_from']}\n"
 
         # Create the log file if it doesn't exist
         if not os.path.exists(log_file):
@@ -113,6 +151,18 @@ class UpgradingQueue:
         # Append the log entry to the file
         with open(log_file, 'a') as f:
             f.write(log_entry)
+
+        # Update upgrades_data
+        if item['id'] not in self.upgrades_data:
+            self.upgrades_data[item['id']] = {'count': 0, 'history': []}
+        
+        self.upgrades_data[item['id']]['count'] += 1
+        self.upgrades_data[item['id']]['history'].append({
+            'datetime': datetime.now(),
+            'new_file': item['filled_by_file'],
+            'original_file': item['upgrading_from']
+        })
+        self.save_upgrades_data()
 
     def hourly_scrape(self, item: Dict[str, Any], queue_manager=None):
         item_identifier = self.generate_identifier(item)
@@ -146,14 +196,19 @@ class UpgradingQueue:
                     if success:
                         logging.info(f"Successfully initiated upgrade for item {item_identifier}")
                         
+                        # Ensure the upgrades_data entry is initialized
+                        if item['id'] not in self.upgrades_data:
+                            self.upgrades_data[item['id']] = {'count': 0, 'history': []}
+                        
                         # Increment the upgrades found count
-                        self.upgrades_found[item['id']] = self.upgrades_found.get(item['id'], 0) + 1
+                        self.upgrades_data[item['id']]['count'] += 1
                     
                         item['upgrading_from'] = item['filled_by_file'] 
-                        logging.info(f"Item {item_identifier} is upgrading from {item['upgrading_from']}")
+
+                        logging.info(f"Item {item_identifier} is upgrading from {item['upgrading_from']} (Upgrades found: {self.upgrades_data[item['id']]['count']})")
 
                         # Log the upgrade
-                        self.log_upgrade(item)
+                        self.log_upgrade(item, adding_queue)
 
                         # Update the item in the database with new values from the upgrade
                         self.update_item_with_upgrade(item, adding_queue)
@@ -208,3 +263,17 @@ class UpgradingQueue:
             return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{'_'.join(item['version'].split())}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
+        
+def log_successful_upgrade(item: Dict[str, Any]):
+    log_file = "/user/db_content/upgrades.log"
+    item_identifier = UpgradingQueue.generate_identifier(item)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"{timestamp} - Upgrade Complete: {item_identifier}\n"
+
+    # Create the log file if it doesn't exist
+    if not os.path.exists(log_file):
+        open(log_file, 'w').close()
+
+    # Append the log entry to the file
+    with open(log_file, 'a') as f:
+        f.write(log_entry)

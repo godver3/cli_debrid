@@ -9,10 +9,11 @@ from database import remove_from_media_items
 from settings import get_setting
 import json
 from reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
-
+from .models import admin_required
 database_bp = Blueprint('database', __name__)
 
 @database_bp.route('/', methods=['GET', 'POST'])
+@admin_required
 def index():
     try:
         conn = get_db_connection()

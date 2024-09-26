@@ -494,6 +494,17 @@ function updateSettings() {
         console.warn("Staleness Threshold input element not found!");
     }
     
+    const enableReverseOrderScraping = document.getElementById('scraping-enable_reverse_order_scraping');
+    console.log("Enable Reverse Order Scraping element:", enableReverseOrderScraping);
+    
+    if (enableReverseOrderScraping) {
+        settingsData['Scraping']['enable_reverse_order_scraping'] = enableReverseOrderScraping.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Enable Reverse Order Scraping checkbox element not found!");
+    }
+    
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {
