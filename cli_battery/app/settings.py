@@ -18,8 +18,6 @@ class Settings:
             # Add more providers here as they become available
         ]
         self.staleness_threshold = get_setting('Staleness Threshold', 'staleness_threshold', 7)  # in days
-        logger.debug(f"Initialized staleness threshold: {self.staleness_threshold}")
-        print(f"Staleness threshold: {self.staleness_threshold}")
         self.max_entries = 1000  # default value, adjust as needed
         self.log_level = 'INFO'
         self._trakt = None
@@ -62,12 +60,8 @@ class Settings:
             self.active_provider = config.get('active_provider', 'none')
             self.providers = config.get('providers', self.providers)
             self.staleness_threshold = get_setting('Staleness Threshold', 'staleness_threshold', 7)
-            logger.debug(f"Loaded staleness threshold: {self.staleness_threshold}")
             self.max_entries = config.get('max_entries', 1000)
             self.log_level = config.get('log_level', 'INFO')
-            
-            # Add debug logging
-            logger.debug(f"Loaded settings: Trakt={self.Trakt}")
         else:
             logger.warning(f"Config file not found: {self.config_file}")
 
@@ -82,7 +76,6 @@ class Settings:
 
     def update(self, new_settings):
         self.staleness_threshold = int(new_settings.get('staleness_threshold', self.staleness_threshold))
-        logger.debug(f"Updated staleness threshold: {self.staleness_threshold}")
         self.max_entries = int(new_settings.get('max_entries', self.max_entries))
         self.log_level = new_settings.get('log_level', self.log_level)
 
@@ -102,19 +95,14 @@ class Settings:
         # Save settings to file
         self.save()
 
-        # Log updated Trakt settings for debugging
-        logger.info(f"Updated Trakt settings: {self.Trakt}")
-
     def save_settings(self):
         settings = self.get_all()
-        logger.debug(f"Saving settings: {settings}")
         try:
             # Ensure the directory exists
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
             
             with open(self.config_file, 'w') as f:
                 json.dump(settings, f, indent=4)
-            logger.info("Settings saved successfully.")
         except IOError as e:
             logger.error(f"Error saving settings to file: {str(e)}")
         except Exception as e:
