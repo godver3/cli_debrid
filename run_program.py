@@ -51,7 +51,7 @@ class ProgramRunner:
             'unreleased': 3600,
             'blacklisted': 3600,
             'pending_uncached': 3600,
-            'upgrading': 30,
+            'upgrading': 3600,
             'task_plex_full_scan': 3600,
             'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
