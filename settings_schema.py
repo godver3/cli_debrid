@@ -125,6 +125,11 @@ SETTINGS_SCHEMA = {
             "description": "Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid)",
             "default": False
         },
+        "disable_adult": {
+            "type": "boolean",
+            "description": "Filter out adult content",
+            "default": True
+        },
         "versions": {
             "type": "dict",
 
