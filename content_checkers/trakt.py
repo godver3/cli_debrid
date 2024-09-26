@@ -87,15 +87,31 @@ def fetch_items_from_trakt(endpoint: str) -> List[Dict[str, Any]]:
     full_url = f"{TRAKT_API_URL}{endpoint}"
     logging.debug(f"Fetching items from Trakt URL: {full_url}")
 
-    try:
-        response = api.get(full_url, headers=headers, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching items from Trakt: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response text: {e.response.text}")
-        return []
+    max_retries = 3
+    retry_delay = 5  # seconds
+
+    for attempt in range(max_retries):
+        try:
+            response = api.get(full_url, headers=headers, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            return response.json()
+        except api.exceptions.RequestException as e:
+            logging.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                if e.response.status_code == 502:
+                    logging.warning("Received 502 Bad Gateway error. Retrying...")
+                else:
+                    logging.error(f"Response status code: {e.response.status_code}")
+                    logging.error(f"Response text: {e.response.text}")
+            
+            if attempt < max_retries - 1:
+                logging.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                logging.error(f"Failed to fetch items from Trakt after {max_retries} attempts.")
+                return []
+
+    return []  # This line should never be reached, but it's here for completeness
 
 def assign_media_type(item: Dict[str, Any]) -> str:
     if 'movie' in item:

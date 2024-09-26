@@ -5,11 +5,10 @@ from typing import List, Dict, Any
 import json
 from datetime import datetime
 from metadata.metadata import get_tmdb_id_and_media_type
+import random
+
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str, bool]):
     from metadata.metadata import get_show_airtime_by_imdb_id
-
-    logging.debug(f"add_wanted_items called with versions type: {type(versions)}")
-    logging.debug(f"versions content: {versions}")
 
     conn = get_db_connection()
     try:
@@ -28,9 +27,53 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
         elif isinstance(versions, list):
             versions = {version: True for version in versions}
 
-        logging.debug(f"Processed versions: {versions}")
+        # New filter step: Collect all items from the database with any state
+        all_existing_items = conn.execute('''
+            SELECT imdb_id, tmdb_id, type, season_number, episode_number, state, version
+            FROM media_items
+        ''').fetchall()
 
+        # Create dictionaries for efficient lookup
+        existing_movies = {}
+        existing_episodes = {}
+        for item in all_existing_items:
+            if item['type'] == 'movie':
+                existing_movies[item['imdb_id']] = item
+                if item['tmdb_id']:
+                    existing_movies[item['tmdb_id']] = item
+            else:
+                key = (item['imdb_id'], item['season_number'], item['episode_number'])
+                existing_episodes[key] = item
+                if item['tmdb_id']:
+                    key = (item['tmdb_id'], item['season_number'], item['episode_number'])
+                    existing_episodes[key] = item
+
+        # Filter out items that already exist in the database
+        filtered_media_items_batch = []
+        filtered_out_count = 0
         for item in media_items_batch:
+            item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+            
+            if item_type == 'movie':
+                if item.get('imdb_id') in existing_movies or item.get('tmdb_id') in existing_movies:
+                    filtered_out_count += 1
+                    if filtered_out_count <= 5:
+                        logging.debug(f"Filtered out movie: {item.get('imdb_id')} / {item.get('tmdb_id')}")
+                    continue
+            else:
+                imdb_key = (item.get('imdb_id'), item.get('season_number'), item.get('episode_number'))
+                tmdb_key = (item.get('tmdb_id'), item.get('season_number'), item.get('episode_number'))
+                if imdb_key in existing_episodes or tmdb_key in existing_episodes:
+                    filtered_out_count += 1
+                    if filtered_out_count <= 5:
+                        logging.debug(f"Filtered out episode: {item.get('imdb_id')} / {item.get('tmdb_id')} - S{item.get('season_number')}E{item.get('episode_number')}")
+                    continue
+            
+            filtered_media_items_batch.append(item)
+
+        logging.debug(f"Filtered out {filtered_out_count} items that already exist in the database")
+
+        for item in filtered_media_items_batch:
             if not item.get('imdb_id'):
                 logging.warning(f"Skipping item without valid IMDb ID: {item.get('title', 'Unknown')}")
                 items_skipped += 1

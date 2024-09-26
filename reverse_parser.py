@@ -3,13 +3,31 @@ from settings import get_setting
 import logging
 import json
 
-def get_version_settings():
+def get_version_settings() -> dict:
+    """
+    Retrieves the version terms settings from the configuration.
+
+    Returns:
+        dict: A dictionary containing version terms settings.
+    """
     return get_setting('Reverse Parser', 'version_terms', {})
 
-def get_default_version():
+def get_default_version() -> str:
+    """
+    Retrieves the default version from the configuration.
+
+    Returns:
+        str: The default version string.
+    """
     return get_setting('Reverse Parser', 'default_version', 'unknown')
 
-def get_version_order():
+def get_version_order() -> list:
+    """
+    Retrieves the version order from the configuration.
+
+    Returns:
+        list: A list representing the order of versions.
+    """
     return get_setting('Reverse Parser', 'version_order', [])
 
 def parse_term(term, filename):
@@ -25,18 +43,15 @@ def parse_term(term, filename):
         bool: True if the term condition is satisfied, False otherwise.
     """
     term = term.strip()
-    logging.debug(f"Parsing term: {term}")
     
     # Handle AND/OR expressions
     if term.startswith('AND(') and term.endswith(')'):
         sub_terms = split_terms(term[4:-1])
         result = all(evaluate_sub_term(sub_term, filename) for sub_term in sub_terms)
-        logging.debug(f"AND condition: {sub_terms}, result: {result}")
         return result
     elif term.startswith('OR(') and term.endswith(')'):
         sub_terms = split_terms(term[3:-1])
         result = any(evaluate_sub_term(sub_term, filename) for sub_term in sub_terms)
-        logging.debug(f"OR condition: {sub_terms}, result: {result}")
         return result
     else:
         # Single term
@@ -61,7 +76,6 @@ def evaluate_sub_term(sub_term, filename):
         try:
             match = re.search(pattern, filename, re.IGNORECASE)
             result = bool(match)
-            logging.debug(f"Regex term: /{pattern}/, match: {match}, result: {result}")
             return result
         except re.error as e:
             logging.error(f"Invalid regex pattern '{pattern}': {e}")
@@ -69,10 +83,9 @@ def evaluate_sub_term(sub_term, filename):
     else:
         # Simple substring match
         result = sub_term.lower() in filename.lower()
-        logging.debug(f"Simple term: {sub_term}, result: {result}")
         return result
 
-def is_regex(term):
+def is_regex(term: str) -> bool:
     """
     Determines if a term is a regex pattern based on delimiters.
     
@@ -84,7 +97,7 @@ def is_regex(term):
     """
     return term.startswith('/') and term.endswith('/')
 
-def extract_regex(term):
+def extract_regex(term: str) -> str:
     """
     Extracts the regex pattern from a term.
     
@@ -127,14 +140,19 @@ def split_terms(terms_str):
         terms.append(current_term.strip())
     return terms
 
-def parse_filename_for_version(filename):
-    logging.info(f"Parsing filename: {filename}")
+def parse_filename_for_version(filename: str) -> str:
+    """
+    Parses a filename to determine its version based on configured settings.
+
+    Args:
+        filename (str): The filename to parse.
+
+    Returns:
+        str: The determined version string, with asterisks indicating match type.
+    """
     version_settings = get_version_settings()
     default_version = get_default_version()
     version_order = get_version_order()
-
-    logging.debug(f"Parsing filename: {filename}")
-    logging.debug(f"Version settings: {json.dumps(version_settings, indent=2)}")
 
     # If version_order is not set, use the keys from version_settings
     if not version_order:
@@ -147,19 +165,22 @@ def parse_filename_for_version(filename):
             # Find all matches based on the regex pattern
             term_list = [match.strip() for match in re.findall(r'(AND\([^()]+\)|OR\([^()]+\)|[^,]+)', joined_terms)]
 
-            logging.debug(f"Checking version {version} with terms: {term_list}")
-
             # Check if all terms match the filename
             if all(parse_term(term, filename) for term in term_list):
-                logging.debug(f"Match found: Version {version}")
                 return f"{version}*"  # One asterisk for local matches
-            else:
-                logging.debug(f"No match for version {version}")
 
-    logging.debug(f"No match found, using default version: {default_version}")
     return f"{default_version}**"  # Two asterisks for default version
 
-def parser_approximation(filename):
+def parser_approximation(filename: str) -> dict:
+    """
+    Performs an approximation parse on the given filename.
+
+    Args:
+        filename (str): The filename to parse.
+
+    Returns:
+        dict: A dictionary containing parsed information, including the version.
+    """
     # This function can be expanded later to include more parsing logic
     version = parse_filename_for_version(filename)
     return {
