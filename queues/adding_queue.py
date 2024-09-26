@@ -42,7 +42,6 @@ class AddingQueue:
         self.items = [i for i in self.items if i['id'] != item['id']]
 
     def process(self, queue_manager):
-        logging.debug("Processing adding queue")
         if self.items:
             item = self.items[0]  # Process the first item in the queue
             item_identifier = queue_manager.generate_identifier(item)
@@ -71,8 +70,7 @@ class AddingQueue:
             else:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
                 self.handle_failed_item(queue_manager, item, "Adding")
-        else:
-            logging.debug("Adding queue is empty")
+
     
     def process_item(self, queue_manager, item, scrape_results, mode):
         item_identifier = queue_manager.generate_identifier(item)

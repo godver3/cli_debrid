@@ -110,7 +110,3 @@ class WantedQueue:
         # Move marked items to Unreleased queue
         for item in items_to_move_unreleased:
             queue_manager.move_to_unreleased(item, "Wanted")
-        
-        logging.debug(f"Wanted queue processing complete. Items moved to Scraping queue: {len(items_to_move_scraping)}")
-        logging.debug(f"Items moved to Unreleased queue: {len(items_to_move_unreleased)}")
-        logging.debug(f"Remaining items in Wanted queue: {len(self.items)}")

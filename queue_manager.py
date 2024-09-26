@@ -39,7 +39,6 @@ class QueueManager:
         self.paused = False
 
     def update_all_queues(self):
-        logging.debug("Updating all queues")
         for queue in self.queues.values():
             queue.update()
 

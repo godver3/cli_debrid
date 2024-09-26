@@ -25,7 +25,6 @@ class ScrapingQueue:
         self.items = [i for i in self.items if i['id'] != item['id']]
 
     def process(self, queue_manager):
-        logging.debug(f"Processing scraping queue. Items: {len(self.items)}")
         if self.items:
             item = self.items.pop(0)
             item_identifier = queue_manager.generate_identifier(item)
