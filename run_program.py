@@ -254,7 +254,7 @@ class ProgramRunner:
 
     def safe_process_queue(self, queue_name: str):
         try:
-            logging.debug(f"Starting to process {queue_name} queue")
+            logging.debug(f"Processing {queue_name} queue")
             
             # Get the appropriate process method
             process_method = getattr(self.queue_manager, f'process_{queue_name}')
@@ -351,11 +351,10 @@ class ProgramRunner:
         current_time = time.time()
         debug_info = []
         for task, interval in self.task_intervals.items():
-            if interval > 60:  # Only log tasks that run less frequently than every minute
-                time_until_next_run = interval - (current_time - self.last_run_times[task])
-                minutes, seconds = divmod(int(time_until_next_run), 60)
-                hours, minutes = divmod(minutes, 60)
-                debug_info.append(f"{task}: {hours:02d}:{minutes:02d}:{seconds:02d}")
+            time_until_next_run = interval - (current_time - self.last_run_times[task])
+            minutes, seconds = divmod(int(time_until_next_run), 60)
+            hours, minutes = divmod(minutes, 60)
+            debug_info.append(f"{task}: {hours:02d}:{minutes:02d}:{seconds:02d}")
 
         logging.info("Time until next task run:\n" + "\n".join(debug_info))
 

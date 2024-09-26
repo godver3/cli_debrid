@@ -188,7 +188,37 @@ export function showPopup(options) {
     function closePopup() {
         popup.remove();
         style.remove();
+        document.removeEventListener('keydown', handleKeyPress);
     }
+
+    function handleKeyPress(event) {
+        if (event.key === 'Enter') {
+            event.preventDefault(); // Prevent default form submission
+            const confirmButton = popup.querySelector('#popupConfirm');
+            if (confirmButton) {
+                confirmButton.click();
+            } else {
+                const closeButton = popup.querySelector('#popupClose');
+                if (closeButton) {
+                    closeButton.click();
+                }
+            }
+        } else if (event.key === 'Escape') {
+            const cancelButton = popup.querySelector('#popupCancel');
+            if (cancelButton) {
+                cancelButton.click();
+            } else {
+                const closeButton = popup.querySelector('#popupClose');
+                if (closeButton) {
+                    closeButton.click();
+                }
+            }
+        }
+    }
+
+    popup.addEventListener('submit', (e) => e.preventDefault());
+
+    document.addEventListener('keydown', handleKeyPress);
 
     if (type === POPUP_TYPES.CONFIRM || type === POPUP_TYPES.PROMPT) {
         const confirmButton = popup.querySelector('#popupConfirm');

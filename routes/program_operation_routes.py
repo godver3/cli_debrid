@@ -44,7 +44,6 @@ def check_service_connectivity():
     try:
         response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
         response.raise_for_status()
-        logging.debug("Plex server is reachable.")
     except RequestException as e:
         logging.error(f"Failed to connect to Plex server: {str(e)}")
         services_reachable = False
@@ -53,7 +52,6 @@ def check_service_connectivity():
     try:
         response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {rd_api_key}"}, timeout=5)
         response.raise_for_status()
-        logging.debug("Real Debrid API is reachable.")
     except RequestException as e:
         logging.error(f"Failed to connect to Real Debrid API: {str(e)}")
         services_reachable = False
@@ -69,9 +67,7 @@ def check_service_connectivity():
         response = api.get(f"{metadata_battery_url}/check_trakt_auth", timeout=5)
         response.raise_for_status()
         trakt_status = response.json().get('status')
-        if trakt_status == 'authorized':
-            logging.debug("Metadata Battery is reachable and authorized with Trakt.")
-        else:
+        if trakt_status != 'authorized':
             logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
             services_reachable = False
     except RequestException as e:
