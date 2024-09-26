@@ -247,23 +247,19 @@ async def get_collected_from_plex(request='all'):
             all_episodes = []
             for i in range(0, len(all_shows), CHUNK_SIZE):
                 chunk = all_shows[i:i+CHUNK_SIZE]
-                logger.debug(f"Processing chunk of {len(chunk)} shows")
                 chunk_episodes = await process_shows_chunk(session, plex_url, headers, semaphore, chunk)
                 all_episodes.extend(chunk_episodes)
                 logger.info(f"Processed {i+len(chunk)}/{len(all_shows)} shows")
                 logger.debug(f"Total episodes: {len(all_episodes)}")
-
             
             all_movies_processed = []
             for i in range(0, len(all_movies), CHUNK_SIZE):
                 chunk = all_movies[i:i+CHUNK_SIZE]
-                logger.debug(f"Processing chunk of {len(chunk)} movies")
                 chunk_movies = await process_movies_chunk(session, plex_url, headers, semaphore, chunk)
                 all_movies_processed.extend(chunk_movies)
                 logger.info(f"Processed {i+len(chunk)}/{len(all_movies)} movies")
                 logger.debug(f"Total movies: {len(all_movies_processed)}")
-            
-
+           
         end_time = time.time()
         total_time = end_time - start_time
         logger.info(f"Collection complete. Total time: {total_time:.2f} seconds")
@@ -553,44 +549,34 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         plex_url = get_setting('Plex', 'url').rstrip('/')
         plex_token = get_setting('Plex', 'token')
         
-        logger.info(f"Connecting to Plex server at {plex_url}")
         plex = plexapi.server.PlexServer(plex_url, plex_token)
         
         logger.info(f"Searching for item with title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
         
         sections = plex.library.sections()
-        logger.info(f"Found {len(sections)} library sections")
         file_deleted = False
         
         for section in sections:
-            logger.info(f"Searching in library section: {section.title} (Type: {section.type})")
             try:
                 if section.type == 'show':
                     # Extract show title from item_title (assuming format "Show Title_...")
                     show_title = item_title.split('_')[0]
-                    logger.info(f"Extracted show title: {show_title}")
                     
                     # Search for the show
                     shows = section.search(title=show_title)
-                    logger.info(f"Found {len(shows)} shows matching title: {show_title}")
                     
                     for show in shows:
-                        logger.info(f"Processing show: {show.title}")
                         # Get all episodes for the show
                         try:
                             episodes = show.episodes()
-                            logger.info(f"Found {len(episodes)} episodes for show: {show.title}")
                         except Exception as e:
                             logger.error(f"Error getting episodes for show {show.title}: {str(e)}")
-                            logger.info(f"Show object details: {vars(show)}")
                             continue
                         
                         for episode in episodes:
-                            logger.info(f"Checking episode: {episode.title} (S{episode.seasonNumber}E{episode.episodeNumber})")
                             if hasattr(episode, 'media'):
                                 for media in episode.media:
                                     for part in media.parts:
-                                        logger.info(f"Checking file: {part.file}")
                                         if os.path.basename(part.file) == os.path.basename(item_path):
                                             logger.info(f"Found matching file in episode: {episode.title}")
                                             media.delete()
@@ -602,7 +588,6 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
                 else:
                     # For movies and other types, use the existing search method
                     items = section.search(title=item_title)
-                    logger.info(f"Found {len(items)} items matching title: {item_title}")
                     
                     for item in items:
                         logger.info(f"Checking item: {item.title}")
@@ -611,14 +596,13 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
                                 for part in media.parts:
                                     logger.info(f"Checking file: {part.file}")
                                     if os.path.basename(part.file) == os.path.basename(item_path):
-                                        logger.info(f"Found matching file in item: {item.title} in section {section.title}")
+                                        logger.info(f"Found matching file in item: {item.title}")
                                         media.delete()
                                         logger.info(f"Successfully deleted media containing file: {part.file} from item: {item.title}")
                                         file_deleted = True
                                         return True
                         else:
                             logger.warning(f"No media found for item: {item.title}")
-                            logger.info(f"Item object details: {vars(item)}")
                 
                 if not file_deleted:
                     logger.warning(f"No matching files found in section {section.title} for title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
