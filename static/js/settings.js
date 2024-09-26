@@ -505,6 +505,17 @@ function updateSettings() {
         console.warn("Enable Reverse Order Scraping checkbox element not found!");
     }
     
+    const disableAdult = document.getElementById('scraping-disable_adult');
+    console.log("Disable Adult Content element:", disableAdult);
+    
+    if (disableAdult) {
+        settingsData['Scraping']['disable_adult'] = disableAdult.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Disable Adult Content checkbox element not found!");
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {

@@ -18,6 +18,25 @@ from .scraper_manager import ScraperManager
 from config_manager import load_config
 import unicodedata
 
+# Add adult content filter
+adult_terms = [
+    'xxx', 'porn', 'adult', 'sex', 'hentai', 'brazzers', 'playboy', 'penthouse',
+    'bangbros', 'naughtyamerica', 'blacked', 'tushy', 'vixen', 'pornhub',
+    'xvideos', 'xhamster', 'redtube', 'youporn', 'eporner', 'xnxx', 'spankbang',
+    'pornhd', 'xmovies', 'beeg', 'porntrex', 'chaturbate', 'myfreecams',
+    'cam4', 'camsoda', 'livejasmin', 'streamate', 'stripchat', 'bongacams',
+    'adultfriendfinder', 'fling', 'ashleymadison', 'seekingarrangement',
+    'onlyfans', 'manyvids', 'clips4sale', 'pornhubpremium', 'brazzersnetwork',
+    'realitykings', 'mofos', 'digitalplayground', 'twistys', 'babes', 'wicked',
+    'evilangel', 'kink', 'gfrevenge', 'puba', 'fakehub', 'naughtyamerica',
+    'teamskeet', 'bangbros', 'blacked', 'blackedraw', 'tushy', 'tushyraw', 'vixen',
+    'deeper', 'sweetsinner', 'sweetheartvideo', 'girlsway', 'whiteghetto',
+    'devilsfilm', 'peternorth', 'roccocontent', 'julesjordan', 'manuelferrara',
+    'legalpornonetwork', 'private', 'vivid', 'wicked', 'wickedpictures', 'hustler',
+    'penthouse', 'playboy', 'playboyplus', 'adulttime', 'brazzers', 'realitykings',
+    'mofos', 'babes', 'twistys', 'digitalplayground', 'fakehub'
+]
+
 def romanize_japanese(text):
     kks = pykakasi.kakasi()
     result = kks.convert(text)
@@ -700,6 +719,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     filter_in = version_settings.get('filter_in', [])
     filter_out = version_settings.get('filter_out', [])
     enable_hdr = version_settings.get('enable_hdr', False)
+    disable_adult = get_setting('Scraping', 'disable_adult', False)
 
     def resolution_filter(result_resolution, max_resolution, resolution_wanted):
         comparison = compare_resolutions(result_resolution, max_resolution)
@@ -710,6 +730,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         elif resolution_wanted == '>=':
             return comparison >= 0
         return False
+
+
 
     # Fetch alternate title for anime
     alternate_title = None
@@ -922,6 +944,11 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             
         if result['size'] > max_size_gb:
             result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
+            continue
+
+        # Apply adult content filter
+        if disable_adult and any(term in original_title.lower() for term in adult_terms):
+            result['filter_reason'] = "Adult content filtered"
             continue
 
         # If the result passed all filters, add it to filtered_results
