@@ -217,6 +217,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Rescrape items that are missing their associated file (i.e. if Plex Library cleanup is enabled)",
             "default": False
+        },
+        "enable_reverse_order_scraping": {
+            "type": "boolean",
+            "description": "Enable reverse order scraping",
+            "default": False
         }
     },
     "Scrapers": {
