@@ -16,7 +16,6 @@ def parse_json_string(s):
         return s
 
 def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, item_media_type: Optional[str] = None) -> Dict[str, Any]:
-    logging.info(f"Starting metadata retrieval for item: IMDB ID: {imdb_id}, TMDB ID: {tmdb_id}, Media Type: {item_media_type}")
 
     if not imdb_id and not tmdb_id:
         raise ValueError("Either imdb_id or tmdb_id must be provided")
@@ -44,14 +43,11 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         if not metadata:
             logging.warning(f"No metadata returned for IMDb ID: {imdb_id}")
             return {}
-
-        logging.info("Processing fields")
-        
+       
         # If metadata is a string, try to parse it as JSON
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
-                logging.info("Successfully parsed metadata string as JSON")
             except json.JSONDecodeError:
                 logging.error(f"Failed to parse metadata string as JSON for IMDb ID: {imdb_id}")
                 return {}
@@ -59,8 +55,6 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         if not isinstance(metadata, dict):
             logging.error(f"Unexpected metadata format for IMDb ID: {imdb_id}. Expected dict, got {type(metadata)}")
             return {}
-
-        logging.info(f"Metadata: {metadata}")  # Log the entire metadata for debugging
 
         processed_metadata = {
             'imdb_id': imdb_id,  # Default to the input imdb_id
@@ -111,18 +105,11 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         processed_metadata['genres'] = ['anime'] if is_anime else processed_metadata['genres']
 
         if media_type == 'movie':
-            logging.info("Processing release date")
             processed_metadata['release_date'] = get_release_date(metadata, imdb_id)
-            logging.info(f"Release date: {processed_metadata['release_date']}")
         elif media_type == 'tv':
-            logging.info("Processing first aired date")
             processed_metadata['first_aired'] = parse_date(metadata.get('first_aired'))
-            
-            logging.info("Processing seasons data")
             processed_metadata['seasons'] = metadata.get('seasons', {})
-            logging.info(f"Found {len(processed_metadata['seasons'])} seasons")
 
-        logging.info(f"Completed metadata retrieval for {processed_metadata['title']} ({processed_metadata['year']})")
         return processed_metadata
 
     except Exception as e:
@@ -149,7 +136,6 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     processed_items = {'movies': [], 'episodes': []}
 
     for index, item in enumerate(media_items, 1):
-        logging.debug(f"Processing item: {item}")
 
         try:
             metadata = get_metadata(imdb_id=item.get('imdb_id'), tmdb_id=item.get('tmdb_id'), item_media_type=item.get('media_type'))
@@ -376,7 +362,6 @@ def test_metadata_processing():
     print(f"Total episodes processed: {len(processed_data['episodes'])}")
 
 def extract_tmdb_id(data):
-    logging.info(f"Extracting TMDB ID from data: {type(data)}")
     if isinstance(data, dict):
         ids = data.get('ids')
         if isinstance(ids, str):
@@ -390,7 +375,6 @@ def extract_tmdb_id(data):
             return None
         
         tmdb_id = ids.get('tmdb')
-        logging.info(f"Extracted TMDB ID: {tmdb_id}")
         return tmdb_id
     logging.error(f"Unexpected data format for IMDb ID: {type(data)}")
     return None
@@ -400,7 +384,6 @@ def get_tmdb_id_and_media_type(imdb_id: str) -> Tuple[Optional[int], Optional[st
         if isinstance(data, str):
             try:
                 parsed = json.loads(data)
-                logging.info(f"Successfully parsed string data to: {type(parsed)}")
                 return parsed
             except json.JSONDecodeError:
                 logging.error(f"Failed to parse data as JSON for IMDb ID {imdb_id}")
