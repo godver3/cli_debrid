@@ -23,6 +23,33 @@ from datetime import datetime, timedelta
 
 debug_bp = Blueprint('debug', __name__)
 
+def async_get_wanted_content(source):
+    try:
+        if source == 'all':
+            get_all_wanted_from_enabled_sources()
+            message = 'Successfully retrieved and added wanted items from all enabled sources'
+        else:
+            get_and_add_wanted_content(source)
+            message = f'Successfully retrieved and added wanted items from {source}'
+        return {'success': True, 'message': message}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+def async_get_collected_from_plex(collection_type):
+    try:
+        if collection_type == 'all':
+            get_and_add_all_collected_from_plex()
+            message = 'Successfully retrieved and added all collected items from Plex'
+        elif collection_type == 'recent':
+            get_and_add_recent_collected_from_plex()
+            message = 'Successfully retrieved and added recent collected items from Plex'
+        else:
+            raise ValueError('Invalid collection type')
+        
+        return {'success': True, 'message': message}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
 @debug_bp.route('/debug_functions')
 @admin_required
 def debug_functions():
@@ -235,19 +262,22 @@ def get_title_year():
 
 @debug_bp.route('/api/get_collected_from_plex', methods=['POST'])
 def get_collected_from_plex():
+    from extensions import task_queue
+
     collection_type = request.form.get('collection_type')
     
-    try:
-        if collection_type == 'all':
-            get_and_add_all_collected_from_plex()
-        elif collection_type == 'recent':
-            get_and_add_recent_collected_from_plex()
-        else:
-            return jsonify({'success': False, 'error': 'Invalid collection type'}), 400
+    if collection_type not in ['all', 'recent']:
+        return jsonify({'success': False, 'error': 'Invalid collection type'}), 400
 
-        return jsonify({'success': True, 'message': f'Successfully retrieved and added {collection_type} collected items from Plex'}), 200
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    task_id = task_queue.add_task(async_get_collected_from_plex, collection_type)
+    return jsonify({'task_id': task_id}), 202
+
+@debug_bp.route('/api/task_status/<task_id>')
+def task_status(task_id):
+    from extensions import task_queue
+
+    task_info = task_queue.get_task_status(task_id)
+    return jsonify(task_info)
 
 def update_trakt_settings(content_sources):
     trakt_watchlist_enabled = any(
@@ -311,19 +341,11 @@ def get_and_add_wanted_content(source_id):
 
 @debug_bp.route('/api/get_wanted_content', methods=['POST'])
 def get_wanted_content():
-    source = request.form.get('source')
-    
-    try:
-        if source == 'all':
-            get_all_wanted_from_enabled_sources()
-            message = 'Successfully retrieved and added wanted items from all enabled sources'
-        else:
-            get_and_add_wanted_content(source)
-            message = f'Successfully retrieved and added wanted items from {source}'
+    from extensions import task_queue
 
-        return jsonify({'success': True, 'message': message}), 200
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    source = request.form.get('source')
+    task_id = task_queue.add_task(async_get_wanted_content, source)
+    return jsonify({'task_id': task_id}), 202
 
 @debug_bp.route('/api/rate_limit_info')
 def get_rate_limit_info():
