@@ -1,5 +1,6 @@
 function searchMedia(event) {
     event.preventDefault();
+    showLoadingState();
     const searchTerm = document.querySelector('input[name="search_term"]').value;
     const version = document.querySelector('select[name="version"]').value;
     fetch('/scraper', {
@@ -11,6 +12,7 @@ function searchMedia(event) {
     })
     .then(response => response.json())
     .then(data => {
+        hideLoadingState();
         console.log('Received data:', JSON.stringify(data, null, 2));  // Pretty print the entire response
         if (data.error) {
             displayError(data.error);
@@ -21,6 +23,7 @@ function searchMedia(event) {
         }
     })
     .catch(error => {
+        hideLoadingState();
         console.error('Error:', error);
         displayError('An error occurred while searching.');
     });
@@ -117,6 +120,7 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
 }
 
 function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview, tmdb_api_key_set) {
+    showLoadingState();
     const resultsDiv = document.getElementById('seasonResults');
     const dropdown = document.getElementById('seasonDropdown');
     const seasonPackButton = document.getElementById('seasonPackButton');
@@ -137,6 +141,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     })
     .then(response => response.json())
     .then(data => {
+        hideLoadingState();
         if (data.error) {
             displayError(data.error);
         } else {
@@ -175,6 +180,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
         }
     })
     .catch(error => {
+        hideLoadingState();
         console.error('Error:', error);
         displayError('An error occurred while selecting media.');
     });
@@ -191,6 +197,7 @@ function displaySeasonInfoTextOnly(title, season_num) {
 }
 
 function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) {
+    showLoadingState();
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
     formData.append('media_id', mediaId);
@@ -208,6 +215,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) 
     })
     .then(response => response.json())
     .then(data => {
+        hideLoadingState();
         if (data.error) {
             displayError(data.error);
         } else {
@@ -215,13 +223,14 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) 
         }
     })
     .catch(error => {
+        hideLoadingState();
         console.error('Error:', error);
         displayError('An error occurred while selecting media.');
     });
 }
 
 async function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
-    showLoadingState(); // Show loading state before fetching results
+    showLoadingState();
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
     formData.append('media_id', mediaId);
@@ -238,43 +247,68 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     })
     .then(response => response.json())
     .then(data => {
+        hideLoadingState();
         displayTorrentResults(data.torrent_results, title, year, version);
     })
     .catch(error => {
+        hideLoadingState();
         console.error('Error:', error);
+        displayError('An error occurred while selecting media.');
     });
 }
 
 function addToRealDebrid(magnetLink) {
-    showLoadingState();
-    fetch('/scraper/add_to_real_debrid', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+    
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Confirm Action',
+        message: 'Are you sure you want to add this torrent to Real-Debrid?',
+        confirmText: 'Add',
+        cancelText: 'Cancel',
+        onConfirm: () => {
+            showLoadingState();
+
+            fetch('/scraper/add_to_real_debrid', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `magnet_link=${encodeURIComponent(magnetLink)}`
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(errorData => {
+                        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+
+            .then(data => {
+                hideLoadingState();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                } else {
+                    document.getElementById('overlay').style.display = 'none';
+
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Success',
+                        message: data.message,
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: `Error adding to Real-Debrid: ${error.message}`,
+                });
+            })
         },
-        body: `magnet_link=${encodeURIComponent(magnetLink)}`
-    })
-    .then(response => {
-        if (!response.ok) {
-            return response.json().then(errorData => {
-                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-            });
-        }
-        return response.json();
-    })
-    .then(data => {
-        if (data.error) {
-            throw new Error(data.error);
-        } else {
-            displaySuccess(data.message);
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        displayError(`Error adding to Real-Debrid: ${error.message}`);
-    })
-    .finally(() => {
-        hideLoadingState();
+
     });
 }
 
@@ -291,17 +325,8 @@ function displaySuccess(message) {
 }
 
 function showLoadingState() {
-    // Create and display loading indicator
-    const loadingIndicator = document.createElement('div');
-    loadingIndicator.id = 'loadingIndicator';
-    loadingIndicator.style.position = 'fixed';
-    loadingIndicator.style.top = '50%';
-    loadingIndicator.style.left = '50%';
-    loadingIndicator.style.transform = 'translate(-50%, -50%)';
-    loadingIndicator.style.zIndex = '1000';
-    loadingIndicator.innerHTML = '<img src="/static/loadingimage.gif" alt="Loading..." style="width: 100px; height: 100px;">';
-    document.body.appendChild(loadingIndicator);
-
+    Loading.show();
+    
     // Disable all buttons
     const buttons = document.getElementsByTagName('button');
     for (let button of buttons) {
@@ -317,18 +342,14 @@ function showLoadingState() {
 
     const episodeDiv = document.getElementsByClassName('episode');
     for (let episode of episodeDiv) {
+        episode.style.pointerEvents = 'none';
         episode.style.opacity = '0.5';
-        //episode.onclick = false;
     }
 }
 
 // Function to hide loading state and re-enable buttons
 function hideLoadingState() {
-    // Remove loading indicator
-    const loadingIndicator = document.getElementById('loadingIndicator');
-    if (loadingIndicator) {
-        loadingIndicator.remove();
-    }
+    Loading.hide();
 
     // Re-enable all buttons
     const buttons = document.getElementsByTagName('button');
@@ -345,7 +366,7 @@ function hideLoadingState() {
 
     const episodeDiv = document.getElementsByClassName('episode');
     for (let episode of episodeDiv) {
-        //episode.onclick = true;
+        episode.style.pointerEvents = 'auto';
         episode.style.opacity = '1';
     }
 }
@@ -472,12 +493,12 @@ function displayTorrentResults(data, title, year) {
             const thead = document.createElement('thead');
             thead.innerHTML = `
                 <tr>
-                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Name</th>
-                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Size</th>
-                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Source</th>
-                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Cached</th>
-                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Score</th>
-                    <th style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">Action</th>
+                    <th style="color: rgb(191 191 190); width: 100%;">Name</th>
+                    <th style="color: rgb(191 191 190); width: 10%;">Size</th>
+                    <th style="color: rgb(191 191 190); width: 15%;">Source</th>
+                    <th style="color: rgb(191 191 190); width: 10%;">Cached</th>
+                    <th style="color: rgb(191 191 190); width: 10%;">Score</th>
+                    <th style="color: rgb(191 191 190); width: 15%;">Action</th>
                 </tr>
             `;
             table.appendChild(thead);
@@ -487,12 +508,18 @@ function displayTorrentResults(data, title, year) {
             data.forEach(torrent => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
-                    <td style="border: 1px solid #ddd; padding: 8px; font-weight: 600; text-transform: uppercase; color: rgb(191 191 190);">${torrent.title}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">${(torrent.size).toFixed(1)} GB</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">${torrent.source}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">${torrent.cached}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);">${torrent.score_breakdown.total_score}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; color: rgb(191 191 190);"><button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button></td>
+                    <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); max-width: 100%; overflow: hidden;">
+                        <div style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis;">
+                            ${torrent.title}
+                        </div>
+                    </td>
+                    <td style="color: rgb(191 191 190);">${(torrent.size).toFixed(1)} GB</td>
+                    <td style="color: rgb(191 191 190);">${torrent.source}</td>
+                    <td style="color: rgb(191 191 190);">${torrent.cached}</td>
+                    <td style="color: rgb(191 191 190);">${torrent.score_breakdown.total_score}</td>
+                    <td style="color: rgb(191 191 190);">
+                        <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button>
+                    </td>
                 `;
                 tbody.appendChild(row);
             });
@@ -670,6 +697,9 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         searchForm.addEventListener('submit', searchMedia);
     }
+
+    // Initialize the Loading object
+    Loading.init();
 });
 
 function displayTraktAuthMessage() {

@@ -22,6 +22,12 @@ document.addEventListener('DOMContentLoaded', function() {
     let modifiedVersionSettings = {};
 
     searchButton.addEventListener('click', performSearch);
+    searchInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            performSearch();
+        }
+    });
+    
     runScrapeButton.addEventListener('click', runScrape);
     newSearchButton.addEventListener('click', startNewSearch);
 
@@ -51,6 +57,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function performSearch() {
+        Loading.show();
         const searchTerm = searchInput.value;
         fetch('/scraper/scraper_tester', {
             method: 'POST',
@@ -65,10 +72,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             return response.json();
         })
-        .then(data => displaySearchResults(data))
+        .then(data => {
+
+            displaySearchResults(data);
+        })
         .catch(error => {
             console.error('Error:', error);
             searchResults.innerHTML = '<p>Error performing search. Please try again.</p>';
+        })
+        .finally(() => {
+            Loading.hide();
         });
     }
 
@@ -162,6 +175,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         runScrapeButton.addEventListener('click', runScrape);
+
+
     });
 
     function selectItem(item) {
@@ -553,6 +568,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function runScrape() {
+        Loading.show();
         const version = document.getElementById('version-select').value;
         const modifiedSettings = getModifiedVersionSettings();
     
@@ -603,6 +619,9 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error:', error);
             // Display an error message to the user
             document.getElementById('scrape-results').innerHTML = '<p>An error occurred while fetching results. Please try again.</p>';
+        })
+        .finally(() => {
+            Loading.hide();
         });
     }
    
@@ -804,6 +823,8 @@ document.addEventListener('DOMContentLoaded', function() {
         scrapeSection.style.display = 'none';
         searchSection.style.display = 'block';
     }
+
+    Loading.init()
 
     // Call this function whenever a setting is changed
 document.getElementById('modifiedSettings').addEventListener('input', updateSaveButtonState);
