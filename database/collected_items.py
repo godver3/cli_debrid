@@ -13,6 +13,7 @@ def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
     from datetime import datetime, timedelta
     from settings import get_setting
+    from queues.upgrading_queue import log_successful_upgrade
 
     conn = get_db_connection()
     try:
@@ -28,10 +29,16 @@ def add_collected_items(media_items_batch, recent=False):
         # Create a set of existing filenames in 'Collected' state
         existing_collected_files = {row['filled_by_file'] for row in existing_items if row['state'] == 'Collected'}
 
+        # Create a set of filenames that are being upgraded from
+        upgrading_from_files = {os.path.basename(row['upgrading_from']) for row in existing_items if row['upgrading_from']}
+
         # Create a dictionary of existing filenames to item details for all fetched items
         existing_file_map = {row['filled_by_file']: row_to_dict(row) for row in existing_items if row['filled_by_file']}
 
-        # Filter out items that are already in 'Collected' state
+        # Create a set to store filtered out filenames
+        filtered_out_files = set()
+
+        # Filter out items that are already in 'Collected' state or are being upgraded from
         filtered_media_items_batch = []
         for item in media_items_batch:
             locations = item.get('location', [])
@@ -41,23 +48,26 @@ def add_collected_items(media_items_batch, recent=False):
             new_locations = []
             for location in locations:
                 filename = os.path.basename(location)
-                if filename and filename not in existing_collected_files:
+                if filename and filename not in existing_collected_files and filename not in upgrading_from_files:
                     new_locations.append(location)
                 else:
-                    logging.info(f"Filtered out: {item.get('title', 'Unknown')} - {filename} (already collected)")
+                    if filename in existing_collected_files:
+                        logging.info(f"Filtered out: {item.get('title', 'Unknown')} - {filename} (already collected)")
+                    elif filename in upgrading_from_files:
+                        logging.info(f"Filtered out: {item.get('title', 'Unknown')} - {filename} (being upgraded from)")
+                    filtered_out_files.add(filename)
             
             if new_locations:
                 item['location'] = new_locations
                 filtered_media_items_batch.append(item)
             else:
-                logging.info(f"Completely filtered out: {item.get('title', 'Unknown')} (all locations already collected)")
-
+                logging.info(f"Completely filtered out: {item.get('title', 'Unknown')} (all locations already collected or being upgraded from)")
 
         # Process all items, including existing ones
         all_valid_filenames = set()
         airtime_cache = {}
         
-        for item in media_items_batch:
+        for item in filtered_media_items_batch:
             try:
                 locations = item.get('location', [])
                 if isinstance(locations, str):
@@ -65,7 +75,7 @@ def add_collected_items(media_items_batch, recent=False):
                 
                 for location in locations:
                     filename = os.path.basename(location)
-                    if filename:
+                    if filename and filename not in filtered_out_files:
                         all_valid_filenames.add(filename)
                         
                 imdb_id = item.get('imdb_id') or None
@@ -116,11 +126,13 @@ def add_collected_items(media_items_batch, recent=False):
                                     'title': existing_item['title'],
                                     'imdb_id': existing_item['imdb_id'],
                                     'upgrading_from': existing_item['upgrading_from'],
-                                    'filled_by_torrent_id': existing_item.get('filled_by_torrent_id')
+                                    'filled_by_torrent_id': existing_item.get('filled_by_torrent_id'),
+                                    'version': existing_item['version']
                                 }
                                 remove_original_item_from_plex(upgrade_item)
                                 remove_original_item_from_account(upgrade_item)
                                 remove_original_item_from_results(upgrade_item, media_items_batch)
+                                log_successful_upgrade(upgrade_item)
 
                             # Before the UPDATE statement, ensure `collected_at` is set
                             if existing_item.get('collected_at') is None:

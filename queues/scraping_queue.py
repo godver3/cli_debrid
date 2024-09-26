@@ -90,12 +90,16 @@ class ScrapingQueue:
 
                 if filtered_results:
                     best_result = filtered_results[0]
-                    if not is_magnet_not_wanted(best_result['magnet']):
-                        logging.info(f"Best result for {item_identifier}: {best_result['title']}, {best_result['magnet']}")
+                    logging.info(f"Best result for {item_identifier}: {best_result['title']}, {best_result['magnet']}")
+                    logging.info(f"Reverse order scraping enabled: {get_setting('Debug', 'enable_reverse_order_scraping', default=False)}")
+                    if get_setting("Debug", "enable_reverse_order_scraping", default=False):
+                        logging.info(f"Reverse order scraping enabled for {item_identifier}")
+                        filtered_results.reverse()
+                        logging.info(f"Filtered results for {item_identifier}: {filtered_results}")
                         queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
-                    else:
-                        logging.warning(f"Best result for {item_identifier} was previously marked as unwanted. Moving to Sleeping.")
-                        queue_manager.move_to_sleeping(item, "Scraping")
+                    else:   
+                        queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
+
                 else:
                     logging.warning(f"No valid results for {item_identifier}, moving to Sleeping")
                     queue_manager.move_to_sleeping(item, "Scraping")
