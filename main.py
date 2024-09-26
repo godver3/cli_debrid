@@ -106,29 +106,43 @@ def check_metadata_service():
 
 def run_secondary_app_process():
     secondary_app_path = os.path.join(os.path.dirname(__file__), 'cli_battery', 'main.py')
-    try:
-        process = subprocess.Popen([sys.executable, secondary_app_path], 
-                                   stdout=subprocess.PIPE, 
-                                   stderr=subprocess.PIPE,
-                                   universal_newlines=True)
-        logging.info(f"Secondary app started with PID: {process.pid}")
-        
-        # Log output from the secondary app
-        while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
-                break
-            if output:
-                logging.info(f"Secondary app: {output.strip()}")
-        
-        # Log any errors
-        for line in process.stderr:
-            logging.error(f"Secondary app error: {line.strip()}")
-        
-        return_code = process.poll()
-        logging.info(f"Secondary app exited with return code: {return_code}")
-    except Exception as e:
-        logging.error(f"Failed to start or run secondary app: {e}")
+    while True:
+        try:
+            process = subprocess.Popen(
+                [sys.executable, secondary_app_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,  # For Python 3.7+, use 'universal_newlines=True' for older versions
+                bufsize=1  # Line-buffered
+            )
+            logging.info(f"Secondary app started with PID: {process.pid}")
+
+            def log_output(pipe, log_func):
+                with pipe:
+                    for line in iter(pipe.readline, ''):
+                        log_func(line.rstrip())
+
+            stdout_thread = threading.Thread(target=log_output, args=(process.stdout, logging.info))
+            stderr_thread = threading.Thread(target=log_output, args=(process.stderr, logging.error))
+
+            stdout_thread.start()
+            stderr_thread.start()
+
+            process.wait()
+            stdout_thread.join()
+            stderr_thread.join()
+
+            return_code = process.returncode
+            logging.info(f"Secondary app exited with return code: {return_code}")
+            if return_code != 0:
+                logging.warning("Secondary app crashed, restarting...")
+                time.sleep(5)  # Wait a bit before restarting
+            else:
+                logging.info("Secondary app exited normally, not restarting")
+                break  # Exit the loop if process exited normally
+        except Exception as e:
+            logging.error(f"Failed to start or run secondary app: {e}")
+            break  # Exit the loop on exception
 
 def main():
     global program_runner
@@ -192,9 +206,9 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     # Start the secondary app as a separate process in a new thread
-    secondary_app_thread = threading.Thread(target=run_secondary_app_process, daemon=True)
-    secondary_app_thread.start()
-    logging.info("Secondary app thread started")
+    # secondary_app_thread = threading.Thread(target=run_secondary_app_process, daemon=True)
+    # secondary_app_thread.start()
+    # logging.info("Secondary app thread started")
 
     # Continue with the primary application's operations
     try:

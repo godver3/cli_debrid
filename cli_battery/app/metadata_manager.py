@@ -66,16 +66,7 @@ class MetadataManager:
         
         stale_threshold = timedelta(days=adjusted_threshold)
         is_stale = (now - last_updated) > stale_threshold
-        
-        logger.debug(f"Base staleness threshold: {settings.staleness_threshold} days")
-        logger.debug(f"Random variation: {variation} days")
-        logger.debug(f"Adjusted staleness threshold: {adjusted_threshold} days")
-        
-        if is_stale:
-            logger.info(f"Metadata is stale. Last updated: {last_updated}, Current time: {now}")
-        else:
-            logger.info(f"Metadata is fresh for {stale_threshold - (now - last_updated)} more.")
-        
+                
         return is_stale
 
     @staticmethod
@@ -88,12 +79,6 @@ class MetadataManager:
                     Item.imdb_id == imdb_id.upper()
                 )
             ).all()
-            
-            for item in items:
-                logger.info(f"Found item: ID={item.id}, IMDb ID={item.imdb_id}, Title={item.title}, Type={item.type}")
-            
-            if not items:
-                logger.info(f"No items found for IMDb ID: {imdb_id}")
 
     @staticmethod
     def get_item(imdb_id):
@@ -152,7 +137,6 @@ class MetadataManager:
             
     @staticmethod
     def get_seasons(imdb_id):
-        logger.info(f"Requesting seasons data for IMDB ID: {imdb_id}")
         with Session() as session:
             item = session.query(Item).filter_by(imdb_id=imdb_id, type='show').first()
             if item:
@@ -160,10 +144,8 @@ class MetadataManager:
                 if seasons:
                     # Check if the seasons data is stale
                     if MetadataManager.is_metadata_stale(item.updated_at):
-                        logger.info(f"Seasons data for IMDB ID: {imdb_id} is stale. Refreshing from Trakt.")
                         return MetadataManager.refresh_seasons(imdb_id, session)
                     else:
-                        logger.info(f"Using fresh seasons data from battery for IMDB ID: {imdb_id}")
                         seasons_data = MetadataManager.format_seasons_data(seasons)
                         return seasons_data, "battery"
 
@@ -172,12 +154,10 @@ class MetadataManager:
 
     @staticmethod
     def refresh_seasons(imdb_id, session):
-        logger.info(f"Fetching seasons and episodes data from Trakt for IMDB ID: {imdb_id}")
         trakt = TraktMetadata()
         seasons_data, source = trakt.get_show_seasons_and_episodes(imdb_id)
         if seasons_data:
             MetadataManager.add_or_update_seasons_and_episodes(imdb_id, seasons_data)
-            logger.info(f"Retrieved and stored seasons and episodes data from Trakt for IMDB ID: {imdb_id}")
             return seasons_data, source
         logger.warning(f"No seasons data found for IMDB ID: {imdb_id}")
         return None, None
@@ -237,14 +217,10 @@ class MetadataManager:
                         episode.imdb_id = episode_info['imdb_id']
 
             session.commit()
-            logger.info(f"Seasons and episodes updated for IMDB ID: {imdb_id}")
             return True
 
     @staticmethod
     def _process_trakt_seasons(imdb_id, seasons_data, episodes_data):
-        logger.info(f"Processing Trakt seasons data for IMDb ID: {imdb_id}")
-        logger.debug(f"Seasons data: {seasons_data}")
-        logger.debug(f"Episodes data: {episodes_data}")
 
         if isinstance(episodes_data, dict):
             # If episodes_data is a dict, we assume it's structured as {season_number: [episodes]}
@@ -267,7 +243,6 @@ class MetadataManager:
             logger.error(f"Unexpected episodes_data type for IMDb ID {imdb_id}: {type(episodes_data)}")
             return {}
 
-        logger.info(f"Processed {len(processed_data)} seasons for IMDb ID: {imdb_id}")
         return processed_data
 
     @staticmethod
@@ -296,7 +271,6 @@ class MetadataManager:
             try:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
                 if not item:
-                    logger.info(f"Creating new Item for IMDB ID: {imdb_id}")
                     trakt = TraktMetadata()
                     show_metadata = trakt.get_show_metadata(imdb_id)
                     if show_metadata:
@@ -331,7 +305,6 @@ class MetadataManager:
                 session.execute(stmt)
 
                 session.commit()
-                logger.info(f"Seasons data updated for IMDB ID: {imdb_id}, Provider: {provider}")
                 return True
             except IntegrityError as e:
                 session.rollback()
@@ -489,7 +462,6 @@ class MetadataManager:
                 session.execute(stmt)
 
                 session.commit()
-                logger.info(f"Episodes updated for IMDB ID: {imdb_id}, Provider: {provider}")
                 return True
 
             except Exception as e:
@@ -499,17 +471,14 @@ class MetadataManager:
 
     @staticmethod
     def get_release_dates(imdb_id):
-        logger.info(f"MetadataManager: Getting release dates for IMDB ID: {imdb_id}")
         with Session() as session:
             item = session.query(Item).filter_by(imdb_id=imdb_id).first()
             if item:
                 metadata = session.query(Metadata).filter_by(item_id=item.id, key='release_dates').first()
                 if metadata:
                     if MetadataManager.is_metadata_stale(metadata.last_updated):
-                        logger.info(f"Release dates for IMDB ID: {imdb_id} are stale. Refreshing from Trakt.")
                         return MetadataManager.refresh_release_dates(imdb_id, session)
                     else:
-                        logger.info(f"Using fresh release dates from battery for IMDB ID: {imdb_id}")
                         try:
                             value = json.loads(metadata.value)
                             return value, "battery"
@@ -541,7 +510,6 @@ class MetadataManager:
             metadata.last_updated = func.now()
 
             session.commit()
-            logger.info(f"Retrieved and stored release dates for IMDB ID: {imdb_id} from Trakt")
             return trakt_release_dates, "trakt"
         logger.warning(f"No release dates found for IMDB ID: {imdb_id}")
         return None, None
@@ -552,14 +520,12 @@ class MetadataManager:
         with Session() as session:
             cached_mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
             if cached_mapping:
-                logger.info(f"Using cached mapping for TMDB ID {tmdb_id}: IMDB ID = {cached_mapping.imdb_id}")
                 return cached_mapping.imdb_id, 'battery'
 
             trakt = TraktMetadata()
             imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id)
             
             if imdb_id:
-                logger.info(f"Storing new mapping for TMDB ID {tmdb_id}: IMDB ID = {imdb_id}")
                 new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
                 session.add(new_mapping)
                 session.commit()
@@ -641,7 +607,6 @@ class MetadataManager:
         with Session() as session:
             item = session.query(Item).options(joinedload(Item.item_metadata)).filter_by(imdb_id=imdb_id, type='movie').first()
             if not item:
-                logger.info(f"Movie with IMDB ID {imdb_id} not found in database. Fetching from Trakt.")
                 return MetadataManager.refresh_movie_metadata(imdb_id)
 
             metadata = {}
@@ -650,10 +615,8 @@ class MetadataManager:
                 metadata[m.key] = m.value
 
             if MetadataManager.is_metadata_stale(item.updated_at):
-                logger.info(f"Metadata for movie {imdb_id} is stale. Refreshing from Trakt.")
                 return MetadataManager.refresh_movie_metadata(imdb_id)
 
-            logger.info(f"Using fresh metadata from battery for movie {imdb_id}")
             return metadata, "battery"
             
     @staticmethod
@@ -663,7 +626,6 @@ class MetadataManager:
         if new_metadata:
             MetadataManager.add_or_update_item(imdb_id, new_metadata.get('title'), new_metadata.get('year'), 'movie')
             MetadataManager.add_or_update_metadata(imdb_id, new_metadata, 'Trakt')
-            logger.info(f"Retrieved and stored movie metadata for IMDB ID: {imdb_id} from Trakt")
             return new_metadata, "trakt"
         logger.warning(f"Could not fetch metadata for movie {imdb_id} from Trakt")
         return None, None
@@ -691,14 +653,12 @@ class MetadataManager:
                     item.updated_at = item.updated_at.replace(tzinfo=timezone.utc)
                 
                 if MetadataManager.is_metadata_stale(item.updated_at):
-                    logger.info(f"Metadata for IMDB ID: {imdb_id} is stale. Refreshing from Trakt.")
                     trakt = TraktMetadata()
                     show_data = trakt.get_show_metadata(imdb_id)
                     if show_data:
                         MetadataManager.update_show_metadata(item, show_data, session)
                         return show_data, "trakt (refreshed)"
                 else:
-                    logger.info(f"Using fresh metadata from battery for IMDB ID: {imdb_id}")
                     metadata = session.query(Metadata).filter_by(item_id=item.id).all()
                     metadata_dict = {}
                     for m in metadata:
@@ -718,7 +678,6 @@ class MetadataManager:
                     session.add(item)
                     session.flush()
                     MetadataManager.update_show_metadata(item, show_data, session)
-                    logger.info(f"Retrieved and stored show metadata for IMDB ID: {imdb_id} from Trakt")
                 except IntegrityError:
                     session.rollback()
                     logger.warning(f"IntegrityError occurred. Item may already exist for IMDB ID: {imdb_id}")
