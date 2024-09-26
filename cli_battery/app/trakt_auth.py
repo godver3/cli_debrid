@@ -26,9 +26,6 @@ class TraktAuth:
         self.pytrakt_file = os.path.expanduser('/user/config/.pytrakt.json')
         self.load_auth()
         
-        # Add debug logging
-        logger.debug(f"TraktAuth initialized: access_token={bool(self.access_token)}, refresh_token={bool(self.refresh_token)}, expires_at={self.expires_at}")
-
     def load_auth(self):
         self.access_token = self.settings.Trakt['access_token']
         self.refresh_token = self.settings.Trakt['refresh_token']
@@ -51,8 +48,6 @@ class TraktAuth:
             self.settings.Trakt['expires_at'] = self.expires_at
             self.settings.save_settings()
             
-            logger.info("Loaded authentication data from .pytrakt.json")
-            logger.debug(f"Loaded auth: access_token={bool(self.access_token)}, refresh_token={bool(self.refresh_token)}, expires_at={self.expires_at}")
         else:
             logger.warning(f".pytrakt.json file not found at {self.pytrakt_file}")
 
@@ -63,10 +58,8 @@ class TraktAuth:
         self.settings.save_settings()
         self.load_auth()  # Reload the auth data after saving
         self.save_trakt_credentials()  # Also update the .pytrakt.json file
-        logger.info("Trakt token data saved and reloaded.")
 
     def is_authenticated(self):
-        logger.info(f"is_authenticated called from: {traceback.extract_stack()[-2][2]}")
 
         if not self.access_token or not self.expires_at:
             logger.warning(f"Missing authentication data: access_token={bool(self.access_token)}, expires_at={self.expires_at}")
@@ -82,7 +75,6 @@ class TraktAuth:
         
         now = datetime.now(timezone.utc)
         is_valid = now < expires_at
-        logger.info(f"Authentication status: {is_valid}. Current time: {now}, Expires at: {expires_at}")
         return is_valid
 
     def refresh_access_token(self):
@@ -160,4 +152,3 @@ class TraktAuth:
         }
         with open(self.pytrakt_file, 'w') as f:
             json.dump(credentials, f)
-        logger.info(f"Trakt credentials saved to {self.pytrakt_file}")

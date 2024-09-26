@@ -36,7 +36,6 @@ class TraktMetadata:
         self.redirect_uri = "http://192.168.1.51:5001/trakt_callback"
 
     def _make_request(self, url):
-        logger.info(f"_make_request called from: {traceback.extract_stack()[-2][2]}")
 
         if not self.trakt_auth.is_authenticated():
             if not self.trakt_auth.refresh_access_token():
@@ -68,7 +67,6 @@ class TraktMetadata:
             return []
 
         full_url = f"{TRAKT_API_URL}{endpoint}"
-        logger.debug(f"Fetching items from Trakt URL: {full_url}")
 
         try:
             response = requests.get(full_url, headers=self.headers, timeout=REQUEST_TIMEOUT)
@@ -268,14 +266,8 @@ class TraktMetadata:
         response = self._make_request(url)
         if response and response.status_code == 200:
             data = response.json()
-            logger.info(f"Full Trakt response for TMDB ID {tmdb_id}: {json.dumps(data, indent=2)}")
             if data:
-                for item in data:
-                    if 'movie' in item:
-                        logger.info(f"Found movie: IMDB ID = {item['movie']['ids']['imdb']}")
-                    elif 'show' in item:
-                        logger.info(f"Found show: IMDB ID = {item['show']['ids']['imdb']}")
-                # Return the first item's IMDB ID as before
+
                 item = data[0]
                 if 'movie' in item:
                     return item['movie']['ids']['imdb'], 'trakt'
