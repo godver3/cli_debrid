@@ -184,6 +184,7 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
     current_date = datetime.now()
     digital_physical_releases = []
     theatrical_releases = []
+    premiere_releases = []
     all_releases = []
 
     for country, country_releases in release_dates.items():
@@ -196,8 +197,10 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
                     release_type = release.get('type', 'unknown').lower()
                     if release_type in ['digital', 'physical']:
                         digital_physical_releases.append(release_date)
-                    elif release_type in ['theatrical', 'premiere']:
+                    elif release_type == 'theatrical':
                         theatrical_releases.append(release_date)
+                    elif release_type == 'premiere':
+                        premiere_releases.append(release_date)
                 except ValueError:
                     logging.warning(f"Invalid date format: {release_date_str}")
 
@@ -208,13 +211,12 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
     if old_theatrical_releases:
         return max(old_theatrical_releases).strftime("%Y-%m-%d")
 
-    old_releases = [date for date in all_releases if date < current_date - timedelta(days=180)]
-    if old_releases:
-        return max(old_releases).strftime("%Y-%m-%d")
+    old_premiere_releases = [date for date in premiere_releases if date < current_date - timedelta(days=730)]  # 24 months
+    if old_premiere_releases:
+        return max(old_premiere_releases).strftime("%Y-%m-%d")
 
-    # If we've reached this point, all releases are in the future
-    # We should either return None or a placeholder date
-    logging.warning(f"No valid release date found for IMDb ID: {imdb_id}. All releases are in the future.")
+    # If we've reached this point, there are no suitable release dates
+    logging.warning(f"No valid release date found for IMDb ID: {imdb_id}.")
     return "Unknown"
 
 def parse_date(date_str: Optional[str]) -> Optional[str]:
