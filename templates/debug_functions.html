@@ -153,21 +153,14 @@
     </div>
 </div>
 
-<div id="loading" class="loading">
-    <div class="loading-content">
-        <div class="spinner"></div>
-        <p>Processing command, please wait...</p>
-    </div>
-</div>
-
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const forms = document.querySelectorAll('form:not(#bulk-queue-action-form)');
-        const loading = document.getElementById('loading');
         const bulkActionForm = document.getElementById('bulk-queue-action-form');
         
         forms.forEach(form => {
-            if (form.id !== 'send-test-notification-form') {
+            if (form.id !== 'send-test-notification-form' && form.id !== 'get-collected-form' && form.id !== 'get-wanted-form') {
                 form.addEventListener('submit', function(e) {
                     e.preventDefault();
                     const url = form.action;
@@ -201,30 +194,13 @@
                         message: confirmMessage,
                         title: 'Confirmation',
                         onConfirm: () => {
-                            loading.style.display = 'flex';
+                            Loading.show();
                             submitForm(url, method, new FormData(form));
                         }
                     });
                 });
             }
         });
-
-        function moveToUpgrading() {
-            const itemId = document.getElementById('item_id').value;
-            const url = '/debug/move_to_upgrading';
-            const method = 'POST';
-            const formData = new FormData();
-            formData.append('id', itemId);
-            submitForm(url, method, formData);
-        }
-
-        // Keep only this listener for the bulk action form
-        if (bulkActionForm) {
-            bulkActionForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-                performBulkAction();
-            });
-        }
 
         function submitForm(url, method, formData) {
             fetch(url, {
@@ -233,7 +209,7 @@
             })
             .then(response => response.json())
             .then(data => {
-                loading.style.display = 'none';
+                Loading.hide();
                 if (data.success) {
                     showPopup({
                         type: POPUP_TYPES.SUCCESS,
@@ -255,7 +231,7 @@
                 }
             })
             .catch(error => {
-                loading.style.display = 'none';
+                Loading.hide();
                 console.error('Error:', error);
                 showPopup({
                     type: POPUP_TYPES.ERROR,
@@ -447,14 +423,14 @@
                 title: 'Confirm Bulk Action',
                 onConfirm: () => {
                     const formData = new FormData(bulkActionForm);
-                    loading.style.display = 'flex';
+                    Loading.show();
                     fetch('/database/bulk_queue_action', {
                         method: 'POST',
                         body: formData
                     })
                     .then(response => response.json())
                     .then(data => {
-                        loading.style.display = 'none';
+                        Loading.hide();
                         if (data.success) {
                             showPopup({
                                 type: POPUP_TYPES.SUCCESS,
@@ -471,7 +447,7 @@
                         }
                     })
                     .catch(error => {
-                        loading.style.display = 'none';
+                        Loading.hide();
                         console.error('Error performing bulk action:', error);
                         showPopup({
                             type: POPUP_TYPES.ERROR,
@@ -574,6 +550,134 @@
                 });
             });
         }
+
+        // Define pollTaskStatus function once
+        function pollTaskStatus(taskId) {
+            fetch(`/debug/api/task_status/${taskId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'PENDING' || data.status === 'RUNNING') {
+                        setTimeout(() => pollTaskStatus(taskId), 2000);  // Poll every 2 seconds
+                    } else {
+                        Loading.hide();
+                        if (data.status === 'SUCCESS') {
+                            // Handle data.result appropriately
+                            let message = 'Task completed successfully';
+                            if (typeof data.result === 'string') {
+                                message = data.result;
+                            } else if (typeof data.result === 'object') {
+                                // You can adjust this based on the actual structure of data.result
+                                message = data.result.message || JSON.stringify(data.result);
+                            }
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: message,
+                                title: 'Success'
+                            });
+                        } else {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: data.result || 'Task failed',
+                                title: 'Error'
+                            });
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'An error occurred while checking task status',
+                        title: 'Error'
+                    });
+                });
+        }
+
+        // Handler for getCollectedForm
+        const getCollectedForm = document.getElementById('get-collected-form');
+        getCollectedForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: 'Are you sure you want to get collected items from Plex?',
+                title: 'Confirmation',
+                onConfirm: () => {
+                    Loading.show();
+                    fetch(this.action, {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.task_id) {
+                            pollTaskStatus(data.task_id);
+                        } else {
+                            Loading.hide();
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Failed to start task',
+                                title: 'Error'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'An error occurred',
+                            title: 'Error'
+                        });
+                    });
+                }
+            });
+        });
+
+        // Handler for getWantedForm
+        const getWantedForm = document.getElementById('get-wanted-form');
+        getWantedForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+
+            // Adding a confirmation popup similar to getCollectedForm
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: 'Are you sure you want to get wanted items?',
+                title: 'Confirmation',
+                onConfirm: () => {
+                    Loading.show();
+                    fetch(this.action, {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.task_id) {
+                            pollTaskStatus(data.task_id);
+                        } else {
+                            Loading.hide();
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Failed to start task',
+                                title: 'Error'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'An error occurred',
+                            title: 'Error'
+                        });
+                    });
+                }
+            });
+        });
     });
 </script>
 {% endblock %}

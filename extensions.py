@@ -8,9 +8,13 @@ from flask_login import current_user
 import logging
 from routes.utils import is_user_system_enabled
 from flask_cors import CORS
+from celery import Celery
+import threading
+import uuid
 
 db = SQLAlchemy()
 app = Flask(__name__)
+
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # Configure CORS
@@ -113,3 +117,30 @@ def add_security_headers(response):
 @app.errorhandler(400)
 def bad_request(error):
     return jsonify({"error": "Bad request", "message": str(error)}), 400
+
+class SimpleTaskQueue:
+    def __init__(self):
+        self.tasks = {}
+
+    def add_task(self, func, *args, **kwargs):
+        task_id = str(uuid.uuid4())
+        self.tasks[task_id] = {'status': 'PENDING', 'result': None}
+        
+        def run_task():
+            self.tasks[task_id]['status'] = 'RUNNING'
+            try:
+                result = func(*args, **kwargs)
+                self.tasks[task_id]['status'] = 'SUCCESS'
+                self.tasks[task_id]['result'] = result
+            except Exception as e:
+                self.tasks[task_id]['status'] = 'FAILURE'
+                self.tasks[task_id]['result'] = str(e)
+
+        thread = threading.Thread(target=run_task)
+        thread.start()
+        return task_id
+
+    def get_task_status(self, task_id):
+        return self.tasks.get(task_id, {'status': 'NOT_FOUND'})
+
+task_queue = SimpleTaskQueue()

@@ -128,7 +128,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     message: `Content source ${data.source_id} added successfully.`,
-                    autoClose: 3000
+                    autoClose: 5000
                 });
             } else {
                 throw new Error(data.error || 'Unknown error');
@@ -139,7 +139,6 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 message: 'Error adding content source: ' + error.message,
-                autoClose: 5000
             });
         });
     }
@@ -176,7 +175,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         showPopup({
                             type: POPUP_TYPES.SUCCESS,
                             message: 'Content source deleted successfully.',
-                            autoClose: 3000
+                            autoClose: 5000
                         });
                     } else {
                         throw new Error(data.error || 'Unknown error');
@@ -187,7 +186,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         message: 'Error deleting content source: ' + error.message,
-                        autoClose: 5000
                     });
                 });
             }
@@ -242,7 +240,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     message: 'Error fetching content sources: ' + error.message,
-                    autoClose: 5000
                 });
             });
     }
@@ -269,7 +266,6 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 message: 'Error updating progress status: ' + error.message,
-                autoClose: 5000
             });
         });
     }
