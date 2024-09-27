@@ -10,6 +10,9 @@ from settings import get_setting
 import json
 from reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
 from .models import admin_required
+from utilities.plex_functions import remove_file_from_plex
+from database.database_reading import get_media_item_by_id
+
 database_bp = Blueprint('database', __name__)
 
 @database_bp.route('/', methods=['GET', 'POST'])
@@ -188,7 +191,15 @@ def delete_item():
     if not item_id:
         return jsonify({'success': False, 'error': 'No item ID provided'}), 400
 
-    try:
+    try:        
+        if get_setting('Sync Deletions', 'sync_deletions', False):
+            item = get_media_item_by_id(item_id)
+            if item['state'] == 'Collected':
+                if item['type'] == 'movie':
+                    remove_file_from_plex(item['title'], item['filled_by_file'])
+                elif item['type'] == 'episode':
+                    remove_file_from_plex(item['title'], item['filled_by_file'], item['episode_title'])
+
         remove_from_media_items(item_id)
         return jsonify({'success': True})
     except Exception as e:
