@@ -18,6 +18,7 @@ from notifications import send_notifications
 import requests
 from pathlib import Path
 import pickle
+from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -517,38 +518,46 @@ def append_runtime_airtime(items):
             logging.error(traceback.format_exc())
     
 def get_and_add_all_collected_from_plex():
-    logging.info("Getting all collected content from Plex")
-    collected_content = asyncio.run(run_get_collected_from_plex())
-    
+    if get_setting('File Management', 'file_collection_management', 'Plex') == 'Plex':
+        logging.info("Getting all collected content from Plex")
+        collected_content = asyncio.run(run_get_collected_from_plex())
+    elif get_setting('File Management', 'file_collection_management', 'Plex') == 'Zurg':
+        logging.info("Getting all collected content from Zurg")
+        collected_content = asyncio.run(run_get_collected_from_zurg())
+
     if collected_content:
         movies = collected_content['movies']
         episodes = collected_content['episodes']
         
-        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from Plex")
+        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes")
         
         #append_runtime_airtime(movies)
         #append_runtime_airtime(episodes)
         
         add_collected_items(movies + episodes)
     else:
-        logging.error("Failed to retrieve content from Plex")
+        logging.error("Failed to retrieve content")
 
 def get_and_add_recent_collected_from_plex():
-    logging.info("Getting recently added content from Plex")
-    collected_content = asyncio.run(run_get_recent_from_plex())
+    if get_setting('File Management', 'file_collection_management', 'Plex') == 'Plex':
+        logging.info("Getting recently added content from Plex")
+        collected_content = asyncio.run(run_get_recent_from_plex())
+    elif get_setting('File Management', 'file_collection_management', 'Plex') == 'Zurg':
+        logging.info("Getting recently added content from Zurg")
+        collected_content = asyncio.run(run_get_recent_from_zurg())
     
     if collected_content:
         movies = collected_content['movies']
         episodes = collected_content['episodes']
         
-        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from Plex")
+        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes")
         
         #append_runtime_airtime(movies)
         #append_runtime_airtime(episodes)
 
         add_collected_items(movies + episodes, recent=True)
     else:
-        logging.error("Failed to retrieve content from Plex")
+        logging.error("Failed to retrieve content")
 
 def run_program():
     global program_runner
