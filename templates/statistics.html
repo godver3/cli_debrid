@@ -67,6 +67,12 @@
 
     .stats-box.recently-added-section-bottom{
         background-color: #444;
+        border-radius: 0px;
+        padding: 15px;
+    }
+
+    .stats-box.recently-upgraded-section{
+        background-color: #444;
         border-radius: 0 0 5px 5px;
         padding: 15px;
     }
@@ -418,20 +424,23 @@
         gap: 10px;
     }
     .compact-view .recently-added-section-top,
-    .compact-view .recently-added-section-bottom{
+    .compact-view .recently-added-section-bottom,
+    .compact-view .recently-upgraded-section{
         flex: 1;
         border-radius: 5px;
     }
 
     .compact-view .recently-added-section-top .card-container,
-    .compact-view .recently-added-section-bottom .card-container {
+    .compact-view .recently-added-section-bottom .card-container,
+    .compact-view .recently-upgraded-section .card-container{
         display: table;
         width: 100%;
         border-collapse: collapse;
     }
 
     .compact-view .recently-added-section-top .card,
-    .compact-view .recently-added-section-bottom .card {
+    .compact-view .recently-added-section-bottom .card,
+    .compact-view .recently-upgraded-section .card{
         display: table-row;
         width: 100%;
         height: auto;
@@ -440,13 +449,15 @@
     }
 
     .compact-view .recently-added-section-top .card:hover,
-    .compact-view .recently-added-section-bottom .card:hover {
+    .compact-view .recently-added-section-bottom .card:hover,
+    .compact-view .recently-upgraded-section .card:hover{
         transform: none;
         color: #fff;
     }
 
     .compact-view .recently-added-section-top .card-hover-content,
-    .compact-view .recently-added-section-bottom .card-hover-content {
+    .compact-view .recently-added-section-bottom .card-hover-content,
+    .compact-view .recently-upgraded-section .card-hover-content{
         display: table-cell;
         position: static;
         padding: 8px;
@@ -456,17 +467,20 @@
     }
 
     .compact-view .recently-added-section-top .card-img,
-    .compact-view .recently-added-section-bottom .card-img {
+    .compact-view .recently-added-section-bottom .card-img,
+    .compact-view .recently-upgraded-section .card-img{
         display: none;
     }
 
     .compact-view .recently-added-section-top .card-content,
-    .compact-view .recently-added-section-bottom .card-content {
+    .compact-view .recently-added-section-bottom .card-content,
+    .compact-view .recently-upgraded-section .card-content{
         display: none;
     }
     
     .compact-view .recently-added-section-top .card h5,
-    .compact-view .recently-added-section-bottom .card h5 {
+    .compact-view .recently-added-section-bottom .card h5,
+    .compact-view .recently-upgraded-section .card h5{
         font-size: 0.9em;
         margin: 0;
         white-space: normal;
@@ -477,7 +491,8 @@
     }
 
     .compact-view .recently-added-section-top .card .info-line,
-    .compact-view .recently-added-section-bottom .card .info-line {
+    .compact-view .recently-added-section-bottom .card .info-line,
+    .compact-view .recently-upgraded-section .card .info-line{
         font-size: 0.8em;
         margin: 0 0 0 5px;
         color: #aaa;
@@ -511,22 +526,26 @@
         }
 
         .compact-view .recently-added-section-top,
-        .compact-view .recently-added-section-bottom {
+        .compact-view .recently-added-section-bottom,
+        .compact-view .recently-upgraded-section {
             margin-bottom: 10px;
         }
 
         .compact-view .recently-added-section-top .card-container,
-        .compact-view .recently-added-section-bottom .card-container {
+        .compact-view .recently-added-section-bottom .card-container,
+        .compact-view .recently-upgraded-section .card-container{
             display: block;
         }
 
         .compact-view .recently-added-section-top .card,
-        .compact-view .recently-added-section-bottom .card {
+        .compact-view .recently-added-section-bottom .card ,
+        .compact-view .recently-upgraded-section .card{
             display: grid;
         }
 
         .compact-view .recently-added-section-top .card-hover-content,
-        .compact-view .recently-added-section-bottom .card-hover-content {
+        .compact-view .recently-added-section-bottom .card-hover-content,
+        .compact-view .recently-upgraded-section .card-hover-content{
             display: inline-grid;
             padding: 0px;
             margin-bottom: 8px;
@@ -534,7 +553,8 @@
         }
 
         .compact-view .recently-added-section-top .card .info-line,
-        .compact-view .recently-added-section-bottom .card .info-line {
+        .compact-view .recently-added-section-bottom .card .info-line,
+        .compact-view .recently-upgraded-section .card .info-line {
             font-size: 0.8em;
             margin: 0px;
         }
@@ -698,8 +718,6 @@
                                 <h5>{{ show.title }}</h5>
                                 <p class="info-line">Added: {{ show.formatted_collected_at }}</p>
                                 <p class="info-line">Versions: {{ show.versions }}</p>
-                                <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
-                                <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
                                 <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">{{ show.filled_by_title }}</span></p>
 
                             </div>
@@ -708,6 +726,32 @@
                     </div>
                 {% endif %}
             </div>
+            {% if stats.upgrading_enabled %}
+            <div class="stats-box recently-upgraded-section"  id="recently-upgraded">
+                <h4>Recently Upgraded</h4>
+                    {% if stats.recently_upgraded %}
+                        <div class="card-container">
+                        {% for item in stats.recently_upgraded %}
+                            <div class="card">
+                                {% if item.poster_url %}
+                                    <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="card-img">
+                                {% endif %}
+                                <div class="card-content">
+                                    <h5>{{ item.title }} {% if item.year %}({{ item.year }}){% endif %}</h5>
+                                </div>
+                                <div class="card-hover-content">
+                                    <h5>{{ item.title }} {% if item.year %}({{ item.year }}){% endif %}</h5>
+                                    <p class="info-line">Added: {{ item.formatted_collected_at }}</p>
+                                    <p class="info-line">Versions: {{ item.versions }}</p>
+                                    <p class="info-line" style="display: block;"><span style="text-transform: uppercase;">{{ item.filled_by_title }}</span></p>
+                                    <p class="info-line" style="display: block;"><span style="text-transform: uppercase;">{{ item.upgrading_from }}</span></p>
+                                </div>
+                            </div>
+                        {% endfor %}
+                        </div>
+                    {% endif %}
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -720,110 +764,6 @@ let use24HourFormat = {{ 'true' if stats.use_24hour_format else 'false' }};
 // Immediately set the checkbox state
 document.getElementById('time-format-toggle').checked = use24HourFormat;
 
-function updateAllTimes(data) {
-    // Update recently aired
-    const recentlyAiredList = document.querySelector('.recently-aired ul');
-    if (recentlyAiredList) {
-        recentlyAiredList.innerHTML = data.recently_aired.map(item => `
-            <li>
-                <span>${item.title} S${item.season.toString().padStart(2, '0')}E${item.episode.toString().padStart(2, '0')}</span>
-                <span class="air-date">${item.formatted_time}</span>
-            </li>
-        `).join('');
-    }
-
-    // Update airing soon
-    const airingSoonList = document.querySelector('.airing-soon ul');
-    if (airingSoonList) {
-        airingSoonList.innerHTML = data.airing_soon.map(item => `
-            <li>
-                <span>${item.title} S${item.season.toString().padStart(2, '0')}E${item.episode.toString().padStart(2, '0')}</span>
-                <span class="air-date">${item.formatted_time}</span>
-            </li>
-        `).join('');
-    }
-
-    // Update upcoming releases
-    const upcomingReleasesList = document.querySelector('.upcoming-releases ul');
-    if (upcomingReleasesList) {
-        upcomingReleasesList.innerHTML = data.upcoming_releases.map(item => `
-            <li>
-                <span>${item.titles.join(', ')}</span>
-                <span class="release-date">${item.formatted_time}</span>
-            </li>
-        `).join('');
-    }
-
-    // Update recently added sections
-    if (data.recently_added) {
-        updateRecentlyAddedSection('Recently Added Movies', data.recently_added.movies);
-        updateRecentlyAddedSection('Recently Added Shows', data.recently_added.shows);
-    }
-}
-
-function updateRecentlyAddedSection(type, items) {
-    const sectionClass = type.includes('Movies') ? 'recently-added-section-top' : 'recently-added-section-bottom';
-    const section = document.querySelector(`.stats-box.${sectionClass}`);
-    if (!section) {
-        console.error(`Section for ${type} not found`);
-        return;
-    }
-    const container = section.querySelector('.card-container') || document.createElement('div');
-    container.className = 'card-container';
-    if (Array.isArray(items) && items.length > 0) {
-        container.innerHTML = items.map(item => {
-            let additionalInfo = '';
-            if (type === 'Recently Added Shows' && item.seasons && item.latest_episode) {
-                additionalInfo = `
-                    <p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
-                    <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>
-                `;
-            }
-
-            return `
-                <div class="card">
-                    ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
-                    <div class="card-content">
-                        <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                    </div>
-                    <div class="card-hover-content">
-                        <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                        <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${item.formatted_collected_at}</p>
-                        <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
-                        ${additionalInfo}
-                        <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
-                    </div>
-                </div>
-            `;
-        }).join('');
-    } else {
-        container.innerHTML = `<p>No recent additions</p>`;
-    }
-    if (!section.contains(container)) {
-        section.appendChild(container);
-    }
-}
-
-function refreshRecentlyAdded() {
-    fetch('/statistics/recently_added?ajax=1', {
-        method: 'GET',
-        credentials: 'include'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.recently_added) {
-            if (data.recently_added.movies) {
-                updateRecentlyAddedSection('Recently Added Movies', data.recently_added.movies);
-            }
-            if (data.recently_added.shows) {
-                updateRecentlyAddedSection('Recently Added Shows', data.recently_added.shows);
-            }
-        }
-    })
-    .catch(error => {
-        console.error('Error fetching recently added items:', error);
-    });
-}
 
 document.addEventListener('DOMContentLoaded', () => {
     const timeFormatToggle = document.getElementById('time-format-toggle');
@@ -892,6 +832,152 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     updateTmdbInfoVisibility();
 
+    function updateAllTimes(data) {
+        // Update recently aired
+        const recentlyAiredList = document.querySelector('.recently-aired ul');
+        if (recentlyAiredList) {
+            recentlyAiredList.innerHTML = data.recently_aired.map(item => `
+                <li>
+                    <span>${item.title} S${item.season.toString().padStart(2, '0')}E${item.episode.toString().padStart(2, '0')}</span>
+                    <span class="air-date">${item.formatted_time}</span>
+                </li>
+            `).join('');
+        }
+
+        // Update airing soon
+        const airingSoonList = document.querySelector('.airing-soon ul');
+        if (airingSoonList) {
+            airingSoonList.innerHTML = data.airing_soon.map(item => `
+                <li>
+                    <span>${item.title} S${item.season.toString().padStart(2, '0')}E${item.episode.toString().padStart(2, '0')}</span>
+                    <span class="air-date">${item.formatted_time}</span>
+                </li>
+            `).join('');
+        }
+
+        // Update upcoming releases
+        const upcomingReleasesList = document.querySelector('.upcoming-releases ul');
+        if (upcomingReleasesList) {
+            upcomingReleasesList.innerHTML = data.upcoming_releases.map(item => `
+                <li>
+                    <span>${item.titles.join(', ')}</span>
+                    <span class="release-date">${item.formatted_time}</span>
+                </li>
+            `).join('');
+        }
+
+        // Update recently added sections
+        if (data.recently_added) {
+            updateRecentlyAddedSection('Recently Added Movies', data.recently_added.movies);
+            updateRecentlyAddedSection('Recently Added Shows', data.recently_added.shows);
+        }
+
+        if (data.recently_upgraded) {
+            updateRecentlyUpgradedSection(data.recently_upgraded);
+        }
+    }
+
+
+
+    function updateRecentlyUpgradedSection(items) {
+        const sectionClass = 'recently-upgraded-section';
+        const section = document.querySelector(`.stats-box.${sectionClass}`);
+        if (section) {
+        
+            const container = section.querySelector('.card-container') || document.createElement('div');
+            container.className = 'card-container';
+            if (Array.isArray(items) && items.length > 0) {
+                container.innerHTML = items.map(item => {
+                    return `
+                        <div class="card">
+                            ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
+                            <div class="card-content">
+                                <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                            </div>
+                            <div class="card-hover-content">
+                                <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                                <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${item.formatted_collected_at}</p>
+                                <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
+                                <p class="info-line" style="display: table-row-group;"><span style="color: #f4f4f4;">NEW: </span><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
+                                <p class="info-line" style="display: table-row-group;"><span style="color: #f4f4f4;">OLD: </span><span style="text-transform: uppercase;">${item.upgrading_from}</span></p>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                container.innerHTML = `<p>No recent additions</p>`;
+            }
+            if (!section.contains(container)) {
+                section.appendChild(container);
+            }
+        }
+}
+
+
+    function refreshRecentlyAdded() {
+        fetch('/statistics/recently_added?ajax=1', {
+            method: 'GET',
+            credentials: 'include'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.recently_added) {
+                if (data.recently_added.movies) {
+                    updateRecentlyAddedSection('Recently Added Movies', data.recently_added.movies);
+                }
+                if (data.recently_added.shows) {
+                    updateRecentlyAddedSection('Recently Added Shows', data.recently_added.shows);
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching recently added items:', error);
+        });
+    }
+
+    function updateRecentlyAddedSection(type, items) {
+        const sectionClass = type.includes('Movies') ? 'recently-added-section-top' : 'recently-added-section-bottom';
+        const section = document.querySelector(`.stats-box.${sectionClass}`);
+        if (!section) {
+            console.error(`Section for ${type} not found`);
+            return;
+        }
+        const container = section.querySelector('.card-container') || document.createElement('div');
+        container.className = 'card-container';
+        if (Array.isArray(items) && items.length > 0) {
+            container.innerHTML = items.map(item => {
+                let additionalInfo = '';
+                if (type === 'Recently Added Shows' && item.seasons && item.latest_episode && !compactToggle.checked) {
+                    additionalInfo = `
+                        <p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
+                        <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>
+                    `;
+                }
+
+                return `
+                    <div class="card">
+                        ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
+                        <div class="card-content">
+                            <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                        </div>
+                        <div class="card-hover-content">
+                            <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
+                            <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${item.formatted_collected_at}</p>
+                            <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
+                            ${additionalInfo}
+                            <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            container.innerHTML = `<p>No recent additions</p>`;
+        }
+        if (!section.contains(container)) {
+            section.appendChild(container);
+        }
+    }
+
     function updateStatistics() {
         console.log('Attempting to fetch statistics...');
         const protocol = window.location.protocol;
@@ -926,6 +1012,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateAiringSoon(data.airing_soon);
             updateUpcomingReleases(data.upcoming_releases);
             updateRecentlyAdded(data.recently_added_movies, data.recently_added_shows);
+            updateRecentlyUpgradedSection(data.recently_upgraded);
             
             // Update timezone information
             updateTimezone(data.timezone);
