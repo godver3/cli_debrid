@@ -60,6 +60,14 @@ SETTINGS_SCHEMA = {
             "default": 7
         }
     },
+    "Sync Deletions": {
+        "tab": "Additional Settings",
+        "sync_deletions": {
+            "type": "boolean",
+            "description": "Sync deletions from the Database to Plex",
+            "default": False
+        }
+    },
     "Metadata Battery": {
         "tab": "Required Settings",
         "url": {
