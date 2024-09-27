@@ -8,7 +8,6 @@ from flask_login import current_user
 import logging
 from routes.utils import is_user_system_enabled
 from flask_cors import CORS
-from celery import Celery
 import threading
 import uuid
 

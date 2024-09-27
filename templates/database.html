@@ -115,8 +115,11 @@
     {% endif %}
 </div>
 
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
+
 import { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips } from '/static/js/tooltips.js';
+
 
 document.addEventListener('DOMContentLoaded', function() {
     let currentContentType = '{{ content_type }}';
@@ -456,6 +459,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function deleteItem(itemId) {
+        Loading.show();
         fetch('{{ url_for('database.delete_item') }}', {
             method: 'POST',
             headers: {
@@ -493,6 +497,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 title: 'Error',
                 message: 'An error occurred while deleting the item: ' + error.message,
             });
+        })
+        .finally(() => {
+            Loading.hide();
         });
     }
 
@@ -557,5 +564,7 @@ document.addEventListener('DOMContentLoaded', function() {
         initializeDatabaseTooltips();
     });
 });
+
+Loading.init();
 </script>
 {% endblock %}

@@ -235,7 +235,7 @@ function updateSettings() {
     }
 
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -514,6 +514,17 @@ function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Disable Adult Content checkbox element not found!");
+    }
+
+    const syncDeletions = document.getElementById('sync-deletions');
+    console.log("Sync Deletions element:", syncDeletions);
+    
+    if (syncDeletions) {
+        settingsData['Sync Deletions']['sync_deletions'] = syncDeletions.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Sync Deletions checkbox element not found!");
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
