@@ -4,7 +4,7 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 
-{% for section in ['Plex', 'RealDebrid', 'Trakt'] %}
+{% for section in ['Plex', 'RealDebrid', 'Trakt', 'File Management'] %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -16,9 +16,15 @@
                 <div class="settings-form-group">
                     <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value.type == 'boolean' %}
-                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if settings[section][key] %}checked{% endif %}>
+                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if settings.get(section, {}).get(key) %}checked{% endif %}>
+                    {% elif value.choices %}
+                        <select id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" class="settings-input">
+                            {% for choice in value.choices %}
+                                <option value="{{ choice }}" {% if settings.get(section, {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            {% endfor %}
+                        </select>
                     {% else %}
-                        <input type="{{ value.type }}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ settings[section][key] }}" class="settings-input" {% if value.sensitive %}type="password"{% endif %}>
+                        <input type="{{ value.type }}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input" {% if value.sensitive %}type="password"{% endif %}>
                     {% endif %}
                     {% if value.description %}
                         <p class="settings-description">{{ value.description }}</p>

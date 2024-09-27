@@ -82,6 +82,12 @@
         <label for="realdebrid_api_key" class="onboarding-label">Real Debrid API Key:</label>
         <input type="text" id="realdebrid_api_key" name="realdebrid_api_key" required class="onboarding-input" value="{{ settings.get('RealDebrid', {}).get('api_key', '') }}">
 
+        <label for="file_collection_management" class="onboarding-label">File Collection Management:</label>
+        <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
+            <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
+            <option value="Zurg" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Zurg' %}selected{% endif %}>Zurg</option>
+        </select>
+
         <p class="settings-description">Enter your Client ID and Client Secret. These can be retrieved by creating an app at
         <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a></p>
 

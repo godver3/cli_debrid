@@ -235,7 +235,7 @@ function updateSettings() {
     }
 
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -516,7 +516,7 @@ function updateSettings() {
         console.warn("Disable Adult Content checkbox element not found!");
     }
 
-    const syncDeletions = document.getElementById('sync-deletions');
+    const syncDeletions = document.getElementById('sync deletions-sync_deletions');
     console.log("Sync Deletions element:", syncDeletions);
     
     if (syncDeletions) {
@@ -525,6 +525,50 @@ function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Sync Deletions checkbox element not found!");
+    }
+
+    const fileCollectionManagement = document.getElementById('file management-file_collection_management');
+    console.log("File Collection Management element:", fileCollectionManagement);
+    
+    if (fileCollectionManagement) {
+        settingsData['File Management']['file_collection_management'] = fileCollectionManagement.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("File Collection Management select element not found!");
+    }
+
+    const zurgAllFolder = document.getElementById('file management-zurg_all_folder');
+    console.log("Zurg All Folder element:", zurgAllFolder);
+    
+    if (zurgAllFolder) {
+        settingsData['File Management']['zurg_all_folder'] = zurgAllFolder.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Zurg All Folder input element not found!");
+    }
+
+    const zurgMoviesFolder = document.getElementById('file management-zurg_movies_folder');
+    console.log("Zurg Movies Folder element:", zurgMoviesFolder);
+    
+    if (zurgMoviesFolder) {
+        settingsData['File Management']['zurg_movies_folder'] = zurgMoviesFolder.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Zurg Movies Folder input element not found!");
+    }
+
+    const zurgShowsFolder = document.getElementById('file management-zurg_shows_folder');
+    console.log("Zurg Shows Folder element:", zurgShowsFolder);
+    
+    if (zurgShowsFolder) {
+        settingsData['File Management']['zurg_shows_folder'] = zurgShowsFolder.value;
+    
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Zurg Shows Folder input element not found!");
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));

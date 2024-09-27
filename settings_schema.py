@@ -34,6 +34,30 @@ SETTINGS_SCHEMA = {
             "default": ""
         }
     },
+    "File Management": {
+        "tab": "Required Settings",
+        "file_collection_management": {
+            "type": "string",
+            "description": "Manage files collected in Plex or use Zurg rename functionality",
+            "default": "Plex",
+            "choices": ["Plex", "Zurg"]
+        },
+        "zurg_all_folder": {
+            "type": "string",
+            "description": "Zurg __all__ Folder",
+            "default": "",
+        },
+        "zurg_movies_folder": {
+            "type": "string",
+            "description": "Zurg Movies Folder",
+            "default": "",
+        },
+        "zurg_shows_folder": {
+            "type": "string",
+            "description": "Zurg Shows Folder",
+            "default": "",
+        },
+    },
     "RealDebrid": {
         "tab": "Required Settings",
         "api_key": {
