@@ -6,6 +6,8 @@ import pickle
 from typing import Dict, Any, List, Tuple
 from urllib.parse import urlparse, urlencode
 import requests
+from requests.exceptions import RequestException
+import time
 from .settings import Settings
 import trakt.core
 from trakt import init
@@ -19,7 +21,6 @@ from datetime import timezone, datetime
 from collections import defaultdict
 from .trakt_auth import TraktAuth
 import traceback
-import iso8601
 
 TRAKT_API_URL = "https://api.trakt.tv"
 CACHE_FILE = 'db_content/trakt_last_activity.pkl'
@@ -218,20 +219,38 @@ class TraktMetadata:
     def refresh_metadata(self, imdb_id: str) -> Dict[str, Any]:
         return self.get_metadata(imdb_id)
 
-    def get_movie_metadata(self, imdb_id):
+    def get_movie_metadata(self, imdb_id, max_retries=3, retry_delay=5):
         headers = {
             'Content-Type': 'application/json',
             'trakt-api-version': '2',
             'trakt-api-key': self.client_id,
             'Authorization': f'Bearer {self.settings.Trakt["access_token"]}'
         }
-        response = requests.get(f"{self.base_url}/movies/{imdb_id}?extended=full", headers=headers)
         
-        if response.status_code == 200:
-            return response.json()
-        else:
-            logger.error(f"Failed to fetch movie metadata from Trakt: {response.text}")
-            return None
+        url = f"{self.base_url}/movies/{imdb_id}?extended=full"
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 429:  # Too Many Requests
+                    retry_after = int(response.headers.get('Retry-After', retry_delay))
+                    logger.warning(f"Rate limited by Trakt API. Retrying after {retry_after} seconds.")
+                    time.sleep(retry_after)
+                else:
+                    logger.error(f"Failed to fetch movie metadata from Trakt: Status {response.status_code}, Response: {response.text}")
+                    
+            except RequestException as e:
+                logger.error(f"Request exception when fetching movie metadata: {str(e)}")
+            
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds... (Attempt {attempt + 1} of {max_retries})")
+                time.sleep(retry_delay)
+        
+        logger.error(f"Failed to fetch movie metadata after {max_retries} attempts")
+        return None
 
     def get_poster(self, imdb_id: str) -> str:
         return "Posters not available through Trakt API"
