@@ -10,7 +10,7 @@ from settings import get_setting
 from .models import user_required, onboarding_required 
 from extensions import app_start_time
 import time 
-from database import get_recently_added_items, get_poster_url, get_collected_counts
+from database import get_recently_added_items, get_poster_url, get_collected_counts, get_recently_upgraded_items
 from debrid.real_debrid import get_active_downloads, check_daily_usage
 import logging
 from metadata.metadata import get_show_airtime_by_imdb_id
@@ -205,7 +205,20 @@ def index():
     recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
     recently_added_end = time.time()
     logging.debug(f"Time for get_recently_added_items: {recently_added_end - recently_added_start:.2f} seconds")
-    
+
+    # Fetch recently upgraded items from the database
+    upgrade_enabled = get_setting('Scraping', 'enable_upgrading', 'False')
+    upgrade_enabled_set = bool(upgrade_enabled)
+    if upgrade_enabled_set:
+        upgrading_enabled = True
+        recently_upgraded_start = time.time()
+        recently_upgraded = asyncio.run(get_recently_upgraded_items(upgraded_limit=5))
+        recently_upgraded_end = time.time()
+        logging.debug(f"Time for get_recently_upgraded_items: {recently_upgraded_end - recently_upgraded_start:.2f} seconds")
+    else:
+        upgrading_enabled = False
+        recently_upgraded=''
+        
     cookie_value = request.cookies.get('use24HourFormat')
     use_24hour_format = cookie_value == 'true' if cookie_value is not None else True
     
@@ -229,6 +242,21 @@ def index():
     for item in recently_added['movies'] + recently_added['shows']:
         logging.debug(f"Item collected_at: {item.get('collected_at')}")
         logging.debug(f"Item formatted_collected_at: {item.get('formatted_collected_at')}")
+
+    # Format times for recently upgraded items
+    if upgrade_enabled_set:
+        for item in recently_upgraded['upgraded']:
+            if 'collected_at' in item:
+                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
+            else:
+                item['formatted_collected_at'] = 'Unknown'
+
+        logging.debug(f"use_24hour_format: {use_24hour_format}")
+        for item in recently_upgraded['upgraded']:
+            logging.debug(f"Item collected_at: {item.get('collected_at')}")
+            logging.debug(f"Item formatted_collected_at: {item.get('formatted_collected_at')}")
+        recently_upgraded = recently_upgraded['upgraded']
 
     # Timing for daily_usage
     daily_usage_start = time.time()
@@ -258,6 +286,7 @@ def index():
         'tomorrow': (now + timedelta(days=1)).date(),
         'recently_added_movies': recently_added['movies'],
         'recently_added_shows': recently_added['shows'],
+        'recently_upgraded': recently_upgraded,
         'use_24hour_format': use_24hour_format,
         'recently_aired': recently_aired,
         'airing_soon': airing_soon,
@@ -267,7 +296,8 @@ def index():
         'limit_downloads': limit_downloads,
         'daily_usage': daily_usage['used'],
         'daily_limit': daily_usage['limit'],
-        'tmdb_api_key_set': tmdb_api_key_set
+        'tmdb_api_key_set': tmdb_api_key_set,
+        'upgrading_enabled': upgrading_enabled
     }
     
     compact_view = request.cookies.get('compact_view', 'false').lower() == 'true'
@@ -307,12 +337,30 @@ def set_time_preference():
         else:
             item['formatted_collected_at'] = 'Unknown'
     
+    upgrade_enabled = get_setting('Scraping', 'enable_upgrading', 'False')
+    upgrade_enabled_set = bool(upgrade_enabled)
+    if upgrade_enabled_set:
+        upgrading_enabled = True
+        recently_upgraded = asyncio.run(get_recently_upgraded_items(upgraded_limit=5))
+        for item in recently_upgraded['upgraded']:
+            if 'collected_at' in item:
+                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
+            else:
+                item['formatted_collected_at'] = 'Unknown'
+        recently_upgraded = recently_upgraded['upgraded']        
+    else:
+        upgrading_enabled = False
+        recently_upgraded=''
+        
     response = make_response(jsonify({
         'status': 'OK', 
         'use24HourFormat': use_24hour_format,
         'recently_aired': recently_aired,
         'airing_soon': airing_soon,
         'upcoming_releases': upcoming_releases,
+        'recently_upgraded': recently_upgraded,
+        'upgrading_enabled': upgrading_enabled,
         'recently_added': recently_added
     }))
     response.set_cookie('use24HourFormat', 
