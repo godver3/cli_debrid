@@ -34,6 +34,9 @@ def migrate_schema():
         if 'upgrading_from' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN upgrading_from TEXT')
             logging.info("Successfully added upgrading_from column to media_items table.")
+        if 'blacklisted_date' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN blacklisted_date TIMESTAMP')
+            logging.info("Successfully added blacklisted_date column to media_items table.")
 
         logging.info("Successfully added new columns to media_items table.")
 
@@ -106,7 +109,8 @@ def create_tables():
                 file_path TEXT,
                 runtime INTEGER,  -- Add the runtime column
                 alternate_title TEXT,
-                upgrading_from TEXT
+                upgrading_from TEXT,
+                blacklisted_date TIMESTAMP
             )
         ''')
 
