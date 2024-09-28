@@ -53,7 +53,8 @@ select#collection_type,
 select#wanted_source,
 select#queue_select,
 select#action_select,
-select#target_queue, .debug-container a {
+select#target_queue, .debug-container a,
+select#task_select {
     padding: 10px;
     background-color: #3a3a3a;
     border: 1px solid #555;

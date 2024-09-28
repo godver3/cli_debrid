@@ -2,7 +2,7 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
 
-from database import get_all_media_items, get_media_item_by_id, update_media_item_state
+from database import get_all_media_items, get_media_item_by_id, update_media_item_state, update_blacklisted_date
 from settings import get_setting
 
 class BlacklistedQueue:
@@ -37,13 +37,26 @@ class BlacklistedQueue:
         items_to_unblacklist = []
 
         for item in self.items:
-            item_id = item['id']
+            if 'blacklisted_date' not in item or item['blacklisted_date'] is None:
+                item['blacklisted_date'] = current_time
+                update_blacklisted_date(item['id'], item['blacklisted_date'])
+                logging.warning(f"Item {queue_manager.generate_identifier(item)} had no blacklisted_date. Setting it to current time.")
+            
             item_identifier = queue_manager.generate_identifier(item)
-            time_blacklisted = current_time - self.blacklist_times[item_id]
-
-            if time_blacklisted >= blacklist_duration:
-                items_to_unblacklist.append(item)
-                logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Unblacklisting.")
+            try:
+                # Convert blacklisted_date to datetime if it's a string
+                if isinstance(item['blacklisted_date'], str):
+                    item['blacklisted_date'] = datetime.fromisoformat(item['blacklisted_date'])
+                
+                time_blacklisted = current_time - item['blacklisted_date']
+                logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Will be unblacklisted in {blacklist_duration.days - time_blacklisted.days} days.")
+                if time_blacklisted >= blacklist_duration:
+                    items_to_unblacklist.append(item)
+                    logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Unblacklisting.")
+            except (TypeError, ValueError) as e:
+                logging.error(f"Error processing blacklisted item {item_identifier}: {str(e)}")
+                logging.error(f"Item details: {item}")
+                continue
 
         for item in items_to_unblacklist:
             self.unblacklist_item(queue_manager, item)
@@ -64,7 +77,12 @@ class BlacklistedQueue:
         item_identifier = queue_manager.generate_identifier(item)
         update_media_item_state(item_id, 'Blacklisted')
         
+        # Update the blacklisted_date in the database
+        blacklisted_date = datetime.now()
+        update_blacklisted_date(item_id, blacklisted_date)
+        
         # Add to blacklisted queue
+        item['blacklisted_date'] = blacklisted_date  # Store as datetime object
         self.add_item(item)
         
         # Remove from current queue
@@ -72,7 +90,7 @@ class BlacklistedQueue:
         if current_queue:
             queue_manager.queues[current_queue].remove_item(item)
         
-        logging.info(f"Moved item {item_identifier} to Blacklisted state")
+        logging.info(f"Moved item {item_identifier} to Blacklisted state and updated blacklisted_date")
 
     def blacklist_old_season_items(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
