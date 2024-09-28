@@ -102,11 +102,14 @@ def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
 
 def is_regex(pattern):
     """Check if a pattern is likely to be a regex."""
-    return any(char in pattern for char in r'.*?+^$()[]{}|\\')
+    return any(char in pattern for char in r'.*?+^$()[]{}|\\') and not (pattern.startswith('"') and pattern.endswith('"'))
 
 def smart_search(pattern, text):
     """Perform either regex search or simple string matching."""
-    if is_regex(pattern):
+    if pattern.startswith('"') and pattern.endswith('"'):
+        # Remove quotes and perform case-insensitive substring search
+        return pattern[1:-1].lower() in text.lower()
+    elif is_regex(pattern):
         try:
             return re.search(pattern, text, re.IGNORECASE) is not None
         except re.error:
