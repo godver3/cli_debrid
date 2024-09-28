@@ -1,7 +1,7 @@
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask.json import jsonify
 from initialization import get_all_wanted_from_enabled_sources
-from run_program import get_and_add_recent_collected_from_plex, get_and_add_all_collected_from_plex
+from run_program import get_and_add_recent_collected_from_plex, get_and_add_all_collected_from_plex, ProgramRunner
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
 from settings import get_all_settings, get_setting, set_setting
 import logging
@@ -20,6 +20,7 @@ from datetime import datetime
 from notifications import send_notifications
 import requests
 from datetime import datetime, timedelta
+from queue_manager import QueueManager
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -543,3 +544,53 @@ def move_to_upgrading():
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         conn.close()
+
+@debug_bp.route('/run_task', methods=['POST'])
+@admin_required
+def run_task():
+    task_name = request.json.get('task_name')
+    if not task_name:
+        return jsonify({'success': False, 'error': 'Task name is required'}), 400
+
+    program_runner = ProgramRunner()
+    queue_manager = QueueManager()
+
+    tasks = {
+        'wanted': queue_manager.process_wanted,
+        'scraping': queue_manager.process_scraping,
+        'adding': queue_manager.process_adding,
+        'checking': queue_manager.process_checking,
+        'sleeping': queue_manager.process_sleeping,
+        'unreleased': queue_manager.process_unreleased,
+        'blacklisted': queue_manager.process_blacklisted,
+        'pending_uncached': queue_manager.process_pending_uncached,
+        'upgrading': queue_manager.process_upgrading,
+        'task_plex_full_scan': program_runner.task_plex_full_scan,
+        'task_debug_log': program_runner.task_debug_log,
+        'task_refresh_release_dates': program_runner.task_refresh_release_dates,
+        'task_purge_not_wanted_magnets_file': program_runner.task_purge_not_wanted_magnets_file,
+        'task_generate_airtime_report': program_runner.task_generate_airtime_report,
+        'task_check_service_connectivity': program_runner.task_check_service_connectivity,
+        'task_send_notifications': program_runner.task_send_notifications,
+    }
+
+    if task_name not in tasks:
+        return jsonify({'success': False, 'error': 'Invalid task name'}), 400
+
+    try:
+        result = tasks[task_name]()
+        return jsonify({'success': True, 'message': f'Task {task_name} executed successfully', 'result': result}), 200
+    except Exception as e:
+        logging.error(f"Error executing task {task_name}: {str(e)}")
+        return jsonify({'success': False, 'error': f'Error executing task {task_name}: {str(e)}'}), 500
+
+@debug_bp.route('/get_available_tasks', methods=['GET'])
+@admin_required
+def get_available_tasks():
+    tasks = [
+        'wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted',
+        'pending_uncached', 'upgrading', 'task_plex_full_scan', 'task_debug_log',
+        'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
+        'task_generate_airtime_report', 'task_check_service_connectivity', 'task_send_notifications'
+    ]
+    return jsonify({'tasks': tasks}), 200
