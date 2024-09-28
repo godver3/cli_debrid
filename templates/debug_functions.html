@@ -150,6 +150,18 @@
                 <button type="submit">Move to Upgrading</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Run Task Manually</h3>
+            <form id="run-task-form">
+                <div class="form-group">
+                    <label for="task_select">Select Task:</label>
+                    <select id="task_select" name="task_name">
+                        <!-- Options will be populated dynamically -->
+                    </select>
+                </div>
+                <button type="submit">Run Task</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -160,7 +172,7 @@
         const bulkActionForm = document.getElementById('bulk-queue-action-form');
         
         forms.forEach(form => {
-            if (form.id !== 'send-test-notification-form' && form.id !== 'get-collected-form' && form.id !== 'get-wanted-form') {
+            if (form.id !== 'send-test-notification-form' && form.id !== 'get-collected-form' && form.id !== 'get-wanted-form' && form.id !== 'run-task-form') {
                 form.addEventListener('submit', function(e) {
                     e.preventDefault();
                     const url = form.action;
@@ -672,6 +684,65 @@
                         showPopup({
                             type: POPUP_TYPES.ERROR,
                             message: 'An error occurred',
+                            title: 'Error'
+                        });
+                    });
+                }
+            });
+        });
+
+        // Fetch available tasks and populate the select element
+        fetch('/debug/get_available_tasks')
+            .then(response => response.json())
+            .then(data => {
+                const taskSelect = document.getElementById('task_select');
+                data.tasks.forEach(task => {
+                    const option = document.createElement('option');
+                    option.value = task;
+                    option.textContent = task;
+                    taskSelect.appendChild(option);
+                });
+            })
+            .catch(error => console.error('Error fetching available tasks:', error));
+
+        // Add event listener for the run task form
+        const runTaskForm = document.getElementById('run-task-form');
+        runTaskForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const taskName = document.getElementById('task_select').value;
+            
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: `Are you sure you want to run the task "${taskName}"?`,
+                title: 'Confirmation',
+                onConfirm: () => {
+                    Loading.show();
+                    fetch('/debug/run_task', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ task_name: taskName }),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        Loading.hide();
+                        if (data.success) {
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: data.message,
+                                title: 'Success'
+                            });
+                        } else {
+                            throw new Error(data.error);
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: error.message || 'An error occurred while running the task',
                             title: 'Error'
                         });
                     });

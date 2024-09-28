@@ -166,3 +166,20 @@ def update_media_item(item_id: int, **kwargs):
         logging.error(f"Error updating media item ID {item_id}: {str(e)}")
     finally:
         conn.close()
+
+@retry_on_db_lock()
+def update_blacklisted_date(item_id: int, blacklisted_date: datetime):
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET blacklisted_date = ?, last_updated = ?
+            WHERE id = ?
+        ''', (blacklisted_date, datetime.now(), item_id))
+        conn.commit()
+        logging.info(f"Updated blacklisted_date to {blacklisted_date} for item ID {item_id}")
+    except Exception as e:
+        logging.error(f"Error updating blacklisted_date for item ID {item_id}: {str(e)}")
+        raise
+    finally:
+        conn.close()
