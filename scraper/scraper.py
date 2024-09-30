@@ -133,7 +133,8 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
     
     # Use guessit with content type and prepared query title
     guessit_type = 'movie' if content_type.lower() == 'movie' else 'episode'
-    guessit_result = guessit(result_title, {'type': guessit_type, 'expected_title': [guessit_query_title]})
+    #guessit_result = guessit(result_title, {'type': guessit_type, 'expected_title': [guessit_query_title]})
+    guessit_result = guessit(result_title, {'type': guessit_type})
     
     guessit_title = guessit_result.get('title', '')
     guessit_title = normalize_title(guessit_title)
