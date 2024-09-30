@@ -83,9 +83,13 @@ def add_collected_items(media_items_batch, recent=False):
                         all_valid_filenames.add(filename)
                         
                 imdb_id = item.get('imdb_id') or None
-                tmdb_id = item.get('tmdb_id')
+                tmdb_id = item.get('tmdb_id') or None
                 normalized_title = normalize_string(item.get('title', 'Unknown'))
                 item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+
+                if imdb_id is None and tmdb_id is None:
+                    logging.warning(f"Skipping item as neither imdb_id nor tmdb_id is provided: {item_identifier}. This item has likely not been matched correctly. See item title: {item.get('title', 'Unknown')}")
+                    continue
 
                 for location in locations:
                     filename = os.path.basename(location)
@@ -126,7 +130,9 @@ def add_collected_items(media_items_batch, recent=False):
                                     'imdb_id': existing_item['imdb_id'],
                                     'upgrading_from': existing_item['upgrading_from'],
                                     'filled_by_torrent_id': existing_item.get('filled_by_torrent_id'),
-                                    'version': existing_item['version']
+                                    'version': existing_item['version'],
+                                    'season_number': existing_item.get('season_number'),  # Add this line
+                                    'episode_number': existing_item.get('episode_number')  # Add this line
                                 }
                                 remove_original_item_from_plex(upgrade_item)
                                 remove_original_item_from_account(upgrade_item)
@@ -268,6 +274,26 @@ def add_collected_items(media_items_batch, recent=False):
     finally:
         conn.close()
 
+def generate_identifier(item: Dict[str, Any]) -> str:
+    if item.get('type') == 'movie':
+        return f"{item.get('title')} ({item.get('year')})"
+    else:
+        season = item.get('season_number', '00')
+        episode = item.get('episode_number', '00')
+        
+        # Convert to int if possible, otherwise use string formatting
+        try:
+            season = f"{int(season):02d}"
+        except (ValueError, TypeError):
+            season = str(season).zfill(2)
+        
+        try:
+            episode = f"{int(episode):02d}"
+        except (ValueError, TypeError):
+            episode = str(episode).zfill(2)
+        
+        return f"{item.get('title')} S{season}E{episode}"
+
 def remove_original_item_from_plex(item: Dict[str, Any]):
     from utilities.plex_functions import remove_file_from_plex
 
@@ -318,23 +344,3 @@ def remove_original_item_from_results(item: Dict[str, Any], media_items_batch: L
             logging.warning(f"No original file path found for {item_identifier}")
     except Exception as e:
         logging.error(f"Error in remove_original_item_from_results: {str(e)}", exc_info=True)
-
-def generate_identifier(item: Dict[str, Any]) -> str:
-    if item.get('type') == 'movie':
-        return f"{item.get('title')} ({item.get('year')})"
-    else:
-        season = item.get('season_number', '00')
-        episode = item.get('episode_number', '00')
-        
-        # Convert to int if possible, otherwise use string formatting
-        try:
-            season = f"{int(season):02d}"
-        except ValueError:
-            season = str(season).zfill(2)
-        
-        try:
-            episode = f"{int(episode):02d}"
-        except ValueError:
-            episode = str(episode).zfill(2)
-        
-        return f"{item.get('title')} S{season}E{episode}"

@@ -9,6 +9,7 @@ from utilities.plex_functions import remove_file_from_plex
 import os
 import pickle
 from pathlib import Path
+from database.database_writing import update_media_item
 
 class UpgradingQueue:
     def __init__(self):
@@ -109,8 +110,11 @@ class UpgradingQueue:
                 upgrade_info = self.upgrade_times.get(item_id)
                 
                 if upgrade_info:
-                    time_in_queue = current_time - upgrade_info['start_time']
+                    collected_at = datetime.fromisoformat(item['original_collected_at']) if isinstance(item['original_collected_at'], str) else item['original_collected_at']
+                    time_in_queue = current_time - collected_at
                     
+                    logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
+
                     # Check if the item has been in the queue for more than 24 hours
                     if time_in_queue > timedelta(hours=24):
                         logging.info(f"Item {item_id} has been in the Upgrading queue for over 24 hours.")
@@ -118,6 +122,8 @@ class UpgradingQueue:
                         # Remove the item from the queue
                         self.remove_item(item)
                         
+                        update_media_item(item_id, state="Collected")
+
                         logging.info(f"Moved item {item_id} to Collected state after 24 hours in Upgrading queue.")
                     
                     # Check if an hour has passed since the last scrape
@@ -178,6 +184,9 @@ class UpgradingQueue:
             current_title = item.get('filled_by_title')
             current_position = next((index for index, result in enumerate(results) if result.get('title') == current_title), None)
 
+            for index, result in enumerate(results):
+                logging.info(f"Result {index}: {result['title']}")
+
             if current_position is not None:
                 logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the scrape results")
                 logging.info(f"Current item title: {current_title}")
@@ -191,7 +200,7 @@ class UpgradingQueue:
                     # Use AddingQueue to attempt the upgrade
                     adding_queue = AddingQueue()
                     uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
-                    success = adding_queue.process_item(queue_manager, item, better_results, uncached_handling)
+                    success = adding_queue.process_item(queue_manager, item, better_results, uncached_handling, upgrade=True)
 
                     if success:
                         logging.info(f"Successfully initiated upgrade for item {item_identifier}")

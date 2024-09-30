@@ -165,12 +165,21 @@ document.addEventListener('DOMContentLoaded', () => {
 }
 
     function updateRecentlyAired(recentlyAired) {
-        const container = document.querySelector('.stats-box.recently-aired');
+        updateSection('.stats-box.recently-aired', recentlyAired);
+    }
+
+    function updateAiringSoon(airingSoon) {
+        updateSection('.stats-box.airing-soon', airingSoon);
+    }
+
+    function updateSection(selector, items) {
+        const container = document.querySelector(selector);
         if (container) {
             const ul = container.querySelector('ul') || document.createElement('ul');
-            ul.innerHTML = recentlyAired.map(item => `
+            const combinedItems = combineEpisodes(items);
+            ul.innerHTML = combinedItems.map(item => `
                 <li>
-                    <span>${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}</span>
+                    <span>${item.title} ${item.seasonEpisodes}</span>
                     <span class="air-date">${item.formatted_time}</span>
                 </li>
             `).join('');
@@ -178,17 +187,49 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function updateAiringSoon(airingSoon) {
-        const container = document.querySelector('.stats-box.airing-soon');
-        if (container) {
-            const ul = container.querySelector('ul') || document.createElement('ul');
-            ul.innerHTML = airingSoon.map(item => `
-                <li>
-                    <span>${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}</span>
-                    <span class="air-date">${item.formatted_time}</span>
-                </li>
-            `).join('');
-            if (!container.contains(ul)) container.appendChild(ul);
+    function combineEpisodes(items) {
+        const combinedMap = new Map();
+
+        items.forEach(item => {
+            const key = item.title;
+            if (!combinedMap.has(key)) {
+                combinedMap.set(key, { ...item, seasons: new Set(), episodes: new Map() });
+            }
+            const combined = combinedMap.get(key);
+            combined.seasons.add(item.season);
+            if (!combined.episodes.has(item.season)) {
+                combined.episodes.set(item.season, new Set());
+            }
+            combined.episodes.get(item.season).add(item.episode);
+            // Keep the most recent formatted_time
+            if (!combined.formatted_time || new Date(item.air_date) > new Date(combined.air_date)) {
+                combined.formatted_time = item.formatted_time;
+                combined.air_date = item.air_date;
+            }
+        });
+
+        return Array.from(combinedMap.values()).map(item => ({
+            ...item,
+            seasonEpisodes: formatSeasonEpisodes(item.seasons, item.episodes)
+        }));
+    }
+
+    function formatSeasonEpisodes(seasons, episodes) {
+        const sortedSeasons = Array.from(seasons).sort((a, b) => a - b);
+        const formatSeason = (season) => `S${String(season).padStart(2, '0')}`;
+        
+        if (sortedSeasons.length === 1) {
+            const season = sortedSeasons[0];
+            const seasonEpisodes = Array.from(episodes.get(season)).sort((a, b) => a - b);
+            if (seasonEpisodes.length === 1) {
+                return `${formatSeason(season)}E${String(seasonEpisodes[0]).padStart(2, '0')}`;
+            } else if (seasonEpisodes.length === 2) {
+                return `${formatSeason(season)}E${String(seasonEpisodes[0]).padStart(2, '0')},E${String(seasonEpisodes[1]).padStart(2, '0')}`;
+            } else {
+                return `${formatSeason(season)}E${String(seasonEpisodes[0]).padStart(2, '0')}-E${String(seasonEpisodes[seasonEpisodes.length - 1]).padStart(2, '0')}`;
+            }
+        } else {
+            return sortedSeasons.map(formatSeason).join(', ');
         }
     }
 

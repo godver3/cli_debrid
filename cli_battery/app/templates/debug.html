@@ -5,6 +5,8 @@
 {% block content %}
 <h2>Debug - Database Content</h2>
 
+<button id="deleteAllItems">Delete All Items</button>
+
 <h3>Items</h3>
 <table id="itemTable">
     <thead>
@@ -131,6 +133,22 @@ document.querySelectorAll('.toggleDetails').forEach(button => {
             this.textContent = 'Show Details';
         }
     });
+});
+
+document.getElementById('deleteAllItems').addEventListener('click', function() {
+    if (confirm('Are you sure you want to delete all items? This action cannot be undone.')) {
+        fetch('/api/debug/delete_all_items', {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('Error deleting all items: ' + (data.error || 'Unknown error'));
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

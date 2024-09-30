@@ -571,6 +571,28 @@ function updateSettings() {
         console.warn("Zurg Shows Folder input element not found!");
     }
 
+    const disableNotWantedCheck = document.getElementById('debug-disable_not_wanted_check');
+    console.log("Disable Not Wanted Check element:", disableNotWantedCheck);
+    
+    if (disableNotWantedCheck) {
+        settingsData['Debug']['disable_not_wanted_check'] = disableNotWantedCheck.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Disable Not Wanted Check checkbox element not found!");
+    }
+
+    const blacklistDuration = document.getElementById('queue-blacklist_duration');
+    console.log("Blacklist Duration element:", blacklistDuration);
+    
+    if (blacklistDuration) {
+        settingsData['Queue']['blacklist_duration'] = parseInt(blacklistDuration.value) || 30;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Blacklist Duration input element not found!");
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {
