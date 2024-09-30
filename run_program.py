@@ -19,6 +19,8 @@ import requests
 from pathlib import Path
 import pickle
 from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
+import ntplib
+import os
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -60,6 +62,7 @@ class ProgramRunner:
             'task_generate_airtime_report': 3600,
             'task_check_service_connectivity': 60,
             'task_send_notifications': 300,  # Run every 5 minutes (300 seconds)
+            'task_sync_time': 3600  # Run every hour
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -79,7 +82,8 @@ class ProgramRunner:
             'task_refresh_release_dates',
             'task_generate_airtime_report',
             'task_check_service_connectivity',
-            'task_send_notifications'
+            'task_send_notifications',
+            'task_sync_time'
         }
         
         # Add this line to store content sources
@@ -195,6 +199,16 @@ class ProgramRunner:
 
     # Update this method to use the cached content sources
     def process_queues(self):
+        self.update_heartbeat()
+        self.check_heartbeat()
+        self.check_task_health()
+        current_time = time.time()
+        time_drift = current_time - self.last_run_times['task_debug_log'] - self.task_intervals['task_debug_log']
+        
+        if abs(time_drift) > 60:  # If drift is more than 60 seconds
+            logging.warning(f"Detected time drift of {time_drift:.2f} seconds. Resetting task timers.")
+            self.last_run_times = {task: current_time for task in self.task_intervals}
+
         self.queue_manager.update_all_queues()
 
         for queue_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached', 'upgrading']:
@@ -215,6 +229,8 @@ class ProgramRunner:
             self.task_generate_airtime_report()
         if self.should_run_task('task_send_notifications'):
             self.task_send_notifications()
+        if self.should_run_task('task_sync_time'):
+            self.sync_time()
             
         # Process content source tasks
         for source, data in self.get_content_sources().items():
@@ -256,13 +272,18 @@ class ProgramRunner:
     def safe_process_queue(self, queue_name: str):
         try:
             logging.debug(f"Processing {queue_name} queue")
+            start_time = time.time()
             
             # Get the appropriate process method
             process_method = getattr(self.queue_manager, f'process_{queue_name}')
             
             # Call the process method and capture any return value
             result = process_method()
-                     
+            
+            duration = time.time() - start_time
+            if duration > 300:  # 5 minutes
+                logging.warning(f"{queue_name} queue processing took {duration:.2f} seconds")
+            
             # Return the result if any
             return result
         
@@ -390,13 +411,54 @@ class ProgramRunner:
 
     def run(self):
         self.run_initialization()
-            
+        
         while self.running:
-            self.process_queues()
-            time.sleep(1)  # Main loop runs every second
+            try:
+                self.process_queues()
+            except Exception as e:
+                logging.error(f"Unexpected error in main loop: {str(e)}")
+                logging.error(traceback.format_exc())
+            finally:
+                time.sleep(1)  # Main loop runs every second
+
+        logging.warning("Program has stopped running")
 
     def invalidate_content_sources_cache(self):
         self.content_sources = None
+
+    def sync_time(self):
+        try:
+            ntp_client = ntplib.NTPClient()
+            response = ntp_client.request('pool.ntp.org', version=3)
+            system_time = time.time()
+            ntp_time = response.tx_time
+            offset = ntp_time - system_time
+            
+            if abs(offset) > 1:  # If offset is more than 1 second
+                logging.warning(f"System time is off by {offset:.2f} seconds. Adjusting task timers.")
+                self.last_run_times = {task: ntp_time for task in self.task_intervals}
+        except:
+            logging.error("Failed to synchronize time with NTP server")
+
+    def check_task_health(self):
+        current_time = time.time()
+        for task, last_run_time in self.last_run_times.items():
+            if current_time - last_run_time > self.task_intervals[task] * 2:
+                logging.warning(f"Task {task} hasn't run in a while. Resetting timer.")
+                self.last_run_times[task] = current_time
+
+    def update_heartbeat(self):
+        with open('/tmp/program_heartbeat', 'w') as f:
+            f.write(str(int(time.time())))
+
+    def check_heartbeat(self):
+        if os.path.exists('/tmp/program_heartbeat'):
+            with open('/tmp/program_heartbeat', 'r') as f:
+                last_heartbeat = int(f.read())
+            if time.time() - last_heartbeat > 300:  # 5 minutes
+                logging.error("Program heartbeat is stale. Restarting.")
+                self.stop()
+                self.start()
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
