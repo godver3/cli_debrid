@@ -87,9 +87,11 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     query_params = {'Query': params}
     
     if enabled_indexers:
-        query_params.update({f'Tracker[]': enabled_indexers.split(',')})
+        query_params['Tracker'] = [indexer.strip() for indexer in enabled_indexers.split(',')]
 
     full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
+
+    logging.info(f"Jackett URL: {full_url}")
 
     try:
         response = api.get(full_url, headers={'accept': 'application/json'})
