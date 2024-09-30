@@ -20,6 +20,10 @@ class PendingUncachedQueue:
         self.items = [i for i in self.items if i['id'] != item['id']]
 
     def process(self, queue_manager):
+        from queue_manager import QueueManager
+
+        queue_manager = QueueManager()
+        
         logging.debug("Processing pending uncached queue")
         active_downloads, download_limit = get_active_downloads()
         
@@ -42,5 +46,8 @@ class PendingUncachedQueue:
                     break  # Process one item at a time
                 else:
                     logging.error(f"Failed to add pending uncached item: {item_identifier}")
+                    queue_manager.move_to_upgrading(item, "Pending Uncached")
+        else:
+            logging.info("Download limit reached. Skipping pending uncached item.")
 
     # Add other methods as needed
