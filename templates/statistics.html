@@ -618,10 +618,25 @@
                 <h3>Recently Aired</h3>
                 {% if stats.recently_aired %}
                     <ul>
-                    {% for item in stats.recently_aired %}
+                    {% for item in stats.recently_aired | groupby('title') %}
                         <li>
-                            <span>{{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }}</span>
-                            <span class="air-date">{{ item.formatted_time }}</span>
+                            <span>{{ item.grouper }} 
+                                {% set seasons = item.list | map(attribute='season') | unique | list %}
+                                {% if seasons | length == 1 %}
+                                    S{{ '%02d' | format(seasons[0]) }}
+                                    {% set episodes = item.list | map(attribute='episode') | list %}
+                                    {% if episodes | length == 1 %}
+                                        E{{ '%02d' | format(episodes[0]) }}
+                                    {% elif episodes | length == 2 %}
+                                        E{{ '%02d' | format(episodes[0]) }},E{{ '%02d' | format(episodes[1]) }}
+                                    {% else %}
+                                        E{{ '%02d' | format(episodes[0]) }}-E{{ '%02d' | format(episodes[-1]) }}
+                                    {% endif %}
+                                {% else %}
+                                    {{ seasons | map('string') | map('zfill', 2) | map('prepend', 'S') | join(', ') }}
+                                {% endif %}
+                            </span>
+                            <span class="air-date">{{ item.list[-1].formatted_time }}</span>
                         </li>
                     {% endfor %}
                     </ul>
@@ -634,10 +649,25 @@
                 <h3>Airing Soon</h3>
                 {% if stats.airing_soon %}
                     <ul>
-                    {% for item in stats.airing_soon %}
+                    {% for item in stats.airing_soon | groupby('title') %}
                         <li>
-                            <span>{{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }}</span>
-                            <span class="air-date" data-original-time="{{ item.air_datetime.strftime('%H:%M') }}">{{ item.formatted_time }}</span>
+                            <span>{{ item.grouper }} 
+                                {% set seasons = item.list | map(attribute='season') | unique | list %}
+                                {% if seasons | length == 1 %}
+                                    S{{ '%02d' | format(seasons[0]) }}
+                                    {% set episodes = item.list | map(attribute='episode') | list %}
+                                    {% if episodes | length == 1 %}
+                                        E{{ '%02d' | format(episodes[0]) }}
+                                    {% elif episodes | length == 2 %}
+                                        E{{ '%02d' | format(episodes[0]) }},E{{ '%02d' | format(episodes[1]) }}
+                                    {% else %}
+                                        E{{ '%02d' | format(episodes[0]) }}-E{{ '%02d' | format(episodes[-1]) }}
+                                    {% endif %}
+                                {% else %}
+                                    {{ seasons | map('string') | map('zfill', 2) | map('prepend', 'S') | join(', ') }}
+                                {% endif %}
+                            </span>
+                            <span class="air-date" data-original-time="{{ item.list[-1].air_datetime.strftime('%H:%M') }}">{{ item.list[-1].formatted_time }}</span>
                         </li>
                     {% endfor %}
                     </ul>

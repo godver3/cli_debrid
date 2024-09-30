@@ -61,10 +61,12 @@ class MetadataManager:
         now = datetime.now(timezone.utc)
         
         # Add random variation to the staleness threshold
-        variation = random.choice([-5, -3, -1, 1, 3, 5])
-        adjusted_threshold = max(settings.staleness_threshold + variation, 1)
+        day_variation = random.choice([-5, -3, -1, 1, 3, 5])
+        hour_variation = random.randint(-12, 12)
         
-        stale_threshold = timedelta(days=adjusted_threshold)
+        adjusted_threshold = max(settings.staleness_threshold + day_variation, 1)
+        
+        stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
         is_stale = (now - last_updated) > stale_threshold
                 
         return is_stale

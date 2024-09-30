@@ -2,6 +2,7 @@ from flask import jsonify, Blueprint
 from app.settings import Settings
 from app.metadata_manager import MetadataManager
 from app.logger_config import logger
+from app.database import DatabaseManager  # Add this import
 import json
 
 settings = Settings()
@@ -108,3 +109,17 @@ def tmdb_to_imdb(tmdb_id):
     except Exception as e:
         logger.error(f"Error in tmdb_to_imdb conversion: {str(e)}", exc_info=True)
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+
+@api_bp.route('/api/debug/delete_all_items', methods=['POST'])
+def delete_all_items():
+    try:
+        success = DatabaseManager.delete_all_items()
+        if success:
+            logger.info("Successfully deleted all items")
+            return jsonify({"success": True, "message": "All items deleted successfully"})
+        else:
+            logger.warning("Failed to delete all items")
+            return jsonify({"success": False, "error": "Failed to delete all items"}), 500
+    except Exception as e:
+        logger.error(f"Error deleting all items: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500

@@ -3,11 +3,13 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import sys, os
 import json
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from settings import get_setting
 from cli_battery.app.direct_api import DirectAPI
+from cli_battery.app.trakt_metadata import TraktMetadata
 
 def parse_json_string(s):
     try:
@@ -134,10 +136,14 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
 
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     processed_items = {'movies': [], 'episodes': []}
+    trakt_metadata = TraktMetadata()
 
     for index, item in enumerate(media_items, 1):
-
         try:
+            if not trakt_metadata._check_rate_limit():
+                logging.warning("Trakt rate limit reached. Waiting for 5 minutes before continuing.")
+                time.sleep(300)  # Wait for 5 minutes
+
             metadata = get_metadata(imdb_id=item.get('imdb_id'), tmdb_id=item.get('tmdb_id'), item_media_type=item.get('media_type'))
             if not metadata:
                 logging.warning(f"Could not fetch metadata for item: {item}")
