@@ -25,3 +25,4 @@ colorlog==6.8.2
 iso8601==2.1.0
 Pillow==10.4.0
 supervisor==4.2.5
+ntplib==0.4.0
