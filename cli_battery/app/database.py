@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, LargeBinary, Text, JSON
 from sqlalchemy.orm import sessionmaker, scoped_session, relationship
 from sqlalchemy.ext.declarative import declarative_base
-from flask import current_app
+from flask import current_app, jsonify
 from datetime import datetime
 from sqlalchemy import or_, func, cast, String
 from sqlalchemy.orm import joinedload, selectinload
@@ -177,6 +177,21 @@ class DatabaseManager:
             if item and item.poster:
                 return item.poster.image_data
         return None
+
+    @staticmethod
+    def delete_all_items():
+        with Session() as session:
+            try:
+                session.query(Item).delete()
+                session.query(Metadata).delete()
+                session.query(Season).delete()
+                session.query(Poster).delete()
+                session.commit()
+                return True
+            except Exception as e:
+                logger.error(f"Error deleting all items: {str(e)}")
+                session.rollback()
+                return False
 
 def init_db(app):
     connection_string = 'sqlite:////user/db_content/cli_battery.db'

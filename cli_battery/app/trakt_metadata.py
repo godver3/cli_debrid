@@ -21,6 +21,7 @@ from datetime import timezone, datetime
 from collections import defaultdict
 from .trakt_auth import TraktAuth
 import traceback
+from collections import deque
 
 TRAKT_API_URL = "https://api.trakt.tv"
 CACHE_FILE = 'db_content/trakt_last_activity.pkl'
@@ -32,25 +33,54 @@ class TraktMetadata:
         self.settings = Settings()
         self.base_url = "https://api.trakt.tv"
         self.trakt_auth = TraktAuth()
-        self.client_id = self.settings.Trakt.get('client_id')
-        self.client_secret = self.settings.Trakt.get('client_secret')
-        self.redirect_uri = "http://192.168.1.51:5001/trakt_callback"
+        self.request_times = deque()
+        self.max_requests = 1000
+        self.time_window = 300  # 5 minutes in seconds
+
+    def _check_rate_limit(self):
+        current_time = time.time()
+        
+        # Remove old requests from the deque
+        while self.request_times and current_time - self.request_times[0] > self.time_window:
+            self.request_times.popleft()
+        
+        # Check if we've hit the rate limit
+        if len(self.request_times) >= self.max_requests:
+            return False
+        
+        # Add the current request time
+        self.request_times.append(current_time)
+        return True
 
     def _make_request(self, url):
+        if not self._check_rate_limit():
+            logger.warning("Rate limit reached. Waiting for 5 minutes before retrying.")
+            time.sleep(300)  # Wait for 5 minutes
+            return self._make_request(url)  # Retry the request
 
         if not self.trakt_auth.is_authenticated():
+            logger.info("Not authenticated. Attempting to refresh token.")
             if not self.trakt_auth.refresh_access_token():
-                logger.error("Failed to authenticate with Trakt.")
+                logger.error("Failed to refresh Trakt access token.")
                 return None
 
         headers = {
             'Content-Type': 'application/json',
             'trakt-api-version': '2',
-            'trakt-api-key': self.client_id,
+            'trakt-api-key': self.trakt_auth.client_id,
             'Authorization': f'Bearer {self.trakt_auth.access_token}'
         }
         try:
             response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 401:
+                logger.warning("Received 401 Unauthorized. Attempting to refresh token.")
+                if self.trakt_auth.refresh_access_token():
+                    # Update the header with the new token and retry the request
+                    headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
+                    response = requests.get(url, headers=headers, timeout=10)
+                else:
+                    logger.error("Failed to refresh Trakt access token after 401 error.")
+                    return None
             response.raise_for_status()
             return response
         except requests.exceptions.RequestException as e:
@@ -61,23 +91,6 @@ class TraktMetadata:
                 logger.error(f"Response status code: {e.response.status_code}")
                 logger.error(f"Response text: {e.response.text}")
             return None
-
-
-    def fetch_items_from_trakt(self, endpoint: str) -> List[Dict[str, Any]]:
-        if not self.headers:
-            return []
-
-        full_url = f"{TRAKT_API_URL}{endpoint}"
-
-        try:
-            response = requests.get(full_url, headers=self.headers, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching items from Trakt: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Response text: {e.response.text}")
-            return []
 
     def get_metadata(self, imdb_id: str) -> Dict[str, Any]:
         show_data = self._get_show_data(imdb_id)
@@ -166,23 +179,24 @@ class TraktMetadata:
                 show_imdb_id = show_data['ids']['imdb']
 
                 # Fetch all episodes for this show
-                _, all_episodes = self.get_show_seasons_and_episodes(show_imdb_id)
+                all_episodes, _ = self.get_show_seasons_and_episodes(show_imdb_id)
                 
                 # Cache all episodes
                 self.cached_episodes = all_episodes
 
                 # Return the requested episode
-                if episode_imdb_id in self.cached_episodes:
-                    return {
-                        'episode': self.cached_episodes[episode_imdb_id],
-                        'show': {
-                            'imdb_id': show_imdb_id,
-                            'metadata': show_data
-                        }
-                    }
+                for season in all_episodes.values():
+                    for episode in season['episodes'].values():
+                        if episode['imdb_id'] == episode_imdb_id:
+                            return {
+                                'episode': episode,
+                                'show': {
+                                    'imdb_id': show_imdb_id,
+                                    'metadata': show_data
+                                }
+                            }
 
         return None
-
 
     def get_show_episodes(self, imdb_id):
         url = f"{self.base_url}/shows/{imdb_id}/seasons?extended=full,episodes"
@@ -210,46 +224,19 @@ class TraktMetadata:
                             'overview': episode.get('overview', ''),
                             'runtime': episode.get('runtime', 0),
                             'first_aired': first_aired,
-                            'imdb_id': episode['ids'].get('imdb')  # Include the IMDb ID
+                            'imdb_id': episode['ids'].get('imdb')
                         })
             return processed_episodes
         return None
-
 
     def refresh_metadata(self, imdb_id: str) -> Dict[str, Any]:
         return self.get_metadata(imdb_id)
 
     def get_movie_metadata(self, imdb_id, max_retries=3, retry_delay=5):
-        headers = {
-            'Content-Type': 'application/json',
-            'trakt-api-version': '2',
-            'trakt-api-key': self.client_id,
-            'Authorization': f'Bearer {self.settings.Trakt["access_token"]}'
-        }
-        
         url = f"{self.base_url}/movies/{imdb_id}?extended=full"
-        
-        for attempt in range(max_retries):
-            try:
-                response = requests.get(url, headers=headers, timeout=10)
-                
-                if response.status_code == 200:
-                    return response.json()
-                elif response.status_code == 429:  # Too Many Requests
-                    retry_after = int(response.headers.get('Retry-After', retry_delay))
-                    logger.warning(f"Rate limited by Trakt API. Retrying after {retry_after} seconds.")
-                    time.sleep(retry_after)
-                else:
-                    logger.error(f"Failed to fetch movie metadata from Trakt: Status {response.status_code}, Response: {response.text}")
-                    
-            except RequestException as e:
-                logger.error(f"Request exception when fetching movie metadata: {str(e)}")
-            
-            if attempt < max_retries - 1:
-                logger.info(f"Retrying in {retry_delay} seconds... (Attempt {attempt + 1} of {max_retries})")
-                time.sleep(retry_delay)
-        
-        logger.error(f"Failed to fetch movie metadata after {max_retries} attempts")
+        response = self._make_request(url)
+        if response and response.status_code == 200:
+            return response.json()
         return None
 
     def get_poster(self, imdb_id: str) -> str:

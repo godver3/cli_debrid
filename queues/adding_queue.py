@@ -71,8 +71,7 @@ class AddingQueue:
                 logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
                 self.handle_failed_item(queue_manager, item, "Adding")
 
-    
-    def process_item(self, queue_manager, item, scrape_results, mode):
+    def process_item(self, queue_manager, item, scrape_results, mode, upgrade=False):
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Processing {mode} mode for item: {item_identifier}")
         logging.debug(f"Total scrape results: {len(scrape_results)}")
@@ -174,7 +173,10 @@ class AddingQueue:
                     logging.debug(f"Failed to process individual result {index + 1} for {item_identifier}")
     
         logging.warning(f"No results successfully processed for {item_identifier}")
-        self.handle_failed_item(queue_manager, item, "Adding")
+        
+        if not upgrade:
+            self.handle_failed_item(queue_manager, item, "Adding")
+            
         return False
 
     def sort_results_by_cache_status(self, scrape_results):
