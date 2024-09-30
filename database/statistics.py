@@ -323,7 +323,17 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         
         # Convert consolidated_movies dict to list and sort
         upgraded_list = list(media_items.values())
-        upgraded_list.sort(key=lambda x: x['collected_at'], reverse=True)
+        
+        # Log the values before sorting
+        for item in upgraded_list:
+            logging.debug(f"Before sorting: {item['title']} - collected_at: {item['collected_at']}")
+        
+        # Update the sorting key to handle None values
+        upgraded_list.sort(key=lambda x: x['collected_at'] or '', reverse=True)
+        
+        # Log the values after sorting
+        for item in upgraded_list:
+            logging.debug(f"After sorting: {item['title']} - collected_at: {item['collected_at']}")
         
         logging.debug("Before limit_and_process:")
         for upgraded in upgraded_list:
@@ -357,7 +367,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
             'upgraded': upgraded_list
         }
     except Exception as e:
-        logging.error(f"Error in get_recently_upgraded_items: {str(e)}")
+        logging.error(f"Error in get_recently_upgraded_items: {str(e)}", exc_info=True)
         return {'upgraded': []}
     finally:
         conn.close()
