@@ -176,6 +176,8 @@ class UpgradingQueue:
 
         is_multi_pack = self.check_multi_pack(item)
 
+        is_multi_pack = False
+
         # Perform scraping
         results, filtered_out = self.scraping_queue.scrape_with_fallback(item, is_multi_pack, queue_manager or self)
 

@@ -148,6 +148,16 @@ class QueueManager:
         else:
             logging.error(f"Failed to retrieve wanted item for ID: {item['id']}")
 
+    def move_to_upgrading(self, item: Dict[str, Any], from_queue: str):
+        item_identifier = self.generate_identifier(item)
+        logging.debug(f"Moving item to Upgrading: {item_identifier}")
+        update_media_item_state(item['id'], 'Upgrading')
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            self.queues["Upgrading"].add_item(updated_item)
+            self.queues[from_queue].remove_item(item)
+            logging.info(f"Moved item {item_identifier} to Upgrading queue")
+
     def move_to_scraping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Scraping: {item_identifier}")

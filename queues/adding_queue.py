@@ -160,7 +160,7 @@ class AddingQueue:
         logging.warning(f"No valid results found for {item_identifier}")
     
         # For episodes, try individual episode scraping
-        if item['type'] == 'episode':
+        if item['type'] == 'episode' and not upgrade:
             logging.info(f"Attempting individual episode scraping for {item_identifier}")
             individual_results = self.scrape_individual_episode(item)
             logging.debug(f"Individual episode scraping returned {len(individual_results)} results")
@@ -176,7 +176,7 @@ class AddingQueue:
         
         if not upgrade:
             self.handle_failed_item(queue_manager, item, "Adding")
-            
+
         return False
 
     def sort_results_by_cache_status(self, scrape_results):
