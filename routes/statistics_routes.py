@@ -232,7 +232,7 @@ def index():
 
     # Format times for recently added items
     for item in recently_added['movies'] + recently_added['shows']:
-        if 'collected_at' in item:
+        if 'collected_at' in item and item['collected_at'] is not None:
             collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
             item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
         else:
@@ -246,7 +246,7 @@ def index():
     # Format times for recently upgraded items
     if upgrade_enabled_set:
         for item in recently_upgraded['upgraded']:
-            if 'collected_at' in item:
+            if 'collected_at' in item and item['collected_at'] is not None:
                 collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
                 item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
             else:
@@ -331,7 +331,7 @@ def set_time_preference():
     # Get recently added items and format their times
     recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
     for item in recently_added['movies'] + recently_added['shows']:
-        if 'collected_at' in item:
+        if 'collected_at' in item and item['collected_at'] is not None:
             collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
             item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
         else:
@@ -343,7 +343,7 @@ def set_time_preference():
         upgrading_enabled = True
         recently_upgraded = asyncio.run(get_recently_upgraded_items(upgraded_limit=5))
         for item in recently_upgraded['upgraded']:
-            if 'collected_at' in item:
+            if 'collected_at' in item and item['collected_at'] is not None:
                 collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
                 item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
             else:
@@ -384,7 +384,7 @@ def recently_added():
 
     # Format times for recently added items
     for item in recently_added['movies'] + recently_added['shows']:
-        if 'collected_at' in item:
+        if 'collected_at' in item and item['collected_at'] is not None:
             collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
             item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
         else:
