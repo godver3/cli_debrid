@@ -116,6 +116,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Offset from the show's airtime to start scraping for new episodes. Positive values are to delay scraping, negative values are to scrape early. Requires Trakt login for accurate airtime, otherwise default of 19:00 will be used.",
             "default": "0"
+        },
+        "blacklist_duration": {
+            "type": "string",
+            "description": "Number of days after which to automatically remove blacklisted items for a re-scrape",
+            "default": "30"
         }
     },
     "Scraping": {
@@ -258,6 +263,11 @@ SETTINGS_SCHEMA = {
         "enable_reverse_order_scraping": {
             "type": "boolean",
             "description": "Enable reverse order scraping",
+            "default": False
+        },
+        "disable_not_wanted_check": {
+            "type": "boolean",
+            "description": "Disable the not wanted check for items in the queue",
             "default": False
         }
     },

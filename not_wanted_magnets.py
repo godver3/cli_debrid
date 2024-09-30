@@ -1,4 +1,5 @@
 import pickle
+from settings import get_setting
 
 def load_not_wanted_magnets():
     try:
@@ -23,6 +24,8 @@ def add_to_not_wanted(magnet):
     save_not_wanted_magnets(not_wanted)
 
 def is_magnet_not_wanted(magnet):
+    if get_setting('Debug','disable_not_wanted_check', False):
+        return False
     not_wanted = load_not_wanted_magnets()
     return magnet in not_wanted
 
@@ -45,6 +48,8 @@ def add_to_not_wanted_urls(url):
     save_not_wanted_urls(not_wanted)
 
 def is_url_not_wanted(url):
+    if get_setting('Debug','disable_not_wanted_check', False):
+        return False
     not_wanted = load_not_wanted_urls()
     file_part = url.split("file=")[-1] if "file=" in url else url
     return any(file_part in nw_url.split("file=")[-1] if "file=" in nw_url else nw_url for nw_url in not_wanted)
