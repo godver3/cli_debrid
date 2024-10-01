@@ -167,6 +167,11 @@ SETTINGS_SCHEMA = {
             "description": "Filter out adult content",
             "default": True
         },
+        "trakt_early_releases": {
+            "type": "boolean",
+            "description": "Check Trakt for early releases",
+            "default": False
+        },
         "versions": {
             "type": "dict",
 
