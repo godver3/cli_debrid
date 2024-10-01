@@ -123,7 +123,7 @@ def similarity(a: str, b: str) -> float:
 
 def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False, content_type: str = None) -> float:
     # Normalize titles
-    query_title = normalize_title(query_title)
+    query_title = normalize_title(query_title).replace('&', 'and')
     
     parsed_info = result.get('parsed_info', {})
     result_title = result.get('title', '')
@@ -133,11 +133,10 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
     
     # Use guessit with content type and prepared query title
     guessit_type = 'movie' if content_type.lower() == 'movie' else 'episode'
-    #guessit_result = guessit(result_title, {'type': guessit_type, 'expected_title': [guessit_query_title]})
     guessit_result = guessit(result_title, {'type': guessit_type})
     
     guessit_title = guessit_result.get('title', '')
-    guessit_title = normalize_title(guessit_title)
+    guessit_title = normalize_title(guessit_title).replace('&', 'and')
 
     logging.debug(f"Comparing cleaned titles - Query: '{query_title}', Guessit: '{guessit_title}'")
 
@@ -150,6 +149,9 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
         if isinstance(alternative_titles, str):
             alternative_titles = [alternative_titles]
         official_titles.extend(alternative_titles)
+        
+        # Normalize alternative titles
+        official_titles = [normalize_title(title).replace('&', 'and') for title in official_titles]
         
         similarity = match_any_title(guessit_title, official_titles)
         
@@ -968,7 +970,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 def normalize_title(title: str) -> str:
     """
     Normalize the title by replacing spaces with periods, removing certain punctuation,
-    standardizing the format, and removing non-English letters while keeping accented English letters.
+    standardizing the format, and removing non-English letters while keeping accented English letters and '&'.
     """
     # Normalize Unicode characters
     normalized = unicodedata.normalize('NFKD', title)
@@ -982,11 +984,11 @@ def normalize_title(title: str) -> str:
     # Replace multiple periods with a single period
     normalized = re.sub(r'\.+', '.', normalized)
     
-    # Keep only English letters (including accented ones), numbers, periods, and hyphens
-    normalized = ''.join(c for c in normalized if c.isalnum() or c in '.-' or (unicodedata.category(c).startswith('L') and ord(c) < 0x300))
+    # Keep only English letters (including accented ones), numbers, periods, hyphens, and '&'
+    normalized = ''.join(c for c in normalized if c.isalnum() or c in '.-&' or (unicodedata.category(c).startswith('L') and ord(c) < 0x300))
     
-    # Remove any remaining non-ASCII characters
-    normalized = re.sub(r'[^\x00-\x7F]+', '', normalized)
+    # Remove any remaining non-ASCII characters, except '&'
+    normalized = ''.join(c for c in normalized if ord(c) < 128 or c == '&')
     
     # Remove leading and trailing periods
     normalized = normalized.strip('.')
@@ -1041,7 +1043,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             version_settings = {}
         logging.debug(f"Using version settings: {version_settings}")
 
+        original_title = title
         title = normalize_title(title)
+
+        logging.info(f"Normalized title: {title}")
+        logging.info(f"Original title: {original_title}")
 
         # Use ScraperManager to handle scraping
         scraper_manager = ScraperManager(load_config())
