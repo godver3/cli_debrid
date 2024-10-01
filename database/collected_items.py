@@ -215,54 +215,55 @@ def add_collected_items(media_items_batch, recent=False):
             for row in existing_items:
                 item = row_to_dict(row)
                 item_identifier = generate_identifier(item)
-                if item['filled_by_file'] and item['filled_by_file'] not in all_valid_filenames:
-                    if get_setting("Debug", "rescrape_missing_files", default=False):
-                        # TODO: Implement rescrape logic to rescrape based on current content sources
-                        # TODO: Should add an option to mark items as deleted to prevent cli_debrid from re-adding if deleted from Plex
-                        try:
-                            # Check for matching items
-                            if item['type'] == 'movie':
-                                matching_items = conn.execute('''
-                                    SELECT id, version FROM media_items 
-                                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'movie' AND state = 'Collected'
-                                ''', (item['imdb_id'], item['tmdb_id'])).fetchall()
-                            else:
-                                matching_items = conn.execute('''
-                                    SELECT id, version FROM media_items 
-                                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
-                                ''', (item['imdb_id'], item['tmdb_id'], item['season_number'], item['episode_number'])).fetchall()
-                            
-                            current_version = item['version'].strip('*')
-                            matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items)
-                            
-                            if matching_version_exists:
-                                # Delete the item if a matching version exists
-                                conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
-                                logging.info(f"Deleted item {item_identifier} as matching version {item['version']} is still collected")
-                            else:
-                                # Move to Wanted state if no matching version exists
-                                conn.execute('''
-                                    UPDATE media_items 
-                                    SET state = 'Wanted', 
-                                        filled_by_file = NULL, 
-                                        filled_by_title = NULL, 
-                                        filled_by_magnet = NULL, 
-                                        filled_by_torrent_id = NULL, 
-                                        collected_at = NULL,
-                                        last_updated = ?,
-                                        version = TRIM(version, '*')
-                                    WHERE id = ?
-                                ''', (datetime.now(), item['id']))
-                                logging.info(f"Moved item to Wanted state as no matching version {item['version']} is collected: {item_identifier} (ID: {item['id']})")
-                        except Exception as e:
-                            conn.rollback()
-                            raise e
-                    else:
-                        cursor = conn.execute('''
-                            DELETE FROM media_items
-                            WHERE id = ?
-                        ''', (item['id'],))
-                        logging.info(f"Deleted item {item_identifier} as file no longer present")
+                if item['state'] == 'Collected':
+                    if item['filled_by_file'] and item['filled_by_file'] not in all_valid_filenames:
+                        if get_setting("Debug", "rescrape_missing_files", default=False):
+                            # TODO: Implement rescrape logic to rescrape based on current content sources
+                            # TODO: Should add an option to mark items as deleted to prevent cli_debrid from re-adding if deleted from Plex
+                            try:
+                                # Check for matching items
+                                if item['type'] == 'movie':
+                                    matching_items = conn.execute('''
+                                        SELECT id, version FROM media_items 
+                                        WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'movie' AND state = 'Collected'
+                                    ''', (item['imdb_id'], item['tmdb_id'])).fetchall()
+                                else:
+                                    matching_items = conn.execute('''
+                                        SELECT id, version FROM media_items 
+                                        WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
+                                    ''', (item['imdb_id'], item['tmdb_id'], item['season_number'], item['episode_number'])).fetchall()
+                                
+                                current_version = item['version'].strip('*')
+                                matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items)
+                                
+                                if matching_version_exists:
+                                    # Delete the item if a matching version exists
+                                    conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
+                                    logging.info(f"Deleted item {item_identifier} as matching version {item['version']} is still collected")
+                                else:
+                                    # Move to Wanted state if no matching version exists
+                                    conn.execute('''
+                                        UPDATE media_items 
+                                        SET state = 'Wanted', 
+                                            filled_by_file = NULL, 
+                                            filled_by_title = NULL, 
+                                            filled_by_magnet = NULL, 
+                                            filled_by_torrent_id = NULL, 
+                                            collected_at = NULL,
+                                            last_updated = ?,
+                                            version = TRIM(version, '*')
+                                        WHERE id = ?
+                                    ''', (datetime.now(), item['id']))
+                                    logging.info(f"Moved item to Wanted state as no matching version {item['version']} is collected: {item_identifier} (ID: {item['id']})")
+                            except Exception as e:
+                                conn.rollback()
+                                raise e
+                        else:
+                            cursor = conn.execute('''
+                                DELETE FROM media_items
+                                WHERE id = ?
+                            ''', (item['id'],))
+                            logging.info(f"Deleted item {item_identifier} as file no longer present")
 
         conn.commit()
         logging.debug(f"Collected items processed and database updated.")
