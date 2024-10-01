@@ -116,6 +116,7 @@
                         <option value="Wanted">Wanted</option>
                         <option value="Pending Uncached">Pending Uncached</option>
                         <option value="Upgrading">Upgrading</option>
+                        <option value="Collected">Collected</option>
                     </select>
                 </div>
                 <button type="submit">Apply Action</button>
@@ -169,10 +170,9 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const forms = document.querySelectorAll('form:not(#bulk-queue-action-form)');
-        const bulkActionForm = document.getElementById('bulk-queue-action-form');
         
         forms.forEach(form => {
-            if (form.id !== 'send-test-notification-form' && form.id !== 'get-collected-form' && form.id !== 'get-wanted-form' && form.id !== 'run-task-form') {
+            if (form.id !== 'send-test-notification-form' && form.id !== 'get-collected-form' && form.id !== 'get-wanted-form' && form.id !== 'run-task-form' && form.id !== 'bulk-queue-action-form') {
                 form.addEventListener('submit', function(e) {
                     e.preventDefault();
                     const url = form.action;
@@ -412,6 +412,15 @@
             }
 
             lastChecked = e.target;
+        }
+
+
+        const bulkActionForm = document.getElementById('bulk-queue-action-form');
+        if (bulkActionForm) {
+            bulkActionForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                performBulkAction();
+            });
         }
 
         function performBulkAction() {

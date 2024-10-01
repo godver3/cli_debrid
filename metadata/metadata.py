@@ -279,7 +279,7 @@ def refresh_release_dates():
     logging.info("Starting refresh_release_dates function")
     
     logging.info("Fetching items to refresh")
-    items_to_refresh = get_all_media_items(state="Unreleased") + get_all_media_items(state="Wanted")
+    items_to_refresh = get_all_media_items(state="Unreleased") + get_all_media_items(state="Wanted") + get_all_media_items(state="Sleeping")
     logging.info(f"Found {len(items_to_refresh)} items to refresh")
 
     for index, item in enumerate(items_to_refresh, 1):
@@ -306,7 +306,7 @@ def refresh_release_dates():
             
             if metadata:
                 logging.info("Getting release date")
-                logging.info(f"Metadata: {metadata}")
+                #logging.info(f"Metadata: {metadata}")
                 if media_type == 'movie':
                     new_release_date = get_release_date(metadata, imdb_id)
                 else:

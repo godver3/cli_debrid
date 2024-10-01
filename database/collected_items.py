@@ -105,7 +105,7 @@ def add_collected_items(media_items_batch, recent=False):
                         item_id = existing_item['id']
                         
                         if existing_item['state'] not in ['Collected', 'Upgrading']:
-                            logging.info(f"Existing item in Checking state: {item_identifier} (ID: {item_id})")
+                            logging.info(f"Existing item in Checking state: {item_identifier} (ID: {item_id}) location: {location}")
                             # Check if the release date is within the past 7 days
                             release_date = datetime.strptime(existing_item['release_date'], '%Y-%m-%d').date()
                             days_since_release = (datetime.now().date() - release_date).days
@@ -165,7 +165,7 @@ def add_collected_items(media_items_batch, recent=False):
                             add_to_collected_notifications(updated_item_dict)
                         else:
                             # If it's not in "Checking" state, no update needed
-                            logging.debug(f"No update needed on collected item: {item_identifier} (ID: {item_id})")
+                            logging.debug(f"No update needed on collected item: {item_identifier} (ID: {item_id}) location: {location}")
 
                     else:
 
@@ -204,7 +204,7 @@ def add_collected_items(media_items_batch, recent=False):
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
                                 datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime')
                             ))
-                        logging.info(f"Added new item as Collected: {item_identifier} (ID: {cursor.lastrowid})")
+                        logging.info(f"Added new item as Collected: {item_identifier} (ID: {cursor.lastrowid}) location: {location}")
 
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
