@@ -10,7 +10,7 @@ JACKETT_FILTER = "!status:failing,test:passed"
 
 def rename_special_characters(text: str) -> str:
     replacements = [
-        ("&", "and"),
+        ("&", ""),
         ("\u00fc", "ue"),
         ("\u00e4", "ae"),
         ("\u00e2", "a"),
@@ -66,6 +66,8 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     jackett_api = settings.get('api', '')
     enabled_indexers = settings.get('enabled_indexers', '').lower()
     seeders_only = settings.get('seeders_only', False)
+
+    logging.info(f"Scraping Jackett for title: {title}")
 
     if "UFC" in title.upper():
         ufc_number = title.upper().split("UFC")[-1].strip()
