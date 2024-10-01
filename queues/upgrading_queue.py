@@ -189,51 +189,52 @@ class UpgradingQueue:
             for index, result in enumerate(results):
                 logging.info(f"Result {index}: {result['title']}")
 
-            if current_position is not None:
+            if current_position is None:
+                logging.info(f"Current item {item_identifier} not found in scrape results")
+                better_results = results  # Consider all results as potential upgrades
+            else:
                 logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the scrape results")
                 logging.info(f"Current item title: {current_title}")
                 
                 # Only consider results that are in higher positions than the current item
                 better_results = results[:current_position]
-                
-                if better_results:
-                    logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier}")
+            
+            if better_results:
+                logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier}")
 
-                    # Use AddingQueue to attempt the upgrade
-                    adding_queue = AddingQueue()
-                    uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
-                    success = adding_queue.process_item(queue_manager, item, better_results, uncached_handling, upgrade=True)
+                # Use AddingQueue to attempt the upgrade
+                adding_queue = AddingQueue()
+                uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
+                success = adding_queue.process_item(queue_manager, item, better_results, uncached_handling, upgrade=True)
 
-                    if success:
-                        logging.info(f"Successfully initiated upgrade for item {item_identifier}")
-                        
-                        # Ensure the upgrades_data entry is initialized
-                        if item['id'] not in self.upgrades_data:
-                            self.upgrades_data[item['id']] = {'count': 0, 'history': []}
-                        
-                        # Increment the upgrades found count
-                        self.upgrades_data[item['id']]['count'] += 1
+                if success:
+                    logging.info(f"Successfully initiated upgrade for item {item_identifier}")
                     
-                        item['upgrading_from'] = item['filled_by_file'] 
+                    # Ensure the upgrades_data entry is initialized
+                    if item['id'] not in self.upgrades_data:
+                        self.upgrades_data[item['id']] = {'count': 0, 'history': []}
+                    
+                    # Increment the upgrades found count
+                    self.upgrades_data[item['id']]['count'] += 1
+                
+                    item['upgrading_from'] = item['filled_by_file'] 
 
-                        logging.info(f"Item {item_identifier} is upgrading from {item['upgrading_from']} (Upgrades found: {self.upgrades_data[item['id']]['count']})")
+                    logging.info(f"Item {item_identifier} is upgrading from {item['upgrading_from']} (Upgrades found: {self.upgrades_data[item['id']]['count']})")
 
-                        # Log the upgrade
-                        self.log_upgrade(item, adding_queue)
+                    # Log the upgrade
+                    self.log_upgrade(item, adding_queue)
 
-                        # Update the item in the database with new values from the upgrade
-                        self.update_item_with_upgrade(item, adding_queue)
+                    # Update the item in the database with new values from the upgrade
+                    self.update_item_with_upgrade(item, adding_queue)
 
-                        # Remove the item from the Upgrading queue
-                        self.remove_item(item)
+                    # Remove the item from the Upgrading queue
+                    self.remove_item(item)
 
-                        logging.info(f"Maintained item {item_identifier} in Upgrading state after successful upgrade.")
-                    else:
-                        logging.info(f"Failed to upgrade item {item_identifier}")
+                    logging.info(f"Maintained item {item_identifier} in Upgrading state after successful upgrade.")
                 else:
-                    logging.info(f"No better results found for {item_identifier}")
+                    logging.info(f"Failed to upgrade item {item_identifier}")
             else:
-                logging.info(f"Current item {item_identifier} not found in scrape results, skipping upgrade")
+                logging.info(f"No better results found for {item_identifier}")
         else:
             logging.info(f"No new results found for {item_identifier} during hourly scrape")
 
