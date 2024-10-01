@@ -17,6 +17,7 @@ from babelfish import Language
 from .scraper_manager import ScraperManager
 from config_manager import load_config
 import unicodedata
+from PTT import parse_title
 
 # Add adult content filter
 adult_terms = [
@@ -133,7 +134,8 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
     
     # Use guessit with content type and prepared query title
     guessit_type = 'movie' if content_type.lower() == 'movie' else 'episode'
-    guessit_result = guessit(result_title, {'type': guessit_type})
+    guessit_result = guessit(result_title, {'type': guessit_type, 'expected_title': [guessit_query_title]})
+    #guessit_result = guessit(result_title, {'type': guessit_type})
     
     guessit_title = guessit_result.get('title', '')
     guessit_title = normalize_title(guessit_title).replace('&', 'and')
@@ -782,6 +784,18 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
     for result in results:
         result['filter_reason'] = "Passed all filters"  # Default reason
+
+        # New pre-filtering step using parse_title
+        release_name = result.get('title', '')
+        parsed_info = parse_title(release_name)
+        if parsed_info and isinstance(parsed_info, dict):
+            parsed_title = parsed_info.get('title', '')
+            if parsed_title:
+                title_similarity = fuzz.ratio(parsed_title.lower(), title.lower())
+                if title_similarity < 75:
+                    result['filter_reason'] = f"Low parsed title similarity: {title_similarity}%"
+                    logging.info(f"Parsing out result due to similarity mismatch: {result.get('title', 'Unknown')}")
+                    continue
 
         parsed_info = result.get('parsed_info', {})
         season_episode_info = parsed_info.get('season_episode_info', {})

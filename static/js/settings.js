@@ -527,6 +527,17 @@ function updateSettings() {
         console.warn("Sync Deletions checkbox element not found!");
     }
 
+    const traktEarlyReleases = document.getElementById('scraping-trakt_early_releases');
+    console.log("Trakt Early Releases element:", traktEarlyReleases);
+    
+    if (traktEarlyReleases) {
+        settingsData['Scraping']['trakt_early_releases'] = traktEarlyReleases.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Trakt Early Releases checkbox element not found!");
+    }
+
     const fileCollectionManagement = document.getElementById('file management-file_collection_management');
     console.log("File Collection Management element:", fileCollectionManagement);
     

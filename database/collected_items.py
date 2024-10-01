@@ -19,11 +19,10 @@ def add_collected_items(media_items_batch, recent=False):
     try:
         conn.execute('BEGIN TRANSACTION')
         
-        # Fetch all existing collected items from the database
+        # Fetch ALL existing items from the database, regardless of state
         existing_items = conn.execute('''
             SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, collected_at, release_date, upgrading_from
-            FROM media_items 
-            WHERE state IN ('Collected', 'Checking', 'Upgrading')
+            FROM media_items
         ''').fetchall()
         
         # Create a set of existing filenames in 'Collected' state
