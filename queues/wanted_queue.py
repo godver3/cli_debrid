@@ -23,20 +23,29 @@ class WantedQueue:
                 release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
                 
                 if item['type'] == 'movie':
-                    movie_airtime_offset = float(get_setting("Queue", "movie_airtime_offset", "19")) * 60
-                    airtime_cutoff = (datetime.combine(release_date, datetime.min.time()) + timedelta(minutes=movie_airtime_offset)).time()
+                    if get_setting("Queue", "movie_airtime_offset", 19) == '':
+                        movie_airtime_offset = 19
+                    else:
+                        movie_airtime_offset = get_setting("Queue", "movie_airtime_offset", 19)
+                    movie_airtime_offset = float(movie_airtime_offset) if movie_airtime_offset else 19.0
+                    airtime_cutoff = (datetime.combine(release_date, datetime.min.time()) + timedelta(hours=movie_airtime_offset)).time()
                 elif item['type'] == 'episode':
-                    episode_airtime_offset = float(get_setting("Queue", "episode_airtime_offset", "0")) * 60
+                    if get_setting("Queue", "episode_airtime_offset", 0) == '':
+                        episode_airtime_offset = 0
+                    else:
+                        episode_airtime_offset = get_setting("Queue", "episode_airtime_offset", 0)
+                    episode_airtime_offset = float(episode_airtime_offset) if episode_airtime_offset else 0.0
                     airtime_str = item.get('airtime') or "19:00"  # Use "19:00" if airtime is None
                     airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                    airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(minutes=episode_airtime_offset)).time()
+                    airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(hours=episode_airtime_offset)).time()
                 else:
                     airtime_cutoff = datetime.now().time()
 
                 scrape_time = datetime.combine(release_date, airtime_cutoff)
                 item['scrape_time'] = scrape_time.strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                item['scrape_time'] = "Invalid date"
+            except ValueError as e:
+                logging.error(f"Error calculating scrape time for item {item.get('id', 'Unknown')}: {str(e)}")
+                item['scrape_time'] = "Invalid date or time"
 
     def get_contents(self):
         return self.items
@@ -81,9 +90,17 @@ class WantedQueue:
 
                 # Apply airtime offset
                 if item['type'] == 'movie':
-                    offset = float(get_setting("Queue", "movie_airtime_offset", "19"))
+                    if get_setting("Queue", "movie_airtime_offset", 19) == '':
+                        movie_airtime_offset = 19
+                    else:
+                        movie_airtime_offset = get_setting("Queue", "movie_airtime_offset", 19)
+                    offset = float(movie_airtime_offset) if movie_airtime_offset else 19.0
                 else:  # episode
-                    offset = float(get_setting("Queue", "episode_airtime_offset", "0"))
+                    if get_setting("Queue", "episode_airtime_offset", 0) == '':
+                        episode_airtime_offset = 0
+                    else:
+                        episode_airtime_offset = get_setting("Queue", "episode_airtime_offset", 0)
+                    offset = float(episode_airtime_offset) if episode_airtime_offset else 0.0
                 
                 release_datetime += timedelta(hours=offset)
 
