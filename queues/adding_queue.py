@@ -51,13 +51,19 @@ class AddingQueue:
                 scrape_results_str = updated_item.get('scrape_results', '')
                 if scrape_results_str:
                     try:
-                        scrape_results = json.loads(scrape_results_str)
+                        if isinstance(scrape_results_str, str):
+                            scrape_results = json.loads(scrape_results_str)
+                        elif isinstance(scrape_results_str, list):
+                            scrape_results = scrape_results_str
+                        else:
+                            raise ValueError(f"Unexpected scrape_results type: {type(scrape_results_str)}")
+                        
                         if not scrape_results:
                             logging.warning(f"Empty scrape results for item: {item_identifier}")
                             self.handle_failed_item(queue_manager, item, "Adding")
                             return
-                    except json.JSONDecodeError:
-                        logging.error(f"Error parsing JSON scrape results for item: {item_identifier}")
+                    except (json.JSONDecodeError, ValueError) as e:
+                        logging.error(f"Error parsing scrape results for item: {item_identifier}. Error: {str(e)}")
                         self.handle_failed_item(queue_manager, item, "Adding")
                         return
 
@@ -74,11 +80,29 @@ class AddingQueue:
     def process_item(self, queue_manager, item, scrape_results, mode, upgrade=False):
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Processing {mode} mode for item: {item_identifier}")
+        logging.debug(f"Scrape results type: {type(scrape_results)}")
+        logging.debug(f"Scrape results content: {scrape_results}")
+
+        if isinstance(scrape_results, str):
+            try:
+                scrape_results = json.loads(scrape_results)
+            except json.JSONDecodeError:
+                logging.error(f"Failed to parse scrape_results JSON for {item_identifier}")
+                scrape_results = []
+
+        if not isinstance(scrape_results, list):
+            logging.error(f"Unexpected scrape_results format for {item_identifier}. Expected list, got {type(scrape_results)}")
+            scrape_results = []
+
         logging.debug(f"Total scrape results: {len(scrape_results)}")
-        index = 0
-        for result in scrape_results:
-            logging.info(f"Index: {index} - Scrape result: {result['title']}")
-            index += 1
+
+        for index, result in enumerate(scrape_results):
+            if isinstance(result, dict):
+                logging.info(f"Index: {index} - Scrape result: {result.get('title', 'No title')}")
+            elif isinstance(result, str):
+                logging.info(f"Index: {index} - Scrape result (string): {result[:50]}...")  # Log first 50 characters
+            else:
+                logging.info(f"Index: {index} - Scrape result type: {type(result)}")
     
         if get_setting('Debug', 'sort_by_uncached_status'):
             scrape_results = self.sort_results_by_cache_status(scrape_results)

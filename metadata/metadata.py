@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 import sys, os
 import json
 import time
+from settings import get_setting
+import content_checkers.trakt as trakt
+import re
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -209,6 +212,19 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
                         premiere_releases.append(release_date)
                 except ValueError:
                     logging.warning(f"Invalid date format: {release_date_str}")
+
+    # Check Trakt for early releases if setting is enabled
+    trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
+    if trakt_early_releases:
+        logging.info("Checking Trakt for early releases")
+        trakt_id = trakt.fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+        if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
+            trakt_id = str(trakt_id[0]['movie']['ids']['trakt'])
+            trakt_lists = trakt.fetch_items_from_trakt(f"/movies/{trakt_id}/lists/personal/popular")
+            for trakt_list in trakt_lists:
+                if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
+                    logging.info(f"Movie found in early release list: {trakt_list['name']}")
+                    return current_date.strftime("%Y-%m-%d")
 
     if digital_physical_releases:
         return min(digital_physical_releases).strftime("%Y-%m-%d")
