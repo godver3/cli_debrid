@@ -10,6 +10,7 @@ import os
 import pickle
 from pathlib import Path
 from database.database_writing import update_media_item
+from database.core import get_db_connection
 
 class UpgradingQueue:
     def __init__(self):
@@ -243,15 +244,47 @@ class UpgradingQueue:
         new_values = adding_queue.get_new_item_values(item)
 
         if new_values:
-            # Add the upgrading_from value to new_values
-            new_values['upgrading_from'] = item['filled_by_file']
+            # Begin a transaction
+            conn = get_db_connection()
+            try:
+                conn.execute('BEGIN TRANSACTION')
 
-            # Update the item in the database with new values
-            update_media_item(item['id'], **new_values)
-            logging.info(f"Updated item in database with new values for {self.generate_identifier(item)}")
+                # Set upgrading_from to the current filled_by_file before updating
+                upgrading_from = item['filled_by_file']
 
-            # Optionally, add to collected notifications
-            add_to_collected_notifications(item)
+                # Update the item in the database with new values
+                conn.execute('''
+                    UPDATE media_items
+                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?
+                    WHERE id = ?
+                ''', (
+                    upgrading_from,
+                    new_values['filled_by_file'],
+                    new_values['filled_by_magnet'],
+                    new_values['version'],
+                    datetime.now(),
+                    'Checking',
+                    item['id']
+                ))
+
+                conn.commit()
+                logging.info(f"Updated item in database with new values for {self.generate_identifier(item)}")
+
+                # Update the item dictionary as well
+                item['upgrading_from'] = upgrading_from
+                item['filled_by_file'] = new_values['filled_by_file']
+                item['filled_by_magnet'] = new_values['filled_by_magnet']
+                item['version'] = new_values['version']
+                item['last_updated'] = datetime.now()
+                item['state'] = 'Checking'
+
+                # Optionally, add to collected notifications
+                add_to_collected_notifications(item)
+            except Exception as e:
+                conn.rollback()
+                logging.error(f"Error updating item {self.generate_identifier(item)}: {str(e)}", exc_info=True)
+            finally:
+                conn.close()
         else:
             logging.warning(f"No new values obtained for item {self.generate_identifier(item)}")
 
