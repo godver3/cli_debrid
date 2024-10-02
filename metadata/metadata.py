@@ -124,21 +124,32 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         return {}
 
 def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_number: int, episode_data: Dict[str, Any], is_anime: bool) -> Dict[str, Any]:
-    logging.info(f"Creating episode item for {show_item['title']} season {season_number} episode {episode_number} airtime {show_item.get('airs', {}).get('time', '19:00')}")
-    
-    # Parse the first_aired date
-    first_aired_utc = parse_date(episode_data.get('first_aired'))
-    
-    # Convert UTC to local timezone if a valid date is available
-    if first_aired_utc and first_aired_utc != 'Unknown':
-        utc_dt = datetime.strptime(first_aired_utc, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        local_tz = pytz.timezone(time.tzname[0])
-        local_dt = utc_dt.astimezone(local_tz)
-        release_date = local_dt.strftime("%Y-%m-%d")
+    logging.info(f"Creating episode item for {show_item['title']} season {season_number} episode {episode_number}")
+
+    # Get the first_aired datetime string
+    first_aired_str = episode_data.get('first_aired')
+
+    if first_aired_str:
+        try:
+            # Parse the UTC datetime string
+            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+            first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+
+            # Convert UTC to local timezone
+            local_tz = pytz.timezone(time.tzname[0])
+            local_dt = first_aired_utc.astimezone(local_tz)
+            
+            # Format the local date (stripping time) as a string
+            release_date = local_dt.strftime("%Y-%m-%d")
+        except ValueError:
+            logging.warning(f"Invalid datetime format: {first_aired_str}")
+            release_date = 'Unknown'
     else:
         release_date = 'Unknown'
-    
-    logging.info(f"Local TZ: {time.tzname[0]} Release date: {release_date}")
+
+    logging.info(f"First aired UTC: {first_aired_str}")
+    logging.info(f"Local datetime: {local_dt if 'local_dt' in locals() else 'N/A'}")
+    logging.info(f"Release date: {release_date}")
 
     return {
         'imdb_id': show_item['imdb_id'],
