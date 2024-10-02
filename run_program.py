@@ -21,6 +21,7 @@ import pickle
 from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
 import ntplib
 import os
+from content_checkers.trakt import check_trakt_early_releases
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -62,7 +63,8 @@ class ProgramRunner:
             'task_generate_airtime_report': 3600,
             'task_check_service_connectivity': 60,
             'task_send_notifications': 300,  # Run every 5 minutes (300 seconds)
-            'task_sync_time': 3600  # Run every hour
+            'task_sync_time': 3600,  # Run every hour
+            'task_check_trakt_early_releases': 3600,  # Run every hour
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -83,7 +85,8 @@ class ProgramRunner:
             'task_generate_airtime_report',
             'task_check_service_connectivity',
             'task_send_notifications',
-            'task_sync_time'
+            'task_sync_time',
+            'task_check_trakt_early_releases'
         }
         
         # Add this line to store content sources
@@ -231,6 +234,8 @@ class ProgramRunner:
             self.task_send_notifications()
         if self.should_run_task('task_sync_time'):
             self.sync_time()
+        if self.should_run_task('task_check_trakt_early_releases'):
+            self.task_check_trakt_early_releases()
             
         # Process content source tasks
         for source, data in self.get_content_sources().items():
@@ -446,6 +451,9 @@ class ProgramRunner:
             if current_time - last_run_time > self.task_intervals[task] * 2:
                 logging.warning(f"Task {task} hasn't run in a while. Resetting timer.")
                 self.last_run_times[task] = current_time
+
+    def task_check_trakt_early_releases(self):
+        check_trakt_early_releases()
 
     def update_heartbeat(self):
         with open('/tmp/program_heartbeat', 'w') as f:
