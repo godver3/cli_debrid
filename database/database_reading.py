@@ -20,8 +20,13 @@ def get_all_media_items(state=None, media_type=None, tmdb_id=None):
     query = 'SELECT * FROM media_items WHERE 1=1'
     params = []
     if state:
-        query += ' AND state = ?'
-        params.append(state)
+        if isinstance(state, (list, tuple)):
+            placeholders = ','.join(['?' for _ in state])
+            query += f' AND state IN ({placeholders})'
+            params.extend(state)
+        else:
+            query += ' AND state = ?'
+            params.append(state)
     if media_type:
         query += ' AND type = ?'
         params.append(media_type)

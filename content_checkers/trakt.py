@@ -9,6 +9,10 @@ import trakt.core
 import time
 import pickle
 import os
+from database.database_reading import get_all_media_items
+from database.database_writing import update_media_item
+from datetime import datetime, date
+from settings import get_setting
 
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
@@ -295,7 +299,57 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
     
     logging.info(f"Retrieved items from Trakt list")
     
-    return all_wanted_items
+    return all_wanted_items\
+    
+def check_trakt_early_releases():
+    logging.info("Checking Trakt for early releases")
+    
+    trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
+    if not trakt_early_releases:
+        logging.info("Trakt early releases check is disabled in settings")
+        return
+
+    # Get all items with state sleeping, wanted, or unreleased
+    states_to_check = ('Sleeping', 'Wanted', 'Unreleased')
+    items_to_check = get_all_media_items(state=states_to_check)
+    
+    current_date = date.today()
+    
+    for item in items_to_check:
+
+        if item['type'] == 'episode':
+            logging.info(f"Skipping episode: {item['title']} (ID: {item['id']})")
+            continue
+        
+        imdb_id = item['imdb_id']
+        
+        trakt_id = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+        if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
+            # Check if 'movie' key exists in the first item
+            if 'movie' in trakt_id[0]:
+                trakt_id = str(trakt_id[0]['movie']['ids']['trakt'])
+            elif 'show' in trakt_id[0]:
+                trakt_id = str(trakt_id[0]['show']['ids']['trakt'])
+            else:
+                logging.warning(f"Unexpected Trakt API response structure for IMDB ID: {imdb_id}")
+                continue
+
+            endpoint = f"/movies/{trakt_id}/lists/personal/popular" if item['type'] == 'movie' else f"/shows/{trakt_id}/lists/personal/popular"
+            trakt_lists = fetch_items_from_trakt(endpoint)
+            
+            for trakt_list in trakt_lists:
+                if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
+                    logging.info(f"Media found in early release list: {trakt_list['name']}")
+                    new_release_date = current_date.strftime("%Y-%m-%d")
+                    
+                    # Update the release date and state in the database
+                    update_media_item(item['id'], release_date=new_release_date)
+                    logging.info(f"Updated release date to {new_release_date} for media: {item['title']} (ID: {item['id']})")
+                    break  # Stop checking other lists for this media item
+                else:
+                    logging.info(f"No early release list found for media: {item['title']} (ID: {item['id']})")
+                    
+    logging.info("Finished checking Trakt for early releases")
     
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
