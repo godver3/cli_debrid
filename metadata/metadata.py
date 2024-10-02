@@ -1,12 +1,14 @@
 import logging
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys, os
 import json
 import time
 from settings import get_setting
 import content_checkers.trakt as trakt
 import re
+import pytz
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -122,6 +124,22 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         return {}
 
 def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_number: int, episode_data: Dict[str, Any], is_anime: bool) -> Dict[str, Any]:
+    logging.info(f"Creating episode item for {show_item['title']} season {season_number} episode {episode_number} airtime {show_item.get('airs', {}).get('time', '19:00')}")
+    
+    # Parse the first_aired date
+    first_aired_utc = parse_date(episode_data.get('first_aired'))
+    
+    # Convert UTC to local timezone if a valid date is available
+    if first_aired_utc and first_aired_utc != 'Unknown':
+        utc_dt = datetime.strptime(first_aired_utc, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        local_tz = pytz.timezone(time.tzname[0])
+        local_dt = utc_dt.astimezone(local_tz)
+        release_date = local_dt.strftime("%Y-%m-%d")
+    else:
+        release_date = 'Unknown'
+    
+    logging.info(f"Local TZ: {time.tzname[0]} Release date: {release_date}")
+
     return {
         'imdb_id': show_item['imdb_id'],
         'tmdb_id': show_item['tmdb_id'],
@@ -130,7 +148,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'season_number': int(season_number),
         'episode_number': int(episode_number),
         'episode_title': episode_data.get('title', f"Episode {episode_number}"),
-        'release_date': parse_date(episode_data.get('first_aired')) or 'Unknown',
+        'release_date': release_date,
         'media_type': 'episode',
         'genres': ['anime'] if is_anime else show_item.get('genres', []),
         'runtime': episode_data.get('runtime') or show_item.get('runtime'),
@@ -457,10 +475,11 @@ def get_episode_airtime(imdb_id: str) -> Optional[str]:
     metadata, _ = DirectAPI.get_show_metadata(imdb_id)
     airs = metadata.get('airs', {})
     airtime = airs.get('time')
-    
+   
     if airtime:
         try:
             parsed_time = datetime.strptime(airtime, "%H:%M")
+            logging.info(f"Parsed airtime: {parsed_time} for {imdb_id}")
             return parsed_time.strftime("%H:%M")
         except ValueError:
             logging.warning(f"Invalid airtime format for {imdb_id}: {airtime}")

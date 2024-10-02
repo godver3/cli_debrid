@@ -19,25 +19,58 @@ def add_collected_items(media_items_batch, recent=False):
     try:
         conn.execute('BEGIN TRANSACTION')
         
-        # Fetch ALL existing items from the database, regardless of state
-        existing_items = conn.execute('''
-            SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, collected_at, release_date, upgrading_from
-            FROM media_items
-        ''').fetchall()
+        existing_collected_files = set()
+        upgrading_from_files = set()
+        existing_file_map = {}
+
+        # Collect filenames from media_items_batch to limit our queries
+        filenames_in_batch = set()
+        for item in media_items_batch:
+            locations = item.get('location', [])
+            if isinstance(locations, str):
+                locations = [locations]
+            for location in locations:
+                filename = os.path.basename(location)
+                if filename:
+                    filenames_in_batch.add(filename)
         
-        # Create a set of existing filenames in 'Collected' state
-        existing_collected_files = {row['filled_by_file'] for row in existing_items if row['state'] == 'Collected'}
+        if filenames_in_batch:
+            # Fetch existing items that match filenames in the batch or in upgrading_from
+            placeholders = ', '.join(['?'] * len(filenames_in_batch))
+            query = f'''
+                SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
+                       filled_by_file, collected_at, release_date, upgrading_from
+                FROM media_items
+                WHERE filled_by_file IN ({placeholders})
+                   OR upgrading_from IN ({placeholders})
+            '''
+            params = list(filenames_in_batch) * 2  # Parameters for both placeholders
+            cursor = conn.execute(query, params)
+            for row in cursor:
+                filled_by_file = row['filled_by_file']
+                upgrading_from = os.path.basename(row['upgrading_from'] or '')
+                state = row['state']
 
-        # Create a set of filenames that are being upgraded from
-        upgrading_from_files = {os.path.basename(row['upgrading_from']) for row in existing_items if row['upgrading_from']}
+                if state == 'Collected':
+                    existing_collected_files.add(filled_by_file)
+                if state == 'Upgrading':
+                    # Add both filled_by_file and upgrading_from to the sets
+                    if filled_by_file:
+                        existing_collected_files.add(filled_by_file)
+                    if upgrading_from:
+                        upgrading_from_files.add(upgrading_from)
 
-        # Create a dictionary of existing filenames to item details for all fetched items
-        existing_file_map = {row['filled_by_file']: row_to_dict(row) for row in existing_items if row['filled_by_file']}
+                # Map both filled_by_file and upgrading_from to the existing item
+                if filled_by_file:
+                    existing_file_map[filled_by_file] = row_to_dict(row)
+                if upgrading_from:
+                    existing_file_map[upgrading_from] = row_to_dict(row)
+            cursor.close()
 
         # Create a set to store filtered out filenames
         filtered_out_files = set()
 
-         # Filter out items that are already in 'Collected' state or are being upgraded from
+        # Filter out items that are already in 'Collected' or 'Upgrading' state
         filtered_media_items_batch = []
         for item in media_items_batch:
             locations = item.get('location', [])
@@ -105,10 +138,11 @@ def add_collected_items(media_items_batch, recent=False):
                         item_id = existing_item['id']
                         
                         if existing_item['state'] not in ['Collected', 'Upgrading']:
-                            logging.info(f"Existing item in Checking state: {item_identifier} (ID: {item_id}) location: {location}")
                             # Check if the release date is within the past 7 days
                             release_date = datetime.strptime(existing_item['release_date'], '%Y-%m-%d').date()
                             days_since_release = (datetime.now().date() - release_date).days
+
+                            logging.info(f"Existing item in Checking state: {item_identifier} (ID: {item_id}) location: {location} with release date: {release_date}")
 
                             if days_since_release <= 7:
                                 if get_setting("Scraping", "enable_upgrading", default=False): 
@@ -130,8 +164,8 @@ def add_collected_items(media_items_batch, recent=False):
                                     'upgrading_from': existing_item['upgrading_from'],
                                     'filled_by_torrent_id': existing_item.get('filled_by_torrent_id'),
                                     'version': existing_item['version'],
-                                    'season_number': existing_item.get('season_number'),  # Add this line
-                                    'episode_number': existing_item.get('episode_number')  # Add this line
+                                    'season_number': existing_item.get('season_number'),
+                                    'episode_number': existing_item.get('episode_number')
                                 }
                                 remove_original_item_from_plex(upgrade_item)
                                 remove_original_item_from_account(upgrade_item)
@@ -139,10 +173,7 @@ def add_collected_items(media_items_batch, recent=False):
                                 log_successful_upgrade(upgrade_item)
 
                             # Before the UPDATE statement, ensure `collected_at` is set
-                            if existing_item.get('collected_at') is None:
-                                existing_collected_at = collected_at
-                            else:
-                                existing_collected_at = existing_item.get('collected_at')
+                            existing_collected_at = existing_item.get('collected_at') or collected_at
 
                             # Update the existing item
                             conn.execute('''
@@ -155,7 +186,9 @@ def add_collected_items(media_items_batch, recent=False):
                             logging.info(f"Updated existing item from Checking to {new_state}: {item_identifier} (ID: {item_id})")
 
                             # Fetch the updated item
-                            updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+                            cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
+                            updated_item = cursor.fetchone()
+                            cursor.close()
                             
                             # Add notification for collected/upgraded item
                             updated_item_dict = dict(updated_item)
@@ -175,7 +208,7 @@ def add_collected_items(media_items_batch, recent=False):
 
                         if item_type == 'movie':
                             # For movies
-                            cursor = conn.execute('''
+                            conn.execute('''
                                 INSERT OR REPLACE INTO media_items
                                 (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime)
                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -194,7 +227,7 @@ def add_collected_items(media_items_batch, recent=False):
                             
                             airtime = airtime_cache[imdb_id]
                             # For episodes
-                            cursor = conn.execute('''
+                            conn.execute('''
                                 INSERT OR REPLACE INTO media_items
                                 (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime)
                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -204,7 +237,7 @@ def add_collected_items(media_items_batch, recent=False):
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
                                 datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime')
                             ))
-                        logging.info(f"Added new item as Collected: {item_identifier} (ID: {cursor.lastrowid}) location: {location}")
+                        logging.info(f"Added new item as Collected: {item_identifier} location: {location}")
 
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
@@ -212,58 +245,66 @@ def add_collected_items(media_items_batch, recent=False):
 
         # Handle items not in the batch if not recent
         if not recent:
-            for row in existing_items:
+            cursor = conn.execute('''
+                SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, collected_at, release_date, upgrading_from
+                FROM media_items
+                WHERE state = 'Collected'
+            ''')
+            for row in cursor:
                 item = row_to_dict(row)
                 item_identifier = generate_identifier(item)
-                if item['state'] == 'Collected':
-                    if item['filled_by_file'] and item['filled_by_file'] not in all_valid_filenames:
-                        if get_setting("Debug", "rescrape_missing_files", default=False):
-                            # TODO: Implement rescrape logic to rescrape based on current content sources
-                            # TODO: Should add an option to mark items as deleted to prevent cli_debrid from re-adding if deleted from Plex
-                            try:
-                                # Check for matching items
-                                if item['type'] == 'movie':
-                                    matching_items = conn.execute('''
-                                        SELECT id, version FROM media_items 
-                                        WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'movie' AND state = 'Collected'
-                                    ''', (item['imdb_id'], item['tmdb_id'])).fetchall()
-                                else:
-                                    matching_items = conn.execute('''
-                                        SELECT id, version FROM media_items 
-                                        WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
-                                    ''', (item['imdb_id'], item['tmdb_id'], item['season_number'], item['episode_number'])).fetchall()
-                                
-                                current_version = item['version'].strip('*')
-                                matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items)
-                                
-                                if matching_version_exists:
-                                    # Delete the item if a matching version exists
-                                    conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
-                                    logging.info(f"Deleted item {item_identifier} as matching version {item['version']} is still collected")
-                                else:
-                                    # Move to Wanted state if no matching version exists
-                                    conn.execute('''
-                                        UPDATE media_items 
-                                        SET state = 'Wanted', 
-                                            filled_by_file = NULL, 
-                                            filled_by_title = NULL, 
-                                            filled_by_magnet = NULL, 
-                                            filled_by_torrent_id = NULL, 
-                                            collected_at = NULL,
-                                            last_updated = ?,
-                                            version = TRIM(version, '*')
-                                        WHERE id = ?
-                                    ''', (datetime.now(), item['id']))
-                                    logging.info(f"Moved item to Wanted state as no matching version {item['version']} is collected: {item_identifier} (ID: {item['id']})")
-                            except Exception as e:
-                                conn.rollback()
-                                raise e
-                        else:
-                            cursor = conn.execute('''
-                                DELETE FROM media_items
-                                WHERE id = ?
-                            ''', (item['id'],))
-                            logging.info(f"Deleted item {item_identifier} as file no longer present")
+                if item['filled_by_file'] and item['filled_by_file'] not in all_valid_filenames:
+                    if get_setting("Debug", "rescrape_missing_files", default=False):
+                        # TODO: Implement rescrape logic to rescrape based on current content sources
+                        # TODO: Should add an option to mark items as deleted to prevent cli_debrid from re-adding if deleted from Plex
+                        try:
+                            # Check for matching items
+                            if item['type'] == 'movie':
+                                matching_cursor = conn.execute('''
+                                    SELECT id, version FROM media_items 
+                                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'movie' AND state = 'Collected'
+                                ''', (item['imdb_id'], item['tmdb_id']))
+                            else:
+                                matching_cursor = conn.execute('''
+                                    SELECT id, version FROM media_items 
+                                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
+                                ''', (item['imdb_id'], item['tmdb_id'], item['season_number'], item['episode_number']))
+                            
+                            matching_items = matching_cursor.fetchall()
+                            matching_cursor.close()
+                            
+                            current_version = item['version'].strip('*')
+                            matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items)
+                            
+                            if matching_version_exists:
+                                # Delete the item if a matching version exists
+                                conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
+                                logging.info(f"Deleted item {item_identifier} as matching version {item['version']} is still collected")
+                            else:
+                                # Move to Wanted state if no matching version exists
+                                conn.execute('''
+                                    UPDATE media_items 
+                                    SET state = 'Wanted', 
+                                        filled_by_file = NULL, 
+                                        filled_by_title = NULL, 
+                                        filled_by_magnet = NULL, 
+                                        filled_by_torrent_id = NULL, 
+                                        collected_at = NULL,
+                                        last_updated = ?,
+                                        version = TRIM(version, '*')
+                                    WHERE id = ?
+                                ''', (datetime.now(), item['id']))
+                                logging.info(f"Moved item to Wanted state as no matching version {item['version']} is collected: {item_identifier} (ID: {item['id']})")
+                        except Exception as e:
+                            conn.rollback()
+                            logging.error(f"Error handling missing file for item {item_identifier}: {str(e)}", exc_info=True)
+                    else:
+                        conn.execute('''
+                            DELETE FROM media_items
+                            WHERE id = ?
+                        ''', (item['id'],))
+                        logging.info(f"Deleted item {item_identifier} as file no longer present")
+            cursor.close()
 
         conn.commit()
         logging.debug(f"Collected items processed and database updated.")
