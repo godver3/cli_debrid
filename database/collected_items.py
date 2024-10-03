@@ -154,7 +154,7 @@ def add_collected_items(media_items_batch, recent=False):
 
                             # Determine if this is an upgrade or initial collection
                             is_upgrade = existing_item.get('collected_at') is not None
-                                                   
+                                                                            
                             if is_upgrade and get_setting("Scraping", "enable_upgrading_cleanup", default=False):
                                 # Create a new dictionary with all the necessary information
                                 upgrade_item = {
@@ -165,13 +165,19 @@ def add_collected_items(media_items_batch, recent=False):
                                     'filled_by_torrent_id': existing_item.get('filled_by_torrent_id'),
                                     'version': existing_item['version'],
                                     'season_number': existing_item.get('season_number'),
-                                    'episode_number': existing_item.get('episode_number')
+                                    'episode_number': existing_item.get('episode_number'),
+                                    'filled_by_file': existing_item.get('filled_by_file')
                                 }
-                                remove_original_item_from_plex(upgrade_item)
-                                remove_original_item_from_account(upgrade_item)
-                                remove_original_item_from_results(upgrade_item, media_items_batch)
-                                log_successful_upgrade(upgrade_item)
-
+                                
+                                # Check if it's not a "pseudo-upgrade" (different release name, same filename)
+                                if upgrade_item['filled_by_file'] != upgrade_item['upgrading_from']:
+                                    remove_original_item_from_plex(upgrade_item)
+                                    remove_original_item_from_account(upgrade_item)
+                                    remove_original_item_from_results(upgrade_item, media_items_batch)
+                                    log_successful_upgrade(upgrade_item)
+                                else:
+                                    logging.info(f"Skipping cleanup/notification for pseudo-upgrade: {upgrade_item['title']} (same filename)")
+                                
                             # Before the UPDATE statement, ensure `collected_at` is set
                             existing_collected_at = existing_item.get('collected_at') or collected_at
 
