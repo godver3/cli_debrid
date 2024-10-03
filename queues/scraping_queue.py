@@ -123,6 +123,9 @@ class ScrapingQueue:
             item.get('genres')
         )
 
+        for result in results:
+            logging.info(f"Scrape result: {result}")
+
         # Filter out unwanted magnets
         results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
 
