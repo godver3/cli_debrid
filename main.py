@@ -11,6 +11,7 @@ import re
 from settings import set_setting
 import subprocess
 import threading
+from logging_config import stop_global_profiling, start_global_profiling
 
 def setup_logging():
     logging.getLogger('selector').setLevel(logging.WARNING)
@@ -146,7 +147,6 @@ def run_secondary_app_process():
 
 def main():
     global program_runner
-    setup_logging()
     setup_directories()
     backup_config()
     
@@ -217,12 +217,20 @@ def main():
             #print("Primary application is running")
             time.sleep(5)
     except KeyboardInterrupt:
+        stop_global_profiling()
         print("Primary application is stopping")
         # Optionally terminate the secondary app process if needed
 
 if __name__ == "__main__":
+    setup_logging()
+    start_global_profiling()
+
     from api_tracker import setup_api_logging
     setup_api_logging()
     from web_server import start_server
     start_server()
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        stop_global_profiling()
+        print("Program stopped.")
