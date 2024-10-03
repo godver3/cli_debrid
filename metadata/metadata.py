@@ -9,6 +9,7 @@ import content_checkers.trakt as trakt
 import re
 import pytz
 import time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -69,7 +70,8 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             'title': metadata.get('title', 'Unknown Title'),
             'year': None,
             'genres': [],
-            'runtime': None
+            'runtime': None,
+            'airs': metadata.get('airs', {})
         }
 
         # Handle the 'ids' field
@@ -147,9 +149,41 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
     else:
         release_date = 'Unknown'
 
-    logging.info(f"First aired UTC: {first_aired_str}")
-    logging.info(f"Local datetime: {local_dt if 'local_dt' in locals() else 'N/A'}")
-    logging.info(f"Release date: {release_date}")
+    # Handle airtime conversion
+    airs = show_item.get('airs', {})
+    airtime = airs.get('time')
+    timezone_str = airs.get('timezone')
+
+    if airtime and timezone_str:
+        try:
+            # Parse the airtime
+            air_time = datetime.strptime(airtime, "%H:%M").time()
+            
+            # Get the show's timezone
+            show_tz = ZoneInfo(timezone_str)
+            
+            # Use the release date if available, otherwise use today's date
+            if release_date != 'Unknown':
+                base_date = datetime.strptime(release_date, "%Y-%m-%d").date()
+            else:
+                base_date = datetime.now(show_tz).date()
+
+            # Combine date and time
+            show_datetime = datetime.combine(base_date, air_time)
+            show_datetime = show_datetime.replace(tzinfo=show_tz)
+            
+            # Get the local timezone dynamically
+            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            local_airtime = show_datetime.astimezone(local_tz)
+            
+            # Format as HH:MM
+            airtime = local_airtime.strftime("%H:%M")
+        except (ValueError, ZoneInfoNotFoundError) as e:
+            logging.warning(f"Error converting airtime: {e}")
+            logging.warning(f"Invalid airtime or timezone: {airtime}, {timezone_str}")
+            airtime = '19:00'  # Default fallback
+    else:
+        airtime = '19:00'  # Default fallback
 
     return {
         'imdb_id': show_item['imdb_id'],
@@ -163,7 +197,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'media_type': 'episode',
         'genres': ['anime'] if is_anime else show_item.get('genres', []),
         'runtime': episode_data.get('runtime') or show_item.get('runtime'),
-        'airtime': show_item.get('airs', {}).get('time', '19:00')
+        'airtime': airtime
     }
 
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -322,7 +356,6 @@ def refresh_release_dates():
             
             if metadata:
                 logging.info("Getting release date")
-                #logging.info(f"Metadata: {metadata}")
                 if media_type == 'movie':
                     new_release_date = get_release_date(metadata, imdb_id)
 
@@ -339,12 +372,31 @@ def refresh_release_dates():
                                     logging.info(f"Movie found in early release list: {trakt_list['name']}")
                                     new_release_date = datetime.now().strftime("%Y-%m-%d")
                                 
-                else:
+                else:  # TV show episode
                     if season_number is not None and episode_number is not None:
                         episode_data = metadata.get('seasons', {}).get(str(season_number), {}).get('episodes', {}).get(str(episode_number), {})
-                        new_release_date = parse_date(episode_data.get('first_aired'))
+                        first_aired_str = episode_data.get('first_aired')
+
+                        if first_aired_str:
+                            try:
+                                # Parse the UTC datetime string
+                                first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+                                first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+
+                                # Convert UTC to local timezone
+                                local_tz = pytz.timezone(time.tzname[0])
+                                local_dt = first_aired_utc.astimezone(local_tz)
+                                
+                                # Format the local date (stripping time) as a string
+                                new_release_date = local_dt.strftime("%Y-%m-%d")
+                            except ValueError:
+                                logging.warning(f"Invalid datetime format: {first_aired_str}")
+                                new_release_date = 'Unknown'
+                        else:
+                            new_release_date = 'Unknown'
                     else:
                         new_release_date = parse_date(metadata.get('first_aired'))
+
                 logging.info(f"New release date: {new_release_date}")
 
                 if new_release_date == "Unknown" or new_release_date is None:
