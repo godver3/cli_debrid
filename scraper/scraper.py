@@ -1011,6 +1011,8 @@ def normalize_title(title: str) -> str:
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
 
+    logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}")
+
     logging.info(f"Pre-filter genres: {genres}")
     genres = filter_genres(genres)
     logging.info(f"Post-filter genres: {genres}")
