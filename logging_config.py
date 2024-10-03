@@ -1,6 +1,24 @@
 import logging
 import logging.handlers
 from settings import get_setting
+import psutil
+import os
+import time
+import threading
+import cProfile
+import pstats
+import io
+
+# Global profiler
+global_profiler = cProfile.Profile()
+
+def start_global_profiling():
+    global global_profiler
+    global_profiler.enable()
+
+def stop_global_profiling():
+    global global_profiler
+    global_profiler.disable()
 
 class OverwriteFileHandler(logging.FileHandler):
     def emit(self, record):
@@ -21,6 +39,29 @@ class DynamicConsoleHandler(logging.StreamHandler):
     def emit(self, record):
         self.setLevel(self.get_level())
         super().emit(record)
+
+def log_system_stats():
+    performance_logger = logging.getLogger('performance_logger')
+    while True:
+        try:
+            process = psutil.Process(os.getpid())
+            cpu_percent = process.cpu_percent(interval=1)
+            memory_info = process.memory_info()
+            
+            performance_logger.info(f"CPU Usage: {cpu_percent}% | "
+                                    f"Memory Usage: {memory_info.rss / 1024 / 1024:.2f} MB | "
+                                    f"Virtual Memory: {memory_info.vms / 1024 / 1024:.2f} MB")
+            
+            # Log top CPU-consuming functions
+            global global_profiler
+            s = io.StringIO()
+            ps = pstats.Stats(global_profiler, stream=s).sort_stats('cumulative')
+            ps.print_stats(20)  # Print top 10 time-consuming functions
+            performance_logger.info(f"Top CPU-consuming functions:\n{s.getvalue()}")
+        except Exception as e:
+            performance_logger.error(f"Error logging system stats: {e}")
+        
+        time.sleep(6)  # Log every 60 seconds
 
 def setup_logging():
     # Create formatter
@@ -87,6 +128,25 @@ def setup_logging():
 
     # Add the filter to the root logger
     root_logger.addFilter(ExcludeFilter())
+
+    # Performance file handler
+    performance_handler = logging.handlers.RotatingFileHandler(
+        '/user/logs/performance.log', maxBytes=100*1024*1024, backupCount=5)
+    performance_handler.setLevel(logging.INFO)
+    performance_handler.setFormatter(formatter)
+    
+    # Create a separate logger for performance logs
+    performance_logger = logging.getLogger('performance_logger')
+    performance_logger.setLevel(logging.INFO)
+    performance_logger.addHandler(performance_handler)
+    performance_logger.propagate = False  # Prevent performance logs from propagating to root logger
+
+    # Start the system stats logging thread
+    stats_thread = threading.Thread(target=log_system_stats, daemon=True)
+    stats_thread.start()
+
+    # Start global profiling
+    start_global_profiling()
 
 if __name__ == "__main__":
     setup_logging()

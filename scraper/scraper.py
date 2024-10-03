@@ -124,7 +124,7 @@ def similarity(a: str, b: str) -> float:
 
 def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False, content_type: str = None) -> float:
     # Normalize titles
-    query_title = normalize_title(query_title).replace('&', 'and')
+    query_title = normalize_title(query_title).replace('&', 'and').replace('-','.')
     
     parsed_info = result.get('parsed_info', {})
     result_title = result.get('title', '')
@@ -138,7 +138,7 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
     #guessit_result = guessit(result_title, {'type': guessit_type})
     
     guessit_title = guessit_result.get('title', '')
-    guessit_title = normalize_title(guessit_title).replace('&', 'and')
+    guessit_title = normalize_title(guessit_title).replace('&', 'and').replace('-','.')
 
     logging.debug(f"Comparing cleaned titles - Query: '{query_title}', Guessit: '{guessit_title}'")
 
