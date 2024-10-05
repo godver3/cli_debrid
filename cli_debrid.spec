@@ -16,17 +16,27 @@ for root, dirs, files in os.walk(project_path):
         dirs.remove('.git')  # don't visit git directories
     if '__pycache__' in dirs:
         dirs.remove('__pycache__')  # don't visit pycache directories
+    if 'cli_battery' in dirs:
+        dirs.remove('cli_battery')  # we'll handle cli_battery separately
     for file in files:
         if file.endswith(('.py', '.json', '.txt')):  # specify exact extensions
             file_path = os.path.join(root, file)
             relative_path = os.path.relpath(file_path, project_path)
             added_files.append((file_path, relative_path))
 
+# Handle cli_battery separately
+cli_battery_path = os.path.join(project_path, 'cli_battery')
+for root, dirs, files in os.walk(cli_battery_path):
+    for file in files:
+        file_path = os.path.join(root, file)
+        relative_path = os.path.relpath(file_path, project_path)
+        added_files.append((file_path, relative_path))
+
 a = Analysis(
     ['windows_wrapper.py'],
     pathex=[project_path],
     binaries=[],
-    datas=added_files + [('version.txt', '.'), ('cli_battery', 'cli_battery')],
+    datas=added_files + [('version.txt', '.')],
     hiddenimports=[
         'requests',
         'urllib3',
