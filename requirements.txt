@@ -14,7 +14,7 @@ guessit==3.8.0
 MarkupSafe==2.1.5
 protobuf==5.28.1
 pykakasi==2.3.0
-Requests==2.32.0
+requests==2.32.0
 SQLAlchemy==2.0.31
 tenacity==9.0.0
 urwid==2.6.15
