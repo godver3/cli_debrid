@@ -19,7 +19,7 @@ for root, dirs, files in os.walk(project_path):
     if 'cli_battery' in dirs:
         dirs.remove('cli_battery')  # we'll handle cli_battery separately
     for file in files:
-        if file.endswith(('.py', '.json', '.txt')):  # specify exact extensions
+        if file.endswith(('.py', '.json', '.txt')) and file != 'version.txt':  # exclude version.txt
             file_path = os.path.join(root, file)
             relative_path = os.path.relpath(file_path, project_path)
             added_files.append((file_path, relative_path))
@@ -32,11 +32,16 @@ for root, dirs, files in os.walk(cli_battery_path):
         relative_path = os.path.relpath(file_path, project_path)
         added_files.append((file_path, relative_path))
 
+# Add version.txt explicitly
+version_file = os.path.join(project_path, 'version.txt')
+if os.path.exists(version_file):
+    added_files.append((version_file, 'version.txt'))
+
 a = Analysis(
     ['windows_wrapper.py'],
     pathex=[project_path],
     binaries=[],
-    datas=added_files + [('version.txt', '.')],
+    datas=added_files,
     hiddenimports=[
         'requests',
         'urllib3',
