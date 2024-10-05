@@ -12,6 +12,12 @@ except ImportError as e:
     traceback.print_exc()
 
 import main as main_app
+
+# Add cli_battery directory to Python path
+cli_battery_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cli_battery')
+sys.path.append(cli_battery_path)
+
+# Now import the battery main module
 from cli_battery import main as battery_main
 
 def setup_paths():
@@ -40,7 +46,12 @@ def run_main_app():
     main_app.main()
 
 def run_battery_app():
-    battery_main.main()
+    try:
+        battery_main.main()
+    except ImportError as e:
+        print(f"Error importing battery main module: {e}")
+        print("Traceback:")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     setup_paths()
