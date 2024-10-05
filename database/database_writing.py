@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 import pickle
 from pathlib import Path
+import os
 
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
@@ -125,9 +126,13 @@ def remove_from_media_items(item_id):
         conn.close()
 
 def add_to_collected_notifications(media_item):
-    notifications_file = Path("/user/db_content/collected_notifications.pkl")
+    # Get db_content directory from environment variable with fallback
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    notifications_file = Path(db_content_dir) / "collected_notifications.pkl"
     
     try:
+        os.makedirs(notifications_file.parent, exist_ok=True)
+        
         if notifications_file.exists():
             with open(notifications_file, "rb") as f:
                 notifications = pickle.load(f)

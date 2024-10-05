@@ -19,7 +19,9 @@ class UpgradingQueue:
         self.last_scrape_times = {}
         self.upgrades_found = {}  # New dictionary to track upgrades found
         self.scraping_queue = ScrapingQueue()
-        self.upgrades_file = Path("/user/db_content/upgrades.pkl")
+        # Get db_content directory from environment variable with fallback
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        self.upgrades_file = Path(db_content_dir) / "upgrades.pkl"
         self.upgrades_data = self.load_upgrades_data()
 
     def load_upgrades_data(self):
@@ -145,13 +147,16 @@ class UpgradingQueue:
         return (current_time - last_scrape_time) >= timedelta(hours=1)
 
     def log_upgrade(self, item: Dict[str, Any], adding_queue: AddingQueue):
-        log_file = "/user/db_content/upgrades.log"
+        # Get db_content directory from environment variable with fallback
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        log_file = os.path.join(db_content_dir, "upgrades.log")
         item_identifier = self.generate_identifier(item)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         new_file = adding_queue.get_new_item_values(item)
         log_entry = f"{timestamp} - Upgraded: {item_identifier} - New File: {new_file['filled_by_file']} - Original File: {item['upgrading_from']}\n"
 
         # Create the log file if it doesn't exist
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
         if not os.path.exists(log_file):
             open(log_file, 'w').close()
 
@@ -310,12 +315,15 @@ class UpgradingQueue:
             raise ValueError(f"Unknown item type: {item['type']}")
         
 def log_successful_upgrade(item: Dict[str, Any]):
-    log_file = "/user/db_content/upgrades.log"
+    # Get db_content directory from environment variable with fallback
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    log_file = os.path.join(db_content_dir, "upgrades.log")
     item_identifier = UpgradingQueue.generate_identifier(item)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"{timestamp} - Upgrade Complete: {item_identifier}\n"
 
     # Create the log file if it doesn't exist
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
     if not os.path.exists(log_file):
         open(log_file, 'w').close()
 

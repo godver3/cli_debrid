@@ -3,7 +3,11 @@ import pickle
 from datetime import datetime, timedelta
 import logging
 
-CACHE_FILE = '/user/db_content/poster_cache.pkl'
+# Get db_content directory from environment variable with fallback
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+
+# Update the path to use the environment variable
+CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'poster_cache.pkl')
 CACHE_EXPIRY_DAYS = 7  # Cache expires after 7 days
 
 UNAVAILABLE_POSTER = "/static/images/placeholder.png"

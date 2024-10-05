@@ -5,7 +5,11 @@ import json
 import ast
 from settings_schema import SETTINGS_SCHEMA
 
-CONFIG_FILE = '/user/config/config.json'
+# Get config directory from environment variable with fallback
+CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
+
+# Update the path to use the environment variable
+CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
 def load_config():
     #logging.debug("Starting load_config()")

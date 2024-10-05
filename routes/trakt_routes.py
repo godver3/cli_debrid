@@ -1,18 +1,20 @@
-from flask import jsonify, Blueprint
+from flask import jsonify, Blueprint, current_app
 from settings import get_setting
 from trakt.core import get_device_code, get_device_token
 import time
 import json
 import os
 import sys
-from flask import current_app
 import traceback
 from api_tracker import api
 import logging
+from pathlib import Path
 
 trakt_bp = Blueprint('trakt', __name__)
 
-TRAKT_CONFIG_PATH = '/user/config/.pytrakt.json'
+# Use environment variable for config directory with fallback
+CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
+TRAKT_CONFIG_PATH = Path(CONFIG_DIR) / '.pytrakt.json'
 
 @trakt_bp.route('/trakt_auth', methods=['POST'])
 def trakt_auth():
@@ -96,13 +98,14 @@ def check_trakt_auth_status():
     return jsonify({'status': 'unauthorized'})
 
 def get_trakt_config():
-    if os.path.exists(TRAKT_CONFIG_PATH):
-        with open(TRAKT_CONFIG_PATH, 'r') as f:
+    if TRAKT_CONFIG_PATH.exists():
+        with TRAKT_CONFIG_PATH.open('r') as f:
             return json.load(f)
     return {}
 
 def save_trakt_config(config):
-    with open(TRAKT_CONFIG_PATH, 'w') as f:
+    TRAKT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with TRAKT_CONFIG_PATH.open('w') as f:
         json.dump(config, f, indent=2)
 
 def update_trakt_config(key, value):

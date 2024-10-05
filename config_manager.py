@@ -7,8 +7,12 @@ import os
 import shutil
 from datetime import datetime
 
-CONFIG_LOCK_FILE = '/user/config/config.lock'
-CONFIG_FILE = '/user/config/config.json'
+# Get the base config directory from an environment variable, with a fallback
+CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
+
+# Use os.path.join to create platform-independent paths
+CONFIG_LOCK_FILE = os.path.join(CONFIG_DIR, 'config.lock')
+CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
 def log_config_state(message, config):
     content_sources = config.get('Content Sources', {})

@@ -18,6 +18,7 @@ from .scraper_manager import ScraperManager
 from config_manager import load_config
 import unicodedata
 from PTT import parse_title
+from pathlib import Path
 
 # Add adult content filter
 adult_terms = [
@@ -44,9 +45,12 @@ def romanize_japanese(text):
     return ' '.join([item['hepburn'] for item in result])
 
 def setup_scraper_logger():
-    log_dir = '/user/logs'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    # Use environment variable for log directory with fallback
+    log_dir = os.environ.get('USER_LOGS', '/user/logs')
+    log_dir = Path(log_dir)
+    
+    # Create log directory if it doesn't exist
+    log_dir.mkdir(parents=True, exist_ok=True)
     
     scraper_logger = logging.getLogger('scraper_logger')
     scraper_logger.setLevel(logging.DEBUG)
@@ -56,7 +60,8 @@ def setup_scraper_logger():
     for handler in scraper_logger.handlers[:]:
         scraper_logger.removeHandler(handler)
     
-    file_handler = logging.FileHandler(os.path.join(log_dir, 'scraper.log'))
+    log_file = log_dir / 'scraper.log'
+    file_handler = logging.FileHandler(str(log_file))
     file_handler.setLevel(logging.DEBUG)
     
     formatter = logging.Formatter('%(asctime)s - %(message)s')

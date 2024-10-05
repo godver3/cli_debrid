@@ -11,7 +11,9 @@ from settings import get_setting
 
 class Settings:
     def __init__(self):
-        self.config_file = '/user/config/settings.json'
+        # Get config directory from environment variable with fallback
+        config_dir = os.environ.get('USER_CONFIG', '/user/config')
+        self.config_file = os.path.join(config_dir, 'settings.json')
         self.active_provider = 'none'
         self.providers = [
             {'name': 'trakt', 'enabled': False},
@@ -50,6 +52,7 @@ class Settings:
             'log_level': self.log_level,
             'Trakt': self.Trakt
         }
+        os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
         with open(self.config_file, 'w') as f:
             json.dump(config, f, indent=4)
 

@@ -1,4 +1,4 @@
-aiohttp==3.9.5
+aiohttp>=3.9,<4.0
 babelfish==0.6.1
 beautifulsoup4==4.12.3
 bencode.py==4.0.0
