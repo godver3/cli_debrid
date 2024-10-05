@@ -31,5 +31,5 @@ pytz==2024.1
 psutil==6.0.0
 urllib3==1.26.15
 idna==3.3
-charset_normalizer==2.0.4
+charset-normalizer==2.0.4
 certifi==2023.5.7
