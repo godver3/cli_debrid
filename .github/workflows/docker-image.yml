@@ -29,7 +29,12 @@ jobs:
 
       - name: Build Windows executable
         run: |
-          pyinstaller --noconfirm --clean cli_debrid.spec
+          pyinstaller --noconfirm --clean --log-level DEBUG cli_debrid.spec
+          dir /s /b dist
+
+      - name: List contents of executable directory
+        run: |
+          dir /s /b dist\cli_debrid
 
       - name: Upload Windows executable artifact
         uses: actions/upload-artifact@v3
