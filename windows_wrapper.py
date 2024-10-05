@@ -4,6 +4,12 @@ import threading
 import main as main_app
 from cli_battery import main as battery_main
 
+try:
+    import requests
+    print("Requests module imported successfully")
+except ImportError as e:
+    print(f"Error importing requests: {e}")
+
 def setup_paths():
     if getattr(sys, 'frozen', False):
         # Running as compiled executable
