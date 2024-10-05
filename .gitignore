@@ -78,3 +78,6 @@ flask_session
 *.lock
 config/*.json
 .aider*
+build.sh
+dist
+build

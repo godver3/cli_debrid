@@ -17,11 +17,17 @@ from settings import get_setting
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
 
-CACHE_FILE = '/user/db_content/trakt_last_activity.pkl'
+# Get db_content directory from environment variable with fallback
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_last_activity.pkl')
+
+# Get config directory from environment variable with fallback
+CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
+TRAKT_CONFIG_FILE = os.path.join(CONFIG_DIR, '.pytrakt.json')
 
 def load_trakt_credentials() -> Dict[str, str]:
     try:
-        with open('/user/config/.pytrakt.json', 'r') as file:
+        with open(TRAKT_CONFIG_FILE, 'r') as file:
             credentials = json.load(file)
         return credentials
     except FileNotFoundError:
@@ -158,7 +164,7 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def ensure_trakt_auth():
     logging.info("Starting Trakt authentication check")
     
-    trakt.core.CONFIG_PATH = '/user/config/.pytrakt.json'
+    trakt.core.CONFIG_PATH = TRAKT_CONFIG_FILE
     
     logging.info("Loading Trakt configuration")
     trakt.core.load_config()
@@ -202,6 +208,7 @@ def load_last_activity_cache() -> Dict[str, Any]:
     return {'lists': {}, 'watchlist': None}
 
 def save_last_activity_cache(data: Dict[str, Any]):
+    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
     with open(CACHE_FILE, 'wb') as f:
         pickle.dump(data, f)
 

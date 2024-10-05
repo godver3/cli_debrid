@@ -9,7 +9,10 @@ import time
 import random
 
 def get_db_connection():
-    db_path = os.path.join('/user/db_content', 'media_items.db')
+    # Get db_content directory from environment variable with fallback
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    db_path = os.path.join(db_content_dir, 'media_items.db')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute('PRAGMA journal_mode=WAL')  # Enable WAL mode
     conn.row_factory = sqlite3.Row

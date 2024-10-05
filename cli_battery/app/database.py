@@ -194,14 +194,16 @@ class DatabaseManager:
                 return False
 
 def init_db(app):
-    connection_string = 'sqlite:////user/db_content/cli_battery.db'
+    # Get db_content directory from environment variable with fallback
+    db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    os.makedirs(db_directory, exist_ok=True)
+
+    db_path = os.path.join(db_directory, 'cli_battery.db')
+    connection_string = f'sqlite:///{db_path}'
 
     try:
         print(f"Attempting to connect to database: {connection_string}")
         engine = create_engine(connection_string, echo=False)
-
-        # Ensure the directory exists
-        os.makedirs('/user/db_content', exist_ok=True)
 
         # Test the connection
         with engine.connect() as conn:
