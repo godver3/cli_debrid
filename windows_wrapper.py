@@ -1,14 +1,18 @@
 import os
 import sys
 import threading
-import main as main_app
-from cli_battery import main as battery_main
+import traceback
 
 try:
     import requests
     print("Requests module imported successfully")
 except ImportError as e:
     print(f"Error importing requests: {e}")
+    print("Traceback:")
+    traceback.print_exc()
+
+import main as main_app
+from cli_battery import main as battery_main
 
 def setup_paths():
     if getattr(sys, 'frozen', False):
