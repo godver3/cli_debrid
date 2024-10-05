@@ -64,6 +64,9 @@ def log_system_stats():
         time.sleep(6)  # Log every 60 seconds
 
 def setup_logging():
+    # Get log directory from environment variable with fallback
+    log_dir = os.environ.get('USER_LOGS', '/user/logs')
+
     # Create formatter
     formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
     
@@ -86,20 +89,20 @@ def setup_logging():
     
     # Debug file handler
     debug_handler = logging.handlers.RotatingFileHandler(
-        '/user/logs/debug.log', maxBytes=100*1024*1024, backupCount=5)
+        os.path.join(log_dir, 'debug.log'), maxBytes=100*1024*1024, backupCount=5)
     debug_handler.setLevel(logging.DEBUG)
     debug_handler.setFormatter(formatter)
     root_logger.addHandler(debug_handler)
     
     # Info file handler
     info_handler = logging.handlers.RotatingFileHandler(
-        '/user/logs/info.log', maxBytes=100*1024*1024, backupCount=5)
+        os.path.join(log_dir, 'info.log'), maxBytes=100*1024*1024, backupCount=5)
     info_handler.setLevel(logging.INFO)
     info_handler.setFormatter(formatter)
     root_logger.addHandler(info_handler)
     
     # Queue file handler (overwriting on each log)
-    queue_handler = OverwriteFileHandler('/user/logs/queue.log')
+    queue_handler = OverwriteFileHandler(os.path.join(log_dir, 'queue.log'))
     queue_handler.setLevel(logging.INFO)
     queue_handler.setFormatter(formatter)
     
@@ -131,7 +134,7 @@ def setup_logging():
 
     # Performance file handler
     performance_handler = logging.handlers.RotatingFileHandler(
-        '/user/logs/performance.log', maxBytes=100*1024*1024, backupCount=5)
+        os.path.join(log_dir, 'performance.log'), maxBytes=100*1024*1024, backupCount=5)
     performance_handler.setLevel(logging.INFO)
     performance_handler.setFormatter(formatter)
     

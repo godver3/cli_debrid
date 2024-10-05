@@ -1,21 +1,31 @@
 import pickle
+import os
 from settings import get_setting
+
+# Get db_content directory from environment variable with fallback
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+
+# Update the paths to use the environment variable
+NOT_WANTED_MAGNETS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_magnets.pkl')
+NOT_WANTED_URLS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_urls.pkl')
 
 def load_not_wanted_magnets():
     try:
-        with open('/user/db_content/not_wanted_magnets.pkl', 'rb') as f:
+        with open(NOT_WANTED_MAGNETS_FILE, 'rb') as f:
             return pickle.load(f)
     except (EOFError, pickle.UnpicklingError):
         # If the file is empty or not a valid pickle object, return an empty set
         return set()
     except FileNotFoundError:
         # If the file does not exist, create it and return an empty set
-        with open('/user/db_content/not_wanted_magnets.pkl', 'wb') as f:
+        os.makedirs(os.path.dirname(NOT_WANTED_MAGNETS_FILE), exist_ok=True)
+        with open(NOT_WANTED_MAGNETS_FILE, 'wb') as f:
             pickle.dump(set(), f)
         return set()
 
 def save_not_wanted_magnets(not_wanted_set):
-    with open('/user/db_content/not_wanted_magnets.pkl', 'wb') as f:
+    os.makedirs(os.path.dirname(NOT_WANTED_MAGNETS_FILE), exist_ok=True)
+    with open(NOT_WANTED_MAGNETS_FILE, 'wb') as f:
         pickle.dump(not_wanted_set, f)
 
 def add_to_not_wanted(magnet):
@@ -31,7 +41,7 @@ def is_magnet_not_wanted(magnet):
 
 def purge_not_wanted_magnets_file():
     # Purge the contents of the file by overwriting it with an empty set
-    with open('/user/db_content/not_wanted_magnets.pkl', 'wb') as f:
+    with open(NOT_WANTED_MAGNETS_FILE, 'wb') as f:
         pickle.dump(set(), f)
     print("The 'not_wanted_magnets.pkl' file has been purged.")
 
@@ -56,15 +66,17 @@ def is_url_not_wanted(url):
 
 def load_not_wanted_urls():
     try:
-        with open('/user/db_content/not_wanted_urls.pkl', 'rb') as f:
+        with open(NOT_WANTED_URLS_FILE, 'rb') as f:
             return pickle.load(f)
     except (EOFError, pickle.UnpicklingError):
         return set()
     except FileNotFoundError:
-        with open('/user/db_content/not_wanted_urls.pkl', 'wb') as f:
+        os.makedirs(os.path.dirname(NOT_WANTED_URLS_FILE), exist_ok=True)
+        with open(NOT_WANTED_URLS_FILE, 'wb') as f:
             pickle.dump(set(), f)
         return set()
     
 def save_not_wanted_urls(not_wanted_set):
-    with open('/user/db_content/not_wanted_urls.pkl', 'wb') as f:
+    os.makedirs(os.path.dirname(NOT_WANTED_URLS_FILE), exist_ok=True)
+    with open(NOT_WANTED_URLS_FILE, 'wb') as f:
         pickle.dump(not_wanted_set, f)

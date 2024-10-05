@@ -373,7 +373,7 @@ def get_active_downloads(check=False):
             return active, limit
     except Exception as e:
         logging.error(f"An error occurred while fetching active downloads: {e}")
-        return (0, 0) if not check else True
+        return (0, 32) if not check else True
 
 @timed_lru_cache(seconds=300)  # Cache for 5 minutes
 def get_user_traffic():

@@ -48,7 +48,10 @@ def api_logs():
         return jsonify({'error': 'An error occurred while fetching logs'}), 500
 
 def get_recent_logs(n, since='', level='all'):
-    log_path = '/user/logs/debug.log'
+    # Get logs directory from environment variable with fallback
+    logs_dir = os.environ.get('USER_LOGS', '/user/logs')
+    log_path = os.path.join(logs_dir, 'debug.log')
+    
     if not os.path.exists(log_path):
         return []
     

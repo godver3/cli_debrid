@@ -23,7 +23,11 @@ class TraktAuth:
         self.client_id = self.settings.Trakt['client_id']
         self.client_secret = self.settings.Trakt['client_secret']
         self.redirect_uri = self.settings.Trakt['redirect_uri']
-        self.pytrakt_file = os.path.expanduser('/user/config/.pytrakt.json')
+        
+        # Get config directory from environment variable with fallback
+        config_dir = os.environ.get('USER_CONFIG', '/user/config')
+        self.pytrakt_file = os.path.join(config_dir, '.pytrakt.json')
+        
         self.load_auth()
         
     def load_auth(self):
@@ -150,5 +154,6 @@ class TraktAuth:
             'OAUTH_REFRESH': self.refresh_token,
             'OAUTH_EXPIRES_AT': self.expires_at
         }
+        os.makedirs(os.path.dirname(self.pytrakt_file), exist_ok=True)
         with open(self.pytrakt_file, 'w') as f:
             json.dump(credentials, f)

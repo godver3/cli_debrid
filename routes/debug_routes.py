@@ -91,8 +91,11 @@ def delete_database():
         # Close any open database connections
         conn.close()
 
+        # Get db_content directory from environment variable with fallback
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        
         # Delete the media_items.db file
-        db_path = os.path.join(current_app.root_path, '/user/db_content', 'media_items.db')
+        db_path = os.path.join(db_content_dir, 'media_items.db')
         if os.path.exists(db_path):
             os.remove(db_path)
             logging.info(f"Deleted media_items.db file: {db_path}")
