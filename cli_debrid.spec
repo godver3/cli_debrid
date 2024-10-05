@@ -6,6 +6,22 @@ from PyInstaller.config import CONF
 
 block_cipher = None
 
+# Get the path to your project directory
+project_path = os.path.abspath(os.path.dirname(__file__))
+
+# Collect all files in the project directory
+added_files = []
+for root, dirs, files in os.walk(project_path):
+    if '.git' in dirs:
+        dirs.remove('.git')  # don't visit git directories
+    if '__pycache__' in dirs:
+        dirs.remove('__pycache__')  # don't visit pycache directories
+    for file in files:
+        if file.endswith(('.py', '.json', '.txt')):  # specify exact extensions
+            file_path = os.path.join(root, file)
+            relative_path = os.path.relpath(file_path, project_path)
+            added_files.append((file_path, relative_path))
+
 a = Analysis(
     ['windows_wrapper.py'],
     pathex=[],
