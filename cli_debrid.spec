@@ -27,6 +27,10 @@ a = Analysis(['windows_wrapper.py'],
                  'guessit',
                  'pykakasi',
                  'requests',
+                 'urllib3',               # Add this line
+                 'idna',                  # Add this line
+                 'charset_normalizer',    # Add this line (or 'chardet' for older versions)
+                 'certifi',               # Add this line
                  'tenacity',
                  'urwid',
                  'werkzeug',
