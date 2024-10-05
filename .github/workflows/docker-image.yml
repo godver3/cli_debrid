@@ -96,8 +96,8 @@ jobs:
         platforms: linux/amd64
         push: true
         tags: ${{ env.DOCKER_TAGS }}
-        build-args: |
-          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        #build-args: |
+          # BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           # You can pass the Windows executable into the build context here if needed
 
     - name: Build and push arm64 image
@@ -108,8 +108,8 @@ jobs:
         platforms: linux/arm64
         push: true
         tags: ${{ env.DOCKER_TAGS_ARM64 }}
-        build-args: |
-          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        # build-args: |
+          # BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           # You can pass the Windows executable into the build context here if needed
 
     - name: Notify Discord - Build Completed
