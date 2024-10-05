@@ -30,11 +30,11 @@ jobs:
       - name: Build Windows executable
         run: |
           pyinstaller --noconfirm --clean --log-level DEBUG cli_debrid.spec
-          dir /s /b dist
+          Get-ChildItem -Path dist -Recurse | ForEach-Object { $_.FullName }
 
       - name: List contents of executable directory
         run: |
-          dir /s /b dist\cli_debrid
+          Get-ChildItem -Path dist\cli_debrid -Recurse | ForEach-Object { $_.FullName }
 
       - name: Upload Windows executable artifact
         uses: actions/upload-artifact@v3
