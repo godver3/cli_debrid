@@ -7,7 +7,7 @@ from PyInstaller.config import CONF
 block_cipher = None
 
 # Get the path to your project directory
-project_path = os.path.abspath(os.path.dirname(__file__))
+project_path = CONF['specpath']
 
 # Collect all files in the project directory
 added_files = []
@@ -24,9 +24,9 @@ for root, dirs, files in os.walk(project_path):
 
 a = Analysis(
     ['windows_wrapper.py'],
-    pathex=[],
+    pathex=[project_path],
     binaries=[],
-    datas=[('version.txt', '.'), ('cli_battery', 'cli_battery')],
+    datas=added_files + [('version.txt', '.'), ('cli_battery', 'cli_battery')],
     hiddenimports=[
         'requests',
         'urllib3',
