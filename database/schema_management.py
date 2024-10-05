@@ -143,7 +143,10 @@ def purge_database(content_type=None, state=None):
         conn.commit()
         logging.info(f"Database purged successfully for type '{content_type}' and state '{state}'.")
 
-        trakt_cache_file = '/user/db_content/trakt_last_activity.pkl'
+        # Get db_content directory from environment variable with fallback
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        trakt_cache_file = os.path.join(db_content_dir, 'trakt_last_activity.pkl')
+        
         if os.path.exists(trakt_cache_file):
             os.remove(trakt_cache_file)
             logging.info(f"Deleted Trakt cache file: {trakt_cache_file}")

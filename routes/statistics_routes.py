@@ -164,7 +164,9 @@ def set_compact_preference():
 def index():
     logging.debug(f"Statistics request: {request.url}")
 
-    os.makedirs('/user/db_content', exist_ok=True)
+    # Get db_content directory from environment variable with fallback
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    os.makedirs(db_content_dir, exist_ok=True)
 
     start_time = time.time()
 

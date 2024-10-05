@@ -24,7 +24,8 @@ app.secret_key = '9683650475'
 
 queue_manager = QueueManager()
 
-db_directory = os.path.join(app.root_path, '/user/db_content')
+# Get db_content directory from environment variable with fallback
+db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 os.makedirs(db_directory, exist_ok=True)
 
 if not os.access(db_directory, os.W_OK):
@@ -46,7 +47,9 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 # Global variables for statistics
 start_time = time.time()
 
-CONFIG_FILE = './config/config.json'
+# Get config directory from environment variable with fallback
+config_dir = os.environ.get('USER_CONFIG', '/user/config')
+CONFIG_FILE = os.path.join(config_dir, 'config.json')
 
 register_blueprints(app)
 

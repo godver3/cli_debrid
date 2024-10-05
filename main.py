@@ -17,29 +17,33 @@ def setup_logging():
     logging.getLogger('selector').setLevel(logging.WARNING)
     logging.getLogger('asyncio').setLevel(logging.WARNING)
 
+    # Get log directory from environment variable with fallback
+    log_dir = os.environ.get('USER_LOGS', '/user/logs')
+
     # Ensure logs directory exists
-    if not os.path.exists('/user/logs'):
-        os.makedirs('/user/logs')
+    os.makedirs(log_dir, exist_ok=True)
 
     # Ensure log files exist
     for log_file in ['debug.log', 'info.log', 'queue.log']:
-        log_path = os.path.join('/user/logs', log_file)
+        log_path = os.path.join(log_dir, log_file)
         if not os.path.exists(log_path):
-            with open(log_path, 'w'):
-                pass
+            open(log_path, 'a').close()
 
     import logging_config
     logging_config.setup_logging()
 
 def setup_directories():
+    # Get db_content directory from environment variable with fallback
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     # Ensure db_content directory exists
-    if not os.path.exists('/user/db_content'):
-        os.makedirs('/user/db_content')
+    os.makedirs(db_content_dir, exist_ok=True)
 
 def backup_config():
-    config_path = '/user/config/config.json'
+    # Get config directory from environment variable with fallback
+    config_dir = os.environ.get('USER_CONFIG', '/user/config')
+    config_path = os.path.join(config_dir, 'config.json')
     if os.path.exists(config_path):
-        backup_path = f'/user/config/config_backup.json'
+        backup_path = os.path.join(config_dir, 'config_backup.json')
         shutil.copy2(config_path, backup_path)
         logging.info(f"Backup of config.json created: {backup_path}")
     else:
@@ -169,8 +173,7 @@ def main():
       (            (             )           (     
       )\ (         )\ )   (   ( /(  (   (    )\ )  
   (  ((_))\       (()/(  ))\  )\()) )(  )\  (()/(  
-  )\  _ ((_)       ((_))/((_)((_)\ (()\((_)  ((_)) 
- ((_)| | (_)       _| |(_))  | |(_) ((_)(_)  _| |  
+  )\  _ ((_)       _| |(_))  | |(_) ((_)(_)  _| |  
 / _| | | | |     / _` |/ -_) | '_ \| '_|| |/ _` |  
 \__| |_| |_|_____\__,_|\___| |_.__/|_|  |_|\__,_|  
            |_____|                                 

@@ -3,7 +3,8 @@ from logging.handlers import RotatingFileHandler
 import os
 
 def setup_logger():
-    log_dir = '/user/logs'
+    # Get log directory from environment variable with fallback
+    log_dir = os.environ.get('USER_LOGS', '/user/logs')
     os.makedirs(log_dir, exist_ok=True)
 
     # Create a logger
@@ -23,7 +24,8 @@ def setup_logger():
     logger.addHandler(console_handler)
 
     # Add file handler
-    file_handler = RotatingFileHandler('/user/logs/battery_debug.log', maxBytes=1024 * 1024, backupCount=10)
+    log_file = os.path.join(log_dir, 'battery_debug.log')
+    file_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=10)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)

@@ -1,5 +1,6 @@
 import logging
 import time
+import os
 from initialization import initialize
 from settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
@@ -20,7 +21,6 @@ from pathlib import Path
 import pickle
 from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
 import ntplib
-import os
 from content_checkers.trakt import check_trakt_early_releases
 
 queue_logger = logging.getLogger('queue_logger')
@@ -244,7 +244,7 @@ class ProgramRunner:
                 self.process_content_source(source, data)
 
     def task_send_notifications(self):
-        notifications_file = Path("/user/db_content/collected_notifications.pkl")
+        notifications_file = Path(os.environ.get('USER_DB_CONTENT', '/user/db_content')) / "collected_notifications.pkl"
         
         if notifications_file.exists():
             try:

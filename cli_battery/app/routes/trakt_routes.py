@@ -16,7 +16,9 @@ settings = Settings()
 
 trakt_bp = Blueprint('trakt', __name__)
 
-TRAKT_CONFIG_PATH = '/user/config/.pytrakt.json'
+# Get config directory from environment variable with fallback
+CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
+TRAKT_CONFIG_PATH = os.path.join(CONFIG_DIR, '.pytrakt.json')
 
 @trakt_bp.route('/trakt_auth', methods=['GET', 'POST'])
 def trakt_auth():
@@ -92,6 +94,7 @@ def get_trakt_config():
     return {}
 
 def save_trakt_config(config):
+    os.makedirs(os.path.dirname(TRAKT_CONFIG_PATH), exist_ok=True)
     with open(TRAKT_CONFIG_PATH, 'w') as f:
         json.dump(config, f, indent=2)
 
