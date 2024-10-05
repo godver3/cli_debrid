@@ -27,7 +27,11 @@ a = Analysis(['windows_wrapper.py'],
                  'guessit',
                  'pykakasi',
                  'requests',
-                 'urllib3',               # Add this line
+                 'requests.packages.urllib3',
+                 'requests.packages.urllib3.contrib',
+                 'requests.packages.urllib3.util',
+                 'requests.packages.urllib3.contrib.pyopenssl',
+                 'requests.packages.urllib3.packages.ssl_match_hostname',
                  'idna',                  # Add this line
                  'charset_normalizer',    # Add this line (or 'chardet' for older versions)
                  'certifi',               # Add this line
