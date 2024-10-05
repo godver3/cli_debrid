@@ -3,6 +3,12 @@ import sys
 import threading
 import traceback
 
+# Add the project root and cli_battery directories to the Python path
+project_root = os.path.dirname(os.path.abspath(__file__))
+cli_battery_path = os.path.join(project_root, 'cli_battery')
+sys.path.append(project_root)
+sys.path.append(cli_battery_path)
+
 try:
     import requests
     print("Requests module imported successfully")
@@ -11,37 +17,30 @@ except ImportError as e:
     print("Traceback:")
     traceback.print_exc()
 
+# Import main app and battery main
 import main as main_app
-
-# Add cli_battery and database directories to Python path
-cli_battery_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cli_battery')
-database_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database')
-sys.path.append(cli_battery_path)
-sys.path.append(database_path)
-
-# Now import the battery main module and database
 from cli_battery import main as battery_main
-import database
+
+# Import other necessary modules
+from database import *
+from settings import *
+from logging_config import *
+from api_tracker import *
+from web_server import start_server
 
 def setup_paths():
     if getattr(sys, 'frozen', False):
-        # Running as compiled executable
         base_path = os.path.dirname(sys.executable)
     else:
-        # Running as script
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        base_path = project_root
 
-    # Set up your Unix-like paths
     os.environ['USER_LOGS'] = os.path.join(base_path, 'user', 'logs')
     os.environ['USER_DB_CONTENT'] = os.path.join(base_path, 'user', 'db_content')
     os.environ['USER_CONFIG'] = os.path.join(base_path, 'user', 'config')
 
-    # Create directories if they don't exist
-    os.makedirs(os.environ['USER_DB_CONTENT'], exist_ok=True)
-    os.makedirs(os.environ['USER_CONFIG'], exist_ok=True)
-    os.makedirs(os.environ['USER_LOGS'], exist_ok=True)
+    for path in [os.environ['USER_DB_CONTENT'], os.environ['USER_CONFIG'], os.environ['USER_LOGS']]:
+        os.makedirs(path, exist_ok=True)
 
-    # Create log files if they don't exist
     for log_file in ['debug.log', 'info.log', 'queue.log']:
         open(os.path.join(os.environ['USER_LOGS'], log_file), 'a').close()
 
@@ -61,26 +60,26 @@ def create_config_files():
     settings_file = os.path.join(config_dir, 'settings.json')
     pytrakt_file = os.path.join(config_dir, '.pytrakt.json')
 
-    if not os.path.exists(settings_file):
-        with open(settings_file, 'w') as f:
-            f.write('{}')
-    
-    if not os.path.exists(pytrakt_file):
-        with open(pytrakt_file, 'w') as f:
-            f.write('{}')
+    for file in [settings_file, pytrakt_file]:
+        if not os.path.exists(file):
+            with open(file, 'w') as f:
+                f.write('{}')
 
 if __name__ == "__main__":
     setup_paths()
     create_config_files()
-    
-    # Create threads for both apps
+    setup_logging()
+    start_global_profiling()
+    setup_api_logging()
+    start_server()
+
     main_thread = threading.Thread(target=run_main_app)
     battery_thread = threading.Thread(target=run_battery_app)
-    
-    # Start both threads
+
     main_thread.start()
     battery_thread.start()
-    
-    # Wait for both threads to complete
+
     main_thread.join()
     battery_thread.join()
+
+    stop_global_profiling()
