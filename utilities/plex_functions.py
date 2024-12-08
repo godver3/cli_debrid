@@ -268,7 +268,10 @@ async def get_collected_from_plex(request='all'):
         logger.debug(f"Final episodes list length: {len(all_episodes)}")
         logger.debug(f"Final movies list length: {len(all_movies_processed)}")
 
-        
+        if not all_movies_processed and not all_episodes:
+            logger.error("No content retrieved from Plex scan")
+            return None
+
         return {
             'movies': all_movies_processed,
             'episodes': all_episodes
@@ -366,19 +369,16 @@ async def get_recent_from_plex():
         logger.debug(f"Final episodes list length: {len(processed_episodes)}")
         logger.debug(f"Final movies list length: {len(processed_movies)}")
 
-        for episode in processed_episodes:
-            location = episode['location']
-            logger.debug(f"Processed episode: {location}")
-        for movie in processed_movies:
-            location = movie['location']
-            logger.debug(f"Processed movie: {location}")
+        if not processed_movies and not processed_episodes:
+            logger.error("No content retrieved from Plex recent scan")
+            return None
 
         return {
             'movies': processed_movies,
             'episodes': processed_episodes
         }
     except Exception as e:
-        logger.error(f"Error collecting content from Plex: {str(e)}", exc_info=True)
+        logger.error(f"Error collecting recent content from Plex: {str(e)}", exc_info=True)
         return None
 
 def is_anime(item):
