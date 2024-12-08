@@ -81,3 +81,5 @@ config/*.json
 build.sh
 dist
 build
+venv
+user

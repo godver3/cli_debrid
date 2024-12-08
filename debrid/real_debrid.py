@@ -95,6 +95,20 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
         if magnet_link.startswith('magnet:'):
             magnet_data = {'magnet': magnet_link}
             torrent_response = api.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
+            
+            # Check for infringing file error
+            if torrent_response.status_code == 503:
+                response_data = torrent_response.json()
+                if response_data.get('error') == 'infringing_file':
+                    logging.warning(f"File flagged as infringing by Real-Debrid. Skipping without retry.")
+                    return None
+                
+                # Only retry for other 503 errors
+                logging.warning("Received 503 error, waiting before retry...")
+                time.sleep(10)
+                torrent_response = api.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
+            
+            torrent_response.raise_for_status()
         else:
             if temp_file_path:
                 with open(temp_file_path, 'rb') as torrent_file:
@@ -113,12 +127,31 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
                 torrent_response = api.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
             sleep(0.1)
 
-        torrent_response.raise_for_status()
+        # Add status code logging
+        logging.debug(f"Torrent response status code: {torrent_response.status_code}")
+        logging.debug(f"Torrent response content: {torrent_response.text[:200]}...")  # Log first 200 chars
+
         torrent_id = torrent_response.json()['id']
 
-        # Step 2: Get torrent info
-        info_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
-        info_response.raise_for_status()
+        # Step 2: Get torrent info with additional error handling
+        max_retries = 3
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                info_response = api.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
+                if info_response.status_code == 503:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        time.sleep(5 * retry_count)  # Exponential backoff
+                        continue
+                info_response.raise_for_status()
+                break
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise
+                time.sleep(5 * retry_count)
+
         torrent_info = info_response.json()
 
         # Add debug logging for all files in the torrent
@@ -158,15 +191,17 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
         }
 
     except api.exceptions.RequestException as e:
-        if isinstance(e, api.exceptions.HTTPError) and e.response.status_code == 503:
-            logging.error("Real-Debrid service is unavailable (503 error)")
-            raise RealDebridUnavailableError("Real-Debrid service is unavailable") from e
-        logging.error(f"Error adding magnet to Real-Debrid: {str(e)}")
-        logging.debug(f"Error details: {e.response.text if e.response else 'No response text available'}")
+        if isinstance(e, api.exceptions.HTTPError):
+            if e.response.status_code == 503:
+                logging.error(f"Real-Debrid service is unavailable (503 error). Response: {e.response.text}")
+                raise RealDebridUnavailableError("Real-Debrid service is unavailable (503 error)") from e
+            logging.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+        else:
+            logging.error(f"Request error occurred: {str(e)}")
         raise
 
     except Exception as e:
-        logging.error(f"Unexpected error: {str(e)}")
+        logging.error(f"Unexpected error in add_to_real_debrid: {str(e)}")
         raise
 
 @lru_cache(maxsize=1000)
@@ -216,49 +251,10 @@ def is_cached_on_rd(hashes):
         logging.warning("No valid hashes after filtering")
         return {}
 
-    url = f'{API_BASE_URL}/torrents/instantAvailability/{"/".join(hashes)}'
-    
-    try:
-        response = get(url)
-        if not response:
-            logging.warning(f"No response from Real-Debrid for hashes: {hashes}")
-            return {hash_: False for hash_ in hashes}  # Consider all as not cached
-
-        response = namespace_to_dict(response)
-
-        cache_status = {}
-        for hash_ in hashes:
-            hash_key = hash_.lower()
-            if hash_key in response and response[hash_key]:
-                # Process as before
-                hash_data = response[hash_key]
-                has_video_files = False
-                if isinstance(hash_data, list) and hash_data:
-                    files = hash_data[0].get('rd', [])
-                elif isinstance(hash_data, dict):
-                    files = hash_data.get('rd', [])
-                else:
-                    files = []
-
-                if files:
-                    for file_info in files:
-                        for filename in file_info.values():
-                            if is_video_file(filename['filename']):
-                                has_video_files = True
-                                break
-                        if has_video_files:
-                            break
-
-                cache_status[hash_] = has_video_files
-            else:
-                cache_status[hash_] = False  # Consider as not cached
-        
-        logging.debug(f"Cache status for hashes {hashes}: {cache_status}")
-        return cache_status
-
-    except Exception as e:
-        logging.error(f"Error in is_cached_on_rd: {str(e)}")
-        return {hash_: False for hash_ in hashes}  # Consider all as not cached in case of any error
+    # Return all hashes as cached since instant availability endpoint is no longer available
+    cache_status = {hash_: True for hash_ in hashes}
+    logging.debug(f"Cache status for hashes {hashes}: {cache_status}")
+    return cache_status
 
 def get_cached_files(hash_):
     url = f'{API_BASE_URL}/torrents/instantAvailability/{hash_}'
