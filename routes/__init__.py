@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, redirect, url_for, render_template, g, req
 from functools import wraps
 import json
 import os
+import sys
 from requests.exceptions import RequestException
 from werkzeug.exceptions import TooManyRequests
 
@@ -25,11 +26,23 @@ from extensions import app
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
+def get_tooltip_schema():
+    if getattr(sys, 'frozen', False):
+        # If the application is run as a bundle, the PyInstaller bootloader
+        # extends the sys module by a flag frozen=True and sets the app 
+        # path into variable _MEIPASS'.
+        application_path = sys._MEIPASS
+    else:
+        application_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    tooltip_path = os.path.join(application_path, 'tooltip_schema.json')
+    
+    with open(tooltip_path, 'r') as f:
+        return json.load(f)
+
 @tooltip_bp.route('/tooltips')
 def get_tooltips():
-    tooltip_path = os.path.join(os.path.dirname(__file__), '..', 'tooltip_schema.json')
-    with open(tooltip_path, 'r') as f:
-        tooltips = json.load(f)
+    tooltips = get_tooltip_schema()
     return jsonify(tooltips)
 
 def is_api_request():

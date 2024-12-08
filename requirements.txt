@@ -33,3 +33,6 @@ urllib3==1.26.15
 idna==3.3
 charset-normalizer==2.0.4
 certifi==2023.5.7
+python-Levenshtein
+appdirs==1.4.4
+pystray==0.19.5

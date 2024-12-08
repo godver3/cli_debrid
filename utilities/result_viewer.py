@@ -1,4 +1,4 @@
-import curses
+'''import curses
 from typing import List, Dict
 
 def truncate_string(string, length):
@@ -80,4 +80,4 @@ def display_results(results: List[Dict], filtered_out_results: List[Dict]):
             elif key == 10:  # Enter key
                 return display_results[current_pos] if not show_filtered_out else None
 
-    return curses.wrapper(main)
+    return curses.wrapper(main)'''
