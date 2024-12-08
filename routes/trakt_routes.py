@@ -117,7 +117,7 @@ def update_trakt_config(key, value):
 def push_trakt_auth_to_battery():
     try:
         trakt_config = get_trakt_config()
-        battery_url = get_setting('Metadata Battery', 'url')
+        battery_url = get_setting('Metadata Battery', 'url', 'http://localhost:5001')
 
         if not battery_url:
             logging.error("Battery URL not set in settings")

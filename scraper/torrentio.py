@@ -39,7 +39,10 @@ def construct_url(imdb_id: str, content_type: str, season: int = None, episode: 
 
 def fetch_data(url: str) -> Dict:
     try:
-        response = api.get(url)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = api.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
     except api.exceptions.RequestException as e:

@@ -313,15 +313,19 @@ function addToRealDebrid(magnetLink) {
 }
 
 function displayError(message) {
-    const overlayContent = document.getElementById('overlayStatus');
-    overlayContent.innerHTML = `<p style="color: red;">Error: ${message}</p>`;
-    overlayContent.style.display = 'block';
+    showPopup({
+        type: POPUP_TYPES.ERROR,
+        title: 'Error',
+        message: message
+    });
 }
 
 function displaySuccess(message) {
-    const overlayContent = document.getElementById('overlayStatus');
-    overlayContent.innerHTML = `<p style="color: green;">${message}</p>`;
-    overlayContent.style.display = 'block';
+    showPopup({
+        type: POPUP_TYPES.SUCCESS,
+        title: 'Success',
+        message: message
+    });
 }
 
 function showLoadingState() {
@@ -469,7 +473,7 @@ function displayTorrentResults(data, title, year) {
                     <button>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title}</p>
-                        <p class="torresult-item">${(torrent.size).toFixed(1)} GB | ${torrent.cached} | ${torrent.score_breakdown.total_score}</p>
+                        <p class="torresult-item">${(torrent.size).toFixed(1)} GB | ${torrent.score_breakdown.total_score}</p>
                         <p class="torresult-item">${torrent.source}</p>
                     </div>
                     </button>             
@@ -496,7 +500,6 @@ function displayTorrentResults(data, title, year) {
                     <th style="color: rgb(191 191 190); width: 100%;">Name</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Size</th>
                     <th style="color: rgb(191 191 190); width: 15%;">Source</th>
-                    <th style="color: rgb(191 191 190); width: 10%;">Cached</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Score</th>
                     <th style="color: rgb(191 191 190); width: 15%;">Action</th>
                 </tr>
@@ -515,7 +518,6 @@ function displayTorrentResults(data, title, year) {
                     </td>
                     <td style="color: rgb(191 191 190);">${(torrent.size).toFixed(1)} GB</td>
                     <td style="color: rgb(191 191 190);">${torrent.source}</td>
-                    <td style="color: rgb(191 191 190);">${torrent.cached}</td>
                     <td style="color: rgb(191 191 190);">${torrent.score_breakdown.total_score}</td>
                     <td style="color: rgb(191 191 190);">
                         <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button>
@@ -531,11 +533,6 @@ function displayTorrentResults(data, title, year) {
     mediaQuery.addListener(handleScreenChange);
     handleScreenChange(mediaQuery);
 
-    // Close the overlay when the close button is clicked
-    document.querySelector('.close-btn').onclick = function() {
-        document.getElementById('overlay').style.display = 'none';
-    };
-    
     overlay.style.display = 'block';
 }
 

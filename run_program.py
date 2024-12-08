@@ -40,22 +40,34 @@ class ProgramRunner:
             return
         self._initialized = True
         self.running = False
-        self.initializing = False  # Add this line
+        self.initializing = False
         
         from queue_manager import QueueManager
-
+        
+        # Initialize queue manager with logging
+        logging.info("Initializing QueueManager")
         self.queue_manager = QueueManager()
+        
+        # Verify queue initialization
+        expected_queues = ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']
+        missing_queues = [q for q in expected_queues if q not in self.queue_manager.queues]
+        if missing_queues:
+            logging.error(f"Missing queues during initialization: {missing_queues}")
+            raise RuntimeError(f"Queue initialization failed. Missing queues: {missing_queues}")
+        
+        logging.info("Successfully initialized QueueManager with queues: " + ", ".join(self.queue_manager.queues.keys()))
+        
         self.tick_counter = 0
         self.task_intervals = {
-            'wanted': 5,
-            'scraping': 5,
-            'adding': 5,
-            'checking': 300, #300
-            'sleeping': 900,
-            'unreleased': 3600,
-            'blacklisted': 3600,
-            'pending_uncached': 3600,
-            'upgrading': 3600,
+            'Wanted': 5,
+            'Scraping': 5,
+            'Adding': 5,
+            'Checking': 300,
+            'Sleeping': 900,
+            'Unreleased': 3600,
+            'Blacklisted': 3600,
+            'Pending Uncached': 3600,
+            'Upgrading': 3600,
             'task_plex_full_scan': 3600,
             'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
@@ -70,15 +82,15 @@ class ProgramRunner:
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
         
         self.enabled_tasks = {
-            'wanted', 
-            'scraping', 
-            'adding', 
-            'checking', 
-            'sleeping', 
-            'unreleased', 
-            'blacklisted',
-            'pending_uncached',
-            'upgrading',
+            'Wanted', 
+            'Scraping', 
+            'Adding', 
+            'Checking', 
+            'Sleeping', 
+            'Unreleased', 
+            'Blacklisted',
+            'Pending Uncached',
+            'Upgrading',
             'task_plex_full_scan', 
             'task_debug_log', 
             'task_refresh_release_dates',
@@ -202,101 +214,105 @@ class ProgramRunner:
 
     # Update this method to use the cached content sources
     def process_queues(self):
-        self.update_heartbeat()
-        self.check_heartbeat()
-        self.check_task_health()
-        current_time = time.time()
-        time_drift = current_time - self.last_run_times['task_debug_log'] - self.task_intervals['task_debug_log']
-        
-        if abs(time_drift) > 60:  # If drift is more than 60 seconds
-            logging.warning(f"Detected time drift of {time_drift:.2f} seconds. Resetting task timers.")
-            self.last_run_times = {task: current_time for task in self.task_intervals}
-
-        self.queue_manager.update_all_queues()
-
-        for queue_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached', 'upgrading']:
-            if self.should_run_task(queue_name):
-                self.safe_process_queue(queue_name)
-
-        if self.should_run_task('task_plex_full_scan'):
-            self.task_plex_full_scan()
-        if self.should_run_task('task_refresh_release_dates'):
-            self.task_refresh_release_dates()
-        if self.should_run_task('task_debug_log'):
-            self.task_debug_log()
-        if self.should_run_task('task_check_service_connectivity'):
-            self.task_check_service_connectivity()
-        if self.should_run_task('task_purge_not_wanted_magnets_file'):
-            self.task_purge_not_wanted_magnets_file()
-        if self.should_run_task('task_generate_airtime_report'):
-            self.task_generate_airtime_report()
-        if self.should_run_task('task_send_notifications'):
-            self.task_send_notifications()
-        if self.should_run_task('task_sync_time'):
-            self.sync_time()
-        if self.should_run_task('task_check_trakt_early_releases'):
-            self.task_check_trakt_early_releases()
+        try:
+            logging.debug("Starting process_queues cycle")
+            self.update_heartbeat()
+            self.check_heartbeat()
+            self.check_task_health()
+            current_time = time.time()
             
-        # Process content source tasks
-        for source, data in self.get_content_sources().items():
-            task_name = f'task_{source}_wanted'
-            if self.should_run_task(task_name):
-                self.process_content_source(source, data)
+            # Update all queues from database
+            self.queue_manager.update_all_queues()
+            
+            # Log the state of all queues
+            logging.debug("Current queue states:")
+            for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
+                should_run = self.should_run_task(queue_name)
+                time_since_last = current_time - self.last_run_times[queue_name]
+                logging.debug(f"Queue {queue_name}: Should run: {should_run}, Time since last run: {time_since_last:.2f}s")
+                if should_run:
+                    logging.info(f"Processing {queue_name} queue")
+                    self.safe_process_queue(queue_name)
 
-    def task_send_notifications(self):
-        notifications_file = Path(os.environ.get('USER_DB_CONTENT', '/user/db_content')) / "collected_notifications.pkl"
-        
-        if notifications_file.exists():
-            try:
-                with open(notifications_file, "rb") as f:
-                    notifications = pickle.load(f)
-                
-                if notifications:
-                    # Fetch enabled notifications
-                    response = requests.get('http://localhost:5000/settings/notifications/enabled')
-                    if response.status_code == 200:
-                        enabled_notifications = response.json().get('enabled_notifications', {})
-                        
-                        # Send notifications
-                        send_notifications(notifications, enabled_notifications)
-                        
-                        # Clear the notifications file
-                        with open(notifications_file, "wb") as f:
-                            pickle.dump([], f)
-                        
-                        logging.info(f"Sent {len(notifications)} notifications and cleared the notifications file")
-                    else:
-                        logging.error(f"Failed to fetch enabled notifications: {response.text}")
-                else:
-                    logging.debug("No notifications to send")
-            except Exception as e:
-                logging.error(f"Error processing notifications: {str(e)}")
-        else:
-            logging.debug("No notifications file found")
+            # Log content source states
+            for source, data in self.get_content_sources().items():
+                task_name = f'task_{source}_wanted'
+                should_run = self.should_run_task(task_name)
+                time_since_last = current_time - self.last_run_times[task_name]
+                logging.debug(f"Content source {source}: Should run: {should_run}, Time since last run: {time_since_last:.2f}s")
+
+            logging.debug("Completed process_queues cycle")
+            
+        except Exception as e:
+            logging.error(f"Error in process_queues: {str(e)}")
+            logging.error(traceback.format_exc())
 
     def safe_process_queue(self, queue_name: str):
         try:
-            logging.debug(f"Processing {queue_name} queue")
+            logging.info(f"Starting to process {queue_name} queue")
             start_time = time.time()
             
+            # Verify queue manager exists
+            if not hasattr(self, 'queue_manager'):
+                logging.error("Queue manager not initialized!")
+                return None
+                
+            # Verify queues exist
+            if not hasattr(self.queue_manager, 'queues'):
+                logging.error("Queue manager has no queues attribute!")
+                return None
+                
+            # Verify specific queue exists
+            if queue_name not in self.queue_manager.queues:
+                logging.error(f"Queue '{queue_name}' not found in queue manager! Available queues: {list(self.queue_manager.queues.keys())}")
+                return None
+            
+            # Convert queue name to lowercase for method name
+            method_name = f'process_{queue_name.lower()}'
+            
             # Get the appropriate process method
-            process_method = getattr(self.queue_manager, f'process_{queue_name}')
+            if not hasattr(self.queue_manager, method_name):
+                logging.error(f"Process method '{method_name}' not found in queue manager!")
+                return None
+                
+            process_method = getattr(self.queue_manager, method_name)
+            
+            # Log queue contents before processing
+            queue_contents = self.queue_manager.queues[queue_name].get_contents()
+            logging.info(f"{queue_name} queue contains {len(queue_contents)} items before processing")
+            if queue_contents:
+                for item in queue_contents:
+                    logging.debug(f"Queue item: {self.queue_manager.generate_identifier(item)}")
+            
+            # Check if queue is paused
+            if self.queue_manager.is_paused():
+                logging.warning(f"Queue processing is paused. Skipping {queue_name} queue.")
+                return None
             
             # Call the process method and capture any return value
+            logging.debug(f"Calling process method for {queue_name} queue")
             result = process_method()
+            logging.debug(f"Process method returned: {result}")
+            
+            # Log after processing
+            queue_contents = self.queue_manager.queues[queue_name].get_contents()
+            logging.info(f"{queue_name} queue contains {len(queue_contents)} items after processing")
+            if queue_contents:
+                for item in queue_contents:
+                    logging.debug(f"Queue item remaining: {self.queue_manager.generate_identifier(item)}")
             
             duration = time.time() - start_time
-            if duration > 300:  # 5 minutes
-                logging.warning(f"{queue_name} queue processing took {duration:.2f} seconds")
+            logging.info(f"Finished processing {queue_name} queue in {duration:.2f} seconds")
             
-            # Return the result if any
             return result
         
         except AttributeError as e:
             logging.error(f"Error: No process method found for {queue_name} queue. Error: {str(e)}")
+            logging.error(f"Queue manager state: {vars(self.queue_manager) if hasattr(self, 'queue_manager') else 'No queue manager'}")
         except Exception as e:
             logging.error(f"Error processing {queue_name} queue: {str(e)}")
             logging.error(f"Traceback: {traceback.format_exc()}")
+            logging.error(f"Queue manager state: {vars(self.queue_manager) if hasattr(self, 'queue_manager') else 'No queue manager'}")
         
         return None
 
@@ -405,8 +421,9 @@ class ProgramRunner:
             self.run()
 
     def stop(self):
+        logging.warning("Program stop requested")
         self.running = False
-        self.initializing = False  # Add this line
+        self.initializing = False
 
     def is_running(self):
         return self.running
@@ -415,18 +432,41 @@ class ProgramRunner:
         return self.initializing
 
     def run(self):
-        self.run_initialization()
-        
-        while self.running:
-            try:
-                self.process_queues()
-            except Exception as e:
-                logging.error(f"Unexpected error in main loop: {str(e)}")
-                logging.error(traceback.format_exc())
-            finally:
-                time.sleep(1)  # Main loop runs every second
+        try:
+            logging.info("Starting program run")
+            self.running = True  # Make sure running flag is set
+            logging.info(f"Program running state: {self.running}")
+            
+            self.run_initialization()
+            
+            while self.running:
+                try:
+                    cycle_start = time.time()
+                    logging.debug("Starting main program cycle")
+                    
+                    # Log program state
+                    logging.debug(f"Program state - Running: {self.running}, Initializing: {self.initializing}")
+                    
+                    self.process_queues()
+                    
+                    cycle_duration = time.time() - cycle_start
+                    logging.debug(f"Completed main program cycle in {cycle_duration:.2f} seconds")
+                    
+                    # Check queue manager state
+                    if hasattr(self, 'queue_manager'):
+                        paused = self.queue_manager.is_paused()
+                        logging.debug(f"Queue manager paused state: {paused}")
+                
+                except Exception as e:
+                    logging.error(f"Unexpected error in main loop: {str(e)}")
+                    logging.error(traceback.format_exc())
+                finally:
+                    time.sleep(1)  # Main loop runs every second
 
-        logging.warning("Program has stopped running")
+            logging.warning("Program has stopped running")
+        except Exception as e:
+            logging.error(f"Fatal error in run method: {str(e)}")
+            logging.error(traceback.format_exc())
 
     def invalidate_content_sources_cache(self):
         self.content_sources = None
@@ -448,8 +488,10 @@ class ProgramRunner:
     def check_task_health(self):
         current_time = time.time()
         for task, last_run_time in self.last_run_times.items():
-            if current_time - last_run_time > self.task_intervals[task] * 2:
-                logging.warning(f"Task {task} hasn't run in a while. Resetting timer.")
+            time_since_last_run = current_time - last_run_time
+            logging.debug(f"Task {task} last ran {time_since_last_run:.2f} seconds ago (interval: {self.task_intervals[task]})")
+            if time_since_last_run > self.task_intervals[task] * 2:
+                logging.warning(f"Task {task} hasn't run in {time_since_last_run:.2f} seconds (should run every {self.task_intervals[task]} seconds)")
                 self.last_run_times[task] = current_time
 
     def task_check_trakt_early_releases(self):
