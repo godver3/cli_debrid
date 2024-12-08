@@ -6,8 +6,15 @@ on:
   workflow_dispatch:  # This enables manual triggering
 
 jobs:
-  build-windows-exe:
-    runs-on: windows-latest
+  # Commenting out the Windows build job
+  #build-windows-exe:
+  #  runs-on: windows-latest
+  #  steps:
+  # ... existing windows build steps ...
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    # Remove the 'needs' line since we're not depending on Windows build anymore
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -15,125 +22,72 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      # Remove the Windows artifact download step since we're not building Windows anymore
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          python-version: '3.11'
-          architecture: 'x64'
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
+      - name: Get version from version.txt
+        run: echo "VERSION=$(cat version.txt)" >> $GITHUB_ENV
 
-      - name: Install dependencies
+      - name: Set Docker tags
         run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
+          if [ "${{ github.ref_name }}" = "dev" ]; then
+            echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }}" >> $GITHUB_ENV
+            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:dev-arm64,godver3/cli_debrid:dev-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            echo "DOCKER_TAGS=godver3/cli_debrid:main,godver3/cli_debrid:main-${{ env.VERSION }}" >> $GITHUB_ENV
+            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:main-arm64,godver3/cli_debrid:main-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
+          else
+            echo "DOCKER_TAGS=godver3/cli_debrid:batteryintegration,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}" >> $GITHUB_ENV
+            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:batteryintegration-arm64,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
+          fi
 
-      - name: Verify requests installation
-        run: |
-          python -c "import requests; print(requests.__version__)"
-          python -c "import urllib3; print(urllib3.__version__)"
-          python -c "import chardet; print(chardet.__version__)"
-          python -c "import certifi; print(certifi.__version__)"
-          python -c "import idna; print(idna.__version__)"
-          python -c "import charset_normalizer; print(charset_normalizer.__version__)"
-
-      - name: Build Windows executable
-        run: |
-          pyinstaller --noconfirm --clean --log-level DEBUG cli_debrid.spec
-          Get-ChildItem -Path dist -Recurse | ForEach-Object { $_.FullName }
-
-      - name: List contents of executable directory
-        run: |
-          Get-ChildItem -Path dist\cli_debrid -Recurse | ForEach-Object { $_.FullName }
-
-      - name: Upload Windows executable artifact
-        uses: actions/upload-artifact@v3
+      - name: Notify Discord - Build Started
+        uses: sarisia/actions-status-discord@v1
         with:
-          name: cli_debrid_executable_windows
-          path: ./dist/cli_debrid/**
+          webhook: ${{ secrets.DISCORD_TOKEN }}
+          title: "Docker Build Started"
+          description: "Building version ${{ env.VERSION }} for tags: ${{ env.DOCKER_TAGS }}, ${{ env.DOCKER_TAGS_ARM64 }}"
+          color: 0xFFA500
 
-# Temporarily disable the build-and-push job
-#  build-and-push:
-#    runs-on: ubuntu-latest
-#    needs: build-windows-exe  # Ensures this job runs after 'build-windows-exe'
-#    steps:
-#      - name: Checkout code
-#        uses: actions/checkout@v4
-#        with:
-#          fetch-depth: 0
-#          token: ${{ secrets.PAT_TOKEN }}
-#
-#      - name: Download Windows executable artifact
-#        uses: actions/download-artifact@v3
-#        with:
-#          name: cli_debrid_executable_windows
-#          path: ./cli_debrid_executable_windows
-#
-#      - name: Set up QEMU
-#        uses: docker/setup-qemu-action@v3
-#
-#      - name: Set up Docker Buildx
-#        uses: docker/setup-buildx-action@v3
-#
-#      - name: Login to Docker Hub
-#        uses: docker/login-action@v3
-#        with:
-#          username: ${{ secrets.DOCKER_USERNAME }}
-#          password: ${{ secrets.DOCKER_PASSWORD }}
-#
-#      - name: Get version from version.txt
-#        run: echo "VERSION=$(cat version.txt)" >> $GITHUB_ENV
-#
-#      - name: Set Docker tags
-#        run: |
-#          if [ "${{ github.ref_name }}" = "dev" ]; then
-#            echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }}" >> $GITHUB_ENV
-#            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:dev-arm64,godver3/cli_debrid:dev-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
-#          elif [ "${{ github.ref_name }}" = "main" ]; then
-#            echo "DOCKER_TAGS=godver3/cli_debrid:main,godver3/cli_debrid:main-${{ env.VERSION }}" >> $GITHUB_ENV
-#            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:main-arm64,godver3/cli_debrid:main-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
-#          else
-#            echo "DOCKER_TAGS=godver3/cli_debrid:batteryintegration,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}" >> $GITHUB_ENV
-#            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:batteryintegration-arm64,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
-#          fi
-#
-#      - name: Notify Discord - Build Started
-#        uses: sarisia/actions-status-discord@v1
-#        with:
-#          webhook: ${{ secrets.DISCORD_TOKEN }}
-#          title: "Docker Build Started"
-#          description: "Building version ${{ env.VERSION }} for tags: ${{ env.DOCKER_TAGS }}, ${{ env.DOCKER_TAGS_ARM64 }}"
-#          color: 0xFFA500
-#
-#      - name: Build and push amd64 image
-#        uses: docker/build-push-action@v5
-#        with:
-#          context: .
-#          file: ./Dockerfile
-#          platforms: linux/amd64
-#          push: true
-#          tags: ${{ env.DOCKER_TAGS }}
-#          build-args: |
-#            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-#            # You can pass the Windows executable into the build context here if needed
-#
-#      - name: Build and push arm64 image
-#        uses: docker/build-push-action@v5
-#        with:
-#          context: .
-#          file: ./Dockerfile
-#          platforms: linux/arm64
-#          push: true
-#          tags: ${{ env.DOCKER_TAGS_ARM64 }}
-#          build-args: |
-#            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-#            # You can pass the Windows executable into the build context here if needed
-#
-#      - name: Notify Discord - Build Completed
-#        uses: sarisia/actions-status-discord@v1
-#        with:
-#          webhook: ${{ secrets.DISCORD_TOKEN }}
-#          title: "Docker Build Completed"
-#          description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}, ${{ env.DOCKER_TAGS_ARM64 }}"
-#          color: 0x00FF00
+      - name: Build and push amd64 image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.DOCKER_TAGS }}
+          build-args: |
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            # You can pass the Windows executable into the build context here if needed
+
+      - name: Build and push arm64 image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.DOCKER_TAGS_ARM64 }}
+          build-args: |
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            # You can pass the Windows executable into the build context here if needed
+
+      - name: Notify Discord - Build Completed
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_TOKEN }}
+          title: "Docker Build Completed"
+          description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}, ${{ env.DOCKER_TAGS_ARM64 }}"
+          color: 0x00FF00
