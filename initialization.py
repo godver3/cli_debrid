@@ -24,12 +24,16 @@ def plex_collection_update(skip_initial_plex_update):
         else:
             result = get_and_add_all_collected_from_plex()
         
-        # Add validation of the Plex scan results
-        if not result or (not result.get('movies') and not result.get('episodes')):
-            logging.error("Plex scan returned no content - skipping collection update to prevent data loss")
-            return False
+        # Check if we got any content from Plex, even if some items were skipped
+        if result and isinstance(result, dict):
+            movies = result.get('movies', [])
+            episodes = result.get('episodes', [])
+            if len(movies) > 0 or len(episodes) > 0:
+                logging.info(f"Successfully processed Plex content: {len(movies)} movies and {len(episodes)} episodes")
+                return True
             
-        return True
+        logging.error("Plex scan returned no content - skipping collection update to prevent data loss")
+        return False
         
     except Exception as e:
         logging.error(f"Error during Plex collection update: {str(e)}")

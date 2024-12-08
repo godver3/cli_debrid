@@ -404,8 +404,13 @@ def main():
     setup_directories()
     backup_config()
 
-    from settings import ensure_settings_file
+    from settings import ensure_settings_file, get_setting, set_setting
     from database import verify_database
+
+    # Add check for Hybrid uncached management setting
+    if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':
+        logging.info("Resetting 'Hybrid' uncached content handling setting to None")
+        set_setting('Scraping', 'uncached_content_handling', 'None')
 
     set_setting('Metadata Battery', 'url', 'http://localhost:50051')
 

@@ -510,6 +510,37 @@ class ProgramRunner:
                 self.stop()
                 self.start()
 
+    def task_send_notifications(self):
+        notifications_file = Path("/user/db_content/collected_notifications.pkl")
+        
+        if notifications_file.exists():
+            try:
+                with open(notifications_file, "rb") as f:
+                    notifications = pickle.load(f)
+                
+                if notifications:
+                    # Fetch enabled notifications
+                    response = requests.get('http://localhost:5000/settings/notifications/enabled')
+                    if response.status_code == 200:
+                        enabled_notifications = response.json().get('enabled_notifications', {})
+                        
+                        # Send notifications
+                        send_notifications(notifications, enabled_notifications)
+                        
+                        # Clear the notifications file
+                        with open(notifications_file, "wb") as f:
+                            pickle.dump([], f)
+                        
+                        logging.info(f"Sent {len(notifications)} notifications and cleared the notifications file")
+                    else:
+                        logging.error(f"Failed to fetch enabled notifications: {response.text}")
+                else:
+                    logging.debug("No notifications to send")
+            except Exception as e:
+                logging.error(f"Error processing notifications: {str(e)}")
+        else:
+            logging.debug("No notifications file found")
+
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
 
@@ -643,12 +674,13 @@ def get_and_add_all_collected_from_plex():
         
         logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes")
         
-        #append_runtime_airtime(movies)
-        #append_runtime_airtime(episodes)
+        # Don't return None if some items were skipped during add_collected_items
+        if len(movies) > 0 or len(episodes) > 0:
+            add_collected_items(movies + episodes)
+            return collected_content  # Return the original content even if some items were skipped
         
-        add_collected_items(movies + episodes)
-    else:
-        logging.error("Failed to retrieve content")
+    logging.error("Failed to retrieve content")
+    return None
 
 def get_and_add_recent_collected_from_plex():
     if get_setting('File Management', 'file_collection_management', 'Plex') == 'Plex':
@@ -664,12 +696,13 @@ def get_and_add_recent_collected_from_plex():
         
         logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes")
         
-        #append_runtime_airtime(movies)
-        #append_runtime_airtime(episodes)
-
-        add_collected_items(movies + episodes, recent=True)
-    else:
-        logging.error("Failed to retrieve content")
+        # Don't return None if some items were skipped during add_collected_items
+        if len(movies) > 0 or len(episodes) > 0:
+            add_collected_items(movies + episodes, recent=True)
+            return collected_content  # Return the original content even if some items were skipped
+    
+    logging.error("Failed to retrieve content")
+    return None
 
 def run_program():
     global program_runner
