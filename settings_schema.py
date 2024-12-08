@@ -130,11 +130,11 @@ SETTINGS_SCHEMA = {
             "description": [
                 "Uncached content management in the program queue:",
                 "None: Only take the best Cached result",
-                "Hybrid: Take the first best Cached result, and if no Cached results found, take the best Uncached result",
+                #"Hybrid: Take the first best Cached result, and if no Cached results found, take the best Uncached result",
                 "Full: Take the best result, whether it's Cached or Uncached"
             ],
             "default": "None",
-            "choices": ["None", "Hybrid", "Full"]
+            "choices": ["None", "Full"]
         },
         "jackett_seeders_only": {
             "type": "boolean",
