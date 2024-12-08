@@ -244,52 +244,90 @@ def detect_resolution(parsed_info: Dict[str, Any]) -> str:
 
 def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[str, Any]:
     try:
-        parsed_info = guessit(title)
+        logging.debug(f"Starting torrent info parsing for: '{title}'")
+        
+        # Add safety check for unreasonable season ranges
+        season_range_match = re.search(r's(\d+)-s(\d+)', title.lower())
+        if season_range_match:
+            start_season = int(season_range_match.group(1))
+            end_season = int(season_range_match.group(2))
+            if end_season - start_season > 50:  # Arbitrary reasonable limit
+                logging.warning(f"Unreasonable season range detected in '{title}'. Skipping parsing.")
+                return {'title': title, 'invalid_season_range': True}
+        
+        # Try guessit parsing with thread-based timeout
+        try:
+            import threading
+            from queue import Queue
+            
+            def parse_with_guessit(title, result_queue):
+                try:
+                    result = guessit(title)
+                    result_queue.put(('success', result))
+                except Exception as e:
+                    result_queue.put(('error', str(e)))
+            
+            result_queue = Queue()
+            parser_thread = threading.Thread(
+                target=parse_with_guessit, 
+                args=(title, result_queue)
+            )
+            parser_thread.daemon = True
+            parser_thread.start()
+            parser_thread.join(timeout=5)  # 5 second timeout
+            
+            if parser_thread.is_alive():
+                logging.warning(f"Guessit parsing timed out for '{title}'")
+                return {'title': title, 'parsing_timeout': True}
+            
+            status, result = result_queue.get_nowait()
+            if status == 'error':
+                logging.error(f"Guessit parsing error: {result}")
+                return {'title': title, 'parsing_error': True}
+            parsed_info = result
+            
+        except Exception as e:
+            logging.error(f"Guessit parsing failed for '{title}': {str(e)}")
+            return {'title': title, 'parsing_error': True}
+        
+        # Process the parsed info
+        try:
+            # Basic validation of parsed info
+            if not isinstance(parsed_info, dict):
+                logging.error(f"Invalid parsed_info type for '{title}': {type(parsed_info)}")
+                return {'title': title, 'invalid_parse': True}
+            
+            # Convert Language objects and handle year
+            for key, value in list(parsed_info.items()):
+                if isinstance(value, Language):
+                    parsed_info[key] = str(value)
+                elif key == 'year' and not isinstance(value, list):
+                    parsed_info[key] = [value]
+                elif isinstance(value, list):
+                    parsed_info[key] = [str(item) if isinstance(item, Language) else item for item in value]
+            
+            # Handle size if provided
+            if size is not None:
+                parsed_info['size'] = parse_size(size)
+            
+            # Add additional information
+            resolution = detect_resolution(parsed_info)
+            parsed_info['resolution'] = resolution
+            parsed_info['resolution_rank'] = get_resolution_rank(resolution)
+            parsed_info['is_hdr'] = detect_hdr(parsed_info)
+            
+            season_episode_info = detect_season_episode_info(parsed_info)
+            parsed_info['season_episode_info'] = season_episode_info
+            
+            return parsed_info
+            
+        except Exception as e:
+            logging.error(f"Error processing parsed info for '{title}': {str(e)}", exc_info=True)
+            return {'title': title, 'processing_error': True}
+            
     except Exception as e:
-        logging.error(f"Error parsing title with guessit: {str(e)}")
-        parsed_info = {'title': title}  # Fallback to using the raw title
-
-    # Convert Language objects to strings and ensure year is always a list
-    for key, value in parsed_info.items():
-        if isinstance(value, Language):
-            parsed_info[key] = str(value)
-        elif key == 'year' and not isinstance(value, list):
-            parsed_info[key] = [value]
-        elif isinstance(value, list):
-            parsed_info[key] = [str(item) if isinstance(item, Language) else item for item in value]
-
-
-    # Handle size
-    if size is not None:
-        parsed_info['size'] = parse_size(size)
-
-    # Convert Language and Size-like objects to strings
-    for key, value in parsed_info.items():
-        if isinstance(value, Language):
-            parsed_info[key] = str(value)
-        elif hasattr(value, 'bytes'):  # Check for Size-like objects
-            parsed_info[key] = str(value.bytes)
-        elif isinstance(value, list):
-            parsed_info[key] = [
-                str(item) if isinstance(item, Language) else
-                str(item.bytes) if hasattr(item, 'bytes') else
-                item
-                for item in value
-            ]
-
-    # Detect resolution and rank
-    resolution = detect_resolution(parsed_info)
-    parsed_info['resolution'] = resolution
-    parsed_info['resolution_rank'] = get_resolution_rank(resolution)
-
-    # Detect HDR
-    parsed_info['is_hdr'] = detect_hdr(parsed_info)
-
-    # Detect season and episode info
-    season_episode_info = detect_season_episode_info(parsed_info)
-    parsed_info['season_episode_info'] = season_episode_info
-
-    return parsed_info
+        logging.error(f"Error in parse_torrent_info for '{title}': {str(e)}", exc_info=True)
+        return {'title': title, 'parsing_error': True}
 
 def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Optional[Dict[str, Any]]:
     url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}"
@@ -814,6 +852,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         title_sim = improved_title_similarity(title, result, is_anime, content_type)
         alternate_title_sim = improved_title_similarity(alternate_title, result, is_anime, content_type) if alternate_title else 0
         
+        logging.debug(f"Title similarity: {title_sim}, Alternate title similarity: {alternate_title_sim}")
+
         if "UFC" in result['title'].upper():
             similarity_threshold = 0.35
         else:
@@ -1081,21 +1121,61 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         all_results = deduplicate_results(all_results)
         logging.debug(f"Total results after deduplication: {len(all_results)}")
 
-        # Normalize and parse results
+        logging.info(f"Starting normalization of {len(all_results)} results")
         normalized_results = []
-        for result in all_results:
-            normalized_result = result.copy()
-            normalized_result['title'] = normalize_title(result.get('title', ''))
-            normalized_result['parsed_info'] = parse_torrent_info(normalized_result['title'])
-            normalized_results.append(normalized_result)
+        for index, result in enumerate(all_results):
+            try:
+                logging.debug(f"Normalizing result {index + 1}/{len(all_results)}: {result.get('title', 'Unknown')}")
+                normalized_result = result.copy()
+                
+                # Track title normalization
+                original_title = result.get('title', '')
+                try:
+                    normalized_title = normalize_title(original_title)
+                    normalized_result['title'] = normalized_title
+                    logging.debug(f"Title normalized: '{original_title}' -> '{normalized_title}'")
+                except Exception as e:
+                    logging.error(f"Error normalizing title '{original_title}': {str(e)}", exc_info=True)
+                    continue
+                
+                # Track parsing info with timeout protection
+                try:
+                    parsed_info = parse_torrent_info(normalized_result['title'])
+                    
+                    # Check for error indicators
+                    if any(key in parsed_info for key in ['invalid_season_range', 'invalid_parse', 'processing_error', 'parsing_error']):
+                        logging.warning(f"Skipping result due to parsing issues: {parsed_info}")
+                        continue
+                        
+                    normalized_result['parsed_info'] = parsed_info
+                    logging.debug(f"Successfully parsed torrent info for '{normalized_title}'")
+                except Exception as e:
+                    logging.error(f"Error parsing torrent info for '{normalized_title}': {str(e)}", exc_info=True)
+                    continue
+                
+                normalized_results.append(normalized_result)
+                
+                # Log progress periodically
+                if (index + 1) % 10 == 0:  # Changed from 50 to 10 for more frequent updates
+                    logging.info(f"Normalized {index + 1}/{len(all_results)} results")
+                
+            except Exception as e:
+                logging.error(f"Error processing result {index + 1}: {str(e)}", exc_info=True)
+                continue
+        
+        logging.info(f"Normalization complete. Processed {len(normalized_results)}/{len(all_results)} results")
+        
+        # Continue with the rest of the function...
+
+        logging.info(f"Filtering {len(normalized_results)} results")
 
         # Filter results
         filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
         filtered_out_results = [result for result in normalized_results if result not in filtered_results]
 
         logging.debug(f"Filtering took {time.time() - start_time:.2f} seconds")
-        logging.debug(f"Total results after filtering: {len(filtered_results)}")
-        logging.debug(f"Total filtered out results: {len(filtered_out_results)}")
+        logging.info(f"Total results after filtering: {len(filtered_results)}")
+        logging.info(f"Total filtered out results: {len(filtered_out_results)}")
 
         # Add is_multi_pack information to each result
         for result in filtered_results:

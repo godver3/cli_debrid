@@ -266,6 +266,7 @@ class AddingQueue:
         item_identifier = queue_manager.generate_identifier(item)
         title = result.get('title', '')
         link = result.get('magnet', '')
+        mode = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
 
         torrent_id = result.get('torrent_id')
         logging.info(f"Torrent ID: {torrent_id}")
@@ -281,31 +282,6 @@ class AddingQueue:
             if temp_file_path and os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
             return False
-        
-        # Check if the item is cached using only the hash
-        cache_status = is_cached_on_rd(current_hash)
-        is_cached = cache_status.get(current_hash, False)
-
-        # Check if we're about to add an uncached item
-        if not is_cached:
-            active_downloads, download_limit = get_active_downloads()
-
-            logging.info(f"Active downloads: {active_downloads}")
-            logging.info(f"Download limit: {download_limit}")
-            
-            if active_downloads >= download_limit:
-                logging.info(f"Download limit reached. Moving {item_identifier} to Pending Uncached Additions queue.")
-                queue_manager.move_to_pending_uncached(item, "Adding", title, link, scrape_results=scrape_results)
-
-                logging.info(f"Result: {result.get('season_pack')}")
-
-                # Process other season items
-                if result.get('season_pack'):
-                    self.move_related_season_items(queue_manager, item, result.get('season_pack'), title, link)
-
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                return True
 
         add_result = add_to_real_debrid(link, temp_file_path)
         
@@ -316,34 +292,37 @@ class AddingQueue:
         if add_result:
             if isinstance(add_result, dict):
                 status = add_result.get('status')
-                if status == 'downloaded' or (status in ['downloading', 'queued'] and 'files' in add_result):
-                    logging.info(f"Torrent added to Real-Debrid successfully for {item_identifier}. Status: {status}")
+                # Get the torrent ID from either the 'id' or 'torrent_id' field
+                torrent_id = add_result.get('torrent_id') or add_result.get('id')
+                
+                # If mode is 'none' and status isn't 'downloaded', skip this result
+                if mode == 'none' and status != 'downloaded':
+                    logging.info(f"Skipping uncached result for {item_identifier} in 'none' mode")
+                    if torrent_id:
+                        self.remove_unwanted_torrent(torrent_id)
+                    else:
+                        logging.warning(f"No torrent ID found in add_result: {add_result}")
+                    return False
+
+                # For 'full' mode or cached content, process normally
+                if status == 'downloaded' or mode == 'full':
+                    logging.info(f"Processing {'cached' if status == 'downloaded' else 'uncached'} content for {item_identifier}")
                     self.add_to_not_wanted(current_hash, item_identifier)
-                    success, torrent_id = self.process_torrent(queue_manager, item, title, link, add_result)
+                    success, returned_torrent_id = self.process_torrent(queue_manager, item, title, link, add_result)
+                    
                     if success:
                         return True
                     else:
                         logging.warning(f"Failed to process torrent for {item_identifier}")
-                        logging.debug(f"Torrent ID: {torrent_id}")
-                        logging.debug(f"ID: {add_result.get('id')}")
-                        self.remove_unwanted_torrent(torrent_id or add_result.get('id'))
+                        logging.debug(f"Torrent ID: {returned_torrent_id or torrent_id}")
+                        self.remove_unwanted_torrent(returned_torrent_id or torrent_id)
                         return False
                 else:
                     logging.warning(f"Unexpected result from Real-Debrid for {item_identifier}: {add_result}")
-                    self.remove_unwanted_torrent(add_result.get('id'))
-            elif add_result in ['downloading', 'queued']:
-                logging.info(f"Uncached torrent added to Real-Debrid successfully for {item_identifier}")
-                self.add_to_not_wanted(current_hash, item_identifier)
-                success, torrent_id = self.process_torrent(queue_manager, item, title, link, {'status': 'uncached', 'files': [], 'torrent_id': None})
-                if success:
-                    return True
-                else:
-                    logging.warning(f"Failed to process uncached torrent for {item_identifier}")
-                    self.remove_unwanted_torrent(torrent_id)  # This will be None for uncached torrents
-                    return False
+                    if torrent_id:
+                        self.remove_unwanted_torrent(torrent_id)
             else:
-                logging.warning(f"Unexpected result from Real-Debrid for {item_identifier}: {add_result}")
-                self.remove_unwanted_torrent(None)
+                logging.warning(f"Unexpected result type from Real-Debrid for {item_identifier}: {type(add_result)}")
         else:
             logging.error(f"Failed to add torrent to Real-Debrid for {item_identifier}")
 
@@ -500,33 +479,37 @@ class AddingQueue:
         return None, None
 
 
-    def add_to_real_debrid_helper(self, link: str, item_identifier: str, hash_value: str, add_if_uncached: bool = True) -> Dict[str, Any]:
+    def add_to_real_debrid_helper(self, link: str, item_identifier: str, hash_result, add_if_uncached: bool = True) -> Dict[str, Any]:
         try:
-            logging.info(f"Processing link for {item_identifier}. Hash: {hash_value}")
+            # Extract just the hash if it's a tuple (hash, temp_file_path)
+            current_hash = hash_result[0] if isinstance(hash_result, tuple) else hash_result
+            temp_file_path = hash_result[1] if isinstance(hash_result, tuple) else None
 
+            logging.info(f"Processing link for {item_identifier}. Hash: {current_hash}")
 
             # Check if the hash is already in the not wanted list
-            if is_magnet_not_wanted(hash_value):
-                logging.info(f"Hash {hash_value} for {item_identifier} is already in not_wanted_magnets. Skipping.")
+            if is_magnet_not_wanted(current_hash):
+                logging.info(f"Hash {current_hash} for {item_identifier} is already in not_wanted_magnets. Skipping.")
                 return {"success": False, "message": "Hash already in not wanted list"}
-    
-            cache_status = is_cached_on_rd(hash_value)
+
+            cache_status = is_cached_on_rd(current_hash)
             logging.info(f"Cache status for {item_identifier}: {cache_status}")
-    
-            if not cache_status[hash_value] and not add_if_uncached:
+
+            if not cache_status[current_hash] and not add_if_uncached:
                 return {"success": False, "message": "Skipping uncached content in hybrid mode"}
 
-            result = add_to_real_debrid(link)
+            # Pass the temp_file_path to add_to_real_debrid
+            result = add_to_real_debrid(link, temp_file_path)
             logging.debug(f"add_to_real_debrid result: {result}")
-    
+
             if not result:
                 return {"success": False, "message": "Failed to add content to Real-Debrid"}
-    
+
             if isinstance(result, list):  # Cached torrent
                 logging.info(f"Added cached content for {item_identifier}")
-                torrent_files = get_magnet_files(link) if link.startswith('magnet:') else self.get_torrent_files(hash_value)
+                torrent_files = get_magnet_files(link) if link.startswith('magnet:') else self.get_torrent_files(current_hash)
                 logging.debug(f"Torrent files: {json.dumps(torrent_files, indent=2)}")
-                torrent_info = self.get_torrent_info(hash_value)
+                torrent_info = self.get_torrent_info(current_hash)
                 logging.debug(f"Torrent info: {json.dumps(torrent_info, indent=2)}")
                 return {
                     "success": True,
@@ -550,13 +533,13 @@ class AddingQueue:
                 logging.info(f"Added uncached content for {item_identifier}. Status: {result}")
     
                 # Add to not wanted list only for uncached torrents
-                add_to_not_wanted(hash_value)
+                add_to_not_wanted(current_hash)
                 add_to_not_wanted_urls(link)
-                logging.info(f"Added hash {hash_value} to not_wanted_magnets for {item_identifier}")
+                logging.info(f"Added hash {current_hash} to not_wanted_magnets for {item_identifier}")
                 logging.info(f"Added URL {link} to not_wanted_urls for {item_identifier}")
     
                 # Poll for torrent status and retrieve file list
-                torrent_info = self.get_torrent_info(hash_value)
+                torrent_info = self.get_torrent_info(current_hash)
                 logging.debug(f"Torrent info for uncached torrent: {json.dumps(torrent_info, indent=2)}")
                 if torrent_info:
                     files = [file['path'] for file in torrent_info.get('files', []) if file.get('selected') == 1]

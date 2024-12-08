@@ -25,16 +25,22 @@ class ScrapingQueue:
         self.items = [i for i in self.items if i['id'] != item['id']]
 
     def process(self, queue_manager):
+        processed_count = 0
+        had_error = False
+        
         if self.items:
             item = self.items.pop(0)
             item_identifier = queue_manager.generate_identifier(item)
             try:
-                # Check if the release date is today or earlier
+                logging.info(f"Starting to process scraping results for {item_identifier}")
+                
+                # Check release date logic
                 if item['release_date'] == 'Unknown':
                     logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
                     queue_manager.move_to_wanted(item, "Scraping")
-                    return
-
+                    processed_count += 1
+                    return True  # Continue processing other items
+                    
                 try:
                     release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
                     today = date.today()
@@ -42,13 +48,15 @@ class ScrapingQueue:
                     if release_date > today:
                         logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
                         queue_manager.move_to_wanted(item, "Scraping")
-                        return
+                        processed_count += 1
+                        return True
                 except ValueError:
                     logging.warning(f"Item {item_identifier} has an invalid release date format: {item['release_date']}. Moving back to Wanted queue.")
                     queue_manager.move_to_wanted(item, "Scraping")
-                    return
+                    processed_count += 1
+                    return True
 
-                # Check if there are other episodes in the same season, excluding different versions of the current episode
+                # Multi-pack check logic
                 is_multi_pack = False
                 if item['type'] == 'episode':
                     is_multi_pack = any(
@@ -62,49 +70,71 @@ class ScrapingQueue:
                     )
 
                 logging.info(f"Scraping for {item_identifier}")
-
                 results, filtered_out_results = self.scrape_with_fallback(item, is_multi_pack, queue_manager)
+                
+                # Ensure both results and filtered_out_results are lists
+                results = results if results is not None else []
+                filtered_out_results = filtered_out_results if filtered_out_results is not None else []
+                
+                logging.info(f"Received {len(results)} initial results and {len(filtered_out_results)} filtered out results for {item_identifier}")
 
                 if not results:
                     logging.warning(f"No results found for {item_identifier} after fallback.")
                     self.handle_no_results(item, queue_manager)
-                    return
+                    processed_count += 1
+                    logging.info(f"Processed count after handling no results: {processed_count}")
+                    return True
 
-                # Filter out "not wanted" results
+                # Filter and process results
                 filtered_results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
-                logging.debug(f"Scrape results for {item_identifier}: {len(filtered_results)} results after filtering")
+                logging.info(f"Found {len(filtered_results)} valid results after filtering for {item_identifier}")
 
                 if not filtered_results:
-                    logging.warning(f"All results for {item_identifier} were filtered out as 'not wanted'. Retrying with individual scraping.")
-                    # Retry with individual scraping
+                    logging.warning(f"All results filtered out for {item_identifier}. Retrying individual scraping.")
                     individual_results, individual_filtered_out = self.scrape_with_fallback(item, False, queue_manager)
+                    logging.info(f"Individual scraping returned {len(individual_results)} results")
+                    
                     filtered_individual_results = [r for r in individual_results if not is_magnet_not_wanted(r['magnet'])]
+                    logging.info(f"After filtering, individual scraping has {len(filtered_individual_results)} valid results")
                     
                     if not filtered_individual_results:
-                        logging.warning(f"No valid results for {item_identifier} even after individual scraping. Moving to Sleeping.")
+                        logging.warning(f"No valid results after individual scraping for {item_identifier}. Moving to Sleeping.")
                         queue_manager.move_to_sleeping(item, "Scraping")
-                        return
-                    else:
-                        filtered_results = filtered_individual_results
+                        processed_count += 1
+                        logging.info(f"Processed count after moving to sleeping: {processed_count}")
+                        return True
+                    filtered_results = filtered_individual_results
 
                 if filtered_results:
                     best_result = filtered_results[0]
-                    logging.info(f"Best result for {item_identifier}: {best_result['title']}, {best_result['magnet']}")
-                    logging.info(f"Reverse order scraping enabled: {get_setting('Debug', 'enable_reverse_order_scraping', default=False)}")
+                    logging.info(f"Best result for {item_identifier}: {best_result['title']}")
+                    
                     if get_setting("Debug", "enable_reverse_order_scraping", default=False):
-                        logging.info(f"Reverse order scraping enabled for {item_identifier}")
+                        logging.info(f"Reverse order scraping enabled. Reversing results.")
                         filtered_results.reverse()
-                        logging.info(f"Filtered results for {item_identifier}: {filtered_results}")
+                    
+                    logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
+                    try:
                         queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
-                    else:   
-                        queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
-
+                        logging.info(f"Successfully moved {item_identifier} to Adding queue")
+                    except Exception as e:
+                        logging.error(f"Failed to move {item_identifier} to Adding queue: {str(e)}", exc_info=True)
+                        had_error = True
                 else:
-                    logging.warning(f"No valid results for {item_identifier}, moving to Sleeping")
+                    logging.info(f"No valid results for {item_identifier}, moving to Sleeping")
                     queue_manager.move_to_sleeping(item, "Scraping")
+                
+                processed_count += 1
+                logging.info(f"Final processed count: {processed_count}")
+                
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
                 queue_manager.move_to_sleeping(item, "Scraping")
+                had_error = True
+                processed_count += 1
+
+        # Return True if there are more items to process or if we processed something
+        return len(self.items) > 0 or processed_count > 0
 
     def scrape_with_fallback(self, item, is_multi_pack, queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
@@ -123,14 +153,20 @@ class ScrapingQueue:
             item.get('genres')
         )
 
+        # Ensure results and filtered_out are lists
+        results = results if results is not None else []
+        filtered_out = filtered_out if filtered_out is not None else []
+
+        logging.info(f"Raw scrape results for {item_identifier}: {len(results)} results")
         for result in results:
-            logging.info(f"Scrape result: {result}")
+            logging.debug(f"Scrape result: {result}")
 
         # Filter out unwanted magnets
-        results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
+        filtered_results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
+        logging.info(f"After filtering unwanted magnets: {len(filtered_results)} results remain for {item_identifier}")
 
-        if results or item['type'] != 'episode':
-            return results, filtered_out
+        if filtered_results or item['type'] != 'episode':
+            return filtered_results, filtered_out
 
         logging.info(f"No results for multi-pack {item_identifier}. Falling back to individual episode scraping.")
 
@@ -146,6 +182,10 @@ class ScrapingQueue:
             False,
             item.get('genres')
         )
+
+        # Ensure individual results and filtered_out are lists
+        individual_results = individual_results if individual_results is not None else []
+        individual_filtered_out = individual_filtered_out if individual_filtered_out is not None else []
 
         # Filter out unwanted magnets for individual results
         individual_results = [r for r in individual_results if not is_magnet_not_wanted(r['magnet'])]

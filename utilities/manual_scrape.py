@@ -4,7 +4,7 @@ import re
 from typing import Tuple
 from typing import Dict, Any, Optional, Tuple, List
 from scraper.scraper import scrape
-from utilities.result_viewer import display_results
+#from utilities.result_viewer import display_results
 from debrid.real_debrid import add_to_real_debrid, extract_hash_from_magnet
 from settings import get_setting
 import os

@@ -2,8 +2,8 @@ import json
 from settings_schema import SETTINGS_SCHEMA
 import logging
 import uuid
-import fcntl
 import os
+import sys
 import shutil
 from datetime import datetime
 
@@ -14,25 +14,55 @@ CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
 CONFIG_LOCK_FILE = os.path.join(CONFIG_DIR, 'config.lock')
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
+if sys.platform.startswith('win'):
+    # Windows-specific import and file locking
+    import msvcrt
+    def lock_file(file):
+        msvcrt.locking(file.fileno(), msvcrt.LK_LOCK, 1)
+    def unlock_file(file):
+        msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    # Unix-like systems
+    import fcntl
+    def lock_file(file):
+        fcntl.flock(file, fcntl.LOCK_EX)
+    def unlock_file(file):
+        fcntl.flock(file, fcntl.LOCK_UN)
+
 def log_config_state(message, config):
     content_sources = config.get('Content Sources', {})
     #logging.debug(f"[CONFIG_STATE] {message} (Content Sources only): {json.dumps(content_sources, indent=2)}")
 
 def acquire_lock():
-    lock_file = open(CONFIG_LOCK_FILE, 'w')
-    fcntl.flock(lock_file, fcntl.LOCK_EX)
-    return lock_file
+    lock_file_handle = open(CONFIG_LOCK_FILE, 'w')
+    lock_file(lock_file_handle)
+    return lock_file_handle
 
-def release_lock(lock_file):
-    fcntl.flock(lock_file, fcntl.LOCK_UN)
-    lock_file.close()
+def release_lock(lock_file_handle):
+    unlock_file(lock_file_handle)
+    lock_file_handle.close()
 
 def load_config():
     try:
-        if not os.path.exists(CONFIG_FILE):
+        config_file_path = os.path.join(os.environ['USER_CONFIG'], 'config.json')
+        logging.debug(f"Attempting to load config from: {config_file_path}")
+        
+        if not os.path.exists(config_file_path):
+            logging.warning(f"Config file does not exist: {config_file_path}")
             return {'Scraping': {'versions': {}}, 'Notifications': {}, 'Content Sources': {}}
-        with open(CONFIG_FILE, 'r') as config_file:
+        
+        logging.debug(f"Config file exists. Checking permissions...")
+        
+        # Check file permissions
+        if os.access(config_file_path, os.R_OK):
+            logging.debug("File is readable")
+        else:
+            logging.error(f"File is not readable: {config_file_path}")
+        
+        with open(config_file_path, 'r') as config_file:
+            logging.debug("Successfully opened config file")
             config = json.load(config_file)
+            logging.debug("Successfully loaded JSON from config file")
         
         # Ensure 'Scraping' and 'versions' exist
         if 'Scraping' not in config:
@@ -51,7 +81,7 @@ def load_config():
         
         return config
     except Exception as e:
-        logging.error(f"Error loading config: {str(e)}")
+        logging.exception(f"Error loading config: {str(e)}")
         return {'Scraping': {'versions': {}}, 'Notifications': {}, 'Content Sources': {}}
 
 def save_config(config):

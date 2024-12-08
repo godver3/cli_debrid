@@ -39,8 +39,10 @@ class QueueManager:
         self.paused = False
 
     def update_all_queues(self):
-        for queue in self.queues.values():
+        for queue_name, queue in self.queues.items():
+            before_count = len(queue.get_contents())
             queue.update()
+            after_count = len(queue.get_contents())
 
     def get_queue_contents(self):
         contents = OrderedDict()
@@ -74,15 +76,33 @@ class QueueManager:
 
     def process_wanted(self):
         if not self.paused:
+            logging.debug("Processing Wanted queue")
+            queue_contents = self.queues["Wanted"].get_contents()
+            logging.debug(f"Wanted queue contains {len(queue_contents)} items")
+            if queue_contents:
+                for item in queue_contents:
+                    logging.debug(f"Processing Wanted item: {self.generate_identifier(item)}")
             self.queues["Wanted"].process(self)
         else:
             logging.debug("Skipping Wanted queue processing: Queue is paused")
 
     def process_scraping(self):
         if not self.paused:
-            self.queues["Scraping"].process(self)
+            logging.debug("Processing Scraping queue")
+            # Update queue before processing
+            self.queues["Scraping"].update()
+            queue_contents = self.queues["Scraping"].get_contents()
+            logging.info(f"Scraping queue contains {len(queue_contents)} items after update")
+            
+            if queue_contents:
+                for item in queue_contents:
+                    logging.debug(f"Scraping queue item: {self.generate_identifier(item)}")
+                result = self.queues["Scraping"].process(self)
+                logging.info(f"Scraping queue process result: {result}")
+                return result
         else:
             logging.debug("Skipping Scraping queue processing: Queue is paused")
+        return False
 
     def process_adding(self):
         if not self.paused:

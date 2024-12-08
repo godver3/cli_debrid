@@ -291,3 +291,8 @@
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
     }
+
+    /* Remove any tooltip-specific styles if they exist */
+    .mobile-tooltip-button {
+        display: none;  /* This will hide any existing tooltip buttons */
+    }
