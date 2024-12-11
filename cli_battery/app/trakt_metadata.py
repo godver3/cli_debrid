@@ -267,18 +267,48 @@ class TraktMetadata:
             return dict(formatted_releases)
         return None
 
-    def convert_tmdb_to_imdb(self, tmdb_id):
+    def convert_tmdb_to_imdb(self, tmdb_id, media_type=None):
+        """
+        Convert TMDB ID to IMDB ID
+        Args:
+            tmdb_id: The TMDB ID to convert
+            media_type: Either 'movie' or 'show' to specify what type of content to look for
+        """
         url = f"{self.base_url}/search/tmdb/{tmdb_id}?type=movie,show"
+        logger.debug(f"Making request to Trakt API: {url}")
+        
         response = self._make_request(url)
         if response and response.status_code == 200:
             data = response.json()
+            logger.debug(f"Received response from Trakt API: {json.dumps(data, indent=2)}")
+            
             if data:
-
-                item = data[0]
-                if 'movie' in item:
-                    return item['movie']['ids']['imdb'], 'trakt'
-                elif 'show' in item:
-                    return item['show']['ids']['imdb'], 'trakt'
+                for item in data:
+                    logger.debug(f"Processing item from response: {json.dumps(item, indent=2)}")
+                    
+                    # If media_type is specified, only look for that type
+                    if media_type:
+                        if media_type == 'show' and 'show' in item:
+                            logger.debug(f"Found show: {item['show']['title']} with IMDb ID: {item['show']['ids']['imdb']}")
+                            return item['show']['ids']['imdb'], 'trakt'
+                        elif media_type == 'movie' and 'movie' in item:
+                            logger.debug(f"Found movie: {item['movie']['title']} with IMDb ID: {item['movie']['ids']['imdb']}")
+                            return item['movie']['ids']['imdb'], 'trakt'
+                    else:
+                        # Fallback to original behavior if no media_type specified
+                        if 'show' in item:
+                            logger.debug(f"Found show: {item['show']['title']} with IMDb ID: {item['show']['ids']['imdb']}")
+                            return item['show']['ids']['imdb'], 'trakt'
+                        elif 'movie' in item:
+                            logger.debug(f"Found movie: {item['movie']['title']} with IMDb ID: {item['movie']['ids']['imdb']}")
+                            return item['movie']['ids']['imdb'], 'trakt'
+                
+                logger.warning(f"No matching {'media type' if media_type else 'content'} found for TMDB ID: {tmdb_id}")
+            else:
+                logger.warning("Received empty data array from Trakt API")
+        else:
+            logger.error(f"Failed to get response from Trakt API. Status code: {response.status_code if response else 'No response'}")
+        
         return None, None
     
 # Add this to your MetadataManager class

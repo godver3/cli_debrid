@@ -518,21 +518,21 @@ class MetadataManager:
 
 
     @staticmethod
-    def tmdb_to_imdb(tmdb_id):
+    def tmdb_to_imdb(tmdb_id, media_type=None):
         with Session() as session:
             cached_mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
             if cached_mapping:
                 return cached_mapping.imdb_id, 'battery'
 
             trakt = TraktMetadata()
-            imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id)
+            imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
             
             if imdb_id:
                 new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
                 session.add(new_mapping)
                 session.commit()
             else:
-                logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id}")
+                logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id} with type {media_type}")
             
             return imdb_id, source
                 
