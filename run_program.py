@@ -437,20 +437,29 @@ class ProgramRunner:
             while self.running:
                 try:
                     cycle_start = time.time()
-                    logging.debug("Starting main program cycle")
+                    #logging.debug("Starting main program cycle")
                     
                     # Log program state
-                    logging.debug(f"Program state - Running: {self.running}, Initializing: {self.initializing}")
+                    #logging.debug(f"Program state - Running: {self.running}, Initializing: {self.initializing}")
                     
                     self.process_queues()
                     
                     cycle_duration = time.time() - cycle_start
-                    logging.debug(f"Completed main program cycle in {cycle_duration:.2f} seconds")
+                    #logging.debug(f"Completed main program cycle in {cycle_duration:.2f} seconds")
                     
                     # Check queue manager state
                     if hasattr(self, 'queue_manager'):
                         paused = self.queue_manager.is_paused()
-                        logging.debug(f"Queue manager paused state: {paused}")
+                        current_time = time.time()
+                        if paused:
+                            # Initialize last_pause_log if it doesn't exist
+                            if not hasattr(self, 'last_pause_log'):
+                                self.last_pause_log = 0
+                            
+                            # Log only every 30 seconds
+                            if current_time - self.last_pause_log >= 30:
+                                logging.warning("Queue manager is currently paused")
+                                self.last_pause_log = current_time
                 
                 except Exception as e:
                     logging.error(f"Unexpected error in main loop: {str(e)}")
