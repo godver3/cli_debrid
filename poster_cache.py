@@ -29,28 +29,38 @@ def save_cache(cache):
     except Exception as e:
         logging.error(f"Error saving cache: {e}")
 
+def normalize_media_type(media_type):
+    """Normalize media type to either 'tv' or 'movie'"""
+    return 'tv' if media_type.lower() in ['tv', 'show', 'series'] else 'movie'
+
 def get_cached_poster_url(tmdb_id, media_type):
+    if not tmdb_id:
+        return UNAVAILABLE_POSTER
+        
     cache = load_cache()
-    cache_key = f"{tmdb_id}_{media_type}"
+    normalized_type = normalize_media_type(media_type)
+    cache_key = f"{tmdb_id}_{normalized_type}"
     cache_item = cache.get(cache_key)
+    
     if cache_item:
         url, timestamp = cache_item
-        if url == UNAVAILABLE_POSTER:
-            return UNAVAILABLE_POSTER  # Return the UNAVAILABLE_POSTER URL instead of None
         if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
             return url
         else:
             logging.info(f"Cache expired for {cache_key}")
-    else:
-        logging.info(f"Cache miss for {cache_key}")
+            
     return None
 
 def cache_poster_url(tmdb_id, media_type, url):
+    if not tmdb_id:
+        return
+        
     cache = load_cache()
-    cache_key = f"{tmdb_id}_{media_type}"
+    normalized_type = normalize_media_type(media_type)
+    cache_key = f"{tmdb_id}_{normalized_type}"
     cache[cache_key] = (url, datetime.now())
     save_cache(cache)
-    logging.info(f"Cached poster URL for {cache_key}")
+    logging.info(f"Cached poster URL for {cache_key}: {url}")
 
 def clean_expired_cache():
     cache = load_cache()
@@ -85,4 +95,4 @@ def cache_media_meta(tmdb_id, media_type, media_meta):
     logging.info(f"Cached media meta for {cache_key}")
 
 def cache_unavailable_poster(tmdb_id, media_type):
-    cache_poster_url(tmdb_id, media_type, UNAVAILABLE_POSTER)  # Use the existing cache_poster_url function
+    cache_poster_url(tmdb_id, media_type, UNAVAILABLE_POSTER)
