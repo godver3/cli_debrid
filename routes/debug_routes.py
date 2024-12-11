@@ -576,6 +576,7 @@ def run_task():
         'task_check_service_connectivity': program_runner.task_check_service_connectivity,
         'task_send_notifications': program_runner.task_send_notifications,
         'task_check_trakt_early_releases': program_runner.task_check_trakt_early_releases,
+        'task_reconcile_queues': program_runner.task_reconcile_queues,
     }
 
     if task_name not in tasks:
