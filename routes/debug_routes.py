@@ -597,6 +597,6 @@ def get_available_tasks():
         'pending_uncached', 'upgrading', 'task_plex_full_scan', 'task_debug_log',
         'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
         'task_generate_airtime_report', 'task_check_service_connectivity', 'task_send_notifications',
-        'task_check_trakt_early_releases'
+        'task_check_trakt_early_releases', 'task_reconcile_queues'
     ]
     return jsonify({'tasks': tasks}), 200
