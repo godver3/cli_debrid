@@ -217,7 +217,7 @@ class ProgramRunner:
     # Update this method to use the cached content sources
     def process_queues(self):
         try:
-            logging.debug("Starting process_queues cycle")
+            # Remove excessive debug logging at start of cycle
             self.update_heartbeat()
             self.check_heartbeat()
             self.check_task_health()
@@ -230,8 +230,9 @@ class ProgramRunner:
             for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
                 should_run = self.should_run_task(queue_name)
                 time_since_last = current_time - self.last_run_times[queue_name]
-                logging.debug(f"Queue {queue_name}: Should run: {should_run}, Time since last run: {time_since_last:.2f}s")
+                # Remove per-queue debug logging unless it's going to run
                 if should_run:
+                    logging.debug(f"Queue {queue_name}: Time since last run: {time_since_last:.2f}s")
                     logging.info(f"Processing {queue_name} queue")
                     self.safe_process_queue(queue_name)
 
@@ -240,13 +241,16 @@ class ProgramRunner:
                 task_name = f'task_{source}_wanted'
                 should_run = self.should_run_task(task_name)
                 time_since_last = current_time - self.last_run_times[task_name]
-                logging.debug(f"Content source {source}: Should run: {should_run}, Time since last run: {time_since_last:.2f}s")
+                # Remove content source debug logging unless it's going to run
+                if should_run:
+                    logging.debug(f"Content source {source}: Time since last run: {time_since_last:.2f}s")
                 
-            # Add this section to process other enabled tasks
+            # Process other enabled tasks
             for task_name in self.enabled_tasks:
                 if (task_name not in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'] 
                     and not task_name.endswith('_wanted')):
                     if self.should_run_task(task_name):
+                        # Only log when task will actually run
                         logging.debug(f"Running task: {task_name}")
                         try:
                             task_method = getattr(self, task_name)
@@ -255,8 +259,6 @@ class ProgramRunner:
                             logging.error(f"Error running task {task_name}: {str(e)}")
                             logging.error(traceback.format_exc())
 
-            logging.debug("Completed process_queues cycle")
-            
         except Exception as e:
             logging.error(f"Error in process_queues: {str(e)}")
             logging.error(traceback.format_exc())
@@ -266,69 +268,48 @@ class ProgramRunner:
             logging.info(f"Starting to process {queue_name} queue")
             start_time = time.time()
             
-            # Verify queue manager exists
-            if not hasattr(self, 'queue_manager'):
-                logging.error("Queue manager not initialized!")
+            # Remove excessive verification logging
+            if not hasattr(self, 'queue_manager') or not hasattr(self.queue_manager, 'queues'):
+                logging.error("Queue manager not properly initialized")
                 return None
                 
-            # Verify queues exist
-            if not hasattr(self.queue_manager, 'queues'):
-                logging.error("Queue manager has no queues attribute!")
-                return None
-                
-            # Verify specific queue exists
             if queue_name not in self.queue_manager.queues:
-                logging.error(f"Queue '{queue_name}' not found in queue manager! Available queues: {list(self.queue_manager.queues.keys())}")
+                logging.error(f"Queue '{queue_name}' not found in queue manager!")
                 return None
             
-            # Convert queue name to lowercase for method name
             method_name = f'process_{queue_name.lower()}'
-            
-            # Get the appropriate process method
             if not hasattr(self.queue_manager, method_name):
                 logging.error(f"Process method '{method_name}' not found in queue manager!")
                 return None
                 
             process_method = getattr(self.queue_manager, method_name)
             
-            # Log queue contents before processing
+            # Only log queue contents at debug level if not empty
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            logging.info(f"{queue_name} queue contains {len(queue_contents)} items before processing")
             if queue_contents:
-                for item in queue_contents:
-                    logging.debug(f"Queue item: {self.queue_manager.generate_identifier(item)}")
+                logging.debug(f"{queue_name} queue contains {len(queue_contents)} items")
+                # Remove per-item debug logging
             
-            # Check if queue is paused
             if self.queue_manager.is_paused():
                 logging.warning(f"Queue processing is paused. Skipping {queue_name} queue.")
                 return None
             
-            # Call the process method and capture any return value
-            logging.debug(f"Calling process method for {queue_name} queue")
             result = process_method()
-            logging.debug(f"Process method returned: {result}")
             
-            # Log after processing
+            # Only log final queue contents at debug level if not empty
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            logging.info(f"{queue_name} queue contains {len(queue_contents)} items after processing")
             if queue_contents:
-                for item in queue_contents:
-                    logging.debug(f"Queue item remaining: {self.queue_manager.generate_identifier(item)}")
+                logging.debug(f"{queue_name} queue contains {len(queue_contents)} items after processing")
             
             duration = time.time() - start_time
             logging.info(f"Finished processing {queue_name} queue in {duration:.2f} seconds")
             
             return result
         
-        except AttributeError as e:
-            logging.error(f"Error: No process method found for {queue_name} queue. Error: {str(e)}")
-            logging.error(f"Queue manager state: {vars(self.queue_manager) if hasattr(self, 'queue_manager') else 'No queue manager'}")
         except Exception as e:
             logging.error(f"Error processing {queue_name} queue: {str(e)}")
-            logging.error(f"Traceback: {traceback.format_exc()}")
-            logging.error(f"Queue manager state: {vars(self.queue_manager) if hasattr(self, 'queue_manager') else 'No queue manager'}")
-        
-        return None
+            logging.error(traceback.format_exc())
+            return None
 
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()
@@ -503,7 +484,7 @@ class ProgramRunner:
         current_time = time.time()
         for task, last_run_time in self.last_run_times.items():
             time_since_last_run = current_time - last_run_time
-            logging.debug(f"Task {task} last ran {time_since_last_run:.2f} seconds ago (interval: {self.task_intervals[task]})")
+            # Only log task health at debug level if there's an issue
             if time_since_last_run > self.task_intervals[task] * 2:
                 logging.warning(f"Task {task} hasn't run in {time_since_last_run:.2f} seconds (should run every {self.task_intervals[task]} seconds)")
                 self.last_run_times[task] = current_time
