@@ -7,6 +7,7 @@ from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_
 from settings import get_setting
 from flask import request, url_for
 from urllib.parse import urlparse
+from datetime import datetime
 
 def get_collected_counts():
     conn = get_db_connection()

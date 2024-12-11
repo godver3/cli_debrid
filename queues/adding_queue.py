@@ -188,14 +188,36 @@ class AddingQueue:
             logging.info(f"Attempting individual episode scraping for {item_identifier}")
             individual_results = self.scrape_individual_episode(item)
             logging.debug(f"Individual episode scraping returned {len(individual_results)} results")
+            
             for index, result in enumerate(individual_results):
                 logging.debug(f"Processing individual result {index + 1}")
+                
+                # Get torrent ID before processing
+                link = result.get('magnet', '')
+                if link.startswith('magnet:'):
+                    current_hash = extract_hash_from_magnet(link)
+                else:
+                    current_hash, _ = self.download_and_extract_hash(link)
+                    
+                # Try to get torrent ID from the result or add_result
+                torrent_id = result.get('torrent_id')
+                
                 if self.process_single_result(queue_manager, item, result, cached_only=(mode == 'none')):
                     logging.info(f"Successfully processed individual result {index + 1} for {item_identifier}")
                     return True
                 else:
                     logging.debug(f"Failed to process individual result {index + 1} for {item_identifier}")
-    
+                    # Clean up the torrent if we have an ID
+                    if torrent_id:
+                        logging.debug(f"Removing failed torrent {torrent_id}")
+                        self.remove_unwanted_torrent(torrent_id)
+                    # If we don't have a torrent_id but have a hash, try to find and remove the torrent
+                    elif current_hash:
+                        torrent_info = self.get_torrent_info(current_hash)
+                        if torrent_info and 'id' in torrent_info:
+                            logging.debug(f"Removing failed torrent {torrent_info['id']} found by hash")
+                            self.remove_unwanted_torrent(torrent_info['id'])
+
         logging.warning(f"No results successfully processed for {item_identifier}")
         
         if not upgrade:
@@ -292,19 +314,17 @@ class AddingQueue:
         if add_result:
             if isinstance(add_result, dict):
                 status = add_result.get('status')
-                # Get the torrent ID from either the 'id' or 'torrent_id' field
                 torrent_id = add_result.get('torrent_id') or add_result.get('id')
                 
-                # If mode is 'none' and status isn't 'downloaded', skip this result
-                if mode == 'none' and status != 'downloaded':
-                    logging.info(f"Skipping uncached result for {item_identifier} in 'none' mode")
+                # Always remove non-downloaded torrents unless in full mode
+                if status != 'downloaded' and mode != 'full':
+                    logging.info(f"Removing non-downloaded torrent (status: {status}) for {item_identifier}")
                     if torrent_id:
                         self.remove_unwanted_torrent(torrent_id)
-                    else:
-                        logging.warning(f"No torrent ID found in add_result: {add_result}")
+                        logging.debug(f"Removed torrent {torrent_id} due to non-downloaded status")
                     return False
 
-                # For 'full' mode or cached content, process normally
+                # Process only if downloaded or in full mode
                 if status == 'downloaded' or mode == 'full':
                     logging.info(f"Processing {'cached' if status == 'downloaded' else 'uncached'} content for {item_identifier}")
                     self.add_to_not_wanted(current_hash, item_identifier)
@@ -317,12 +337,11 @@ class AddingQueue:
                         logging.debug(f"Torrent ID: {returned_torrent_id or torrent_id}")
                         self.remove_unwanted_torrent(returned_torrent_id or torrent_id)
                         return False
-                else:
-                    logging.warning(f"Unexpected result from Real-Debrid for {item_identifier}: {add_result}")
-                    if torrent_id:
-                        self.remove_unwanted_torrent(torrent_id)
-            else:
-                logging.warning(f"Unexpected result type from Real-Debrid for {item_identifier}: {type(add_result)}")
+
+            # Handle unexpected result type
+            logging.warning(f"Unexpected result type from Real-Debrid for {item_identifier}: {type(add_result)}")
+            if torrent_id:
+                self.remove_unwanted_torrent(torrent_id)
         else:
             logging.error(f"Failed to add torrent to Real-Debrid for {item_identifier}")
 
@@ -737,30 +756,63 @@ class AddingQueue:
         item_identifier = queue_manager.generate_identifier(item)
         title = result.get('title', '')
         link = result.get('magnet', '')
+        torrent_id = None  # Initialize torrent_id
 
-        if link.startswith('magnet:'):
-            current_hash = extract_hash_from_magnet(link)
-        else:
-            current_hash = self.download_and_extract_hash(link)
-
-        if not current_hash:
-            logging.warning(f"Failed to extract hash from link for {item_identifier}")
-            return False
-
-        is_cached = is_cached_on_rd(current_hash)
-        if cached_only and not is_cached:
-            return False
-
-        add_result = self.add_to_real_debrid_helper(link, item_identifier, current_hash)
-
-        if add_result['success']:
-            self.add_to_not_wanted(current_hash, item_identifier)
-            if self.process_torrent(queue_manager, item, title, link, add_result):
-                return True
+        try:
+            if link.startswith('magnet:'):
+                current_hash = extract_hash_from_magnet(link)
             else:
-                self.remove_unwanted_torrent(add_result['torrent_id'])
+                current_hash = self.download_and_extract_hash(link)
 
-        return False
+            if not current_hash:
+                logging.warning(f"Failed to extract hash from link for {item_identifier}")
+                return False
+
+            is_cached = is_cached_on_rd(current_hash)
+            if cached_only and not is_cached:
+                return False
+
+            add_result = self.add_to_real_debrid_helper(link, item_identifier, current_hash)
+            torrent_id = add_result.get('torrent_id')  # Store torrent_id from add_result
+
+            if add_result['success']:
+                status = add_result.get('status')
+
+                # Always remove non-downloaded torrents unless in full mode
+                if status != 'downloaded' and cached_only:
+                    logging.info(f"Removing non-downloaded torrent (status: {status}) for {item_identifier}")
+                    if torrent_id:
+                        self.remove_unwanted_torrent(torrent_id)
+                        logging.debug(f"Removed torrent {torrent_id} due to non-downloaded status")
+                    return False
+
+                # Process only if downloaded or not in cached_only mode
+                if status == 'downloaded' or not cached_only:
+                    self.add_to_not_wanted(current_hash, item_identifier)
+                    if self.process_torrent(queue_manager, item, title, link, add_result):
+                        return True
+                    else:
+                        logging.warning(f"Failed to process torrent for {item_identifier}")
+                        if torrent_id:
+                            self.remove_unwanted_torrent(torrent_id)
+                            logging.debug(f"Removed torrent {torrent_id} due to processing failure")
+                        return False
+
+            else:
+                # Handle failed add_result
+                if torrent_id:
+                    logging.warning(f"Failed to add torrent for {item_identifier}")
+                    self.remove_unwanted_torrent(torrent_id)
+                    logging.debug(f"Removed torrent {torrent_id} due to add_result failure")
+                return False
+
+        except Exception as e:
+            logging.error(f"Error in process_single_result for {item_identifier}: {str(e)}")
+            # Ensure cleanup happens even if an exception occurs
+            if torrent_id:
+                self.remove_unwanted_torrent(torrent_id)
+                logging.debug(f"Removed torrent {torrent_id} due to exception")
+            return False
 
     def calculate_absolute_episode(self, item: Dict[str, Any]) -> int:
         season_number = int(item['season_number'])
