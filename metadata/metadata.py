@@ -47,14 +47,6 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         else:
             logging.info(f"Fetching TV show metadata for IMDb ID: {imdb_id}")
             metadata, _ = DirectAPI.get_show_metadata(imdb_id)
-    
-    try:
-        if media_type == 'movie':
-            logging.info(f"Fetching movie metadata for IMDb ID: {imdb_id}")
-            metadata, _ = DirectAPI.get_movie_metadata(imdb_id)
-        else:
-            logging.info(f"Fetching TV show metadata for IMDb ID: {imdb_id}")
-            metadata, _ = DirectAPI.get_show_metadata(imdb_id)
 
         if not metadata:
             logging.warning(f"No metadata returned for IMDb ID: {imdb_id}")
