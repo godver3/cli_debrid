@@ -15,6 +15,9 @@ from functools import lru_cache
 class RealDebridUnavailableError(Exception):
     pass
 
+class RealDebridTooManyDownloadsError(Exception):
+    pass
+
 API_BASE_URL = "https://api.real-debrid.com/rest/1.0"
 
 # Common video file extensions
@@ -195,6 +198,11 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
             if e.response.status_code == 503:
                 logging.error(f"Real-Debrid service is unavailable (503 error). Response: {e.response.text}")
                 raise RealDebridUnavailableError("Real-Debrid service is unavailable (503 error)") from e
+            elif e.response.status_code == 509:
+                error_data = e.response.json()
+                if error_data.get('error') == 'too_many_active_downloads':
+                    logging.error("Real-Debrid has too many active downloads")
+                    raise RealDebridTooManyDownloadsError("Real-Debrid has too many active downloads") from e
             logging.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
         else:
             logging.error(f"Request error occurred: {str(e)}")

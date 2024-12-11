@@ -22,6 +22,7 @@ import pickle
 from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
 import ntplib
 from content_checkers.trakt import check_trakt_early_releases
+from debrid.real_debrid import RealDebridTooManyDownloadsError
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -268,7 +269,6 @@ class ProgramRunner:
             logging.info(f"Starting to process {queue_name} queue")
             start_time = time.time()
             
-            # Remove excessive verification logging
             if not hasattr(self, 'queue_manager') or not hasattr(self.queue_manager, 'queues'):
                 logging.error("Queue manager not properly initialized")
                 return None
@@ -284,19 +284,21 @@ class ProgramRunner:
                 
             process_method = getattr(self.queue_manager, method_name)
             
-            # Only log queue contents at debug level if not empty
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
             if queue_contents:
                 logging.debug(f"{queue_name} queue contains {len(queue_contents)} items")
-                # Remove per-item debug logging
             
             if self.queue_manager.is_paused():
                 logging.warning(f"Queue processing is paused. Skipping {queue_name} queue.")
                 return None
             
-            result = process_method()
+            try:
+                result = process_method()
+            except RealDebridTooManyDownloadsError:
+                logging.warning("Pausing queue due to too many active downloads on Real-Debrid")
+                self.queue_manager.pause_queue()
+                return None
             
-            # Only log final queue contents at debug level if not empty
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
             if queue_contents:
                 logging.debug(f"{queue_name} queue contains {len(queue_contents)} items after processing")
