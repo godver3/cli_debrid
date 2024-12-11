@@ -30,6 +30,12 @@ class DirectAPI:
         return seasons, source
 
     @staticmethod
-    def tmdb_to_imdb(tmdb_id: str) -> Optional[str]:
-        imdb_id, source = MetadataManager.tmdb_to_imdb(tmdb_id)
+    def tmdb_to_imdb(tmdb_id: str, media_type: str = None) -> Optional[str]:
+        """
+        Convert TMDB ID to IMDB ID
+        Args:
+            tmdb_id: The TMDB ID to convert
+            media_type: Either 'movie' or 'show' to specify what type of content to look for
+        """
+        imdb_id, source = MetadataManager.tmdb_to_imdb(tmdb_id, media_type=media_type)
         return imdb_id, source
