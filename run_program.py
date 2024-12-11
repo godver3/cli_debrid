@@ -77,6 +77,7 @@ class ProgramRunner:
             'task_send_notifications': 300,  # Run every 5 minutes (300 seconds)
             'task_sync_time': 3600,  # Run every hour
             'task_check_trakt_early_releases': 3600,  # Run every hour
+            'task_reconcile_queues': 300,  # Run every 5 minutes
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -98,7 +99,8 @@ class ProgramRunner:
             'task_check_service_connectivity',
             'task_send_notifications',
             'task_sync_time',
-            'task_check_trakt_early_releases'
+            'task_check_trakt_early_releases',
+            'task_reconcile_queues'
         }
         
         # Add this line to store content sources
@@ -224,8 +226,7 @@ class ProgramRunner:
             # Update all queues from database
             self.queue_manager.update_all_queues()
             
-            # Log the state of all queues
-            logging.debug("Current queue states:")
+            # Process queue tasks
             for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
                 should_run = self.should_run_task(queue_name)
                 time_since_last = current_time - self.last_run_times[queue_name]
@@ -234,12 +235,25 @@ class ProgramRunner:
                     logging.info(f"Processing {queue_name} queue")
                     self.safe_process_queue(queue_name)
 
-            # Log content source states
+            # Process content source tasks
             for source, data in self.get_content_sources().items():
                 task_name = f'task_{source}_wanted'
                 should_run = self.should_run_task(task_name)
                 time_since_last = current_time - self.last_run_times[task_name]
                 logging.debug(f"Content source {source}: Should run: {should_run}, Time since last run: {time_since_last:.2f}s")
+                
+            # Add this section to process other enabled tasks
+            for task_name in self.enabled_tasks:
+                if (task_name not in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'] 
+                    and not task_name.endswith('_wanted')):
+                    if self.should_run_task(task_name):
+                        logging.debug(f"Running task: {task_name}")
+                        try:
+                            task_method = getattr(self, task_name)
+                            task_method()
+                        except Exception as e:
+                            logging.error(f"Error running task {task_name}: {str(e)}")
+                            logging.error(traceback.format_exc())
 
             logging.debug("Completed process_queues cycle")
             
@@ -540,6 +554,77 @@ class ProgramRunner:
                 logging.error(f"Error processing notifications: {str(e)}")
         else:
             logging.debug("No notifications file found")
+
+    def task_sync_time(self):
+        self.sync_time()
+
+    def task_reconcile_queues(self):
+        """Task to reconcile items in Checking state with matching filled_by_file items"""
+        from database.core import get_db_connection
+        import logging
+        import os
+        from datetime import datetime
+
+        # Setup specific logging for reconciliations
+        reconciliation_logger = logging.getLogger('reconciliations')
+        if not reconciliation_logger.handlers:
+            log_dir = '/user/logs'
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, 'reconciliations.log')
+            handler = logging.FileHandler(log_file)
+            handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+            reconciliation_logger.addHandler(handler)
+            reconciliation_logger.setLevel(logging.INFO)
+
+        conn = get_db_connection()
+        try:
+            # Get all items in Checking state
+            cursor = conn.execute('''
+                SELECT * FROM media_items 
+                WHERE state = 'Checking' 
+                AND filled_by_file IS NOT NULL
+            ''')
+            checking_items = cursor.fetchall()
+            
+            for checking_item in checking_items:
+                if not checking_item['filled_by_file']:
+                    continue
+
+                # Find matching items with the same filled_by_file
+                cursor = conn.execute('''
+                    SELECT * FROM media_items 
+                    WHERE filled_by_file = ? 
+                    AND id != ? 
+                    AND state != 'Checking'
+                ''', (checking_item['filled_by_file'], checking_item['id']))
+                matching_items = cursor.fetchall()
+
+                for matching_item in matching_items:
+                    # Log the reconciliation
+                    reconciliation_logger.info(
+                        f"Reconciling items:\n"
+                        f"  Checking Item: ID={checking_item['id']}, Title={checking_item['title']}, "
+                        f"Type={checking_item['type']}, File={checking_item['filled_by_file']}\n"
+                        f"  Matching Item: ID={matching_item['id']}, Title={matching_item['title']}, "
+                        f"State={matching_item['state']}, Type={matching_item['type']}"
+                    )
+
+                    # Delete the matching item
+                    conn.execute('DELETE FROM media_items WHERE id = ?', (matching_item['id'],))
+                    
+                    reconciliation_logger.info(
+                        f"Deleted matching item (ID={matching_item['id']}) and kept checking item "
+                        f"(ID={checking_item['id']})"
+                    )
+
+            conn.commit()
+            logging.info("Queue reconciliation completed successfully")
+            
+        except Exception as e:
+            logging.error(f"Error during queue reconciliation: {str(e)}")
+            conn.rollback()
+        finally:
+            conn.close()
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
