@@ -609,12 +609,20 @@ class ProgramRunner:
                         f"State={matching_item['state']}, Type={matching_item['type']}"
                     )
 
+                    # Update the checking item to Collected state with timestamp
+                    conn.execute('''
+                        UPDATE media_items 
+                        SET state = 'Collected', 
+                            collected_at = ? 
+                        WHERE id = ?
+                    ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), checking_item['id']))
+
                     # Delete the matching item
                     conn.execute('DELETE FROM media_items WHERE id = ?', (matching_item['id'],))
                     
                     reconciliation_logger.info(
-                        f"Deleted matching item (ID={matching_item['id']}) and kept checking item "
-                        f"(ID={checking_item['id']})"
+                        f"Updated checking item (ID={checking_item['id']}) to Collected state and "
+                        f"deleted matching item (ID={matching_item['id']})"
                     )
 
             conn.commit()
