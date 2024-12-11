@@ -254,14 +254,14 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         
         logging.debug(f"Initial upgraded results: {len(upgrade_results)}")
         for media in upgrade_results:
-            logging.debug(f"Upgraded: {media['title']} ({media['year']}) - Version: {media['version']}")
+            logging.debug(f"Upgraded: {media['title']} ({media['year']}) - Type: {media['type']} - Version: {media['version']}")
         
         media_items = {}
         
         async with aiohttp.ClientSession() as session:
             poster_tasks = []
             
-            # Process movies
+            # Process items
             for row in upgrade_results:
                 item = dict(row)
                 key = f"{item['title']}-{item['year']}"
@@ -273,7 +273,10 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                         'upgrading_from': [item['upgrading_from']],
                         'collected_at': item['collected_at']
                     }
-                    media_type = 'movie'
+                    # Set media_type based on the item type from database
+                    media_type = 'tv' if item['type'] in ['show', 'episode'] else 'movie'
+                    logging.debug(f"Setting media_type to {media_type} for {item['title']} (type: {item['type']})")
+                    
                     cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
                     if cached_url:
                         media_items[key]['poster_url'] = cached_url
