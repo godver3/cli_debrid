@@ -31,7 +31,11 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
     # Convert TMDB ID to IMDb ID if necessary
     if tmdb_id and not imdb_id:
         logging.info(f"Converting TMDB ID {tmdb_id} to IMDb ID with media type: {item_media_type}")
-        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=item_media_type)
+        if item_media_type == "tv":
+            converted_item_media_type = "show"
+        else:
+            converted_item_media_type = item_media_type
+        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=converted_item_media_type)
         if not imdb_id:
             logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}")
             return {}
