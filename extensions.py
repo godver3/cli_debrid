@@ -10,11 +10,19 @@ from routes.utils import is_user_system_enabled
 from flask_cors import CORS
 import threading
 import uuid
+from datetime import timedelta
+import os
 
 db = SQLAlchemy()
 app = Flask(__name__)
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+# Configure session
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_PERMANENT'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
+app.secret_key = os.urandom(24)  # Generate a secure secret key
 
 # Configure CORS
 CORS(app, resources={r"/*": {
