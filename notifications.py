@@ -41,9 +41,9 @@ def consolidate_items(notifications):
             
         # Store in consolidated with the unique key
         if media_type in ['movie']:
-            consolidated['movie'][item_key] = item_info
+            consolidated['movie'][item_key] = [item_info]
         else:
-            consolidated['show'][item_key] = item_info
+            consolidated['show'][item_key] = [item_info]
             
     return consolidated
 

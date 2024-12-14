@@ -56,9 +56,9 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         
         # Query for movies
         movie_query = """
-        SELECT title, year, type, collected_at, imdb_id, tmdb_id, version, filled_by_title, filled_by_file
+        SELECT title, year, type, collected_at, imdb_id, tmdb_id, version, filled_by_title, filled_by_file, state
         FROM media_items
-        WHERE type = 'movie' AND collected_at IS NOT NULL
+        WHERE type = 'movie' AND collected_at IS NOT NULL AND state = 'Collected'
         GROUP BY title, year
         ORDER BY MAX(collected_at) DESC
         LIMIT ?
@@ -77,12 +77,16 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         cursor.execute(movie_query, (movie_limit,))
         movie_results = cursor.fetchall()
         
+        logging.debug(f"Initial movie results: {len(movie_results)}")
+        for movie in movie_results:
+            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Version: {movie['version']} - State: {movie['state']}")
+        
         cursor.execute(episode_query, (show_limit,))
         episode_results = cursor.fetchall()
         
-        logging.debug(f"Initial movie results: {len(movie_results)}")
-        for movie in movie_results:
-            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Version: {movie['version']}")
+        logging.debug(f"Initial episode results: {len(episode_results)}")
+        for episode in episode_results:
+            logging.debug(f"Episode: {episode['title']} - Season: {episode['season_number']} - Episode: {episode['episode_number']} - Version: {episode['version']}")
         
         consolidated_movies = {}
         shows = {}
@@ -204,13 +208,15 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
             for item in items:
                 if len(unique_items) >= limit:
                     break
-                if item['title'] not in unique_items:
+                # Use both title and year as the key for movies
+                key = f"{item['title']}-{item['year']}" if 'year' in item else item['title']
+                if key not in unique_items:
                     if 'seasons' in item:
                         item['seasons'].sort()
                     item['versions'].sort()
                     item['versions'] = ', '.join(item['versions'])  # Join versions into a string
-                    unique_items[item['title']] = item
-                logging.debug(f"Processed item: {item['title']} - Versions: {item['versions']}")
+                    unique_items[key] = item
+                logging.debug(f"Processed item: {item['title']} ({item.get('year', '')}) - Versions: {item['versions']}")
             return list(unique_items.values())
 
         movies_list = limit_and_process(movies_list)
@@ -349,13 +355,15 @@ async def get_recently_upgraded_items(upgraded_limit=5):
             for item in items:
                 if len(unique_items) >= limit:
                     break
-                if item['title'] not in unique_items:
+                # Use both title and year as the key for movies
+                key = f"{item['title']}-{item['year']}" if 'year' in item else item['title']
+                if key not in unique_items:
                     if 'seasons' in item:
                         item['seasons'].sort()
                     item['versions'].sort()
                     item['versions'] = ', '.join(item['versions'])  # Join versions into a string
-                    unique_items[item['title']] = item
-                logging.debug(f"Processed item: {item['title']} - Versions: {item['versions']}")
+                    unique_items[key] = item
+                logging.debug(f"Processed item: {item['title']} ({item.get('year', '')}) - Versions: {item['versions']}")
             return list(unique_items.values())
 
         upgraded_list = limit_and_process(upgraded_list)
