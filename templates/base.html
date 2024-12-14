@@ -27,6 +27,7 @@
 
     <!-- Theme Color for Mobile Browsers -->
     <meta name="theme-color" content="#007bff">
+
     
     {% block head %}{% endblock %}
     
@@ -519,44 +520,6 @@
 
 
     @media (max-width: 776px) {
-        .header-content {
-            position: absolute;
-            left: 10px;
-        }
-
-        .hamburger-menu {
-            flex-direction: column;
-            justify-content: space-between;
-            width: 30px;
-            height: 21px;
-            cursor: pointer;
-            display: flex;
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-        }
-
-        .hamburger-menu .bar {
-            width: 100%;
-            height: 3px;
-            background-color: rgb(191 191 190);
-            border-radius: 3px;
-            transition: all 0.3s ease-in-out;
-        }
-
-        /* Hamburger menu animation */
-        .hamburger-menu.active .bar:nth-child(1) {
-            transform: translateY(9px) rotate(45deg);
-        }
-
-        .hamburger-menu.active .bar:nth-child(2) {
-            opacity: 0;
-        }
-
-        .hamburger-menu.active .bar:nth-child(3) {
-            transform: translateY(-9px) rotate(-45deg);
-        }
-
         nav ul {
             flex-direction: column;
             position: absolute;
@@ -567,90 +530,162 @@
             max-height: 0;
             overflow: hidden;
             transition: max-height 0.3s ease-out;
-            z-index: 9999; /* Increase z-index to ensure it's on top */
-            background-color: #1a1a1a;
+            z-index: 1000;
         }
 
         nav ul.show {
             height: auto;
-            max-height: 1000px; /* Adjust this value based on your menu's height */
-            transition: max-height 0.5s ease-in;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Add shadow for better visibility */
+            max-height: none;
+            overflow: visible;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
 
         nav ul li {
-            opacity: 0;
-            transform: translateY(-20px);
-            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+            width: 100%;
+            margin: 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        nav ul.show li {
-            opacity: 1;
-            transform: translateY(0);
-            transition: opacity 0.3s ease-out 0.2s, transform 0.3s ease-out 0.2s;
-        }
-
-        .header-controls {
-            position: absolute;
-            right: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-        }
-
-        .action-controls {
-            display: flex;
-            gap: 5px;
-        }
-
-        .header-controls {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-        }
-
-        .user-controls, .program-controls {
-            margin-bottom: 5px;
-        }
-
-        .icon-button {
-            font-size: 1.2rem;
-        }
-
-        nav ul li {
-            margin-right: 0;
-            margin-bottom: 5px;
-        }
-
-        nav ul li a {
-            display: block;
-            padding: 10px;
-        }
-
-        nav ul li a::after {
-            bottom: 0;
-        }
-
-        /* Adjust time zone and 24-hour toggle layout */
-        .time-controls {
-            display: flex;
-            flex-direction: row;
-            align-items: center;
-            justify-content: space-between;
+        .menu-group {
             width: 100%;
         }
 
-        .time-controls .form-group {
-            margin-bottom: 0;
-            margin-right: 10px;
+        .dropdown {
+            position: relative;
+            display: none;
+            width: 100%;
+            background-color: #2a2a2a;
+            transition: all 0.3s ease;
+        }
+
+        .dropdown.show {
+            display: block;
+            animation: slideDown 0.3s ease forwards;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .dropdown li {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .dropdown li:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown li a {
+            padding: 12px 20px 12px 40px;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            color: #f4f4f4;
+            transition: all 0.2s ease;
+            font-size: 0.95em;
+            opacity: 0.9;
+        }
+
+        .dropdown li a:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+            padding-left: 45px;
+        }
+
+        .dropdown li a:active {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .group-title {
+            width: 100%;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #1a1a1a;
+            color: #fff;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .group-title i {
+            transition: transform 0.3s ease;
+        }
+
+        .menu-group .group-title.active {
+            background-color: #2a2a2a;
+            color: #FFA500;
+        }
+
+        .menu-group .group-title.active i {
+            transform: rotate(180deg);
+        }
+
+        /* Ripple effect for clicks */
+        .dropdown li a {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .dropdown li a::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            background: radial-gradient(circle, rgba(255,255,255,.2) 0%, transparent 100%);
+            transform: scale(0);
+            transition: transform 0.3s ease-out;
+            pointer-events: none;
+        }
+
+        .dropdown li a:active::after {
+            transform: scale(2);
+            transition: 0s;
+        }
+
+        .hamburger-menu {
+            display: block;
+            cursor: pointer;
+            padding: 10px;
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1002;
+        }
+
+        .hamburger-menu .bar {
+            width: 25px;
+            height: 3px;
+            background-color: #fff;
+            margin: 5px 0;
+            transition: all 0.3s ease;
+            border-radius: 2px;
+        }
+
+        .hamburger-menu.active .bar:nth-child(1) {
+            transform: rotate(-45deg) translate(-5px, 6px);
+        }
+
+        .hamburger-menu.active .bar:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger-menu.active .bar:nth-child(3) {
+            transform: rotate(45deg) translate(-5px, -6px);
         }
 
         nav {
-            position: static;
-            transform: none;
-        }
-
-        .tooltip {
-            display: none !important;
+            width: 100%;
+            display: flex;
+            justify-content: center;
         }
     }
 
@@ -740,6 +775,69 @@
         position: relative;
         z-index: 1; /* Ensure main content is below the nav menu */
     }
+
+    /* Add this to your base.html style section, after the h1 styles (around line 134) */
+    h2 {
+        font-size: 1.4em;
+        color: #f4f4f4;
+        margin-bottom: 1rem;
+        font-family: Arial, sans-serif;
+    }
+
+    /* Add these styles */
+    .menu-group {
+        position: relative;
+    }
+
+    .menu-group .group-title {
+        padding-right: 20px; /* Space for caret */
+    }
+
+    .dropdown {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        background-color: #1a1a1a;
+        min-width: 160px;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+        z-index: 1001;
+        border-radius: 4px;
+    }
+
+    .dropdown li {
+        width: 100%;
+    }
+
+    .dropdown li a {
+        padding: 12px 16px;
+        display: block;
+        white-space: nowrap;
+        background-color: #1a1a1a;
+        width: 100%; /* Ensure the anchor takes full width */
+        font-size: small;
+    }
+
+    .dropdown li a:hover {
+        background-color: #333;
+        color: #FFA500;
+    }
+
+    .menu-group:hover .dropdown {
+        display: block;
+    }
+
+    .group-title i {
+        margin-left: 5px;
+    }
+
+    .dropdown li a::after {
+        display: none; /* Remove the underline effect from dropdown items */
+    }
+
+    .menu-group:hover .group-title {
+        color: #FFA500; /* Orange text for group title when dropdown is open */
+    }
 </style>
 <!-- Add this near the top of the <body> tag -->
 <script>
@@ -759,7 +857,7 @@
       data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}">
     <header>
         <div class="header-content">
-            <img src="{{ url_for('static', filename='icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
+            <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
             <div class="title-version">
                 <h1>cli_debrid</h1>
                 <span class="version-info">v{{ version }}</span>
@@ -778,32 +876,67 @@
                 <div class="bar"></div>
             </div>
             <ul id="navMenu">
-                {% set menu_items = [
-                    ('statistics.index', 'Home'),
-                    ('queues.index', 'Queues'),
-                    ('scraper.index', 'Scraper'),
-                    ('logs.logs', 'Logs'),
-                    ('settings.index', 'Settings'),
-                    ('database.index', 'Database'),
-                    ('scraper.scraper_tester', 'Tester'),
-                    ('debug.debug_functions', 'Debug'),
-                    ('database.reverse_parser', 'R. Parser')
-                ] %}
+                {% set menu_groups = {
+                    'Main': [
+                        ('statistics.index', 'Home'),
+                        ('queues.index', 'Queues'),
+                        ('scraper.index', 'Scraper')
+                    ],
+                    'System': [
+                        ('logs.logs', 'Logs'),
+                        ('settings.index', 'Settings'),
+                        ('database.index', 'Database')
+                    ],
+                    'Tools': [
+                        ('scraper.scraper_tester', 'Tester'),
+                        ('debug.debug_functions', 'Debug'),
+                        ('database.reverse_parser', 'R. Parser'),
+                        ('program_operation.task_timings', 'Task Timings')
+                    ]
+                } %}
                 
                 {% if is_user_system_enabled() %}
                     {% if current_user.is_authenticated %}
-                        {% for route, label in menu_items %}
-                            {% if current_user.role == 'admin' or loop.index <= 3 %}
-                                <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
-                            {% endif %}
-                        {% endfor %}
                         {% if current_user.role == 'admin' %}
-                            <li><a href="{{ url_for('user_management.manage_users') }}">Users</a></li>
+                            {% for group_name, items in menu_groups.items() %}
+                            <li class="menu-group">
+                                <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
+                                <ul class="dropdown">
+                                    {% for route, label in items %}
+                                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                                    {% endfor %}
+                                </ul>
+                            </li>
+                            {% endfor %}
+                            <li class="menu-group">
+                                <a href="#" class="group-title">Users <i class="fas fa-caret-down"></i></a>
+                                <ul class="dropdown">
+                                    <li><a href="{{ url_for('user_management.manage_users') }}">Manage Users</a></li>
+                                </ul>
+                            </li>
+                        {% else %}
+                            {% for group_name, items in menu_groups.items() if group_name == 'Main' %}
+                            <li class="menu-group">
+                                <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
+                                <ul class="dropdown">
+                                    {% for route, label in items %}
+                                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                                    {% endfor %}
+                                </ul>
+                            </li>
+                            {% endfor %}
                         {% endif %}
                     {% endif %}
                 {% else %}
-                    {% for route, label in menu_items %}
-                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                    {% for group_name, items in menu_groups.items() %}
+                    <li class="menu-group">
+                        <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
+                        <ul class="dropdown">
+                            {% for route, label in items %}
+                                <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                            {% endfor %}
+                        </ul>
+                    </li>
                     {% endfor %}
                 {% endif %}
             </ul>
@@ -855,46 +988,76 @@
             const userSystemEnabled = document.body.dataset.userSystemEnabled === 'true';
             const isAuthenticated = {{ 'true' if current_user.is_authenticated else 'false' }};
 
-            initializeHamburgerMenu(userSystemEnabled, isAuthenticated);
-            
-            // Initialize tooltips
-            initializeTooltips();
-        });
-
-        function initializeHamburgerMenu(userSystemEnabled, isAuthenticated) {
+            // Initialize hamburger menu
             const hamburger = document.querySelector('.hamburger-menu');
             const navMenu = document.querySelector('#navMenu');
 
             if (hamburger && navMenu) {
-                const navItems = navMenu.querySelectorAll('li');
-
-                // Show hamburger menu only if user system is disabled or user is authenticated
-                if (!userSystemEnabled || isAuthenticated) {
-                    hamburger.style.display = 'flex';
-                } else {
-                    hamburger.style.display = 'none';
-                }
-
+                // Hamburger menu toggle
                 hamburger.addEventListener('click', function() {
                     hamburger.classList.toggle('active');
                     navMenu.classList.toggle('show');
                     
-                    if (navMenu.classList.contains('show')) {
-                        // Animate menu items when opening
-                        navItems.forEach((item, index) => {
-                            item.style.transitionDelay = `${index * 0.1}s`;
-                        });
-                    } else {
-                        // Remove transition delay when closing
-                        navItems.forEach(item => {
-                            item.style.transitionDelay = '0s';
-                        });
+                    // Close all dropdowns when closing the menu
+                    if (!navMenu.classList.contains('show')) {
+                        const allDropdowns = navMenu.querySelectorAll('.dropdown');
+                        const allGroupTitles = navMenu.querySelectorAll('.group-title');
+                        allDropdowns.forEach(dropdown => dropdown.classList.remove('show'));
+                        allGroupTitles.forEach(title => title.classList.remove('active'));
+                    }
+                });
+
+                // Group title clicks
+                const groupTitles = navMenu.querySelectorAll('.group-title');
+                groupTitles.forEach(title => {
+                    title.addEventListener('click', function(e) {
+                        if (window.innerWidth <= 776) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            
+                            // Close all other dropdowns
+                            const allDropdowns = navMenu.querySelectorAll('.dropdown');
+                            const allGroupTitles = navMenu.querySelectorAll('.group-title');
+                            allDropdowns.forEach(dropdown => {
+                                if (dropdown !== this.nextElementSibling) {
+                                    dropdown.classList.remove('show');
+                                }
+                            });
+                            allGroupTitles.forEach(t => {
+                                if (t !== this) {
+                                    t.classList.remove('active');
+                                }
+                            });
+
+                            // Toggle current dropdown
+                            const dropdown = this.nextElementSibling;
+                            dropdown.classList.toggle('show');
+                            this.classList.toggle('active');
+                        }
+                    });
+                });
+
+                // Close menu when clicking outside
+                document.addEventListener('click', function(e) {
+                    if (window.innerWidth <= 776) {
+                        if (!navMenu.contains(e.target) && !hamburger.contains(e.target)) {
+                            navMenu.classList.remove('show');
+                            hamburger.classList.remove('active');
+                            const allDropdowns = navMenu.querySelectorAll('.dropdown');
+                            const allGroupTitles = navMenu.querySelectorAll('.group-title');
+                            allDropdowns.forEach(dropdown => dropdown.classList.remove('show'));
+                            allGroupTitles.forEach(title => title.classList.remove('active'));
+                        }
                     }
                 });
             }
-        }
+            
+            // Initialize tooltips
+            initializeTooltips();
+        });
     </script>
     {% block scripts %}{% endblock %}
+
 </body>
 </html>
 

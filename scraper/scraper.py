@@ -140,7 +140,6 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
     # Use guessit with content type and prepared query title
     guessit_type = 'movie' if content_type.lower() == 'movie' else 'episode'
     guessit_result = guessit(result_title, {'type': guessit_type, 'expected_title': [guessit_query_title]})
-    #guessit_result = guessit(result_title, {'type': guessit_type})
     
     guessit_title = guessit_result.get('title', '')
     guessit_title = normalize_title(guessit_title).replace('&', 'and').replace('-','.')
@@ -165,20 +164,24 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
         logging.debug(f"Anime title similarity: {similarity}")
 
     else:
-        # For non-anime, use the existing logic
+        # For non-anime, use the existing logic with improved word matching
         token_sort_similarity = fuzz.token_sort_ratio(query_title, guessit_title) / 100
         
-        query_words = set(query_title.split())
-        guessit_words = set(guessit_title.split())
-        all_words_present = query_words.issubset(guessit_words)
+        # Split into words and remove 's' from the end of words for comparison
+        query_words = set(word.rstrip('s') for word in query_title.split())
+        guessit_words = set(word.rstrip('s') for word in guessit_title.split())
+        
+        # Check if all base words (without 's') are present
+        all_words_present = query_words.issubset(guessit_words) or guessit_words.issubset(query_words)
 
-        if all_words_present:
+        # If token sort similarity is very high (>0.95), don't penalize as heavily
+        if token_sort_similarity > 0.95:
             similarity = token_sort_similarity
         else:
-            similarity = token_sort_similarity * 0.5  # Penalize if not all words are present
+            similarity = token_sort_similarity * (0.75 if all_words_present else 0.5)
 
         logging.debug(f"Token sort ratio: {token_sort_similarity}")
-        logging.debug(f"All query words present: {all_words_present}")
+        logging.debug(f"All base words present: {all_words_present}")
 
     logging.debug(f"Final similarity score: {similarity}")
 
@@ -1031,8 +1034,20 @@ def normalize_title(title: str) -> str:
     Normalize the title by replacing spaces with periods, removing certain punctuation,
     standardizing the format, and removing non-English letters while keeping accented English letters and '&'.
     """
+    # Handle HTML encoded characters
+    title = title.replace('&039;', "'").replace('&039s', "'s").replace('&#39;', "'")
+    
     # Normalize Unicode characters
     normalized = unicodedata.normalize('NFKD', title)
+    
+    # Handle percentage signs and variations
+    normalized = normalized.replace('1%', '1.percent')
+    normalized = normalized.replace('1.%', '1.percent')
+    normalized = normalized.replace('1.percent', '1.percent')
+    
+    # Handle common acronyms (add more as needed)
+    normalized = re.sub(r'S\.H\.I\.E\.L\.D', 'SHIELD', normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'S\.H\.I\.E\.L\.D\.', 'SHIELD', normalized, flags=re.IGNORECASE)
     
     # Remove apostrophes, colons, and parentheses
     normalized = re.sub(r"[':()\[\]{}]", "", normalized)
