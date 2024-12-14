@@ -18,11 +18,18 @@ const SCROLL_HIDE_DELAY = 100; // ms to wait after scrolling stops before hiding
 let isUpdatingContent = false;
 
 function isMobileDevice() {
-    return (typeof window.orientation !== "undefined") || 
-           (navigator.userAgent.indexOf('IEMobile') !== -1) ||
-           ('ontouchstart' in window) ||
-           (navigator.maxTouchPoints > 0) ||
-           (navigator.msMaxTouchPoints > 0);
+    // Check if the device has a touch screen AND a small viewport
+    // This is more accurate than just checking for touch capability
+    const hasTouchScreen = (
+        'ontouchstart' in window ||
+        navigator.maxTouchPoints > 0 ||
+        navigator.msMaxTouchPoints > 0
+    );
+    
+    // Check viewport width - typical breakpoint for mobile devices
+    const isMobileViewport = window.innerWidth <= 768;
+    
+    return hasTouchScreen && isMobileViewport;
 }
 
 async function fetchTooltips() {
