@@ -7,9 +7,10 @@ from settings_schema import SETTINGS_SCHEMA
 from collections import defaultdict
 from datetime import datetime
 
-def format_notification_content(notifications, notification_type):
+def consolidate_items(notifications):
     consolidated = defaultdict(lambda: defaultdict(list))
     
+    # First pass: organize all items
     for notification in notifications:
         media_type = notification['type']
         title = notification['title']
@@ -25,18 +26,30 @@ def format_notification_content(notifications, notification_type):
             'original_collected_at': original_collected_at
         }
         
-        if media_type in ['movie', 'show']:
-            consolidated[media_type][key].append(item_info)
-        elif media_type == 'season':
-            season_number = notification.get('season_number', '')
-            item_info['season'] = f"Season {season_number}"
-            consolidated['show'][key].append(item_info)
-        elif media_type == 'episode':
+        # Create a unique identifier for the item
+        if media_type == 'episode':
             season_number = notification.get('season_number', '')
             episode_number = notification.get('episode_number', '')
             item_info['episode'] = f"S{season_number:02d}E{episode_number:02d}"
-            consolidated['show'][key].append(item_info)
+            item_key = f"{key}_{item_info['episode']}"
+        elif media_type == 'season':
+            season_number = notification.get('season_number', '')
+            item_info['season'] = f"Season {season_number}"
+            item_key = f"{key}_{item_info['season']}"
+        else:
+            item_key = key
+            
+        # Store in consolidated with the unique key
+        if media_type in ['movie']:
+            consolidated['movie'][item_key] = item_info
+        else:
+            consolidated['show'][item_key] = item_info
+            
+    return consolidated
 
+def format_notification_content(notifications, notification_type):
+    consolidated = consolidate_items(notifications)
+    
     content = []
     
     if notification_type == 'Discord':
