@@ -68,7 +68,7 @@ class WantedQueue:
             airtime_str = item.get('airtime')
 
             if not release_date_str or (isinstance(release_date_str, str) and release_date_str.lower() == 'unknown'):
-                logging.info(f"Item {item_identifier} has no scrape time. Moving to Unreleased queue.")
+                logging.debug(f"Item {item_identifier} has no scrape time. Moving to Unreleased queue.")
                 items_to_move_unreleased.append(item)
                 continue  # Skip further processing for this item
 
@@ -80,10 +80,9 @@ class WantedQueue:
                     try:
                         airtime = datetime.strptime(airtime_str, '%H:%M').time()
                     except ValueError:
-                        logging.warning(f"Invalid airtime format for item {item_identifier}: {airtime_str}. Using default.")
+                        logging.debug(f"Invalid airtime format for item {item_identifier}: {airtime_str}. Using default.")
                         airtime = datetime.strptime("00:00", '%H:%M').time()
                 else:
-                    logging.debug(f"No airtime set for item {item_identifier}. Using default.")
                     airtime = datetime.strptime("00:00", '%H:%M').time()
 
                 release_datetime = datetime.combine(release_date, airtime)
@@ -107,23 +106,20 @@ class WantedQueue:
                 time_until_release = release_datetime - current_datetime
 
                 if time_until_release <= timedelta():
-                    logging.info(f"Item {item_identifier} has met its airtime requirement. Moving to Scraping queue.")
+                    logging.debug(f"Item {item_identifier} has met its airtime requirement. Moving to Scraping queue.")
                     items_to_move_scraping.append(item)
                 elif time_until_release > timedelta(hours=24):
-                    logging.info(f"Item {item_identifier} is more than 24 hours away. Moving to Unreleased queue.")
+                    logging.debug(f"Item {item_identifier} is more than 24 hours away. Moving to Unreleased queue.")
                     items_to_move_unreleased.append(item)
-                else:
-                    logging.debug(f"Item {item_identifier} will be ready for scraping in {time_until_release}. Keeping in Wanted queue.")
 
             except ValueError as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}")
             except Exception as e:
                 logging.error(f"Unexpected error processing item {item_identifier}: {str(e)}", exc_info=True)
 
-        # Move marked items to Scraping queue
+        # Move marked items to respective queues
         for item in items_to_move_scraping:
             queue_manager.move_to_scraping(item, "Wanted")
         
-        # Move marked items to Unreleased queue
         for item in items_to_move_unreleased:
             queue_manager.move_to_unreleased(item, "Wanted")
