@@ -423,50 +423,18 @@ def send_test_notification():
                 'title': 'Test Movie 1',
                 'year': 2023,
                 'tmdb_id': '123456',
-                'collected_at': now.isoformat(),
-                'version': 'Default'
-            },
-            {
-                'type': 'movie',
-                'title': 'Test Movie 1',
-                'year': 2023,
-                'tmdb_id': '123456',
-                'collected_at': (now + timedelta(hours=1)).isoformat(),
-                'version': 'Extended'
+                'original_collected_at': now.isoformat(),
+                'version': 'Default',
+                'is_upgrade': False
             },
             {
                 'type': 'movie',
                 'title': 'Test Movie 2',
                 'year': 2023,
                 'tmdb_id': '234567',
-                'collected_at': (now + timedelta(hours=2)).isoformat(),
-                'version': 'Default'
-            },
-            {
-                'type': 'show',
-                'title': 'Test TV Show 1',
-                'year': 2023,
-                'tmdb_id': '345678',
-                'collected_at': (now + timedelta(hours=3)).isoformat(),
-                'version': 'Default'
-            },
-            {
-                'type': 'season',
-                'title': 'Test TV Show 1',
-                'year': 2023,
-                'tmdb_id': '345678',
-                'season_number': 1,
-                'collected_at': (now + timedelta(hours=4)).isoformat(),
-                'version': 'Default'
-            },
-            {
-                'type': 'season',
-                'title': 'Test TV Show 1',
-                'year': 2023,
-                'tmdb_id': '345678',
-                'season_number': 2,
-                'collected_at': (now + timedelta(hours=5)).isoformat(),
-                'version': 'Default'
+                'original_collected_at': (now + timedelta(hours=1)).isoformat(),
+                'version': 'Extended',
+                'is_upgrade': True
             },
             {
                 'type': 'episode',
@@ -475,36 +443,9 @@ def send_test_notification():
                 'tmdb_id': '345678',
                 'season_number': 1,
                 'episode_number': 1,
-                'collected_at': (now + timedelta(hours=6)).isoformat(),
-                'version': 'Default'
-            },
-            {
-                'type': 'episode',
-                'title': 'Test TV Show 1',
-                'year': 2023,
-                'tmdb_id': '345678',
-                'season_number': 1,
-                'episode_number': 2,
-                'collected_at': (now + timedelta(hours=7)).isoformat(),
-                'version': 'Extended'
-            },
-            {
-                'type': 'show',
-                'title': 'Test TV Show 2',
-                'year': 2023,
-                'tmdb_id': '456789',
-                'collected_at': (now + timedelta(hours=8)).isoformat(),
-                'version': 'Default'
-            },
-            {
-                'type': 'episode',
-                'title': 'Test TV Show 2',
-                'year': 2023,
-                'tmdb_id': '456789',
-                'season_number': 1,
-                'episode_number': 1,
-                'collected_at': (now + timedelta(hours=9)).isoformat(),
-                'version': 'Default'
+                'original_collected_at': (now + timedelta(hours=2)).isoformat(),
+                'version': 'Default',
+                'is_upgrade': False
             }
         ]
 
