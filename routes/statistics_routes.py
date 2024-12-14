@@ -125,7 +125,8 @@ def get_recently_aired_and_airing_soon():
                 'title': title,
                 'season': season,
                 'episode': episode,
-                'air_datetime': air_datetime
+                'air_datetime': air_datetime,
+                'sort_key': air_datetime.isoformat()  # Add consistent sort key
             }
             
             if air_datetime <= now:
@@ -159,166 +160,134 @@ def set_compact_preference():
     return response
 
 @statistics_bp.route('/')
+@statistics_bp.route('/statistics')
 @user_required
 @onboarding_required
 def index():
-    logging.debug(f"Statistics request: {request.url}")
-
-    # Get db_content directory from environment variable with fallback
-    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-    os.makedirs(db_content_dir, exist_ok=True)
-
-    start_time = time.time()
-
-    uptime = int(time.time() - app_start_time)
-
-    # Timing for collected_counts
-    collected_counts_start = time.time()
-    collected_counts = get_collected_counts()
-    collected_counts_end = time.time()
-    logging.debug(f"Time for get_collected_counts: {collected_counts_end - collected_counts_start:.2f} seconds")
-
-    # Timing for recently_aired and airing_soon
-    recently_aired_start = time.time()
+    # Initialize session if not already set
+    if 'use_24hour_format' not in session:
+        session['use_24hour_format'] = True  # Default to 24-hour format
+    if 'compact_view' not in session:
+        session['compact_view'] = False  # Default to non-compact view
+    
+    # Get view preferences from session
+    use_24hour_format = session.get('use_24hour_format', True)
+    compact_view = session.get('compact_view', False)
+    
+    # Handle compact toggle
+    toggle_compact = request.args.get('toggle_compact')
+    if toggle_compact is not None:
+        # Convert string value to boolean
+        new_compact_view = toggle_compact.lower() == 'true'
+        session['compact_view'] = new_compact_view
+        compact_view = new_compact_view
+        if request.headers.get('Accept') == 'application/json':
+            return jsonify({'success': True, 'compact_view': compact_view})
+    
+    # Get all statistics data
+    stats = {}
+    stats['timezone'] = time.tzname[0]
+    stats['uptime'] = int(time.time() - app_start_time)
+    
+    # Get collection counts
+    counts = get_collected_counts()
+    stats['total_movies'] = counts['total_movies']
+    stats['total_shows'] = counts['total_shows']
+    stats['total_episodes'] = counts['total_episodes']
+    
+    # Get active downloads
+    active_downloads = get_active_downloads()
+    stats['active_downloads'] = len(active_downloads) if active_downloads else 0
+    
+    # Get recently aired and upcoming shows
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
-    recently_aired_end = time.time()
-    logging.debug(f"Time for get_recently_aired_and_airing_soon: {recently_aired_end - recently_aired_start:.2f} seconds")
-
-    # Timing for upcoming_releases
-    upcoming_releases_start = time.time()
+    
+    # Format dates and times according to preferences
+    for item in recently_aired:
+        item['formatted_datetime'] = format_datetime_preference(
+            item['air_datetime'], 
+            use_24hour_format
+        )
+    
+    for item in airing_soon:
+        item['formatted_datetime'] = format_datetime_preference(
+            item['air_datetime'], 
+            use_24hour_format
+        )
+    
+    # Get upcoming releases
     upcoming_releases = get_upcoming_releases()
-    upcoming_releases_end = time.time()
-    logging.debug(f"Time for get_upcoming_releases: {upcoming_releases_end - upcoming_releases_start:.2f} seconds")
-
-    # Timing for active_downloads
-    active_downloads_start = time.time()
-    try:
-        active_downloads, limit_downloads = get_active_downloads()
-    except Exception as e:
-        logging.error(f"Error fetching active downloads: {e}")
-        active_downloads, limit_downloads = 0, 0
-    active_downloads_end = time.time()
-    logging.debug(f"Time for get_active_downloads: {active_downloads_end - active_downloads_start:.2f} seconds")
-
-    now = datetime.now()
+    for release in upcoming_releases:
+        release['formatted_date'] = format_date(release['release_date'])
     
-    # Fetch recently added items from the database
-    recently_added_start = time.time()
-    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
-    recently_added_end = time.time()
-    logging.debug(f"Time for get_recently_added_items: {recently_added_end - recently_added_start:.2f} seconds")
-
-    # Fetch recently upgraded items from the database
-    upgrade_enabled = get_setting('Scraping', 'enable_upgrading', 'False')
-    upgrade_enabled_set = bool(upgrade_enabled)
-    if upgrade_enabled_set:
-        upgrading_enabled = True
-        recently_upgraded_start = time.time()
-        recently_upgraded = asyncio.run(get_recently_upgraded_items(upgraded_limit=5))
-        recently_upgraded_end = time.time()
-        logging.debug(f"Time for get_recently_upgraded_items: {recently_upgraded_end - recently_upgraded_start:.2f} seconds")
-    else:
-        upgrading_enabled = False
-        recently_upgraded=''
+    # Set up async event loop for recently added and upgraded items
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        # Get recently added items
+        recently_added_data = loop.run_until_complete(get_recently_added_items())
+        recently_added = {
+            'movies': [],
+            'shows': []
+        }
         
-    cookie_value = request.cookies.get('use24HourFormat')
-    use_24hour_format = cookie_value == 'true' if cookie_value is not None else True
+        # Process movies
+        if 'movies' in recently_added_data:
+            for movie in recently_added_data['movies']:
+                movie['formatted_date'] = format_datetime_preference(
+                    movie['collected_at'], 
+                    use_24hour_format
+                )
+                recently_added['movies'].append(movie)
+        
+        # Process shows
+        if 'shows' in recently_added_data:
+            for show in recently_added_data['shows']:
+                show['formatted_date'] = format_datetime_preference(
+                    show['collected_at'], 
+                    use_24hour_format
+                )
+                recently_added['shows'].append(show)
+        
+        # Get recently upgraded items
+        recently_upgraded_data = loop.run_until_complete(get_recently_upgraded_items())
+        recently_upgraded = []
+        
+        if recently_upgraded_data and 'upgraded' in recently_upgraded_data:
+            for item in recently_upgraded_data['upgraded']:
+                item['formatted_date'] = format_datetime_preference(
+                    item['collected_at'], 
+                    use_24hour_format
+                )
+                recently_upgraded.append(item)
     
-    # Format times for recently aired and airing soon
-    for item in recently_aired + airing_soon:
-        item['formatted_time'] = format_datetime_preference(item['air_datetime'], use_24hour_format)
+    finally:
+        loop.close()
     
-    # Format times for upcoming releases (if they have time information)
-    for item in upcoming_releases:
-        item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
-
-    # Format times for recently added items
-    for item in recently_added['movies'] + recently_added['shows']:
-        if 'collected_at' in item and item['collected_at'] is not None:
-            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
-            item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
-        else:
-            item['formatted_collected_at'] = 'Unknown'
-
-    logging.debug(f"use_24hour_format: {use_24hour_format}")
-    for item in recently_added['movies'] + recently_added['shows']:
-        logging.debug(f"Item collected_at: {item.get('collected_at')}")
-        logging.debug(f"Item formatted_collected_at: {item.get('formatted_collected_at')}")
-
-    # Format times for recently upgraded items
-    if upgrade_enabled_set:
-        for item in recently_upgraded['upgraded']:
-            if 'collected_at' in item and item['collected_at'] is not None:
-                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
-                item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
-            else:
-                item['formatted_collected_at'] = 'Unknown'
-
-        logging.debug(f"use_24hour_format: {use_24hour_format}")
-        for item in recently_upgraded['upgraded']:
-            logging.debug(f"Item collected_at: {item.get('collected_at')}")
-            logging.debug(f"Item formatted_collected_at: {item.get('formatted_collected_at')}")
-        recently_upgraded = recently_upgraded['upgraded']
-
-    # Timing for daily_usage
-    daily_usage_start = time.time()
-    try:
-        daily_usage = check_daily_usage()
-    except Exception as e:
-        logging.error(f"Error fetching Real-Debrid information: {e}")
-        active_downloads, limit_downloads = 0, 0
-        daily_usage = {'used': 0, 'limit': 0}
-    daily_usage_end = time.time()
-    logging.debug(f"Time for check_daily_usage: {daily_usage_end - daily_usage_start:.2f} seconds")
-
     # Check if TMDB API key is set
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
-    tmdb_api_key_set = bool(tmdb_api_key)
-
-    stats = {
-        'uptime': uptime,
-        'total_movies': collected_counts['total_movies'],
-        'total_shows': collected_counts['total_shows'],
-        'total_episodes': collected_counts['total_episodes'],
-        'recently_aired': recently_aired,
-        'airing_soon': airing_soon,
-        'upcoming_releases': upcoming_releases,
-        'today': now.date(),
-        'yesterday': (now - timedelta(days=1)).date(),
-        'tomorrow': (now + timedelta(days=1)).date(),
-        'recently_added_movies': recently_added['movies'],
-        'recently_added_shows': recently_added['shows'],
-        'recently_upgraded': recently_upgraded,
-        'use_24hour_format': use_24hour_format,
-        'recently_aired': recently_aired,
-        'airing_soon': airing_soon,
-        'upcoming_releases': upcoming_releases,
-        'timezone': time.tzname[0],
-        'active_downloads': active_downloads, 
-        'limit_downloads': limit_downloads,
-        'daily_usage': daily_usage['used'],
-        'daily_limit': daily_usage['limit'],
-        'tmdb_api_key_set': tmdb_api_key_set,
-        'upgrading_enabled': upgrading_enabled
-    }
+    stats['tmdb_api_key_set'] = bool(tmdb_api_key)
     
-    compact_view = request.cookies.get('compact_view', 'false').lower() == 'true'
+    return render_template('statistics.html',
+                         stats=stats,
+                         recently_aired=recently_aired,
+                         airing_soon=airing_soon,
+                         upcoming_releases=upcoming_releases,
+                         recently_added=recently_added,
+                         recently_upgraded=recently_upgraded,
+                         use_24hour_format=use_24hour_format,
+                         compact_view=compact_view)
 
-    end_time = time.time()
-    total_time = end_time - start_time
-    logging.debug(f"Total time for statistics page: {total_time:.2f} seconds")
-
-    if request.args.get('ajax') == '1':
-        logging.debug("Returning JSON response")
-        return jsonify(stats)
-    else:
-        logging.debug("Rendering HTML template")
-        return render_template('statistics.html', stats=stats, compact_view=compact_view, recently_added=recently_added)
-        
 @statistics_bp.route('/set_time_preference', methods=['POST'])
+@user_required
+@onboarding_required
 def set_time_preference():
     data = request.json
     use_24hour_format = data.get('use24HourFormat', True)
+    
+    # Save to session
+    session['use_24hour_format'] = use_24hour_format
     
     # Format times with the new preference
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
@@ -331,7 +300,9 @@ def set_time_preference():
         item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
     
     # Get recently added items and format their times
-    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
     for item in recently_added['movies'] + recently_added['shows']:
         if 'collected_at' in item and item['collected_at'] is not None:
             collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
@@ -343,7 +314,7 @@ def set_time_preference():
     upgrade_enabled_set = bool(upgrade_enabled)
     if upgrade_enabled_set:
         upgrading_enabled = True
-        recently_upgraded = asyncio.run(get_recently_upgraded_items(upgraded_limit=5))
+        recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
         for item in recently_upgraded['upgraded']:
             if 'collected_at' in item and item['collected_at'] is not None:
                 collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
@@ -380,7 +351,9 @@ def recently_added():
     use_24hour_format = cookie_value == 'true' if cookie_value is not None else True
 
     recently_added_start = time.time()
-    recently_added = asyncio.run(get_recently_added_items(movie_limit=5, show_limit=5))
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
     recently_added_end = time.time()
     logging.debug(f"Time for get_recently_added_items: {recently_added_end - recently_added_start:.2f} seconds")
 
@@ -536,4 +509,3 @@ def format_datetime_preference(date_input, use_24hour_format):
         return f"{day_str} {formatted_time}"
     except ValueError:
         return str(date_input)  # Return original string if parsing fails
-    
