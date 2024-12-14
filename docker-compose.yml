@@ -1,28 +1,17 @@
-version: '3.8'
-
 services:
-
   cli_debrid:
     image: godver3/cli_debrid:dev
     pull_policy: always
-    container_name: cli_debrid_app
+    container_name: cli_debrid
     ports:
       - "5000:5000"
       - "5001:5001"
     volumes:
-      - cli_debrid_data:/user
+      - /host/location/db_content:/user/db_content
+      - /host/location/config:/user/config
+      - /host/location/logs:/user/logs
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped
     tty: true
     stdin_open: true
-    networks:
-      - cli_debrid
-
-networks:
-  cli_debrid:
-    name: cli_debrid
-    driver: bridge
-
-volumes:
-  cli_debrid_data:
