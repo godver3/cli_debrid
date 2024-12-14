@@ -16,6 +16,11 @@ export function initializeProgramControls() {
     updateButtonState(initialStatus === 'Running');
 
     programControlButton.addEventListener('click', toggleProgram);
+    // Add touch event handling for mobile
+    programControlButton.addEventListener('touchstart', function(e) {
+        e.preventDefault();  // Prevent double-firing on mobile
+        toggleProgram();
+    });
 
     function toggleProgram() {
         const currentStatus = programControlButton.dataset.status;
