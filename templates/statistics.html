@@ -422,141 +422,28 @@
         display: flex;
         flex-direction: row;
         gap: 10px;
+        flex-wrap: wrap;
+        width: 100%;
     }
+
     .compact-view .recently-added-section-top,
     .compact-view .recently-added-section-bottom,
-    .compact-view .recently-upgraded-section{
-        flex: 1;
-        border-radius: 5px;
+    .compact-view .recently-upgraded-section {
+        flex: 1 1 calc(33.33% - 7px);
+        min-width: 250px;
     }
 
-    .compact-view .recently-added-section-top .card-container,
-    .compact-view .recently-added-section-bottom .card-container,
-    .compact-view .recently-upgraded-section .card-container{
-        display: table;
-        width: 100%;
-        border-collapse: collapse;
-    }
-
-    .compact-view .recently-added-section-top .card,
-    .compact-view .recently-added-section-bottom .card,
-    .compact-view .recently-upgraded-section .card{
-        display: table-row;
-        width: 100%;
-        height: auto;
-        box-shadow: none;
-        transition: none;
-    }
-
-    .compact-view .recently-added-section-top .card:hover,
-    .compact-view .recently-added-section-bottom .card:hover,
-    .compact-view .recently-upgraded-section .card:hover{
-        transform: none;
-        color: #fff;
-    }
-
-    .compact-view .recently-added-section-top .card-hover-content,
-    .compact-view .recently-added-section-bottom .card-hover-content,
-    .compact-view .recently-upgraded-section .card-hover-content{
-        display: table-cell;
-        position: static;
-        padding: 8px;
-        border-bottom: 1px solid #555;
-        background: none;
-        opacity: 1;
-    }
-
-    .compact-view .recently-added-section-top .card-img,
-    .compact-view .recently-added-section-bottom .card-img,
-    .compact-view .recently-upgraded-section .card-img{
-        display: none;
-    }
-
-    .compact-view .recently-added-section-top .card-content,
-    .compact-view .recently-added-section-bottom .card-content,
-    .compact-view .recently-upgraded-section .card-content{
-        display: none;
-    }
-    
-    .compact-view .recently-added-section-top .card h5,
-    .compact-view .recently-added-section-bottom .card h5,
-    .compact-view .recently-upgraded-section .card h5{
-        font-size: 0.9em;
-        margin: 0;
-        white-space: normal;
-        overflow: visible;
-        text-overflow: clip;
-        display: inline;
-        color: #FFA500;
-    }
-
-    .compact-view .recently-added-section-top .card .info-line,
-    .compact-view .recently-added-section-bottom .card .info-line,
-    .compact-view .recently-upgraded-section .card .info-line{
-        font-size: 0.8em;
-        margin: 0 0 0 5px;
-        color: #aaa;
-        display: inline;
-    }
-
-    @media (max-width: 768px) {
-        .compact-view .card {
-            width: calc(33.33% - 7px);
-        }
-
-    }
-
-    @media (max-width: 480px) {
-        .compact-view .card {
-            width: calc(50% - 5px);
-        }
-    }
-
+    /* Media query adjustments */
     @media (max-width: 1200px) {
-        .compact-view .top-stats {
-            display: block;
-        }
-        .compact-view .stats-box.recently-aired, .compact-view .stats-box.airing-soon, .compact-view .stats-box.upcoming-releases {
-            width: 100%;
-            margin-bottom: 10px;
-        }
-
         .compact-view .recently-added {
             display: block;
         }
-
+        
         .compact-view .recently-added-section-top,
         .compact-view .recently-added-section-bottom,
         .compact-view .recently-upgraded-section {
+            width: 100%;
             margin-bottom: 10px;
-        }
-
-        .compact-view .recently-added-section-top .card-container,
-        .compact-view .recently-added-section-bottom .card-container,
-        .compact-view .recently-upgraded-section .card-container{
-            display: block;
-        }
-
-        .compact-view .recently-added-section-top .card,
-        .compact-view .recently-added-section-bottom .card ,
-        .compact-view .recently-upgraded-section .card{
-            display: grid;
-        }
-
-        .compact-view .recently-added-section-top .card-hover-content,
-        .compact-view .recently-added-section-bottom .card-hover-content,
-        .compact-view .recently-upgraded-section .card-hover-content{
-            display: inline-grid;
-            padding: 0px;
-            margin-bottom: 8px;
-            overflow-wrap: anywhere;
-        }
-
-        .compact-view .recently-added-section-top .card .info-line,
-        .compact-view .recently-added-section-bottom .card .info-line,
-        .compact-view .recently-upgraded-section .card .info-line {
-            font-size: 0.8em;
-            margin: 0px;
         }
     }
 
@@ -566,6 +453,53 @@
         color: #be1600;
         font-style: italic;
         text-align: center;
+    }
+
+    /* Compact view styles for cards */
+    .compact-view .card-container {
+        display: block;
+    }
+
+    .compact-view .card {
+        width: 100%;
+        height: auto;
+        margin-bottom: 5px;
+        background-color: #555;
+        border-radius: 3px;
+        position: relative;
+        overflow: visible;
+        box-shadow: none;
+    }
+
+    .compact-view .card-img {
+        display: none;
+    }
+
+    .compact-view .card-content {
+        display: none;
+    }
+
+    .compact-view .card-hover-content {
+        position: relative;
+        opacity: 1;
+        background: none;
+        padding: 5px;
+        display: block;
+    }
+
+    .compact-view .card:hover {
+        transform: none;
+    }
+
+    .compact-view .card h5 {
+        font-size: 0.9em;
+        margin: 0;
+        color: #FFA500;
+    }
+
+    .compact-view .card .info-line {
+        font-size: 0.8em;
+        margin: 2px 0;
     }
 
 </style>

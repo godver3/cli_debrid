@@ -1,4 +1,4 @@
-from flask import jsonify, request, current_app, Blueprint, logging
+from flask import jsonify, request, current_app, Blueprint, logging, render_template
 from routes import admin_required
 from .database_routes import perform_database_migration 
 from extensions import initialize_app 
@@ -10,6 +10,7 @@ from flask_login import login_required
 from requests.exceptions import RequestException
 from api_tracker import api
 import logging
+import time
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -165,3 +166,66 @@ def check_program_conditions():
         'requiredSettingsComplete': required_settings_complete,
         'missingFields': missing_fields
     })
+
+@program_operation_bp.route('/api/task_timings', methods=['GET'])
+@login_required
+def get_task_timings():
+    global program_runner
+    
+    if not program_runner or not program_runner.is_running():
+        return jsonify({
+            "status": "error",
+            "message": "Program is not running"
+        }), 404
+
+    current_time = time.time()
+    task_timings = {}
+    
+    # Get all task intervals and their last run times
+    for task, interval in program_runner.task_intervals.items():
+        last_run = program_runner.last_run_times.get(task, current_time)
+        time_until_next_run = interval - (current_time - last_run)
+        
+        # Convert to hours, minutes, seconds
+        hours, remainder = divmod(int(time_until_next_run), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        task_timings[task] = {
+            "next_run_in": {
+                "hours": hours,
+                "minutes": minutes,
+                "seconds": seconds,
+                "total_seconds": time_until_next_run
+            },
+            "interval": interval,
+            "last_run": last_run,
+            "enabled": task in program_runner.enabled_tasks
+        }
+
+    # Group tasks by type
+    grouped_timings = {
+        "queues": {},
+        "content_sources": {},
+        "system_tasks": {}
+    }
+
+    for task, timing in task_timings.items():
+        if task in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
+                   'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
+            grouped_timings["queues"][task] = timing
+        elif task.endswith('_wanted'):
+            grouped_timings["content_sources"][task] = timing
+        else:
+            grouped_timings["system_tasks"][task] = timing
+
+    return jsonify({
+        "status": "success",
+        "data": grouped_timings,
+        "current_time": current_time
+    })
+
+@program_operation_bp.route('/task_timings')
+@login_required
+@admin_required
+def task_timings():
+    return render_template('task_timings.html')
