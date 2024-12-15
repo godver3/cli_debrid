@@ -216,17 +216,19 @@
 
     .cards-container {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 15px;
+        justify-content: center;
+        margin: 0 auto;
+        max-width: 1200px;
     }
 
     .card {
-        background-color: #363636;
-        border-radius: 6px;
-        overflow: hidden;
-        transition: all 0.2s;
+        width: 200px;
+        height: 300px;
         position: relative;
-        aspect-ratio: 2/3;
+        overflow: hidden;
+        margin: 0 auto;
     }
 
     .card:hover {
