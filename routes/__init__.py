@@ -21,6 +21,7 @@ from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
+from .video_routes import video_routes
 from api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from extensions import app
 
@@ -130,6 +131,7 @@ def register_blueprints(app):
         (real_time_api_bp, '/realtime_api_calls'),
         (tooltip_bp, '/tooltip'),
         (over_usage_bp, '/over_usage'),
+        (video_routes, '/video'),
     ]
     
     for blueprint, url_prefix in blueprints:

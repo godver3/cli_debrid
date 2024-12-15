@@ -11,6 +11,18 @@
         font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif;
     }
 
+    .info-banner {
+        background-color: #2c2c2c;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid #444;
+    }
+
+    .info-banner p {
+        margin: 0;
+        color: #f4f4f4;
+    }
 
     /* Task Timing specific styles */
     #taskTimingsContainer .task-tile {
@@ -89,7 +101,9 @@
 
 {% block content %}
 <div id="taskTimingsContainer" class="container-fluid mt-4">
-    <!-- <h2>Task Timings</h2> -->
+    <div class="info-banner">
+        <p><i class="fas fa-info-circle"></i> Task timings are only displayed while the program is running. When the program is stopped, no timing information will be available.</p>
+    </div>
     
     <!-- Task Type Tabs -->
     <ul class="nav nav-tabs mb-4" id="taskTabs" role="tablist">

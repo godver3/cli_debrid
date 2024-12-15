@@ -1,5 +1,6 @@
 from .core import get_db_connection
 import logging
+import os
 
 def search_movies(search_term):
     conn = get_db_connection()
@@ -153,5 +154,54 @@ def get_all_season_episode_counts(tmdb_id):
     except Exception as e:
         logging.error(f"Error retrieving season episode counts (TMDB ID: {tmdb_id}): {str(e)}")
         return {}
+    finally:
+        conn.close()
+
+def row_to_dict(row):
+    return dict(row)
+
+def get_all_videos():
+    """
+    Retrieve all videos from the database that have associated files.
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT id, title, filled_by_file
+            FROM media_items
+            WHERE filled_by_file IS NOT NULL
+        ''')
+        videos = [row_to_dict(row) for row in cursor]
+        # Construct full file path for each video
+        for video in videos:
+            if video['filled_by_file']:
+                base_name = video['filled_by_file']
+                video['filled_by_file'] = os.path.join(r'/mnt/zurg/movies', base_name, base_name)
+        return videos
+    finally:
+        conn.close()
+
+def get_video_by_id(video_id):
+    """
+    Retrieve a specific video by its ID.
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT id, title, filled_by_file, state
+            FROM media_items
+            WHERE id = ?
+        ''', (video_id,))
+        row = cursor.fetchone()
+        if row:
+            video = row_to_dict(row)
+            logging.info(f"Found video in database: {video}")
+            if video['filled_by_file']:
+                base_name = video['filled_by_file']
+                video['filled_by_file'] = os.path.join(r'/mnt/zurg/movies', base_name, base_name)
+                logging.info(f"Constructed file path: {video['filled_by_file']}")
+            return video
+        logging.error(f"No video found with ID {video_id}")
+        return None
     finally:
         conn.close()

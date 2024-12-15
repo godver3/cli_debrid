@@ -1217,6 +1217,35 @@
             initializeTooltips();
         });
     </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const menuItems = document.querySelectorAll('.nav-item');
+            
+            menuItems.forEach(item => {
+                item.addEventListener('touchstart', function(e) {
+                    // Prevent the default touch behavior
+                    e.preventDefault();
+                    
+                    // Toggle the submenu directly
+                    const submenu = this.querySelector('.submenu');
+                    if (submenu) {
+                        // Close all other submenus
+                        menuItems.forEach(otherItem => {
+                            if (otherItem !== item) {
+                                const otherSubmenu = otherItem.querySelector('.submenu');
+                                if (otherSubmenu) {
+                                    otherSubmenu.style.display = 'none';
+                                }
+                            }
+                        });
+                        
+                        // Toggle current submenu
+                        submenu.style.display = submenu.style.display === 'block' ? 'none' : 'block';
+                    }
+                }, { passive: false });
+            });
+        });
+    </script>
     {% block scripts %}{% endblock %}
 
 </body>

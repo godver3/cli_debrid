@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block head %}
+<!-- Add any additional CSS for the browse page -->
+<style>
+.video-card {
+    transition: transform 0.2s;
+}
+.video-card:hover {
+    transform: translateY(-5px);
+}
+.file-path {
+    word-break: break-all;
+    font-size: 0.8em;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Video Browser</h2>
+    
+    <div class="row">
+        {% for video in videos %}
+        <div class="col-md-4 mb-4">
+            <div class="card video-card">
+                <div class="card-body">
+                    <h5 class="card-title">{{ video.title }}</h5>
+                    {% if video.filled_by_file %}
+                    <p class="card-text file-path"><small class="text-muted">{{ video.filled_by_file }}</small></p>
+                    <a href="{{ url_for('video.play_video', _external=True, video_id=video.id) }}" class="btn btn-primary">Play Video</a>
+                    {% else %}
+                    <p class="card-text text-warning">No file available</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
