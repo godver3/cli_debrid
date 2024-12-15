@@ -810,7 +810,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             if original_title:
                 # Split the title into Japanese and non-Japanese parts
                 japanese_part = ''.join([char for char in original_title if '\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u309f' or '\u30a0' <= char <= '\u30ff'])
-                non_japanese_part = ''.join([char for char in original_title if not ('\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u309f' or '\u30a0' <= char <= '\u30ff')])
+                non_japanese_part = ''.join([char for char in original_title if not ('\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u309f' or '\u30a0' <= char <= '\u30ff')]
                 
                 # Romanize only the Japanese part
                 romanized_japanese = romanize_japanese(japanese_part)
@@ -837,7 +837,10 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         if parsed_info and isinstance(parsed_info, dict):
             parsed_title = parsed_info.get('title', '')
             if parsed_title:
-                title_similarity = fuzz.ratio(parsed_title.lower(), title.lower())
+                # Normalize both titles before comparison
+                normalized_parsed_title = normalize_title(parsed_title)
+                normalized_query_title = normalize_title(title)
+                title_similarity = fuzz.ratio(normalized_parsed_title.lower(), normalized_query_title.lower())
                 if title_similarity < 75:
                     result['filter_reason'] = f"Low parsed title similarity: {title_similarity}%"
                     logging.info(f"Parsing out result due to similarity mismatch: {result.get('title', 'Unknown')}")
@@ -1048,6 +1051,10 @@ def normalize_title(title: str) -> str:
     # Handle common acronyms (add more as needed)
     normalized = re.sub(r'S\.H\.I\.E\.L\.D', 'SHIELD', normalized, flags=re.IGNORECASE)
     normalized = re.sub(r'S\.H\.I\.E\.L\.D\.', 'SHIELD', normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'S\.W\.A\.T', 'SWAT', normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'S\.W\.A\.T\.', 'SWAT', normalized, flags=re.IGNORECASE)
+    # Also handle spaced versions
+    normalized = re.sub(r'S\s+W\s+A\s+T', 'SWAT', normalized, flags=re.IGNORECASE)
     
     # Remove apostrophes, colons, and parentheses
     normalized = re.sub(r"[':()\[\]{}]", "", normalized)

@@ -11,7 +11,11 @@ def consolidate_items(notifications):
     consolidated = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     
     # First pass: organize all items
-    for notification in notifications:
+    for notification in sorted(notifications, key=lambda x: (
+        x['title'],
+        x.get('season_number', ''),
+        x.get('episode_number', '')
+    )):
         media_type = notification['type']
         title = notification['title']
         year = notification.get('year', '')
