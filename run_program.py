@@ -245,7 +245,12 @@ class ProgramRunner:
                 # Remove content source debug logging unless it's going to run
                 if should_run:
                     logging.debug(f"Content source {source}: Time since last run: {time_since_last:.2f}s")
-                
+                    try:
+                        self.process_content_source(source, data)
+                    except Exception as e:
+                        logging.error(f"Error processing content source {source}: {str(e)}")
+                        logging.error(traceback.format_exc())
+            
             # Process other enabled tasks
             for task_name in self.enabled_tasks:
                 if (task_name not in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'] 

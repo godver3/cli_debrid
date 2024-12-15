@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+
+{% block head %}
+<!-- Plyr CSS -->
+<link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+<style>
+.video-container {
+    position: relative;
+    width: 100%;
+    max-width: 1280px;
+    margin: 0 auto;
+    background: #000;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    z-index: 1000;
+}
+
+.loading-overlay.active {
+    display: flex;
+}
+
+.loading-spinner {
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    border-top: 4px solid #fff;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+}
+
+.error-message {
+    color: #ff4444;
+    margin-top: 10px;
+    text-align: center;
+    padding: 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+    margin-top: 10px;
+    color: #fff;
+}
+
+/* Plyr customization */
+.plyr {
+    --plyr-color-main: #00b3ff;
+    height: 100%;
+}
+
+.plyr video {
+    width: 100%;
+    height: 100%;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>{{ video.title }}</h2>
+    <div id="errorMessage" class="error-message" style="display: none;"></div>
+    <div class="video-container">
+        <div id="loadingOverlay" class="loading-overlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Loading video...</div>
+        </div>
+        <div id="player-wrapper">
+            <video id="player" controls></video>
+        </div>
+    </div>
+</div>
+
+<!-- Plyr JS -->
+<script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
+
+<script>
+    let player = null;
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+    const BUFFER_THRESHOLD = 90; // Buffer threshold in seconds
+
+    function initializePlayer() {
+        const videoElement = document.createElement('video');
+        videoElement.setAttribute('playsinline', '');
+        videoElement.setAttribute('id', 'player');
+        videoElement.setAttribute('preload', 'auto');
+        
+        // Set reasonable buffer size
+        videoElement.preload = 'auto';
+        if ('buffered' in videoElement) {
+            videoElement.autobuffer = true;
+        }
+
+        const wrapper = document.getElementById('player-wrapper');
+        wrapper.innerHTML = '';
+        wrapper.appendChild(videoElement);
+
+        const controls = [
+            'play-large',
+            'rewind',
+            'play',
+            'fast-forward',
+            'progress',
+            'current-time',
+            'duration',
+            'mute',
+            'volume',
+            'settings',
+            'fullscreen'
+        ];
+
+        player = new Plyr('#player', {
+            controls,
+            seekTime: 10,
+            keyboard: { focused: true, global: true },
+            tooltips: { controls: true, seek: true },
+            previewThumbnails: { enabled: false },
+            debug: false,
+            quality: { default: 1080 },
+            buffer: { threshold: BUFFER_THRESHOLD }
+        });
+
+        player.on('ready', () => {
+            console.log('Player is ready');
+            hideLoading();
+        });
+
+        let isBuffering = false;
+        let lastBufferCheck = 0;
+
+        player.on('waiting', () => {
+            console.log('Player is waiting/buffering');
+            if (!isBuffering) {
+                isBuffering = true;
+                showLoading();
+            }
+        });
+
+        player.on('playing', () => {
+            console.log('Player is playing');
+            isBuffering = false;
+            hideLoading();
+            retryCount = 0;
+        });
+
+        player.on('progress', () => {
+            const now = Date.now();
+            // Only check buffer every second
+            if (now - lastBufferCheck < 1000) return;
+            lastBufferCheck = now;
+
+            const video = player.elements.original;
+            if (!video) return;
+
+            const buffered = video.buffered;
+            const currentTime = video.currentTime;
+            
+            if (buffered.length > 0) {
+                const bufferedEnd = buffered.end(buffered.length - 1);
+                const bufferedAmount = bufferedEnd - currentTime;
+                
+                // If we have buffered more than threshold, pause the loading
+                if (bufferedAmount > BUFFER_THRESHOLD) {
+                    console.log(`Sufficient buffer (${bufferedAmount.toFixed(2)}s), pausing stream`);
+                    cleanupCurrentStream();
+                }
+            }
+        });
+
+        player.on('error', (error) => {
+            console.error('Player error:', error);
+            handlePlaybackError();
+        });
+
+        return player;
+    }
+
+    function cleanupCurrentStream() {
+        const videoId = getCurrentVideoId();
+        if (!videoId) return;
+
+        fetch(`/video/${videoId}/cleanup`, {
+            method: 'POST',
+        }).then(response => {
+            if (!response.ok) {
+                console.warn('Failed to cleanup stream:', response.statusText);
+            }
+        }).catch(error => {
+            console.error('Error cleaning up stream:', error);
+        });
+    }
+
+    function loadVideo(videoId, startTime = 0) {
+        showLoading();
+        
+        if (player) {
+            player.destroy();
+        }
+        
+        player = initializePlayer();
+        
+        const source = {
+            type: 'video',
+            title: 'Video',
+            sources: [{
+                src: `/video/${videoId}/stream?t=${startTime}`,
+                type: 'video/mp4',
+            }]
+        };
+
+        player.source = source;
+    }
+
+    function showError(message) {
+        const errorMessage = document.getElementById('errorMessage');
+        errorMessage.textContent = message;
+        errorMessage.style.display = 'block';
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        loadingOverlay.classList.remove('active');
+    }
+
+    function hideError() {
+        const errorMessage = document.getElementById('errorMessage');
+        errorMessage.style.display = 'none';
+    }
+
+    function showLoading() {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        loadingOverlay.classList.add('active');
+    }
+
+    function hideLoading() {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        loadingOverlay.classList.remove('active');
+    }
+
+    function handlePlaybackError() {
+        console.error('Playback error');
+        if (retryCount < MAX_RETRIES) {
+            console.log(`Retrying playback (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+            retryCount++;
+            
+            setTimeout(() => {
+                loadVideo(getCurrentVideoId(), player ? player.currentTime : 0);
+            }, 3000);
+        } else {
+            console.error('Max playback retries reached');
+            showError('Failed to play video after multiple attempts. Please refresh the page and try again.');
+        }
+    }
+
+    function getCurrentVideoId() {
+        return {{ video.id }};
+    }
+
+    // Initialize stream when the page loads
+    loadVideo(getCurrentVideoId());
+
+    // Cleanup when leaving the page
+    window.addEventListener('beforeunload', async () => {
+        try {
+            await fetch(`/video/{{ video.id }}/cleanup`, { method: 'POST' });
+        } catch (error) {
+            console.error('Error during cleanup:', error);
+        }
+    });
+</script>
+{% endblock %}
