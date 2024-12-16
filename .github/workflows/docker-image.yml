@@ -32,7 +32,8 @@ jobs:
           pip install -r requirements.txt
           
       - name: Build Windows executable
-        run: build_venv\Scripts\pyinstaller.exe windows_build.spec --clean
+        shell: cmd
+        run: .\build_venv\Scripts\pyinstaller.exe windows_build.spec --clean
         
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v3
