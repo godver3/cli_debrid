@@ -183,7 +183,7 @@ def package_app():
         scraper_path = os.path.join(os.path.dirname(__file__), 'scraper')
         static_path = os.path.join(os.path.dirname(__file__), 'static')
         utilities_path = os.path.join(os.path.dirname(__file__), 'utilities')
-        icon_path = os.path.join(os.path.dirname(__file__), 'static', 'favicon.png')
+        icon_path = os.path.join(os.path.dirname(__file__), 'static', 'white-icon-32x32.png')
         
         # Get babelfish data directory
         babelfish_data = get_babelfish_data_dir()
@@ -268,7 +268,7 @@ def setup_tray_icon():
                 win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
         win32gui.EnumWindows(enum_windows_callback, None)
 
-    def restore_from_tray(icon, item):
+    def restore_from_tray(icon):
         # Show both the main window and console window
         def enum_windows_callback(hwnd, _):
             window_text = win32gui.GetWindowText(hwnd)
@@ -276,15 +276,59 @@ def setup_tray_icon():
                 win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
                 win32gui.SetForegroundWindow(hwnd)
         win32gui.EnumWindows(enum_windows_callback, None)
+
+    def restore_menu_action(icon, item):
+        restore_from_tray(icon)
         
+    def hide_to_tray(icon, item):
+        minimize_to_tray()
+
     def on_exit(icon, item):
         logging.info("Exit option selected from system tray")
         icon.stop()
-        os._exit(0)
+        # Stop all processes
+        global program_runner, metadata_process
+        print("\nStopping the program...")
+
+        # Stop the main program runner
+        if 'program_runner' in globals() and program_runner:
+            program_runner.stop()
+            print("Main program stopped.")
+
+        # Terminate the metadata battery process
+        with metadata_lock:
+            if metadata_process and metadata_process.poll() is None:
+                print("Stopping metadata battery...")
+                metadata_process.terminate()
+                try:
+                    metadata_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    metadata_process.kill()
+                print("Metadata battery stopped.")
+
+        # Find and terminate all related processes
+        current_process = psutil.Process()
+        children = current_process.children(recursive=True)
+        for child in children:
+            print(f"Terminating child process: {child.pid}")
+            child.terminate()
+
+        # Wait for all child processes to terminate
+        _, still_alive = psutil.wait_procs(children, timeout=5)
+
+        # If any processes are still alive, kill them
+        for p in still_alive:
+            print(f"Force killing process: {p.pid}")
+            p.kill()
+
+        print("All processes terminated.")
+        # Force kill all cli_debrid.exe processes
+        subprocess.run(['taskkill', '/F', '/IM', 'cli_debrid.exe'], shell=True)
 
     # Create the menu
     menu = (
-        item('Show', restore_from_tray),
+        item('Show', restore_menu_action),
+        item('Hide', hide_to_tray),
         item('Exit', on_exit),
     )
 
@@ -306,17 +350,20 @@ def setup_tray_icon():
     logging.info("Listing all visible windows:")
     list_windows()
     
-    icon_path = os.path.join(application_path, 'static', 'icon-32x32.png')
+    icon_path = os.path.join(application_path, 'static', 'white-icon-32x32.png')
     
     # If the icon doesn't exist in the frozen path, try the static directory
     if not os.path.exists(icon_path):
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'icon-32x32.png')
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'white-icon-32x32.png')
     
     logging.info(f"Using icon path: {icon_path}")
     
     try:
         image = Image.open(icon_path)
-        icon = pystray.Icon("CLI Debrid", image, "CLI Debrid", menu)
+        icon = pystray.Icon("CLI Debrid", image, "CLI Debrid\nMain app: localhost:5000\nBattery: localhost:5001", menu)
+        
+        # Set up double-click handler
+        icon.on_activate = restore_from_tray
         
         # Minimize the window to tray when the icon is created
         minimize_to_tray()
@@ -363,7 +410,8 @@ def stop_program():
         p.kill()
 
     print("All processes terminated.")
-    sys.exit(0)
+    # Send interrupt signal to self
+    os.kill(os.getpid(), signal.SIGINT)
 
 # Function to run the metadata battery
 def run_metadata_battery():
