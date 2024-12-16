@@ -23,6 +23,7 @@ from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent
 import ntplib
 from content_checkers.trakt import check_trakt_early_releases
 from debrid.real_debrid import RealDebridTooManyDownloadsError
+import tempfile
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -509,12 +510,14 @@ class ProgramRunner:
         check_trakt_early_releases()
 
     def update_heartbeat(self):
-        with open('/tmp/program_heartbeat', 'w') as f:
+        heartbeat_file = os.path.join(tempfile.gettempdir(), 'program_heartbeat')
+        with open(heartbeat_file, 'w') as f:
             f.write(str(int(time.time())))
 
     def check_heartbeat(self):
-        if os.path.exists('/tmp/program_heartbeat'):
-            with open('/tmp/program_heartbeat', 'r') as f:
+        heartbeat_file = os.path.join(tempfile.gettempdir(), 'program_heartbeat')
+        if os.path.exists(heartbeat_file):
+            with open(heartbeat_file, 'r') as f:
                 last_heartbeat = int(f.read())
             if time.time() - last_heartbeat > 300:  # 5 minutes
                 logging.error("Program heartbeat is stale. Restarting.")
@@ -522,7 +525,11 @@ class ProgramRunner:
                 self.start()
 
     def task_send_notifications(self):
-        notifications_file = Path("/user/db_content/collected_notifications.pkl")
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content/')
+        db_path = os.path.join(db_content_dir, 'media_items.db')
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        
+        notifications_file = Path(db_content_dir + "collected_notifications.pkl")
         
         if notifications_file.exists():
             try:
@@ -565,7 +572,7 @@ class ProgramRunner:
         # Setup specific logging for reconciliations
         reconciliation_logger = logging.getLogger('reconciliations')
         if not reconciliation_logger.handlers:
-            log_dir = '/user/logs'
+            log_dir = os.environ.get('USER_LOGS', '/user/logs/')
             os.makedirs(log_dir, exist_ok=True)
             log_file = os.path.join(log_dir, 'reconciliations.log')
             handler = logging.FileHandler(log_file)

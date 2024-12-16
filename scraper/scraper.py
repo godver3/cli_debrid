@@ -5,7 +5,6 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
 from settings import get_setting
 import time
-#from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, get_overseerr_show_details, get_overseerr_show_episodes, get_all_season_episode_counts
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
 from fuzzywuzzy import fuzz
 from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
@@ -17,10 +16,11 @@ from babelfish import Language
 from .scraper_manager import ScraperManager
 from config_manager import load_config
 import unicodedata
+import sys
 from PTT import parse_title
 from pathlib import Path
 
-# Add adult content filter
+# Add our own adult terms list for additional filtering
 adult_terms = [
     'xxx', 'porn', 'adult', 'sex', 'hentai', 'brazzers', 'playboy', 'penthouse',
     'bangbros', 'naughtyamerica', 'blacked', 'tushy', 'vixen', 'pornhub',
@@ -1077,7 +1077,6 @@ def normalize_title(title: str) -> str:
     return normalized.lower()  # Convert to lowercase for case-insensitive comparison
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}")
 
     logging.info(f"Pre-filter genres: {genres}")
