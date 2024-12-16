@@ -21,13 +21,13 @@ def stop_global_profiling():
     global_profiler.disable()
 
 class OverwriteFileHandler(logging.FileHandler):
-    def __init__(self, filename, mode='w', encoding='utf-8', delay=False):
+    def __init__(self, filename, mode='w', encoding=None, delay=False):
         super().__init__(filename, mode, encoding, delay)
     
     def emit(self, record):
         # Open the file in write mode ('w') for each emission
         self.baseFilename = self.baseFilename
-        with open(self.baseFilename, 'w', encoding='utf-8') as f:
+        with open(self.baseFilename, 'w', encoding=self.encoding) as f:
             f.write(self.format(record) + self.terminator)
 
 class DynamicConsoleHandler(logging.StreamHandler):
@@ -121,7 +121,7 @@ def setup_logging():
     root_logger.addHandler(info_handler)
     
     # Queue file handler (overwriting on each log)
-    queue_handler = OverwriteFileHandler(os.path.join(log_dir, 'queue.log'), encoding='utf-8', errors='replace')
+    queue_handler = OverwriteFileHandler(os.path.join(log_dir, 'queue.log'), encoding='utf-8')
     queue_handler.setLevel(logging.INFO)
     queue_handler.setFormatter(formatter)
     
