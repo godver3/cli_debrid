@@ -62,9 +62,14 @@ jobs:
           name: windows-executable
           path: windows-executable
 
+      - name: Get version from version.txt
+        run: echo "VERSION=$(cat version.txt)" >> $GITHUB_ENV
+
       - name: Rename Windows executable
+        shell: bash
         run: |
-          mv windows-executable/cli_debrid.exe "windows-executable/cli_debrid - ${{ env.VERSION }}.exe"
+          VERSION=$(cat version.txt)
+          mv "windows-executable/cli_debrid.exe" "windows-executable/cli_debrid - ${VERSION}.exe"
 
       - name: Create Release
         if: github.ref_name == 'main' || github.ref_name == 'dev'
