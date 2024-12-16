@@ -102,7 +102,7 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # Check for icon file
 icon_path = None
-possible_icons = ['static/favicon.ico', 'static/favicon.png']
+possible_icons = ['static/white-icon-32x32.ico']
 for icon in possible_icons:
     if os.path.exists(os.path.join(base_dir, icon)):
         icon_path = icon
