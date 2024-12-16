@@ -128,7 +128,11 @@ def get_version():
     return version
 
 def signal_handler(signum, frame):
-    stop_program()
+    stop_program(from_signal=True)
+    # Exit directly when handling SIGINT
+    if signum == signal.SIGINT:
+        stop_global_profiling()
+        sys.exit(0)
 
 def update_web_ui_state(state):
     try:
@@ -388,7 +392,7 @@ def setup_tray_icon():
         return
 
 # Modify the stop_program function
-def stop_program():
+def stop_program(from_signal=False):
     global program_runner, metadata_process
     print("\nStopping the program...")
 
@@ -409,23 +413,28 @@ def stop_program():
             print("Metadata battery stopped.")
 
     # Find and terminate all related processes
-    current_process = psutil.Process()
-    children = current_process.children(recursive=True)
-    for child in children:
-        print(f"Terminating child process: {child.pid}")
-        child.terminate()
+    try:
+        current_process = psutil.Process()
+        children = current_process.children(recursive=True)
+        for child in children:
+            print(f"Terminating child process: {child.pid}")
+            child.terminate()
 
-    # Wait for all child processes to terminate
-    _, still_alive = psutil.wait_procs(children, timeout=5)
+        # Wait for all child processes to terminate
+        _, still_alive = psutil.wait_procs(children, timeout=5)
 
-    # If any processes are still alive, kill them
-    for p in still_alive:
-        print(f"Force killing process: {p.pid}")
-        p.kill()
+        # If any processes are still alive, kill them
+        for p in still_alive:
+            print(f"Force killing process: {p.pid}")
+            p.kill()
 
-    print("All processes terminated.")
-    # Send interrupt signal to self
-    os.kill(os.getpid(), signal.SIGINT)
+        print("All processes terminated.")
+    except Exception as e:
+        print(f"Error while terminating processes: {e}")
+
+    # Only send the interrupt signal if not already handling a signal
+    if not from_signal:
+        os.kill(os.getpid(), signal.SIGINT)
 
 # Function to run the metadata battery
 def run_metadata_battery():
@@ -466,10 +475,6 @@ def run_metadata_battery():
         except Exception as e:
             logging.error(f"Error running metadata battery: {e}")
             metadata_process = None
-
-# Update signal handler
-def signal_handler(signum, frame):
-    stop_program()
 
 def open_log_file():
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
