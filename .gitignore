@@ -83,3 +83,54 @@ dist
 build
 venv
 user
+
+# PyInstaller
+*.spec
+build_venv/
+build_env/
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Windows specific
+*.exe
+*.pyd
+*.dll
+
+# Environment
+.env
+.venv
+env/
+ENV/
+
+# Logs and databases
+*.log
+flask_session/
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Project specific
+test_output.mp4
+user/
+config/*.json
+.aider*
+
+# Virtual Environment
+venv/
+build_venv/
+build_env/

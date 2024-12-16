@@ -141,8 +141,8 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
             first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
             first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
 
-            # Convert UTC to local timezone
-            local_tz = pytz.timezone(time.tzname[0])
+            # Convert UTC to local timezone using cross-platform function
+            local_tz = _get_local_timezone()
             local_dt = first_aired_utc.astimezone(local_tz)
             
             # Format the local date (stripping time) as a string
@@ -177,7 +177,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
             show_datetime = show_datetime.replace(tzinfo=show_tz)
             
             # Get the local timezone dynamically
-            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            local_tz = _get_local_timezone()
             local_airtime = show_datetime.astimezone(local_tz)
             
             # Format as HH:MM
@@ -203,6 +203,11 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'runtime': episode_data.get('runtime') or show_item.get('runtime'),
         'airtime': airtime
     }
+
+def _get_local_timezone():
+    """Get the local timezone in a cross-platform way."""
+    from tzlocal import get_localzone
+    return get_localzone()
 
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     processed_items = {'movies': [], 'episodes': []}
@@ -387,8 +392,8 @@ def refresh_release_dates():
                                 first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
                                 first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
 
-                                # Convert UTC to local timezone
-                                local_tz = pytz.timezone(time.tzname[0])
+                                # Convert UTC to local timezone using cross-platform function
+                                local_tz = _get_local_timezone()
                                 local_dt = first_aired_utc.astimezone(local_tz)
                                 
                                 # Format the local date (stripping time) as a string
