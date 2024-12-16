@@ -263,7 +263,7 @@ def setup_tray_icon():
         def enum_windows_callback(hwnd, _):
             window_text = win32gui.GetWindowText(hwnd)
             logging.debug(f"Found window: {window_text}")
-            if "cli_debrid.exe" in window_text.lower():
+            if "cli_debrid" in window_text.lower() and window_text.lower().endswith(".exe"):
                 logging.info(f"Hiding window: {window_text}")
                 win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
         win32gui.EnumWindows(enum_windows_callback, None)
@@ -272,7 +272,7 @@ def setup_tray_icon():
         # Show both the main window and console window
         def enum_windows_callback(hwnd, _):
             window_text = win32gui.GetWindowText(hwnd)
-            if "cli_debrid.exe" in window_text.lower():
+            if "cli_debrid" in window_text.lower() and window_text.lower().endswith(".exe"):
                 win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
                 win32gui.SetForegroundWindow(hwnd)
         win32gui.EnumWindows(enum_windows_callback, None)
@@ -322,8 +322,12 @@ def setup_tray_icon():
             p.kill()
 
         print("All processes terminated.")
-        # Force kill all cli_debrid.exe processes
-        subprocess.run(['taskkill', '/F', '/IM', 'cli_debrid.exe'], shell=True)
+        # Force kill all cli_debrid processes
+        if is_frozen():
+            exe_name = os.path.basename(sys.executable)
+        else:
+            exe_name = "cli_debrid-" + get_version() + ".exe"
+        subprocess.run(['taskkill', '/F', '/IM', exe_name], shell=True)
 
     # Create the menu
     menu = (
