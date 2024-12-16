@@ -21,19 +21,24 @@ jobs:
           python-version: '3.11'
           
       - name: Create and activate virtual environment
+        shell: cmd
         run: |
           python -m venv build_venv
-          .\build_venv\Scripts\activate
+          call build_venv\Scripts\activate.bat
           
       - name: Install dependencies
+        shell: cmd
         run: |
+          call build_venv\Scripts\activate.bat
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install -r requirements.txt
           
       - name: Build Windows executable
         shell: cmd
-        run: .\build_venv\Scripts\pyinstaller.exe windows_build.spec --clean
+        run: |
+          call build_venv\Scripts\activate.bat
+          pyinstaller windows_build.spec --clean
         
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v3
