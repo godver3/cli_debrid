@@ -9,10 +9,10 @@ RUN apt-get update && apt-get install -y gcc supervisor && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy only the requirements file first to leverage Docker cache
-COPY requirements.txt .
+COPY requirements-linux.txt .
 
 # Install the requirements
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-linux.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
