@@ -75,15 +75,9 @@ def inject_version():
             base_dir = os.path.dirname(os.path.abspath(__file__))
         
         version_path = os.path.join(base_dir, 'version.txt')
-        logging.info(f"Looking for version.txt at: {version_path}")
-        logging.info(f"sys.executable: {sys.executable}")
-        logging.info(f"Is frozen: {getattr(sys, 'frozen', False)}")
-        logging.info(f"__file__: {__file__ if '__file__' in globals() else 'Not available'}")
-        logging.info(f"Base directory: {base_dir}")
         
         with open(version_path, 'r') as f:
             version = f.read().strip()
-            logging.info(f"Found version: {version}")
     except FileNotFoundError:
         logging.warning(f"version.txt not found at {version_path}")
         version = "Unknown"
