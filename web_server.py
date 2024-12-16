@@ -15,6 +15,7 @@ from extensions import db, app, app_start_time
 from routes.auth_routes import init_db
 from flask_login import current_user
 import logging
+import sys
 
 from routes import register_blueprints, auth_bp
 
@@ -65,9 +66,29 @@ def utility_processor():
 @app.context_processor
 def inject_version():
     try:
-        with open('version.txt', 'r') as f:
+        # Get the application's root directory
+        if getattr(sys, 'frozen', False):
+            # If frozen (exe), look in the PyInstaller temp directory
+            base_dir = os.path.dirname(__file__)  # This will be the _MEI* directory
+        else:
+            # If running from source, use the directory containing this script
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        version_path = os.path.join(base_dir, 'version.txt')
+        logging.info(f"Looking for version.txt at: {version_path}")
+        logging.info(f"sys.executable: {sys.executable}")
+        logging.info(f"Is frozen: {getattr(sys, 'frozen', False)}")
+        logging.info(f"__file__: {__file__ if '__file__' in globals() else 'Not available'}")
+        logging.info(f"Base directory: {base_dir}")
+        
+        with open(version_path, 'r') as f:
             version = f.read().strip()
+            logging.info(f"Found version: {version}")
     except FileNotFoundError:
+        logging.warning(f"version.txt not found at {version_path}")
+        version = "Unknown"
+    except Exception as e:
+        logging.error(f"Error reading version.txt: {str(e)}")
         version = "Unknown"
     return dict(version=version)
     

@@ -37,7 +37,8 @@ for directory in data_dirs:
 additional_files = [
     'version.txt',
     'tooltip_schema.json',
-    os.path.join('static', 'favicon.png'),
+    os.path.join('static', 'white-icon-32x32.png'),
+    os.path.join('static', 'white-icon-32x32.ico'),
 ]
 
 for file in additional_files:
@@ -78,7 +79,7 @@ target = Executable(
     script="windows_wrapper.py",
     target_name="cli_debrid.exe",
     base=None,  # "Win32GUI" if sys.platform == "win32" else None,
-    icon="static/favicon.ico" if os.path.exists("static/favicon.ico") else None,
+    icon="static/white-icon-32x32.ico" if os.path.exists("static/white-icon-32x32.ico") else None,
 )
 
 setup(
