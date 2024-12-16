@@ -85,7 +85,7 @@ venv
 user
 
 # PyInstaller
-*.spec
+# *.spec
 build_venv/
 build_env/
 
