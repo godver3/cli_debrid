@@ -32,7 +32,7 @@ jobs:
           call build_venv\Scripts\activate.bat
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install -r requirements.txt
+          pip install -r requirements.txt  # This will include pywin32 for Windows
           
       - name: Build Windows executable
         shell: cmd
