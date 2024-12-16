@@ -7,6 +7,8 @@ import signal
 import logging
 import platform
 import psutil
+import win32gui
+import win32con
 
 # Existing imports
 import shutil
@@ -103,9 +105,22 @@ def backup_config():
 
 def get_version():
     try:
-        with open('version.txt', 'r') as version_file:
+        # Get the application path based on whether we're frozen or not
+        if getattr(sys, 'frozen', False):
+            application_path = sys._MEIPASS
+        else:
+            application_path = os.path.dirname(os.path.abspath(__file__))
+        
+        version_path = os.path.join(application_path, 'version.txt')
+        logging.info(f"Reading version from: {version_path}")
+        
+        with open(version_path, 'r') as version_file:
             version = version_file.read().strip()
     except FileNotFoundError:
+        logging.error("version.txt not found")
+        version = "0.0.0"
+    except Exception as e:
+        logging.error(f"Error reading version: {e}")
         version = "0.0.0"
     return version
 
@@ -233,66 +248,83 @@ def is_frozen():
 def setup_tray_icon():
     logging.info("Starting setup_tray_icon function")
     
-    # Check if running in a graphical environment
-    if "DISPLAY" not in os.environ:
-        logging.info("Running in a non-graphical environment. Skipping system tray setup.")
-        return
-
-    # Import pystray only if we're in a graphical environment
+    # Import required modules
     try:
         import pystray
         from pystray import MenuItem as item
         from PIL import Image
         logging.info("Successfully imported pystray and PIL")
     except ImportError as e:
-        logging.error(f"Failed to import pystray or PIL: {e}")
+        logging.error(f"Failed to import required modules: {e}")
         return
 
+    def minimize_to_tray():
+        # Find and hide both the main window and console window
+        def enum_windows_callback(hwnd, _):
+            window_text = win32gui.GetWindowText(hwnd)
+            logging.debug(f"Found window: {window_text}")
+            if "cli_debrid.exe" in window_text.lower():
+                logging.info(f"Hiding window: {window_text}")
+                win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+        win32gui.EnumWindows(enum_windows_callback, None)
+
+    def restore_from_tray(icon, item):
+        # Show both the main window and console window
+        def enum_windows_callback(hwnd, _):
+            window_text = win32gui.GetWindowText(hwnd)
+            if "cli_debrid.exe" in window_text.lower():
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                win32gui.SetForegroundWindow(hwnd)
+        win32gui.EnumWindows(enum_windows_callback, None)
+        
     def on_exit(icon, item):
         logging.info("Exit option selected from system tray")
         icon.stop()
-        stop_program()
+        os._exit(0)
 
-    def view_logs(icon, item):
-        logging.info("View Logs option selected from system tray")
-        open_log_file()
+    # Create the menu
+    menu = (
+        item('Show', restore_from_tray),
+        item('Exit', on_exit),
+    )
 
-    # Path to your icon image
-    icon_image_path = os.path.join(os.path.dirname(sys.executable if is_frozen() else __file__), 'static', 'favicon.png')
-    logging.info(f"Icon image path: {icon_image_path}")
-
-    # Check if icon file exists, otherwise create a placeholder
-    if not os.path.exists(icon_image_path):
-        logging.warning(f"Icon file not found at {icon_image_path}. Creating placeholder.")
-        image = Image.new('RGB', (64, 64), color=(73, 109, 137))
+    # Get the icon path
+    if getattr(sys, 'frozen', False):
+        application_path = sys._MEIPASS
     else:
-        logging.info("Loading icon image")
-        image = Image.open(icon_image_path)
-
-    # Create the system tray icon
+        application_path = os.path.dirname(os.path.abspath(__file__))
+    
+    # List all windows to help with debugging
+    def list_windows():
+        def callback(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if title:
+                    logging.info(f"Visible window: {title}")
+        win32gui.EnumWindows(callback, None)
+    
+    logging.info("Listing all visible windows:")
+    list_windows()
+    
+    icon_path = os.path.join(application_path, 'static', 'icon-32x32.png')
+    
+    # If the icon doesn't exist in the frozen path, try the static directory
+    if not os.path.exists(icon_path):
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'icon-32x32.png')
+    
+    logging.info(f"Using icon path: {icon_path}")
+    
     try:
-        icon = pystray.Icon(
-            "cli_debrid",
-            image,
-            "cli_debrid",
-            menu=pystray.Menu(
-                item('View Logs', view_logs),
-                item('Exit', on_exit)
-            )
-        )
-        logging.info("System tray icon created successfully")
-    except Exception as e:
-        logging.error(f"Failed to create system tray icon: {e}")
-        return
-
-    # Run the icon
-    logging.info("Starting system tray icon")
-    try:
+        image = Image.open(icon_path)
+        icon = pystray.Icon("CLI Debrid", image, "CLI Debrid", menu)
+        
+        # Minimize the window to tray when the icon is created
+        minimize_to_tray()
+        
         icon.run()
     except Exception as e:
-        logging.error(f"Error running system tray icon: {e}")
-
-    logging.info("setup_tray_icon function completed")
+        logging.error(f"Failed to create or run system tray icon: {e}")
+        return
 
 # Modify the stop_program function
 def stop_program():
@@ -451,9 +483,7 @@ def main():
     is_windows = platform.system() == 'Windows'
     if is_windows:
         # Start the metadata battery
-        metadata_thread = threading.Thread(target=run_metadata_battery)
-        metadata_thread.daemon = True
-        metadata_thread.start()
+        print("Running on Windows. Starting metadata battery...")
     else:
         print("Running on a non-Windows system. Metadata battery will not be started.")
 
@@ -480,10 +510,6 @@ def main():
     try:
         while True:
             time.sleep(5)
-            # Only check metadata process on Windows
-            if is_windows:
-                if metadata_process is None or metadata_process.poll() is not None:
-                    logging.warning("Metadata battery process has stopped unexpectedly.")
     except KeyboardInterrupt:
         stop_program()
 

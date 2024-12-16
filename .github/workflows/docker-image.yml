@@ -6,15 +6,8 @@ on:
   workflow_dispatch:  # This enables manual triggering
 
 jobs:
-  # Commenting out the Windows build job
-  #build-windows-exe:
-  #  runs-on: windows-latest
-  #  steps:
-  # ... existing windows build steps ...
-
-  build-and-push:
-    runs-on: ubuntu-latest
-    # Remove the 'needs' line since we're not depending on Windows build anymore
+  build-windows-exe:
+    runs-on: windows-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,7 +15,45 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
 
-      # Remove the Windows artifact download step since we're not building Windows anymore
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Create and activate virtual environment
+        run: |
+          python -m venv build_venv
+          .\build_venv\Scripts\activate
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+          
+      - name: Build Windows executable
+        run: build_venv\Scripts\pyinstaller.exe windows_build.spec --clean
+        
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-executable
+          path: dist/
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: windows-executable
+          path: windows-executable
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
