@@ -75,7 +75,7 @@ jobs:
         if: github.ref_name == 'main' || github.ref_name == 'dev'
         uses: softprops/action-gh-release@v1
         with:
-          files: "windows-executable/cli_debrid - ${{ env.VERSION }}.exe"
+          files: "windows-executable/cli_debrid-${{ env.VERSION }}.exe"
           name: "Release ${{ env.VERSION }}"
           tag_name: "v${{ env.VERSION }}"
           draft: false
