@@ -7,8 +7,11 @@ import signal
 import logging
 import platform
 import psutil
-import win32gui
-import win32con
+
+# Import Windows-specific modules only on Windows
+if platform.system() == 'Windows':
+    import win32gui
+    import win32con
 
 # Existing imports
 import shutil
@@ -246,6 +249,11 @@ def is_frozen():
 
 # Modify the setup_tray_icon function
 def setup_tray_icon():
+    # Only proceed if we're on Windows
+    if platform.system() != 'Windows':
+        logging.info("Tray icon is only supported on Windows")
+        return
+
     logging.info("Starting setup_tray_icon function")
     
     # Import required modules
@@ -253,7 +261,9 @@ def setup_tray_icon():
         import pystray
         from pystray import MenuItem as item
         from PIL import Image
-        logging.info("Successfully imported pystray and PIL")
+        import win32gui
+        import win32con
+        logging.info("Successfully imported pystray, PIL, and Windows modules")
     except ImportError as e:
         logging.error(f"Failed to import required modules: {e}")
         return
@@ -526,6 +536,9 @@ def main():
 
     # Start the system tray icon if running as a packaged Windows app
     if is_frozen() and platform.system() == 'Windows':
+        # Import Windows-specific modules only on Windows
+        import win32gui
+        import win32con
         # Start the system tray icon
         tray_thread = threading.Thread(target=setup_tray_icon)
         tray_thread.daemon = True
