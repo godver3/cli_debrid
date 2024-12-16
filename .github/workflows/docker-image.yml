@@ -69,7 +69,7 @@ jobs:
         shell: bash
         run: |
           VERSION=$(cat version.txt)
-          mv "windows-executable/cli_debrid.exe" "windows-executable/cli_debrid - ${VERSION}.exe"
+          mv "windows-executable/cli_debrid.exe" "windows-executable/cli_debrid-${VERSION}.exe"
 
       - name: Create Release
         if: github.ref_name == 'main' || github.ref_name == 'dev'
