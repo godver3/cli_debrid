@@ -33,12 +33,17 @@ class OverwriteFileHandler(logging.FileHandler):
 class DynamicConsoleHandler(logging.StreamHandler):
     def __init__(self):
         import sys
-        import codecs
         super().__init__()
         if sys.platform == 'win32':
-            # Force UTF-8 encoding for Windows console
-            sys.stdout.reconfigure(encoding='utf-8')
-            sys.stderr.reconfigure(encoding='utf-8')
+            import locale
+            # Set UTF-8 encoding for Windows console
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+            # Set console to UTF-8 mode
+            try:
+                locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+            except locale.Error:
+                pass
         self.setLevel(self.get_level())
 
     def get_level(self):
@@ -46,8 +51,13 @@ class DynamicConsoleHandler(logging.StreamHandler):
         return getattr(logging, console_level.upper())
 
     def emit(self, record):
-        self.setLevel(self.get_level())
-        super().emit(record)
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            stream.write(msg + self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
 
 def log_system_stats():
     performance_logger = logging.getLogger('performance_logger')
@@ -98,20 +108,20 @@ def setup_logging():
     
     # Debug file handler
     debug_handler = logging.handlers.RotatingFileHandler(
-        os.path.join(log_dir, 'debug.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8')
+        os.path.join(log_dir, 'debug.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8', errors='replace')
     debug_handler.setLevel(logging.DEBUG)
     debug_handler.setFormatter(formatter)
     root_logger.addHandler(debug_handler)
     
     # Info file handler
     info_handler = logging.handlers.RotatingFileHandler(
-        os.path.join(log_dir, 'info.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8')
+        os.path.join(log_dir, 'info.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8', errors='replace')
     info_handler.setLevel(logging.INFO)
     info_handler.setFormatter(formatter)
     root_logger.addHandler(info_handler)
     
     # Queue file handler (overwriting on each log)
-    queue_handler = OverwriteFileHandler(os.path.join(log_dir, 'queue.log'))
+    queue_handler = OverwriteFileHandler(os.path.join(log_dir, 'queue.log'), encoding='utf-8', errors='replace')
     queue_handler.setLevel(logging.INFO)
     queue_handler.setFormatter(formatter)
     
@@ -143,7 +153,7 @@ def setup_logging():
 
     # Performance file handler
     performance_handler = logging.handlers.RotatingFileHandler(
-        os.path.join(log_dir, 'performance.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8')
+        os.path.join(log_dir, 'performance.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8', errors='replace')
     performance_handler.setLevel(logging.INFO)
     performance_handler.setFormatter(formatter)
     
