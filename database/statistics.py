@@ -77,16 +77,16 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         cursor.execute(movie_query, (movie_limit,))
         movie_results = cursor.fetchall()
         
-        logging.debug(f"Initial movie results: {len(movie_results)}")
-        for movie in movie_results:
-            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Version: {movie['version']} - State: {movie['state']}")
+        #logging.debug(f"Initial movie results: {len(movie_results)}")
+        #for movie in movie_results:
+        #    logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Version: {movie['version']} - State: {movie['state']}")
         
         cursor.execute(episode_query, (show_limit,))
         episode_results = cursor.fetchall()
         
-        logging.debug(f"Initial episode results: {len(episode_results)}")
-        for episode in episode_results:
-            logging.debug(f"Episode: {episode['title']} - Season: {episode['season_number']} - Episode: {episode['episode_number']} - Version: {episode['version']}")
+        #logging.debug(f"Initial episode results: {len(episode_results)}")
+        #for episode in episode_results:
+        #    logging.debug(f"Episode: {episode['title']} - Season: {episode['season_number']} - Episode: {episode['episode_number']} - Version: {episode['version']}")
         
         consolidated_movies = {}
         shows = {}
@@ -117,7 +117,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     consolidated_movies[key]['filled_by_title'].append(item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file'])
                     consolidated_movies[key]['collected_at'] = max(consolidated_movies[key]['collected_at'], item['collected_at'])
                 
-                logging.debug(f"Consolidated movie: {key} - Versions: {consolidated_movies[key]['versions']}")
+                #logging.debug(f"Consolidated movie: {key} - Versions: {consolidated_movies[key]['versions']}")
             
             # Process episodes
             for row in episode_results:
@@ -154,7 +154,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     if item['version'] not in show['versions']:
                         show['versions'].append(item['version'])
                 
-                logging.debug(f"Processed show: {item['title']} - Versions: {shows[item['title']]['versions']}")
+                #logging.debug(f"Processed show: {item['title']} - Versions: {shows[item['title']]['versions']}")
             
             # Wait for all poster URL tasks to complete
             poster_results = await asyncio.gather(*[task for _, task, _ in poster_tasks], return_exceptions=True)
@@ -167,7 +167,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     item['poster_url'] = result
                     cache_poster_url(item['tmdb_id'], media_type, result)
                 else:
-                    logging.info(f"get_setting('TMDB', 'api_key'): {get_setting('TMDB', 'api_key')}")
+                    #logging.info(f"get_setting('TMDB', 'api_key'): {get_setting('TMDB', 'api_key')}")
                     if get_setting('TMDB', 'api_key') == "":
                         logging.warning("TMDB API key not set, using placeholder images")
                         
@@ -196,11 +196,11 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         shows_list = list(shows.values())
         shows_list.sort(key=lambda x: x['collected_at'], reverse=True)
         
-        logging.debug("Before limit_and_process:")
-        for movie in movies_list:
-            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
-        for show in shows_list:
-            logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
+        #logging.debug("Before limit_and_process:")
+        #for movie in movies_list:
+        #    logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
+        #for show in shows_list:
+        #    logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
         
         # Final processing and limiting to 5 unique items based on title
         def limit_and_process(items, limit=5):
@@ -216,17 +216,17 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     item['versions'].sort()
                     item['versions'] = ', '.join(item['versions'])  # Join versions into a string
                     unique_items[key] = item
-                logging.debug(f"Processed item: {item['title']} ({item.get('year', '')}) - Versions: {item['versions']}")
+                #logging.debug(f"Processed item: {item['title']} ({item.get('year', '')}) - Versions: {item['versions']}")
             return list(unique_items.values())
 
         movies_list = limit_and_process(movies_list)
         shows_list = limit_and_process(shows_list)
 
-        logging.debug("After limit_and_process:")
-        for movie in movies_list:
-            logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
-        for show in shows_list:
-            logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
+        #logging.debug("After limit_and_process:")
+        #for movie in movies_list:
+        #    logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
+        #for show in shows_list:
+        #    logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
 
         # Clean expired cache entries
         clean_expired_cache()
@@ -259,9 +259,9 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         cursor.execute(upgraded_query, (upgraded_limit,))
         upgrade_results = cursor.fetchall()
         
-        logging.debug(f"Initial upgraded results: {len(upgrade_results)}")
-        for media in upgrade_results:
-            logging.debug(f"Upgraded: {media['title']} ({media['year']}) - Type: {media['type']} - Version: {media['version']}")
+        #logging.debug(f"Initial upgraded results: {len(upgrade_results)}")
+        #for media in upgrade_results:
+        #    logging.debug(f"Upgraded: {media['title']} ({media['year']}) - Type: {media['type']} - Version: {media['version']}")
         
         media_items = {}
         
@@ -282,7 +282,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                     }
                     # Set media_type based on the item type from database
                     media_type = 'tv' if item['type'] in ['show', 'episode'] else 'movie'
-                    logging.debug(f"Setting media_type to {media_type} for {item['title']} (type: {item['type']})")
+                    #logging.debug(f"Setting media_type to {media_type} for {item['title']} (type: {item['type']})")
                     
                     cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
                     if cached_url:
@@ -296,7 +296,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                     media_items[key]['upgrading_from'].append(item['upgrading_from'])
                     media_items[key]['collected_at'] = max(media_items[key]['collected_at'], item['collected_at'])
                 
-                logging.debug(f"Upgraded Media: {key} - Versions: {media_items[key]['versions']}")
+                #logging.debug(f"Upgraded Media: {key} - Versions: {media_items[key]['versions']}")
             
             
             # Wait for all poster URL tasks to complete
@@ -310,7 +310,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                     item['poster_url'] = result
                     cache_poster_url(item['tmdb_id'], media_type, result)
                 else:
-                    logging.info(f"get_setting('TMDB', 'api_key'): {get_setting('TMDB', 'api_key')}")
+                    #logging.info(f"get_setting('TMDB', 'api_key'): {get_setting('TMDB', 'api_key')}")
                     if get_setting('TMDB', 'api_key') == "":
                         logging.warning("TMDB API key not set, using placeholder images")
                         
@@ -335,19 +335,19 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         upgraded_list = list(media_items.values())
         
         # Log the values before sorting
-        for item in upgraded_list:
-            logging.debug(f"Before sorting: {item['title']} - collected_at: {item['collected_at']}")
+        #for item in upgraded_list:
+        #    logging.debug(f"Before sorting: {item['title']} - collected_at: {item['collected_at']}")
         
         # Update the sorting key to handle None values
         upgraded_list.sort(key=lambda x: x['collected_at'] or '', reverse=True)
         
         # Log the values after sorting
-        for item in upgraded_list:
-            logging.debug(f"After sorting: {item['title']} - collected_at: {item['collected_at']}")
+        #for item in upgraded_list:
+        #    logging.debug(f"After sorting: {item['title']} - collected_at: {item['collected_at']}")
         
-        logging.debug("Before limit_and_process:")
-        for upgraded in upgraded_list:
-            logging.debug(f"Upgraded: {upgraded['title']} ({upgraded['year']}) - Versions: {upgraded['versions']}")
+        #logging.debug("Before limit_and_process:")
+        #for upgraded in upgraded_list:
+        #    logging.debug(f"Upgraded: {upgraded['title']} ({upgraded['year']}) - Versions: {upgraded['versions']}")
         
         # Final processing and limiting to 5 unique items based on title
         def limit_and_process(items, limit=5):
@@ -363,14 +363,14 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                     item['versions'].sort()
                     item['versions'] = ', '.join(item['versions'])  # Join versions into a string
                     unique_items[key] = item
-                logging.debug(f"Processed item: {item['title']} ({item.get('year', '')}) - Versions: {item['versions']}")
+                #logging.debug(f"Processed item: {item['title']} ({item.get('year', '')}) - Versions: {item['versions']}")
             return list(unique_items.values())
 
         upgraded_list = limit_and_process(upgraded_list)
 
-        logging.debug("After limit_and_process:")
-        for upgraded in upgraded_list:
-            logging.debug(f"Upgraded: {upgraded['title']} ({upgraded['year']}) - Versions: {upgraded['versions']}")
+        #logging.debug("After limit_and_process:")
+        #for upgraded in upgraded_list:
+        #    logging.debug(f"Upgraded: {upgraded['title']} ({upgraded['year']}) - Versions: {upgraded['versions']}")
 
         # Clean expired cache entries
         clean_expired_cache()

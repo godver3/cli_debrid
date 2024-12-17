@@ -41,7 +41,7 @@ def load_config():
     return {}
 
 def save_config(config):
-    logging.debug("Starting save_config()")
+    # logging.debug("Starting save_config()")
     #logging.debug(f"Config before saving: {json.dumps(config, indent=2)}")
     
     # Ensure Content Sources are saved as proper JSON
