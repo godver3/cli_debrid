@@ -7,6 +7,7 @@ import signal
 import logging
 import platform
 import psutil
+import webbrowser
 
 # Import Windows-specific modules only on Windows
 if platform.system() == 'Windows':
@@ -259,6 +260,20 @@ def setup_tray_icon():
         return
 
     logging.info("Starting setup_tray_icon function")
+    
+    # Launch browser after 2 seconds
+    def delayed_browser_launch():
+        time.sleep(2)  # Wait for 2 seconds
+        try:
+            webbrowser.open('http://localhost:5000')
+            logging.info("Browser launched successfully")
+        except Exception as e:
+            logging.error(f"Failed to launch browser: {e}")
+    
+    # Start browser launch in a separate thread
+    browser_thread = threading.Thread(target=delayed_browser_launch)
+    browser_thread.daemon = True
+    browser_thread.start()
     
     # Import required modules
     try:

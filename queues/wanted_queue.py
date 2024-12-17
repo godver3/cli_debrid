@@ -57,7 +57,7 @@ class WantedQueue:
         self.items = [i for i in self.items if i['id'] != item['id']]
 
     def process(self, queue_manager):
-        logging.debug("Processing wanted queue")
+        # logging.debug("Processing wanted queue")
         current_datetime = datetime.now()
         items_to_move_scraping = []
         items_to_move_unreleased = []

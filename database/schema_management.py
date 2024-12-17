@@ -38,7 +38,7 @@ def migrate_schema():
             conn.execute('ALTER TABLE media_items ADD COLUMN blacklisted_date TIMESTAMP')
             logging.info("Successfully added blacklisted_date column to media_items table.")
 
-        logging.info("Successfully added new columns to media_items table.")
+        # logging.info("Successfully added new columns to media_items table.")
 
         # Remove the existing index if it exists
         conn.execute('DROP INDEX IF EXISTS unique_media_item_file')
@@ -52,7 +52,7 @@ def migrate_schema():
         ''')
 
         conn.commit()
-        logging.info("Schema migration completed successfully. Unique constraint removed.")
+        # logging.info("Schema migration completed successfully. Unique constraint removed.")
     except Exception as e:
         conn.rollback()
         logging.error(f"Unexpected error during schema migration: {str(e)}")
@@ -115,7 +115,7 @@ def create_tables():
         ''')
 
         conn.commit()
-        logging.info("Tables created successfully.")
+        # logging.info("Tables created successfully.")
     except Exception as e:
         logging.error(f"Error creating media_items table: {str(e)}")
     finally:
