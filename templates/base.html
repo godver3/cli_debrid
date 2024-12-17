@@ -1171,31 +1171,35 @@
                 // Group title clicks
                 const groupTitles = navMenu.querySelectorAll('.group-title');
                 groupTitles.forEach(title => {
-                    title.addEventListener('click', function(e) {
+                    const handleClick = function(e) {
                         if (window.innerWidth <= 776) {
                             e.preventDefault();
                             e.stopPropagation();
                             
-                            // Close all other dropdowns
+                            // Toggle current dropdown immediately
+                            const dropdown = this.nextElementSibling;
+                            const wasActive = this.classList.contains('active');
+                            
+                            // Close all dropdowns and remove active states
                             const allDropdowns = navMenu.querySelectorAll('.dropdown');
                             const allGroupTitles = navMenu.querySelectorAll('.group-title');
-                            allDropdowns.forEach(dropdown => {
-                                if (dropdown !== this.nextElementSibling) {
-                                    dropdown.classList.remove('show');
-                                }
-                            });
-                            allGroupTitles.forEach(t => {
-                                if (t !== this) {
-                                    t.classList.remove('active');
-                                }
-                            });
-
-                            // Toggle current dropdown
-                            const dropdown = this.nextElementSibling;
-                            dropdown.classList.toggle('show');
-                            this.classList.toggle('active');
+                            allDropdowns.forEach(d => d.classList.remove('show'));
+                            allGroupTitles.forEach(t => t.classList.remove('active'));
+                            
+                            // Toggle current if it wasn't active
+                            if (!wasActive) {
+                                this.classList.add('active');
+                                dropdown.classList.add('show');
+                            }
                         }
-                    });
+                    };
+
+                    // Handle both click and touch events
+                    title.addEventListener('click', handleClick);
+                    title.addEventListener('touchstart', function(e) {
+                        e.preventDefault();
+                        handleClick.call(this, e);
+                    }, { passive: false });
                 });
 
                 // Close menu when clicking outside
@@ -1222,26 +1226,35 @@
             const menuItems = document.querySelectorAll('.nav-item');
             
             menuItems.forEach(item => {
-                item.addEventListener('touchstart', function(e) {
-                    // Prevent the default touch behavior
+                item.addEventListener('click', function(e) {
+                    // Prevent default behavior
                     e.preventDefault();
                     
-                    // Toggle the submenu directly
+                    // Toggle the active state and submenu in one go
                     const submenu = this.querySelector('.submenu');
                     if (submenu) {
-                        // Close all other submenus
+                        // Close all other submenus and remove active states
                         menuItems.forEach(otherItem => {
                             if (otherItem !== item) {
                                 const otherSubmenu = otherItem.querySelector('.submenu');
                                 if (otherSubmenu) {
                                     otherSubmenu.style.display = 'none';
                                 }
+                                otherItem.classList.remove('active');
                             }
                         });
                         
-                        // Toggle current submenu
+                        // Toggle current item's state
+                        this.classList.toggle('active');
                         submenu.style.display = submenu.style.display === 'block' ? 'none' : 'block';
                     }
+                });
+
+                // Add touch support
+                item.addEventListener('touchstart', function(e) {
+                    // Prevent double-firing on touch devices
+                    e.preventDefault();
+                    this.click();
                 }, { passive: false });
             });
         });
