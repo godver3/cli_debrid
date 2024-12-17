@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Tuple
 class AnimeMatcher:
     def __init__(self, calculate_absolute_episode_func):
         self.calculate_absolute_episode = calculate_absolute_episode_func
-        logging.info("AnimeMatcher initialized")
+        # logging.info("AnimeMatcher initialized")
 
     def match_anime_files(self, files: List[str], items: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
         matches = []

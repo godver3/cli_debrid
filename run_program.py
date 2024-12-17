@@ -291,8 +291,8 @@ class ProgramRunner:
             process_method = getattr(self.queue_manager, method_name)
             
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            if queue_contents:
-                logging.debug(f"{queue_name} queue contains {len(queue_contents)} items")
+            # if queue_contents:
+                # logging.debug(f"{queue_name} queue contains {len(queue_contents)} items")
             
             if self.queue_manager.is_paused():
                 logging.warning(f"Queue processing is paused. Skipping {queue_name} queue.")
@@ -306,11 +306,11 @@ class ProgramRunner:
                 return None
             
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            if queue_contents:
-                logging.debug(f"{queue_name} queue contains {len(queue_contents)} items after processing")
+            # if queue_contents:
+                # logging.debug(f"{queue_name} queue contains {len(queue_contents)} items after processing")
             
             duration = time.time() - start_time
-            logging.info(f"Finished processing {queue_name} queue in {duration:.2f} seconds")
+            # logging.info(f"Finished processing {queue_name} queue in {duration:.2f} seconds")
             
             return result
         

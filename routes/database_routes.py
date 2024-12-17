@@ -207,7 +207,7 @@ def delete_item():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def perform_database_migration():
-    logging.info("Performing database migration...")
+    # logging.info("Performing database migration...")
     inspector = inspect(db.engine)
     if not inspector.has_table("user"):
         # If the user table doesn't exist, create all tables

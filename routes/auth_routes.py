@@ -30,8 +30,8 @@ def create_default_admin():
             logging.info("Default admin account created with onboarding incomplete.")
         else:
             logging.info("Default admin already exists.")
-    else:
-        logging.info("Users already exist. Skipping default admin creation.")
+    # else:
+    #     logging.info("Users already exist. Skipping default admin creation.")
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -57,7 +57,7 @@ def load_user(user_id):
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
     
-    logging.debug("Entering login route")
+    # logging.debug("Entering login route")
     
     if not is_user_system_enabled():
         logging.debug("User system not enabled, redirecting to statistics.index")
