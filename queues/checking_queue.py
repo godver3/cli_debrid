@@ -16,18 +16,18 @@ class CheckingQueue:
 
     def update(self):
         db_items = get_all_media_items(state="Checking")
-        logging.debug(f"Database returned {len(db_items)} items in Checking state")
-        if db_items:
-            logging.debug(f"First checking item from DB: {dict(db_items[0])}")
+        # logging.debug(f"Database returned {len(db_items)} items in Checking state")
+        # if db_items:
+            # logging.debug(f"First checking item from DB: {dict(db_items[0])}")
         
         self.items = [dict(row) for row in db_items]
         # Initialize checking times for new items
         for item in self.items:
             if item['id'] not in self.checking_queue_times:
                 self.checking_queue_times[item['id']] = time.time()
-        logging.debug(f"Updated checking queue - current item count: {len(self.items)}")
-        if self.items:
-            logging.debug(f"Items in queue: {[item['id'] for item in self.items]}")
+        # logging.debug(f"Updated checking queue - current item count: {len(self.items)}")
+        # if self.items:
+            # logging.debug(f"Items in queue: {[item['id'] for item in self.items]}")
 
     def get_contents(self):
         return self.items

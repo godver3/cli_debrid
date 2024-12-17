@@ -95,7 +95,6 @@ class ProgramRunner:
             'Pending Uncached',
             'Upgrading',
             'task_plex_full_scan', 
-            'task_debug_log', 
             'task_refresh_release_dates',
             'task_generate_airtime_report',
             'task_check_service_connectivity',
@@ -234,8 +233,8 @@ class ProgramRunner:
                 time_since_last = current_time - self.last_run_times[queue_name]
                 # Remove per-queue debug logging unless it's going to run
                 if should_run:
-                    logging.debug(f"Queue {queue_name}: Time since last run: {time_since_last:.2f}s")
-                    logging.info(f"Processing {queue_name} queue")
+                    # logging.debug(f"Queue {queue_name}: Time since last run: {time_since_last:.2f}s")
+                    # logging.info(f"Processing {queue_name} queue")
                     self.safe_process_queue(queue_name)
 
             # Process content source tasks
@@ -245,7 +244,7 @@ class ProgramRunner:
                 time_since_last = current_time - self.last_run_times[task_name]
                 # Remove content source debug logging unless it's going to run
                 if should_run:
-                    logging.debug(f"Content source {source}: Time since last run: {time_since_last:.2f}s")
+                    # logging.debug(f"Content source {source}: Time since last run: {time_since_last:.2f}s")
                     try:
                         self.process_content_source(source, data)
                     except Exception as e:
@@ -258,7 +257,7 @@ class ProgramRunner:
                     and not task_name.endswith('_wanted')):
                     if self.should_run_task(task_name):
                         # Only log when task will actually run
-                        logging.debug(f"Running task: {task_name}")
+                        # logging.debug(f"Running task: {task_name}")
                         try:
                             task_method = getattr(self, task_name)
                             task_method()
@@ -272,7 +271,7 @@ class ProgramRunner:
 
     def safe_process_queue(self, queue_name: str):
         try:
-            logging.info(f"Starting to process {queue_name} queue")
+            # logging.info(f"Starting to process {queue_name} queue")
             start_time = time.time()
             
             if not hasattr(self, 'queue_manager') or not hasattr(self.queue_manager, 'queues'):
@@ -503,7 +502,7 @@ class ProgramRunner:
             time_since_last_run = current_time - last_run_time
             # Only log task health at debug level if there's an issue
             if time_since_last_run > self.task_intervals[task] * 2:
-                logging.warning(f"Task {task} hasn't run in {time_since_last_run:.2f} seconds (should run every {self.task_intervals[task]} seconds)")
+                # logging.warning(f"Task {task} hasn't run in {time_since_last_run:.2f} seconds (should run every {self.task_intervals[task]} seconds)")
                 self.last_run_times[task] = current_time
 
     def task_check_trakt_early_releases(self):
@@ -526,10 +525,7 @@ class ProgramRunner:
 
     def task_send_notifications(self):
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content/')
-        db_path = os.path.join(db_content_dir, 'media_items.db')
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        
-        notifications_file = Path(db_content_dir + "collected_notifications.pkl")
+        notifications_file = Path(db_content_dir) / "collected_notifications.pkl"
         
         if notifications_file.exists():
             try:

@@ -93,7 +93,7 @@ def get_recently_aired_and_airing_soon():
     SELECT DISTINCT title, season_number, episode_number, release_date, airtime, imdb_id
     FROM media_items
     WHERE type = 'episode' AND release_date >= ? AND release_date <= ?
-    ORDER BY release_date, airtime
+    ORDER BY release_date, airtime, title, season_number, episode_number
     """
     
     cursor.execute(query, (two_days_ago.date().isoformat(), (now + timedelta(days=1)).date().isoformat()))
@@ -103,6 +103,9 @@ def get_recently_aired_and_airing_soon():
     
     recently_aired = []
     airing_soon = []
+    
+    # Group episodes by show and season
+    current_group = None
     
     for result in results:
         title, season, episode, release_date, airtime, imdb_id = result
@@ -121,21 +124,63 @@ def get_recently_aired_and_airing_soon():
             
             air_datetime = datetime.combine(release_date.date(), airtime)
             
-            item = {
-                'title': title,
-                'season': season,
-                'episode': episode,
-                'air_datetime': air_datetime,
-                'sort_key': air_datetime.isoformat()  # Add consistent sort key
-            }
-            
-            if air_datetime <= now:
-                recently_aired.append(item)
+            # Check if this episode should be part of the current group
+            if (current_group and 
+                current_group['title'] == title and 
+                current_group['season'] == season and 
+                current_group['end_episode'] == episode - 1 and
+                current_group['air_datetime'] == air_datetime):
+                # Extend the current group
+                current_group['end_episode'] = episode
             else:
-                airing_soon.append(item)
+                # If there was a previous group, add it to the appropriate list
+                if current_group:
+                    episode_range = f"E{current_group['start_episode']:02d}"
+                    if current_group['start_episode'] != current_group['end_episode']:
+                        episode_range = f"E{current_group['start_episode']:02d}-{current_group['end_episode']:02d}"
+                    
+                    formatted_item = {
+                        'title': f"{current_group['title']} S{current_group['season']:02d}{episode_range}",
+                        'air_datetime': current_group['air_datetime'],
+                        'sort_key': current_group['air_datetime'].isoformat(),
+                        'formatted_datetime': format_datetime_preference(current_group['air_datetime'], session.get('use_24hour_format', False))
+                    }
+                    
+                    if current_group['air_datetime'] <= now:
+                        recently_aired.append(formatted_item)
+                    else:
+                        airing_soon.append(formatted_item)
+                
+                # Start a new group
+                current_group = {
+                    'title': title,
+                    'season': season,
+                    'start_episode': episode,
+                    'end_episode': episode,
+                    'air_datetime': air_datetime
+                }
+                
         except ValueError as e:
             logging.error(f"Error parsing date/time for {title}: {e}")
             continue
+    
+    # Don't forget to add the last group
+    if current_group:
+        episode_range = f"E{current_group['start_episode']:02d}"
+        if current_group['start_episode'] != current_group['end_episode']:
+            episode_range = f"E{current_group['start_episode']:02d}-{current_group['end_episode']:02d}"
+        
+        formatted_item = {
+            'title': f"{current_group['title']} S{current_group['season']:02d}{episode_range}",
+            'air_datetime': current_group['air_datetime'],
+            'sort_key': current_group['air_datetime'].isoformat(),
+            'formatted_datetime': format_datetime_preference(current_group['air_datetime'], session.get('use_24hour_format', False))
+        }
+        
+        if current_group['air_datetime'] <= now:
+            recently_aired.append(formatted_item)
+        else:
+            airing_soon.append(formatted_item)
     
     return recently_aired, airing_soon
 

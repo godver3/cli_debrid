@@ -868,7 +868,7 @@
                 <ul>
                     {% for item in recently_aired %}
                     <li>
-                        <span class="show-title">{{ item.title }} S{{ '%02d' | format(item.season) }}E{{ '%02d' | format(item.episode) }}</span>
+                        <span class="show-title">{{ item.title }}</span>
                         <span class="air-time">{{ item.formatted_datetime }}</span>
                     </li>
                     {% endfor %}
@@ -880,7 +880,7 @@
                 <ul>
                     {% for item in airing_soon %}
                     <li>
-                        <span class="show-title">{{ item.title }} S{{ '%02d' | format(item.season) }}E{{ '%02d' | format(item.episode) }}</span>
+                        <span class="show-title">{{ item.title }}</span>
                         <span class="air-time">{{ item.formatted_datetime }}</span>
                     </li>
                     {% endfor %}
