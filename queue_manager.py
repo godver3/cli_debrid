@@ -72,28 +72,28 @@ class QueueManager:
         if not self.paused:
             self.queues["Checking"].process(self)
             self.queues["Checking"].clean_up_checking_times()
-        else:
-            logging.debug("Skipping Checking queue processing: Queue is paused")
+        # else:
+            # logging.debug("Skipping Checking queue processing: Queue is paused")
 
     def process_wanted(self):
         if not self.paused:
-            logging.debug("Processing Wanted queue")
+            # logging.debug("Processing Wanted queue")
             queue_contents = self.queues["Wanted"].get_contents()
-            logging.debug(f"Wanted queue contains {len(queue_contents)} items")
-            if queue_contents:
-                for item in queue_contents:
-                    logging.debug(f"Processing Wanted item: {self.generate_identifier(item)}")
+            # logging.debug(f"Wanted queue contains {len(queue_contents)} items")
+            # if queue_contents:
+                # for item in queue_contents:
+                    # logging.debug(f"Processing Wanted item: {self.generate_identifier(item)}")
             self.queues["Wanted"].process(self)
-        else:
-            logging.debug("Skipping Wanted queue processing: Queue is paused")
+        # else:
+            # logging.debug("Skipping Wanted queue processing: Queue is paused")
 
     def process_scraping(self):
         if not self.paused:
-            logging.debug("Processing Scraping queue")
+            # logging.debug("Processing Scraping queue")
             # Update queue before processing
             self.queues["Scraping"].update()
             queue_contents = self.queues["Scraping"].get_contents()
-            logging.info(f"Scraping queue contains {len(queue_contents)} items after update")
+            # logging.info(f"Scraping queue contains {len(queue_contents)} items after update")
             
             if queue_contents:
                 for item in queue_contents:

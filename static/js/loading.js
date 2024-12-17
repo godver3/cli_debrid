@@ -11,10 +11,16 @@ const Loading = {
             this.element.innerHTML = `
                 <div class="loading-content">
                     <div class="spinner"></div>
-                    <p>Processing command, please wait...</p>
+                    <p>Processing command in background...</p>
+                    <button class="close-loading">Continue in background</button>
                 </div>
             `;
             document.body.appendChild(this.element);
+            
+            // Add click handler for close button
+            this.element.querySelector('.close-loading').addEventListener('click', () => {
+                this.hide();
+            });
         }
     },
 
