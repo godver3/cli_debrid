@@ -214,11 +214,11 @@ def init_db(app):
         Base.metadata.bind = engine
         Base.metadata.create_all(engine)
 
-        logger.info(f"Successfully connected to database: {connection_string}")
-        logger.info("All database tables created successfully.")
+        logger.info(f"Successfully connected to cli_battery database: {connection_string}")
+        # logger.info("All database tables created successfully.")
         return engine
     except Exception as e:
-        logger.error(f"Failed to connect to {connection_string}: {str(e)}")
+        logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
         logger.critical("Database connection failed.")
         raise
 

@@ -48,8 +48,14 @@ class BlacklistedQueue:
                 if isinstance(item['blacklisted_date'], str):
                     item['blacklisted_date'] = datetime.fromisoformat(item['blacklisted_date'])
                 
+                # Ensure both times are naive (no timezone) for comparison
+                if hasattr(item['blacklisted_date'], 'tzinfo') and item['blacklisted_date'].tzinfo is not None:
+                    item['blacklisted_date'] = item['blacklisted_date'].replace(tzinfo=None)
+                
                 time_blacklisted = current_time - item['blacklisted_date']
-                logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Will be unblacklisted in {blacklist_duration.days - time_blacklisted.days} days.")
+                days_until_unblacklist = blacklist_duration.days - time_blacklisted.days
+                
+                logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Will be unblacklisted in {days_until_unblacklist} days.")
                 if time_blacklisted >= blacklist_duration:
                     items_to_unblacklist.append(item)
                     logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Unblacklisting.")
@@ -67,6 +73,9 @@ class BlacklistedQueue:
     def unblacklist_item(self, queue_manager, item: Dict[str, Any]):
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Unblacklisting item: {item_identifier}")
+        
+        # Reset the blacklisted_date to None when unblacklisting
+        update_blacklisted_date(item['id'], None)
         
         # Move the item back to the Wanted queue
         queue_manager.move_to_wanted(item, "Blacklisted")

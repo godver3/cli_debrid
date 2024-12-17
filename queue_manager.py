@@ -43,7 +43,7 @@ class QueueManager:
             before_count = len(queue.get_contents())
             queue.update()
             after_count = len(queue.get_contents())
-            logging.debug(f"Queue {queue_name} update: {before_count} -> {after_count} items")
+            # logging.debug(f"Queue {queue_name} update: {before_count} -> {after_count} items")
 
     def get_queue_contents(self):
         contents = OrderedDict()

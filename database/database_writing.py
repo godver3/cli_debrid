@@ -173,7 +173,7 @@ def update_media_item(item_id: int, **kwargs):
         conn.close()
 
 @retry_on_db_lock()
-def update_blacklisted_date(item_id: int, blacklisted_date: datetime):
+def update_blacklisted_date(item_id: int, blacklisted_date: datetime | None):
     conn = get_db_connection()
     try:
         conn.execute('''
