@@ -264,22 +264,122 @@ def setup_tray_icon():
     # Check for FFmpeg installation
     def check_ffmpeg():
         try:
-            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5, check=True)
             return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
             return False
 
     def install_ffmpeg():
         try:
-            import winget_cli
-            logging.info("Attempting to install FFmpeg using winget...")
-            result = subprocess.run(['winget', 'install', 'FFmpeg'], capture_output=True, text=True)
-            if result.returncode == 0:
-                logging.info("FFmpeg installed successfully")
-                return True
-            else:
-                logging.error(f"Failed to install FFmpeg: {result.stderr}")
+            if platform.system() != 'Windows':
+                logging.warning("FFmpeg automatic installation is only supported on Windows")
                 return False
+                
+            logging.info("Attempting to install FFmpeg using winget...")
+            # Check if winget is available first
+            try:
+                subprocess.run(['winget', '--version'], capture_output=True, timeout=5, check=True)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                logging.info("Winget not available or not responding, attempting manual FFmpeg installation...")
+                try:
+                    import requests
+                    import zipfile
+                    import winreg
+                    
+                    # Create FFmpeg directory in AppData
+                    appdata = os.path.join(os.environ['LOCALAPPDATA'], 'FFmpeg')
+                    os.makedirs(appdata, exist_ok=True)
+                    
+                    # Download FFmpeg
+                    url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+                    logging.info("Downloading FFmpeg...")
+                    response = requests.get(url, stream=True, timeout=30)
+                    zip_path = os.path.join(appdata, 'ffmpeg.zip')
+                    with open(zip_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
+                    # Extract FFmpeg
+                    logging.info("Extracting FFmpeg...")
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(appdata)
+                    
+                    # Find the bin directory in extracted contents
+                    extracted_dir = next(d for d in os.listdir(appdata) if d.startswith('ffmpeg-'))
+                    bin_path = os.path.join(appdata, extracted_dir, 'bin')
+                    
+                    # Add to PATH
+                    logging.info("Adding FFmpeg to PATH...")
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment', 0, winreg.KEY_ALL_ACCESS)
+                    current_path = winreg.QueryValueEx(key, 'Path')[0]
+                    if bin_path not in current_path:
+                        new_path = current_path + ';' + bin_path
+                        winreg.SetValueEx(key, 'Path', 0, winreg.REG_EXPAND_SZ, new_path)
+                        winreg.CloseKey(key)
+                        # Notify Windows of environment change
+                        import win32gui, win32con
+                        win32gui.SendMessage(win32con.HWND_BROADCAST, win32con.WM_SETTINGCHANGE, 0, 'Environment')
+                    
+                    # Clean up zip file
+                    os.remove(zip_path)
+                    
+                    logging.info("FFmpeg installed successfully")
+                    # Update current process environment
+                    os.environ['PATH'] = new_path
+                    return True
+                    
+                except Exception as e:
+                    logging.error(f"Error during manual FFmpeg installation: {e}")
+                    return False
+                
+            # Install FFmpeg using winget with auto-accept
+            try:
+                # Install FFmpeg with auto-accept
+                logging.info("Installing FFmpeg (this may take a few minutes)...")
+                process = subprocess.Popen(
+                    ['winget', 'install', '--id', 'Gyan.FFmpeg', '--source', 'winget', '--accept-package-agreements'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    bufsize=1  # Line buffered
+                )
+                
+                # Print output in real-time
+                try:
+                    while True:
+                        output = process.stdout.readline()
+                        if output:
+                            output = output.strip()
+                            if output:  # Only log non-empty lines
+                                logging.info(f"winget: {output}")
+                                # If we see the download URL, we know it's starting
+                                if "Downloading" in output:
+                                    logging.info("Download started - please wait...")
+                        error = process.stderr.readline()
+                        if error:
+                            error = error.strip()
+                            if error:  # Only log non-empty lines
+                                logging.error(f"winget error: {error}")
+                        # If process has finished and no more output, break
+                        if output == '' and error == '' and process.poll() is not None:
+                            break
+                except KeyboardInterrupt:
+                    logging.warning("Installation interrupted by user")
+                    process.terminate()
+                    return False
+                
+                if process.returncode == 0:
+                    logging.info("FFmpeg installed successfully")
+                    return True
+                else:
+                    logging.error(f"Failed to install FFmpeg with winget (exit code: {process.returncode})")
+                    # Fallback to manual installation
+                    logging.info("Falling back to manual installation...")
+                    return install_ffmpeg()  # Recursive call will try manual installation
+            except subprocess.TimeoutExpired:
+                logging.error("Winget installation timed out, falling back to manual installation...")
+                return install_ffmpeg()  # Recursive call will try manual installation
+                
         except Exception as e:
             logging.error(f"Error installing FFmpeg: {e}")
             return False
@@ -509,7 +609,7 @@ def update_media_locations():
     def build_file_map(zurg_all_folder):
         """Build a map of filenames to their full paths using find"""
         cmd = f"find {shlex.quote(zurg_all_folder)} -type f"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             logging.error(f"Error running find command: {result.stderr}")
             return {}
