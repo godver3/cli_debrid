@@ -73,6 +73,7 @@ def add_collected_items(media_items_batch, recent=False):
         # Filter out items that are already in 'Collected' or 'Upgrading' state
         filtered_media_items_batch = []
         for item in media_items_batch:
+            
             locations = item.get('location', [])
             if isinstance(locations, str):
                 locations = [locations]
@@ -185,9 +186,10 @@ def add_collected_items(media_items_batch, recent=False):
                             conn.execute('''
                                 UPDATE media_items
                                 SET state = ?, last_updated = ?, collected_at = ?, 
-                                    original_collected_at = COALESCE(original_collected_at, ?)
+                                    original_collected_at = COALESCE(original_collected_at, ?),
+                                    location_on_disk = ?
                                 WHERE id = ?
-                            ''', (new_state, datetime.now(), collected_at, existing_collected_at, item_id))
+                            ''', (new_state, datetime.now(), collected_at, existing_collected_at, location, item_id))
                             
                             logging.info(f"Updated existing item from Checking to {new_state}: {item_identifier} (ID: {item_id})")
 
@@ -216,12 +218,12 @@ def add_collected_items(media_items_batch, recent=False):
                             # For movies
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime')
+                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), location
                             ))
                         else:
                             if imdb_id not in airtime_cache:
@@ -235,15 +237,15 @@ def add_collected_items(media_items_batch, recent=False):
                             # For episodes
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime')
+                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), location
                             ))
-                        logging.info(f"Added new item as Collected: {item_identifier} location: {location}")
+                            logging.info(f"Added new item as Collected: {item_identifier} location: {location}")
 
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)

@@ -23,7 +23,7 @@ def index():
                 upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
                 if upgrade_info:
                     time_added = upgrade_info.get('time_added')
-                    logging.info(f"time_added: {time_added}")
+                    # logging.info(f"time_added: {time_added}")
                     if isinstance(time_added, str):
                         item['time_added'] = time_added
                     elif isinstance(time_added, datetime):

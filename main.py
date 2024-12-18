@@ -451,45 +451,140 @@ def stop_program(from_signal=False):
     if not from_signal:
         os.kill(os.getpid(), signal.SIGINT)
 
-# Function to run the metadata battery
-def run_metadata_battery():
-    global metadata_process
-    
-    with metadata_lock:
-        if metadata_process and metadata_process.poll() is None:
-            logging.info("Metadata battery is already running.")
-            return
+def update_media_locations():
+    """
+    Startup function that reviews database items and updates their location_on_disk field
+    by checking the zurg_all_folder location.
+    """
+    import os
+    from database.core import get_db_connection
+    import logging
+    from time import time
+    import subprocess
+    import shlex
+    from collections import defaultdict
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        try:
-            # Determine the base path
-            if getattr(sys, 'frozen', False):
-                # Running as compiled executable
-                base_path = sys._MEIPASS
+    BATCH_SIZE = 1000
+    MAX_WORKERS = 4  # Number of parallel workers
+
+    def build_file_map(zurg_all_folder):
+        """Build a map of filenames to their full paths using find"""
+        cmd = f"find {shlex.quote(zurg_all_folder)} -type f"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            logging.error(f"Error running find command: {result.stderr}")
+            return {}
+        
+        # Create a map of filename -> list of full paths
+        file_map = defaultdict(list)
+        for path in result.stdout.splitlines():
+            if path:
+                filename = os.path.basename(path)
+                file_map[filename].append(path)
+        
+        logging.info(f"Built file map with {len(file_map)} unique filenames")
+        return file_map
+
+    def process_batch(items_batch, file_map, zurg_all_folder):
+        """Process a batch of items and return updates"""
+        updates = []
+        for item_id, filled_by_file, media_type in items_batch:
+            if not filled_by_file:
+                continue
+
+            # Check if file exists in our map
+            if filled_by_file in file_map:
+                paths = file_map[filled_by_file]
+                if len(paths) == 1:
+                    # Single match - use it
+                    updates.append((paths[0], item_id))
+                else:
+                    # Multiple matches - try to find best match
+                    # First try exact folder match
+                    direct_path = os.path.join(zurg_all_folder, filled_by_file, filled_by_file)
+                    if direct_path in paths:
+                        updates.append((direct_path, item_id))
+                    else:
+                        # Just use the first match
+                        updates.append((paths[0], item_id))
+                        if len(paths) > 1:
+                            logging.debug(f"Multiple matches found for {filled_by_file}, using {paths[0]}")
             else:
-                # Running in a normal Python environment
-                base_path = os.path.dirname(__file__)
+                logging.error(f"Could not find location for item {item_id} with file {filled_by_file}")
+        
+        return updates
 
-            # Construct the path to cli_battery/main.py
-            cli_battery_main_path = os.path.join(base_path, 'cli_battery', 'main.py')
+    zurg_all_folder = get_setting('File Management', 'zurg_all_folder')
+    if not zurg_all_folder:
+        logging.error("zurg_all_folder not set in settings")
+        return
 
-            # Check if the file exists
-            if not os.path.exists(cli_battery_main_path):
-                logging.error(f"cli_battery main.py not found at {cli_battery_main_path}")
-                return
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-            # Start the metadata battery as a subprocess
-            metadata_process = subprocess.Popen(
-                [sys.executable, cli_battery_main_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
-            logging.info(f"Metadata battery started with PID: {metadata_process.pid}")
+    try:
+        # Build file map first
+        start_time = time()
+        file_map = build_file_map(zurg_all_folder)
+        logging.info(f"Built file map in {time() - start_time:.1f} seconds")
 
-        except Exception as e:
-            logging.error(f"Error running metadata battery: {e}")
-            metadata_process = None
+        # Get all media items that need updating
+        cursor.execute("""
+            SELECT id, filled_by_file, type 
+            FROM media_items 
+            WHERE filled_by_file IS NOT NULL 
+            AND (location_on_disk IS NULL OR location_on_disk = '')
+            AND type != 'movie'
+        """)
+        items = cursor.fetchall()
+        total_items = len(items)
+        logging.info(f"Found {total_items} items to process")
+
+        # Process items in parallel batches
+        start_time = time()
+        all_updates = []
+        
+        # Split items into batches
+        batches = [items[i:i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
+        
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # Submit all batches to the thread pool
+            future_to_batch = {
+                executor.submit(process_batch, batch, file_map, zurg_all_folder): batch 
+                for batch in batches
+            }
+            
+            # Process completed batches
+            for future in as_completed(future_to_batch):
+                batch = future_to_batch[future]
+                try:
+                    updates = future.result()
+                    if updates:
+                        # Execute database updates
+                        cursor.executemany(
+                            "UPDATE media_items SET location_on_disk = ? WHERE id = ?",
+                            updates
+                        )
+                        conn.commit()
+                        processed = len(updates)
+                        all_updates.extend(updates)
+                        elapsed = time() - start_time
+                        items_per_sec = len(all_updates) / elapsed if elapsed > 0 else 0
+                        logging.info(f"Progress: {len(all_updates)}/{total_items} items ({items_per_sec:.1f} items/sec)")
+                except Exception as e:
+                    logging.error(f"Error processing batch: {str(e)}")
+
+        elapsed = time() - start_time
+        items_per_sec = total_items / elapsed if elapsed > 0 else 0
+        logging.info(f"Finished updating media locations. Processed {total_items} items in {elapsed:.1f} seconds ({items_per_sec:.1f} items/sec)")
+        logging.info(f"Successfully updated {len(all_updates)} items")
+
+    except Exception as e:
+        logging.error(f"Error updating media locations: {str(e)}")
+        conn.rollback()
+    finally:
+        conn.close()
 
 def open_log_file():
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
@@ -530,6 +625,9 @@ def main():
 
     ensure_settings_file()
     verify_database()
+
+    # Add the update_media_locations call here
+    # update_media_locations()
 
     os.system('cls' if os.name == 'nt' else 'clear')
 
@@ -605,7 +703,7 @@ def package_main():
 if __name__ == "__main__":
     setup_logging()
     start_global_profiling()
-
+        
     from api_tracker import setup_api_logging
     setup_api_logging()
     from web_server import start_server
