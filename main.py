@@ -261,6 +261,39 @@ def setup_tray_icon():
 
     logging.info("Starting setup_tray_icon function")
     
+    # Check for FFmpeg installation
+    def check_ffmpeg():
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+
+    def install_ffmpeg():
+        try:
+            import winget_cli
+            logging.info("Attempting to install FFmpeg using winget...")
+            result = subprocess.run(['winget', 'install', 'FFmpeg'], capture_output=True, text=True)
+            if result.returncode == 0:
+                logging.info("FFmpeg installed successfully")
+                return True
+            else:
+                logging.error(f"Failed to install FFmpeg: {result.stderr}")
+                return False
+        except Exception as e:
+            logging.error(f"Error installing FFmpeg: {e}")
+            return False
+
+    # Check and install FFmpeg if needed
+    if not check_ffmpeg():
+        logging.info("FFmpeg not found on system, attempting to install...")
+        if not install_ffmpeg():
+            logging.warning("Failed to install FFmpeg. Some video processing features may not work.")
+        else:
+            logging.info("FFmpeg installation completed successfully")
+    else:
+        logging.info("FFmpeg is already installed")
+    
     # Launch browser after 2 seconds
     def delayed_browser_launch():
         time.sleep(2)  # Wait for 2 seconds
