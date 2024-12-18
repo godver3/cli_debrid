@@ -294,11 +294,14 @@ def setup_tray_icon():
     else:
         logging.info("FFmpeg is already installed")
     
+    import socket
+    ip_address = socket.gethostbyname(socket.gethostname())
+
     # Launch browser after 2 seconds
     def delayed_browser_launch():
         time.sleep(2)  # Wait for 2 seconds
         try:
-            webbrowser.open('http://localhost:5000')
+            webbrowser.open(f'http://{ip_address}:5000')
             logging.info("Browser launched successfully")
         except Exception as e:
             logging.error(f"Failed to launch browser: {e}")
@@ -426,7 +429,9 @@ def setup_tray_icon():
     
     try:
         image = Image.open(icon_path)
-        icon = pystray.Icon("CLI Debrid", image, "CLI Debrid\nMain app: localhost:5000\nBattery: localhost:5001", menu)
+        import socket
+        ip_address = socket.gethostbyname(socket.gethostname())
+        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: {ip_address}:5000\nBattery: {ip_address}:5001", menu)
         
         # Set up double-click handler
         icon.on_activate = restore_from_tray
