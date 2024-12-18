@@ -37,6 +37,9 @@ def migrate_schema():
         if 'blacklisted_date' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN blacklisted_date TIMESTAMP')
             logging.info("Successfully added blacklisted_date column to media_items table.")
+        if 'location_on_disk' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN location_on_disk TEXT')
+            logging.info("Successfully added location_on_disk column to media_items table.")
 
         # logging.info("Successfully added new columns to media_items table.")
 

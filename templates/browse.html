@@ -1,41 +1,539 @@
 {% extends "base.html" %}
 
 {% block head %}
-<!-- Add any additional CSS for the browse page -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
 <style>
-.video-card {
-    transition: transform 0.2s;
+.video-card { 
+    transition: transform 0.2s; 
+    background-color: #1a1a1a; 
+    border: 1px solid #444;
+    color: #f4f4f4;
+    cursor: pointer;
+    height: auto;
+    padding: 1rem;
 }
-.video-card:hover {
-    transform: translateY(-5px);
+.video-card:hover { 
+    transform: translateY(-5px); 
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3); 
 }
-.file-path {
-    word-break: break-all;
-    font-size: 0.8em;
+.letter-nav { 
+    margin: 2rem 0; 
+    background-color: #1a1a1a; 
+    padding: 1rem; 
+    border-radius: 0.5rem; 
+    border: 1px solid #444;
+}
+.letter-nav .btn { 
+    padding: 0.5rem 1rem; 
+    margin: 0.2rem;
+    min-width: 2.5rem;
+}
+.card-title {
+    color: #f4f4f4;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 0;
+    font-size: 1.1rem;
+}
+.title-text {
+    flex-grow: 1;
+    margin-right: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.version-count {
+    background-color: #2a2a2a;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    color: #aaa;
+    min-width: 35px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.btn-link {
+    text-align: left;
+    white-space: normal;
+    word-wrap: break-word;
+    height: auto;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 1rem;
+}
+.btn-link span:first-child {
+    flex-grow: 1;
+    margin-right: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+.badge {
+    flex-shrink: 0;
+}
+.version-item { 
+    padding: 0.75rem; 
+    margin-bottom: 0.5rem; 
+    background-color: #2a2a2a; 
+    border-radius: 0.25rem; 
+    border: 1px solid #444;
+    color: #f4f4f4;
+    cursor: pointer;
+}
+.version-item:hover {
+    background-color: #333;
+}
+.modal-content {
+    background-color: #1a1a1a;
+    color: #f4f4f4;
+    border: 1px solid #444;
+}
+.modal-header {
+    border-bottom: 1px solid #444;
+}
+.season-header {
+    color: #f4f4f4;
+    margin-top: 1rem;
+}
+.season-header h6 {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+.episode-number {
+    font-weight: 500;
+}
+.episode-title {
+    color: #aaa;
+    font-size: 0.9rem;
+}
+.nav-tabs {
+    border-bottom: 1px solid #444;
+}
+.nav-tabs .nav-link {
+    color: #f4f4f4;
+    border: 1px solid transparent;
+}
+.nav-tabs .nav-link:hover {
+    border-color: #444 #444 #444;
+    background-color: #2a2a2a;
+}
+.nav-tabs .nav-link.active {
+    color: #fff;
+    background-color: #1a1a1a;
+    border-color: #444 #444 transparent;
+}
+.video-card-header {
+    padding: 0.8rem 1.25rem;
+}
+.video-card-header:hover {
+    background-color: #2a2a2a;
+}
+.modal {
+    background: rgba(0, 0, 0, 0.5);
+}
+.modal-dialog {
+    max-width: 600px;
+    margin: 1.75rem auto;
+}
+.modal-backdrop {
+    display: none;
+}
+.modal-header .close {
+    color: #f4f4f4;
+}
+.modal-title {
+    color: #f4f4f4;
+}
+.modal-body {
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: 1.5rem;
+}
+.text-muted {
+    color: #aaa !important;
+}
+.btn-primary {
+    background-color: #007bff;
+    border-color: #0056b3;
+}
+.btn-primary:hover {
+    background-color: #0056b3;
+    border-color: #004085;
+}
+.alert-info {
+    background-color: #1a1a1a;
+    border-color: #444;
+    color: #f4f4f4;
+}
+.card-header {
+    padding: 0.8rem 1.25rem;
+}
+.col {
+    margin-bottom: 1rem;
+}
+/* Override Bootstrap's default grid gutters */
+.row {
+    --bs-gutter-y: 1rem;
+    --bs-gutter-x: 1.5rem;
+}
+.season-header {
+    background-color: #2a2a2a;
+    padding: 0.5rem 1rem;
+    margin: 0.5rem 0;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.season-header:hover {
+    background-color: #333;
+}
+.episode-list {
+    padding: 0.5rem 1rem;
+}
+.episode-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #444;
+}
+.episode-item:last-child {
+    border-bottom: none;
+}
+.episode-title {
+    flex-grow: 1;
+    margin-right: 1rem;
+}
+.modal-lg {
+    max-width: 800px;
 }
 </style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('versionsModal');
+    const modalTitle = modal.querySelector('.modal-title');
+    const modalBody = modal.querySelector('.modal-body');
+
+    modal.addEventListener('show.bs.modal', function(event) {
+        const card = event.relatedTarget;
+        const title = card.dataset.title;
+        const mediaType = card.dataset.mediaType;
+        const content = JSON.parse(card.dataset.content);
+        
+        modalTitle.textContent = title;
+        modalBody.innerHTML = '';
+
+        if (mediaType === 'movies') {
+            // Display movie versions
+            modalBody.innerHTML = '<h6 class="mb-3">Available Versions</h6>';
+            content.forEach(version => {
+                const versionItem = document.createElement('div');
+                versionItem.className = 'version-item';
+                versionItem.onclick = function() {
+                    window.location.href = "{{ url_for('video.play_video', video_id=0) }}".replace('0', version.id);
+                };
+                
+                const fileInfo = document.createElement('small');
+                fileInfo.textContent = version.filled_by_file || version.location_on_disk;
+                versionItem.appendChild(fileInfo);
+
+                if (version.version) {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge bg-secondary ms-2';
+                    badge.textContent = version.version;
+                    versionItem.appendChild(badge);
+                }
+
+                modalBody.appendChild(versionItem);
+            });
+        } else {
+            // Display TV show seasons and episodes
+            const seasons = content.seasons;
+            Object.entries(seasons).sort(([a], [b]) => Number(a) - Number(b)).forEach(([seasonNum, episodes]) => {
+                const seasonHeader = document.createElement('div');
+                seasonHeader.className = 'season-header mb-2';
+                seasonHeader.innerHTML = `<h6>Season ${seasonNum}</h6>`;
+                modalBody.appendChild(seasonHeader);
+
+                episodes.sort((a, b) => a.episode_number - b.episode_number).forEach(episode => {
+                    const episodeItem = document.createElement('div');
+                    episodeItem.className = 'version-item';
+                    episodeItem.onclick = function() {
+                        window.location.href = "{{ url_for('video.play_video', video_id=0) }}".replace('0', episode.id);
+                    };
+
+                    const header = document.createElement('div');
+                    header.className = 'd-flex justify-content-between align-items-center mb-1';
+                    
+                    const episodeNum = document.createElement('span');
+                    episodeNum.className = 'episode-number';
+                    episodeNum.textContent = `E${episode.episode_number}`;
+                    header.appendChild(episodeNum);
+
+                    if (episode.version) {
+                        const badge = document.createElement('span');
+                        badge.className = 'badge bg-secondary';
+                        badge.textContent = episode.version;
+                        header.appendChild(badge);
+                    }
+                    episodeItem.appendChild(header);
+
+                    if (episode.episode_title) {
+                        const title = document.createElement('div');
+                        title.className = 'episode-title mb-1';
+                        title.textContent = episode.episode_title;
+                        episodeItem.appendChild(title);
+                    }
+
+                    const fileInfo = document.createElement('small');
+                    fileInfo.textContent = episode.filled_by_file || episode.location_on_disk;
+                    episodeItem.appendChild(fileInfo);
+
+                    modalBody.appendChild(episodeItem);
+                });
+            });
+        }
+    });
+});
+</script>
 {% endblock %}
 
 {% block content %}
 <div class="container mt-4">
-    <h2>Video Browser</h2>
-    
-    <div class="row">
-        {% for video in videos %}
-        <div class="col-md-4 mb-4">
-            <div class="card video-card">
-                <div class="card-body">
-                    <h5 class="card-title">{{ video.title }}</h5>
-                    {% if video.filled_by_file %}
-                    <p class="card-text file-path"><small class="text-muted">{{ video.filled_by_file }}</small></p>
-                    <a href="{{ url_for('video.play_video', _external=True, video_id=video.id) }}" class="btn btn-primary">Play Video</a>
-                    {% else %}
-                    <p class="card-text text-warning">No file available</p>
-                    {% endif %}
+    <!-- Media Type Navigation -->
+    <ul class="nav nav-tabs mb-4" role="tablist">
+        <li class="nav-item" role="presentation">
+            <a class="nav-link {% if media_type == 'movies' %}active{% endif %}" 
+               href="/video/browse/movies{% if current_letter %}/{{ current_letter }}{% endif %}"
+               role="tab"
+               onclick="window.location.href=this.href; return false;">Movies</a>
+        </li>
+        <li class="nav-item" role="presentation">
+            <a class="nav-link {% if media_type == 'tv' %}active{% endif %}" 
+               href="/video/browse/tv{% if current_letter %}/{{ current_letter }}{% endif %}"
+               role="tab"
+               onclick="window.location.href=this.href; return false;">TV Shows</a>
+        </li>
+    </ul>
+
+    <!-- Alphabet Navigation -->
+    <div class="letter-nav text-center mb-4">
+        <div class="d-flex flex-wrap justify-content-center gap-1">
+            <a class="btn {% if not current_letter %}btn-primary{% else %}btn-outline-light{% endif %}" 
+               href="/video/browse{% if media_type == 'tv' %}/tv{% endif %}">All</a>
+            
+            {% if '#' in available_letters %}
+            <a class="btn {% if current_letter == '#' %}btn-primary{% else %}btn-outline-light{% endif %}" 
+               href="/video/browse{% if media_type == 'tv' %}/tv{% else %}/movies{% endif %}/%23">#</a>
+            {% endif %}
+            
+            {% for letter in available_letters %}
+                {% if letter != '#' %}
+                <a class="btn {% if current_letter == letter %}btn-primary{% else %}btn-outline-light{% endif %}" 
+                   href="/video/browse{% if media_type == 'tv' %}/tv{% else %}/movies{% endif %}/{{ letter }}">
+                    {{ letter }}
+                </a>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Video Grid -->
+    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+        {% for title, content in videos.items() %}
+        <div class="col">
+            {% if media_type == 'movies' %}
+                <div class="card bg-dark">
+                    <div class="card-header bg-dark">
+                        <button class="btn btn-link w-100 text-light" 
+                                data-bs-toggle="modal"
+                                data-bs-target="#versionsModal"
+                                data-title="{{ title }}"
+                                data-media-type="{{ media_type }}"
+                                data-content='{{ content|tojson }}'>
+                            <span>{{ title }}</span>
+                            <span class="badge bg-secondary">{{ content|length }} version{{ 's' if content|length != 1 }}</span>
+                        </button>
+                    </div>
                 </div>
-            </div>
+            {% else %}
+                <div class="card bg-dark">
+                    <div class="card-header bg-dark">
+                        <button class="btn btn-link w-100 text-light" 
+                                data-bs-toggle="modal"
+                                data-bs-target="#versionsModal"
+                                data-title="{{ title }}"
+                                data-media-type="{{ media_type }}"
+                                data-content='{{ content|tojson }}'>
+                            <span>{{ title }}</span>
+                            <span class="badge bg-secondary">{{ content.seasons|length }} season{{ 's' if content.seasons|length != 1 }}</span>
+                        </button>
+                    </div>
+                </div>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
+
+    <!-- Versions Modal -->
+    <div class="modal fade" id="versionsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"></h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    let currentTVShow = null;
+    let currentContentContainer = null;
+
+    function showSeasons() {
+        currentContentContainer.innerHTML = '<h6 class="mb-3">Select a Season</h6>';
+        const seasonsList = document.createElement('div');
+        seasonsList.className = 'list-group';
+        
+        Object.entries(currentTVShow.seasons)
+            .sort(([a], [b]) => parseInt(a) - parseInt(b))
+            .forEach(([season, episodes]) => {
+                const seasonItem = document.createElement('button');
+                seasonItem.className = 'list-group-item list-group-item-action bg-dark text-light';
+                seasonItem.innerHTML = `Season ${season} <span class="badge bg-secondary float-end">${Object.keys(groupEpisodesByNumber(episodes)).length} episodes</span>`;
+                seasonItem.onclick = () => showEpisodes(season, episodes);
+                seasonsList.appendChild(seasonItem);
+            });
+        
+        currentContentContainer.appendChild(seasonsList);
+    }
+
+    function groupEpisodesByNumber(episodes) {
+        return episodes.reduce((acc, episode) => {
+            const key = episode.episode_number;
+            if (!acc[key]) {
+                acc[key] = {
+                    episode_number: episode.episode_number,
+                    episode_title: episode.episode_title,
+                    versions: []
+                };
+            }
+            acc[key].versions.push(episode);
+            return acc;
+        }, {});
+    }
+    
+    function showEpisodes(season, episodes) {
+        currentContentContainer.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="mb-0">Season ${season}</h6>
+                <button class="btn btn-outline-light btn-sm" onclick="showSeasons()">Back to Seasons</button>
+            </div>
+        `;
+        
+        const episodesList = document.createElement('div');
+        episodesList.className = 'list-group';
+        
+        const groupedEpisodes = groupEpisodesByNumber(episodes);
+        
+        Object.values(groupedEpisodes)
+            .sort((a, b) => a.episode_number - b.episode_number)
+            .forEach(episode => {
+                const episodeItem = document.createElement('button');
+                episodeItem.className = 'list-group-item list-group-item-action bg-dark text-light';
+                episodeItem.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span>Episode ${episode.episode_number}: ${episode.episode_title}</span>
+                        <span class="badge bg-primary">${episode.versions.length} version${episode.versions.length !== 1 ? 's' : ''}</span>
+                    </div>
+                `;
+                episodeItem.onclick = () => showVersions(season, episode);
+                episodesList.appendChild(episodeItem);
+            });
+        
+        currentContentContainer.appendChild(episodesList);
+    }
+    
+    function showVersions(season, episode) {
+        currentContentContainer.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="mb-0">Season ${season}, Episode ${episode.episode_number}</h6>
+                <button class="btn btn-outline-light btn-sm" onclick="showEpisodes(${season}, currentTVShow.seasons[${season}])">Back to Episodes</button>
+            </div>
+            <h6 class="mb-3">Available Versions</h6>
+        `;
+        
+        episode.versions.forEach(version => {
+            const versionItem = document.createElement('button');
+            versionItem.className = 'version-item w-100 text-start mb-2';
+            versionItem.onclick = () => {
+                const versionsModal = bootstrap.Modal.getInstance(document.getElementById('versionsModal'));
+                versionsModal.hide();
+                window.location.href = `/video/${version.id}`;
+            };
+            
+            versionItem.innerHTML = `
+                <div>Version ${version.version}</div>
+                <small class="d-block text-muted">${version.filled_by_file || version.location_on_disk}</small>
+            `;
+            
+            currentContentContainer.appendChild(versionItem);
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const versionsModal = document.getElementById('versionsModal');
+        versionsModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const title = button.getAttribute('data-title');
+            const mediaType = button.getAttribute('data-media-type');
+            const content = JSON.parse(button.getAttribute('data-content'));
+            
+            const modalTitle = versionsModal.querySelector('.modal-title');
+            const modalBody = versionsModal.querySelector('.modal-body');
+            modalTitle.textContent = title;
+            modalBody.innerHTML = '';
+            
+            if (mediaType === 'movies') {
+                modalBody.innerHTML = '<h6 class="mb-3">Available Versions</h6>';
+                content.forEach(version => {
+                    const versionItem = document.createElement('button');
+                    versionItem.className = 'version-item w-100 text-start mb-2';
+                    versionItem.onclick = () => {
+                        const versionsModal = bootstrap.Modal.getInstance(document.getElementById('versionsModal'));
+                        versionsModal.hide();
+                        window.location.href = `/video/${version.id}`;
+                    };
+                    
+                    versionItem.innerHTML = `
+                        <div>Version ${version.version}</div>
+                        <small class="d-block text-muted">${version.filled_by_file || version.location_on_disk}</small>
+                    `;
+                    
+                    modalBody.appendChild(versionItem);
+                });
+            } else {
+                currentTVShow = content;
+                const contentContainer = document.createElement('div');
+                currentContentContainer = contentContainer;
+                modalBody.appendChild(contentContainer);
+                showSeasons();
+            }
+        });
+    });
+    </script>
 </div>
 {% endblock %}

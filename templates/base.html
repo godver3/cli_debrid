@@ -759,6 +759,10 @@
             transition: transform 0.3s ease;
         }
 
+        .menu-group:hover .group-title {
+            color: #FFA500; /* Orange text for group title when dropdown is open */
+        }
+
         .menu-group .group-title.active {
             background-color: #2a2a2a;
             color: #FFA500;
@@ -1041,7 +1045,8 @@
                     'Main': [
                         ('statistics.index', 'Home'),
                         ('queues.index', 'Queues'),
-                        ('scraper.index', 'Scraper')
+                        ('scraper.index', 'Scraper'),
+                        ('video.browse_videos', 'Player')
                     ],
                     'System': [
                         ('logs.logs', 'Logs'),
