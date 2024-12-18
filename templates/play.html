@@ -68,6 +68,45 @@
     width: 100%;
     height: 100%;
 }
+
+/* Fix Plyr icon sizing */
+.plyr button svg {
+    width: 18px;
+    height: 18px;
+}
+
+.plyr button.plyr__control--overlaid svg {
+    width: 32px;
+    height: 32px;
+}
+
+.plyr--full-ui input[type=range] {
+    height: 6px;
+}
+
+.plyr__control {
+    padding: 8px;
+}
+
+.plyr__control--overlaid {
+    padding: 20px;
+    background: rgba(0, 179, 255, 0.8);
+}
+
+.plyr__control--overlaid:hover {
+    background: rgba(0, 179, 255, 1);
+}
+
+.plyr--video .plyr__controls {
+    padding: 12px 6px 0;
+    background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7));
+}
+
+.plyr__menu__container {
+    background: rgba(28, 28, 28, 0.9);
+    border-radius: 4px;
+    padding: 8px;
+}
 </style>
 {% endblock %}
 
@@ -92,14 +131,30 @@
 <script>
     let player = null;
     let retryCount = 0;
+    let lastBufferCheck = 0;
     const MAX_RETRIES = 3;
     const BUFFER_THRESHOLD = 90; // Buffer threshold in seconds
+    let videoDuration = 0;
+
+    function formatTime(seconds) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
 
     function initializePlayer() {
         const videoElement = document.createElement('video');
         videoElement.setAttribute('playsinline', '');
         videoElement.setAttribute('id', 'player');
         videoElement.setAttribute('preload', 'auto');
+        
+        // Set duration directly on video element
+        if (videoDuration > 0) {
+            videoElement.duration = videoDuration;
+            // Also set it as a data attribute for backup
+            videoElement.setAttribute('data-duration', videoDuration);
+        }
         
         // Set reasonable buffer size
         videoElement.preload = 'auto';
@@ -125,43 +180,62 @@
             'fullscreen'
         ];
 
+        // Create player with duration in initial config
         player = new Plyr('#player', {
             controls,
             seekTime: 10,
             keyboard: { focused: true, global: true },
             tooltips: { controls: true, seek: true },
             previewThumbnails: { enabled: false },
-            debug: false,
+            debug: true,
             quality: { default: 1080 },
-            buffer: { threshold: BUFFER_THRESHOLD }
+            buffer: { threshold: BUFFER_THRESHOLD },
+            duration: videoDuration,
+            loadSprite: true
         });
+
+        // Store the expected duration in the player instance
+        player.config.duration = videoDuration;
 
         player.on('ready', () => {
-            console.log('Player is ready');
+            console.log('Player is ready, setting duration:', videoDuration);
             hideLoading();
+            updatePlayerDuration(videoDuration);
         });
 
-        let isBuffering = false;
-        let lastBufferCheck = 0;
+        let hasSetDuration = false;
+        
+        player.on('loadedmetadata', () => {
+            console.log('Metadata loaded, player duration:', player.duration);
+            console.log('Expected duration:', videoDuration);
+            if (!hasSetDuration && videoDuration > 0) {
+                hasSetDuration = true;
+                updatePlayerDuration(videoDuration);
+            }
+        });
+
+        // Add timeupdate listener to continuously ensure correct duration
+        player.on('timeupdate', () => {
+            const currentDuration = player.duration;
+            if (videoDuration > 0 && (!currentDuration || Math.abs(currentDuration - videoDuration) > 1)) {
+                console.log('Correcting duration on timeupdate, current:', currentDuration, 'expected:', videoDuration);
+                updatePlayerDuration(videoDuration);
+            }
+        });
 
         player.on('waiting', () => {
             console.log('Player is waiting/buffering');
-            if (!isBuffering) {
-                isBuffering = true;
-                showLoading();
-            }
+            showLoading();
         });
 
         player.on('playing', () => {
             console.log('Player is playing');
-            isBuffering = false;
             hideLoading();
             retryCount = 0;
         });
 
         player.on('progress', () => {
             const now = Date.now();
-            // Only check buffer every second
             if (now - lastBufferCheck < 1000) return;
             lastBufferCheck = now;
 
@@ -174,8 +248,8 @@
             if (buffered.length > 0) {
                 const bufferedEnd = buffered.end(buffered.length - 1);
                 const bufferedAmount = bufferedEnd - currentTime;
+                console.log(`Buffer status: ${bufferedAmount.toFixed(2)}s, Current time: ${currentTime.toFixed(2)}, Total duration: ${player.duration}`);
                 
-                // If we have buffered more than threshold, pause the loading
                 if (bufferedAmount > BUFFER_THRESHOLD) {
                     console.log(`Sufficient buffer (${bufferedAmount.toFixed(2)}s), pausing stream`);
                     cleanupCurrentStream();
@@ -189,6 +263,41 @@
         });
 
         return player;
+    }
+
+    function updatePlayerDuration(duration) {
+        if (!duration || duration <= 0) return;
+        
+        console.log('Updating player duration to:', duration);
+        
+        // Update the video element directly
+        const video = player.elements.original;
+        if (video) {
+            video.duration = duration;
+            video.setAttribute('data-duration', duration);
+        }
+        
+        // Update Plyr's internal duration
+        player.duration = duration;
+        player.config.duration = duration;
+        
+        // Update UI elements
+        if (player.elements.display.duration) {
+            player.elements.display.duration.textContent = formatTime(duration);
+        }
+        if (player.elements.progress) {
+            player.elements.progress.setAttribute('aria-valuemax', duration);
+        }
+        if (player.elements.inputs.seek) {
+            player.elements.inputs.seek.setAttribute('aria-valuemax', duration);
+        }
+        
+        // Force progress bar update
+        const progress = player.elements.progress;
+        if (progress && progress.value) {
+            const percent = (player.currentTime / duration) * 100;
+            progress.style.setProperty('--value', `${percent}%`);
+        }
     }
 
     function cleanupCurrentStream() {
@@ -209,22 +318,41 @@
     function loadVideo(videoId, startTime = 0) {
         showLoading();
         
-        if (player) {
-            player.destroy();
-        }
-        
-        player = initializePlayer();
-        
-        const source = {
-            type: 'video',
-            title: 'Video',
-            sources: [{
-                src: `/video/${videoId}/stream?t=${startTime}`,
-                type: 'video/mp4',
-            }]
-        };
+        // First fetch video metadata
+        fetch(`/video/${videoId}/start`)
+            .then(response => response.json())
+            .then(metadata => {
+                if (metadata.error) {
+                    throw new Error(metadata.error);
+                }
 
-        player.source = source;
+                console.log('Received metadata:', metadata);
+                videoDuration = parseFloat(metadata.duration);
+
+                if (player) {
+                    player.destroy();
+                }
+                
+                player = initializePlayer();
+                
+                const source = {
+                    type: 'video',
+                    title: 'Video',
+                    duration: videoDuration,
+                    sources: [{
+                        src: `/video/${videoId}/stream?t=${startTime}`,
+                        type: 'video/mp4',
+                        size: metadata.size
+                    }]
+                };
+
+                console.log('Setting player source with duration:', videoDuration);
+                player.source = source;
+            })
+            .catch(error => {
+                console.error('Error loading video:', error);
+                showError('Failed to load video: ' + error.message);
+            });
     }
 
     function showError(message) {
