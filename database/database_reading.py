@@ -162,22 +162,56 @@ def row_to_dict(row):
 
 def get_all_videos():
     """
-    Retrieve all videos from the database that have associated files.
+    Retrieve all videos from the database with their essential information.
+    Groups movies and TV shows separately.
     """
     conn = get_db_connection()
     try:
+        # Get movies
         cursor = conn.execute('''
-            SELECT id, title, filled_by_file
+            SELECT 
+                id,
+                title,
+                year,
+                type as media_type,
+                filled_by_file,
+                location_on_disk,
+                version,
+                state
             FROM media_items
-            WHERE filled_by_file IS NOT NULL
+            WHERE type = 'movie'
+            AND state = 'Collected'
+            AND (location_on_disk IS NOT NULL OR filled_by_file IS NOT NULL)
+            ORDER BY title, year
         ''')
-        videos = [row_to_dict(row) for row in cursor]
-        # Construct full file path for each video
-        for video in videos:
-            if video['filled_by_file']:
-                base_name = video['filled_by_file']
-                video['filled_by_file'] = os.path.join(r'/mnt/zurg/movies', base_name, base_name)
-        return videos
+        movies = [row_to_dict(row) for row in cursor]
+        
+        # Get TV episodes
+        cursor = conn.execute('''
+            SELECT 
+                id,
+                title,
+                year,
+                type as media_type,
+                filled_by_file,
+                location_on_disk,
+                version,
+                state,
+                season_number,
+                episode_number,
+                episode_title
+            FROM media_items
+            WHERE type = 'episode'
+            AND state = 'Collected'
+            AND (location_on_disk IS NOT NULL OR filled_by_file IS NOT NULL)
+            ORDER BY title, year, season_number, episode_number
+        ''')
+        episodes = [row_to_dict(row) for row in cursor]
+        
+        return {
+            'movies': movies,
+            'episodes': episodes
+        }
     finally:
         conn.close()
 
@@ -188,7 +222,7 @@ def get_video_by_id(video_id):
     conn = get_db_connection()
     try:
         cursor = conn.execute('''
-            SELECT id, title, filled_by_file, state
+            SELECT id, title, filled_by_file, state, location_on_disk
             FROM media_items
             WHERE id = ?
         ''', (video_id,))
@@ -196,10 +230,9 @@ def get_video_by_id(video_id):
         if row:
             video = row_to_dict(row)
             logging.info(f"Found video in database: {video}")
-            if video['filled_by_file']:
-                base_name = video['filled_by_file']
-                video['filled_by_file'] = os.path.join(r'/mnt/zurg/movies', base_name, base_name)
-                logging.info(f"Constructed file path: {video['filled_by_file']}")
+            # Use location_on_disk for file path if available
+            if not video.get('location_on_disk') and video.get('filled_by_file'):
+                logging.warning(f"No location_on_disk for video {video_id}, falling back to filled_by_file")
             return video
         logging.error(f"No video found with ID {video_id}")
         return None

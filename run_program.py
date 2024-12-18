@@ -1,4 +1,5 @@
 import logging
+import random
 import time
 import os
 from initialization import initialize
@@ -80,6 +81,7 @@ class ProgramRunner:
             'task_sync_time': 3600,  # Run every hour
             'task_check_trakt_early_releases': 3600,  # Run every hour
             'task_reconcile_queues': 300,  # Run every 5 minutes
+            'task_heartbeat': 120,  # Run every 2 minutes
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -101,11 +103,20 @@ class ProgramRunner:
             'task_send_notifications',
             'task_sync_time',
             'task_check_trakt_early_releases',
-            'task_reconcile_queues'
+            'task_reconcile_queues',
+            'task_heartbeat'
         }
         
         # Add this line to store content sources
         self.content_sources = None
+
+    def task_heartbeat(self):
+        random_number = random.randint(1, 100)
+        if self.running:
+            if random_number < 100:
+                logging.info("Program running...")
+            else:
+                logging.info("Program running...is your fridge?")
 
     # Modify this method to cache content sources
     def get_content_sources(self, force_refresh=False):
