@@ -316,15 +316,25 @@ document.addEventListener('DOMContentLoaded', function() {
             <a class="nav-link {% if media_type == 'movies' %}active{% endif %}" 
                href="/video/browse/movies{% if current_letter %}/{{ current_letter }}{% endif %}"
                role="tab"
-               onclick="window.location.href=this.href; return false;">Movies</a>
+               onclick="handleNavClick(event, this.href)"
+               ontouchstart="handleNavClick(event, this.href)">Movies</a>
         </li>
         <li class="nav-item" role="presentation">
             <a class="nav-link {% if media_type == 'tv' %}active{% endif %}" 
                href="/video/browse/tv{% if current_letter %}/{{ current_letter }}{% endif %}"
                role="tab"
-               onclick="window.location.href=this.href; return false;">TV Shows</a>
+               onclick="handleNavClick(event, this.href)"
+               ontouchstart="handleNavClick(event, this.href)">TV Shows</a>
         </li>
     </ul>
+
+    <script>
+    function handleNavClick(event, href) {
+        event.preventDefault();
+        window.location.href = href;
+        return false;
+    }
+    </script>
 
     <!-- Alphabet Navigation -->
     <div class="letter-nav text-center mb-4">
