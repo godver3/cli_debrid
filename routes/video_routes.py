@@ -445,6 +445,9 @@ def stream_video(video_id):
                     '-hwaccel_device', '/dev/dri/renderD128'
                 ]
 
+                # Add debug logging
+                logger.info("FFmpeg command before execution: %s", ' '.join(ffmpeg_cmd))
+
                 # Add video filters based on whether the source is HDR
                 if video_info.get('is_hdr', False):
                     vf = 'format=p010le|vaapi,hwupload,scale_vaapi=w=1920:h=1080:format=nv12,tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709'
