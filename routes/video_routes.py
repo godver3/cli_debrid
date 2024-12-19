@@ -13,6 +13,9 @@ import atexit
 from werkzeug.wsgi import FileWrapper
 import time
 from threading import Lock
+import errno
+from threading import Lock
+from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(
@@ -30,6 +33,9 @@ ffmpeg_processes = {}
 video_info_cache = {}
 process_lock = Lock()
 cache_lock = Lock()
+
+stream_bitrates = defaultdict(lambda: 6000000)  # Default to 6Mbps
+stream_locks = defaultdict(Lock)
 
 @video_routes.before_request
 def log_request():
@@ -152,6 +158,70 @@ def get_video_info(file_path):
         logger.error(f"Error getting video info: {str(e)}")
         return None
 
+def analyze_streams(file_path):
+    """Analyze streams in the video file and return compatible streams for MP4 output"""
+    cmd = [
+        'ffprobe',
+        '-v', 'error',
+        '-select_streams', 'a',  # Select all audio streams
+        '-show_entries', 'stream=index:stream=codec_name:stream=channels:stream=tags',
+        '-of', 'json',
+        file_path
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        streams_info = json.loads(result.stdout)
+        
+        # List of audio codecs that can be copied directly
+        copy_codecs = {'aac', 'mp3'}
+        # Codecs that need transcoding (excluding truehd which we'll skip)
+        transcode_codecs = {'ac3', 'eac3', 'dts'}
+        
+        stream_configs = []
+        ac3_stream = None  # Store the best AC3 stream candidate
+        
+        for stream in streams_info.get('streams', []):
+            codec = stream.get('codec_name')
+            channels = stream.get('channels', 2)
+            index = stream['index']
+            
+            # Skip TrueHD streams
+            if codec == 'truehd':
+                continue
+                
+            if codec in copy_codecs:
+                stream_configs.append({
+                    'index': index,
+                    'codec': codec,
+                    'channels': channels,
+                    'copy': True,
+                    'language': stream.get('tags', {}).get('language', 'und')
+                })
+            elif codec in transcode_codecs:
+                stream_info = {
+                    'index': index,
+                    'codec': codec,
+                    'channels': channels,
+                    'copy': False,
+                    'language': stream.get('tags', {}).get('language', 'und')
+                }
+                
+                # If this is an AC3 stream with 5.1/6 channels, mark it as our preferred choice
+                if codec == 'ac3' and channels in (6, 8):
+                    ac3_stream = stream_info
+                stream_configs.append(stream_info)
+        
+        # If we found a good AC3 stream, move it to the front of the list
+        if ac3_stream and ac3_stream in stream_configs:
+            stream_configs.remove(ac3_stream)
+            stream_configs.insert(0, ac3_stream)
+        
+        return stream_configs
+    except Exception as e:
+        logger.error(f"Error analyzing streams: {str(e)}")
+        return []
+
 def check_vaapi_support():
     """Check if VAAPI hardware acceleration is available"""
     try:
@@ -220,6 +290,31 @@ def is_browser_compatible(video_info):
 def log_request():
     """Log all requests to this blueprint"""
     logger.debug(f"Received request: {request.method} {request.path}")
+
+@video_routes.route('/api/buffer_health', methods=['POST'])
+def update_buffer_health():
+    data = request.get_json()
+    video_id = data.get('videoId')
+    health = float(data.get('health', 1.0))
+    
+    with stream_locks[video_id]:
+        current_bitrate = stream_bitrates[video_id]
+        
+        # Adjust bitrate based on buffer health
+        if health < 0.3:  # Poor buffer health
+            new_bitrate = max(1000000, current_bitrate - 500000)  # Reduce by 500kbps, min 1Mbps
+        elif health > 0.8:  # Good buffer health
+            new_bitrate = min(6000000, current_bitrate + 250000)  # Increase by 250kbps, max 6Mbps
+        else:
+            new_bitrate = current_bitrate  # Maintain current bitrate
+            
+        stream_bitrates[video_id] = new_bitrate
+        
+    return jsonify({'status': 'ok'})
+
+def get_stream_bitrate(video_id):
+    with stream_locks[video_id]:
+        return stream_bitrates[video_id]
 
 @video_routes.route('/browse')
 @video_routes.route('/browse/<media_type>')
@@ -417,69 +512,130 @@ def stream_video(video_id):
         
         if can_direct_stream:
             logger.info("Using direct stream copy")
-            ffmpeg_cmd = [
-                'ffmpeg',
-                '-i', file_path,
-                '-c', 'copy',
+            
+            # Get audio stream info for transcoding if needed
+            audio_streams = analyze_streams(file_path)
+            needs_audio_transcode = any(not stream['copy'] for stream in audio_streams)
+            
+            if needs_audio_transcode:
+                # Base command with video copy
+                ffmpeg_cmd = [
+                    'ffmpeg',
+                    '-i', file_path,
+                    '-map', '0:v:0',
+                    '-c:v', 'copy'
+                ]
+                
+                # Add audio streams with appropriate encoding
+                for i, stream in enumerate(audio_streams):
+                    ffmpeg_cmd.extend([
+                        '-map', f'0:{stream["index"]}'
+                    ])
+                    if stream['copy']:
+                        ffmpeg_cmd.extend([
+                            f'-c:a:{i}', 'copy'
+                        ])
+                    else:
+                        # Transcode to AAC with appropriate bitrate based on channels
+                        bitrate = min(stream['channels'] * 64, 384)  # 64k per channel, max 384k
+                        ffmpeg_cmd.extend([
+                            f'-c:a:{i}', 'aac',
+                            f'-b:a:{i}', f'{bitrate}k',
+                            f'-ac:a:{i}', '2' if stream['channels'] <= 2 else '6'
+                        ])
+            else:
+                # If all audio streams can be copied, use simple command
+                ffmpeg_cmd = [
+                    'ffmpeg',
+                    '-i', file_path,
+                    '-map', '0:v:0',
+                    '-map', '0:a',
+                    '-c:v', 'copy',
+                    '-c:a', 'copy'
+                ]
+            
+            # Add output options
+            ffmpeg_cmd.extend([
                 '-movflags', '+faststart+delay_moov',
                 '-f', 'mp4',
                 'pipe:1'
-            ]
+            ])
         else:
             # Check for hardware acceleration support
             use_vaapi = check_vaapi_support()
             logger.info(f"Using VAAPI hardware acceleration: {use_vaapi}")
 
-            # Base ffmpeg command
-            ffmpeg_cmd = ['ffmpeg', '-i', file_path]
-            
-            # Add seek parameter if needed
-            if start_time > 0:
-                ffmpeg_cmd.extend(['-ss', str(start_time)])
-
             if use_vaapi:
-                # Add VAAPI hardware acceleration parameters
-                ffmpeg_cmd[1:1] = [
+                # Construct FFmpeg command with hardware acceleration
+                ffmpeg_cmd = [
+                    'ffmpeg',
+                    # Hardware acceleration setup
                     '-hwaccel', 'vaapi',
+                    '-hwaccel_device', '/dev/dri/renderD128',
                     '-hwaccel_output_format', 'vaapi',
-                    '-hwaccel_device', '/dev/dri/renderD128'
+                    
+                    # Input options
+                    '-i', file_path,
+                    
+                    # Video encoding settings
+                    '-vf', 'format=nv12|vaapi,hwupload,scale_vaapi=w=1920:h=1080:format=nv12',  # Reduce to 1080p
+                    '-c:v', 'h264_vaapi',
+                    '-rc_mode', 'CBR',  # Use CBR for more stable bitrate
+                    '-b:v', f'{int(get_stream_bitrate(video_id) / 1000000)}M',
+                    '-maxrate', f'{int(get_stream_bitrate(video_id) * 1.25 / 1000000)}M',
+                    '-bufsize', f'{int(get_stream_bitrate(video_id) * 2 / 1000000)}M',
+                    '-profile:v', 'main',  # Use main profile for better compatibility
+                    '-level', '4.1',
+                    
+                    # GOP and keyframe settings
+                    '-g', '24',  # One keyframe every second at 24fps
+                    '-keyint_min', '24',
+                    
+                    # Stream selection
+                    '-map', '0:v:0',
+                    '-map', '0:a:0',  # Select the first audio stream
+                    # '-map', selected_audio_stream,
+                    
+                    # Audio settings
+                    '-c:a:0', 'aac',
+                    '-b:a:0', '128k',  # Reduce audio bitrate
+                    '-ac:a:0', '2',
+                    
+                    # Performance settings
+                    '-threads', '4',
+                    '-quality', '28',  # Lower quality for better performance
+                    '-low_power', '1',  # Enable low power mode
+                    
+                    # Output format settings
+                    '-movflags', '+faststart+delay_moov+frag_keyframe+empty_moov+default_base_moof',
+                    '-max_muxing_queue_size', '9999',
+                    
+                    # Output format
+                    '-f', 'mp4',
+                    'pipe:1'
                 ]
-
-                # Add debug logging
-                logger.info("FFmpeg command before execution: %s", ' '.join(ffmpeg_cmd))
-
-                # Add video filters based on whether the source is HDR
-                if video_info.get('is_hdr', False):
-                    vf = 'format=p010le|vaapi,hwupload,scale_vaapi=w=1920:h=1080:format=nv12,tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709'
-                else:
-                    vf = 'format=nv12|vaapi,hwupload,scale_vaapi=w=1920:h=1080:format=nv12'
-                
-                ffmpeg_cmd.extend([
-                    '-vf', vf,
-                    '-c:v', 'h264_vaapi'
-                ])
             else:
                 # Software encoding fallback
-                ffmpeg_cmd.extend([
+                ffmpeg_cmd = [
+                    'ffmpeg',
+                    '-i', file_path,
                     '-vf', 'scale=1920:1080',
                     '-c:v', 'libx264',
-                    '-preset', 'veryfast'
-                ])
-
-            # Common parameters for both hardware and software encoding
-            ffmpeg_cmd.extend([
-                '-rc_mode', 'VBR',
-                '-b:v', '8M',
-                '-maxrate', '10M',
-                '-bufsize', '16M',
-                '-c:a', 'aac',
-                '-b:a', '192k',
-                '-ac', '2',
-                '-ar', '48000',
-                '-movflags', '+faststart+delay_moov',
-                '-f', 'mp4',
-                'pipe:1'
-            ])
+                    '-preset', 'veryfast',
+                    '-rc_mode', 'VBR',
+                    '-b:v', '4M',
+                    '-maxrate', '6M',
+                    '-bufsize', '8M',
+                    '-profile:v', 'main',
+                    '-level', '4.1',
+                    '-c:a', 'aac',
+                    '-b:a', '192k',
+                    '-ac', '2',
+                    '-ar', '48000',
+                    '-movflags', '+faststart+delay_moov+frag_keyframe+empty_moov',
+                    '-f', 'mp4',
+                    'pipe:1'
+                ]
 
         logger.info(f"Starting FFmpeg with command: {' '.join(ffmpeg_cmd)}")
 
@@ -494,8 +650,26 @@ def stream_video(video_id):
         with process_lock:
             ffmpeg_processes[video_id] = process
 
+        def log_stderr():
+            while True:
+                line = process.stderr.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    logger.info(f"FFmpeg stderr: {line.decode().strip()}")
+
+        # Start stderr logging thread
+        import threading
+        stderr_thread = threading.Thread(target=log_stderr, daemon=True)
+        stderr_thread.start()
+
         def generate():
             try:
+                buffer = bytearray()
+                buffer_size = 1024 * 1024  # 1MB buffer
+                initial_buffer_size = 2 * 1024 * 1024  # 2MB initial buffer
+                initial_buffering = True
+
                 while True:
                     chunk = process.stdout.read(64*1024)
                     if not chunk:
@@ -508,7 +682,23 @@ def stream_video(video_id):
                                 logger.error(f"FFmpeg process ended with return code: {retcode}")
                             break
                         continue
-                    yield chunk
+
+                    buffer.extend(chunk)
+
+                    # For initial buffering, wait until we have enough data
+                    if initial_buffering:
+                        if len(buffer) >= initial_buffer_size:
+                            logger.info(f"Initial buffer filled ({len(buffer)} bytes), starting playback")
+                            initial_buffering = False
+                            yield bytes(buffer)
+                            buffer.clear()
+                        continue
+
+                    # Regular streaming after initial buffer
+                    if len(buffer) >= buffer_size:
+                        yield bytes(buffer)
+                        buffer.clear()
+
             except GeneratorExit:
                 logger.info(f"Client disconnected from video {video_id}")
                 cleanup_stream(video_id)
@@ -523,15 +713,12 @@ def stream_video(video_id):
 
         headers = {
             'Content-Type': 'video/mp4',
-            'Transfer-Encoding': 'chunked',
-            'Connection': 'keep-alive',
             'Cache-Control': 'no-cache',
-            'Accept-Ranges': 'none'
+            'X-Accel-Buffering': 'no'  # Disable Nginx buffering if present
         }
 
         return Response(
             generate(),
-            mimetype='video/mp4',
             headers=headers,
             direct_passthrough=True
         )
@@ -544,6 +731,14 @@ def stream_video(video_id):
 @video_routes.route('/<int:video_id>/cleanup', methods=['POST'])
 def cleanup_video(video_id):
     """Cleanup video resources when playback is done"""
+    try:
+        with stream_locks[video_id]:
+            if video_id in stream_bitrates:
+                del stream_bitrates[video_id]
+        if video_id in stream_locks:
+            del stream_locks[video_id]
+    except Exception as e:
+        logger.error(f"Error cleaning up stream data: {str(e)}")
     cleanup_stream(video_id)
     return jsonify({'status': 'success'})
 
