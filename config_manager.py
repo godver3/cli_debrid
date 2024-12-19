@@ -45,24 +45,22 @@ def release_lock(lock_file_handle):
 def load_config():
     try:
         config_file_path = os.path.join(os.environ['USER_CONFIG'], 'config.json')
-        logging.debug(f"Attempting to load config from: {config_file_path}")
+        #logging.debug(f"Attempting to load config from: {config_file_path}")
         
         if not os.path.exists(config_file_path):
             logging.warning(f"Config file does not exist: {config_file_path}")
             return {'Scraping': {'versions': {}}, 'Notifications': {}, 'Content Sources': {}}
         
-        logging.debug(f"Config file exists. Checking permissions...")
+        #logging.debug(f"Config file exists. Checking permissions...")
         
         # Check file permissions
-        if os.access(config_file_path, os.R_OK):
-            logging.debug("File is readable")
-        else:
+        if not os.access(config_file_path, os.R_OK):
             logging.error(f"File is not readable: {config_file_path}")
         
         with open(config_file_path, 'r') as config_file:
-            logging.debug("Successfully opened config file")
+            #logging.debug("Successfully opened config file")
             config = json.load(config_file)
-            logging.debug("Successfully loaded JSON from config file")
+            #logging.debug("Successfully loaded JSON from config file")
         
         # Ensure 'Scraping' and 'versions' exist
         if 'Scraping' not in config:
