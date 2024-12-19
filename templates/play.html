@@ -189,7 +189,10 @@
             previewThumbnails: { enabled: false },
             debug: true,
             quality: { default: 1080 },
-            buffer: { threshold: BUFFER_THRESHOLD },
+            buffer: { 
+                threshold: BUFFER_THRESHOLD,
+                preload: true 
+            },
             duration: videoDuration,
             loadSprite: true
         });
@@ -262,6 +265,26 @@
             handlePlaybackError();
         });
 
+        const video = player.elements.original;
+        
+        video.addEventListener('waiting', () => {
+            showLoading();
+            console.log('Video is buffering...');
+        });
+
+        video.addEventListener('canplay', () => {
+            hideLoading();
+            console.log('Video can play');
+        });
+
+        video.addEventListener('progress', () => {
+            if (video.buffered.length) {
+                const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                const duration = video.duration;
+                console.log(`Buffered: ${Math.round((bufferedEnd / duration) * 100)}%`);
+            }
+        });
+
         return player;
     }
 
@@ -317,10 +340,16 @@
 
     function loadVideo(videoId, startTime = 0) {
         showLoading();
+        hideError();
         
         // First fetch video metadata
         fetch(`/video/${videoId}/start`)
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch metadata: ${response.status} ${response.statusText}`);
+                }
+                return response.json();
+            })
             .then(metadata => {
                 if (metadata.error) {
                     throw new Error(metadata.error);
@@ -348,10 +377,38 @@
 
                 console.log('Setting player source with duration:', videoDuration);
                 player.source = source;
+
+                // Add error handler for video element
+                const video = player.elements.original;
+                video.addEventListener('error', (e) => {
+                    const error = e.target.error;
+                    let errorMessage = 'Video playback error';
+                    
+                    if (error.code === MediaError.MEDIA_ERR_NETWORK) {
+                        errorMessage = 'Network error while loading video. Please try again.';
+                        // Attempt to reload after network error
+                        setTimeout(() => {
+                            console.log('Attempting to reload video after network error...');
+                            loadVideo(videoId, video.currentTime);
+                        }, 5000);
+                    } else if (error.code === MediaError.MEDIA_ERR_DECODE) {
+                        errorMessage = 'Video decode error. The video might be corrupted.';
+                    } else if (error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+                        errorMessage = 'Video format not supported by your browser.';
+                    }
+                    
+                    showError(errorMessage);
+                    console.error('Video Error:', errorMessage, error);
+                });
             })
             .catch(error => {
                 console.error('Error loading video:', error);
                 showError('Failed to load video: ' + error.message);
+                // Attempt to reload after error
+                setTimeout(() => {
+                    console.log('Attempting to reload video after error...');
+                    loadVideo(videoId, startTime);
+                }, 5000);
             });
     }
 
@@ -406,6 +463,58 @@
             await fetch(`/video/{{ video.id }}/cleanup`, { method: 'POST' });
         } catch (error) {
             console.error('Error during cleanup:', error);
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const video = document.getElementById('player');
+        let lastBufferCheck = Date.now();
+        let bufferHealth = 1.0; // 1.0 = good, 0.0 = bad
+        
+        // Monitor buffering state
+        video.addEventListener('waiting', function() {
+            // Video is buffering
+            bufferHealth = Math.max(0, bufferHealth - 0.2);
+            sendBufferHealth();
+        });
+
+        video.addEventListener('playing', function() {
+            // Video resumed playing
+            bufferHealth = Math.min(1.0, bufferHealth + 0.1);
+            sendBufferHealth();
+        });
+
+        // Monitor buffer progress
+        setInterval(function() {
+            if (!video.paused) {
+                const buffered = video.buffered;
+                if (buffered.length > 0) {
+                    const currentBuffer = buffered.end(buffered.length - 1) - video.currentTime;
+                    if (currentBuffer < 2) { // Less than 2 seconds buffered
+                        bufferHealth = Math.max(0, bufferHealth - 0.1);
+                    } else if (currentBuffer > 5) { // More than 5 seconds buffered
+                        bufferHealth = Math.min(1.0, bufferHealth + 0.05);
+                    }
+                    sendBufferHealth();
+                }
+            }
+        }, 1000);
+
+        function sendBufferHealth() {
+            // Only send updates every 2 seconds at most
+            if (Date.now() - lastBufferCheck > 2000) {
+                lastBufferCheck = Date.now();
+                fetch('/api/buffer_health', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        videoId: getCurrentVideoId(),
+                        health: bufferHealth
+                    })
+                });
+            }
         }
     });
 </script>
