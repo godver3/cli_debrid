@@ -116,7 +116,7 @@ def get_version():
             application_path = os.path.dirname(os.path.abspath(__file__))
         
         version_path = os.path.join(application_path, 'version.txt')
-        logging.info(f"Reading version from: {version_path}")
+        # logging.info(f"Reading version from: {version_path}")
         
         with open(version_path, 'r') as version_file:
             version = version_file.read().strip()
@@ -774,17 +774,19 @@ def main():
     # Display logo and web UI message
     import socket
     ip_address = socket.gethostbyname(socket.gethostname())
-    print(f"""
+    print(r"""
       (            (             )           (     
       )\ (         )\ )   (   ( /(  (   (    )\ )  
   (  ((_))\       (()/(  ))\  )\()) )(  )\  (()/(  
-  )\  _ ((_)       _| |(_))  | |(_) ((_)(_)  _| |  
+  )\  _ ((_)       ((_))/((_)((_)\ (()\((_)  ((_)) 
+ ((_)| | (_)       _| |(_))  | |(_) ((_)(_)  _| |  
 / _| | | | |     / _` |/ -_) | '_ \| '_|| |/ _` |  
 \__| |_| |_|_____\__,_|\___| |_.__/|_|  |_|\__,_|  
            |_____|                                 
 
-           Version: {version}                      
+           Version:                      
     """)
+    print(f"             {version}\n") 
     print(f"cli_debrid is initialized.")
     print(f"The web UI is available at http://{ip_address}:5000")
     print("Use the web UI to control the program.")

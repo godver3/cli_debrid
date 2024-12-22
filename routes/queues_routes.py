@@ -3,7 +3,8 @@ from .models import user_required, onboarding_required
 from datetime import datetime
 from queue_manager import QueueManager
 import logging
-from .program_operation_routes import program_is_running, program_is_initializing  # Add this import
+from .program_operation_routes import program_is_running, program_is_initializing
+from initialization import get_initialization_status
 
 queues_bp = Blueprint('queues', __name__)
 
@@ -56,12 +57,14 @@ def index():
     return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_running=program_running, program_initializing=program_initializing)
 
 @queues_bp.route('/api/queue_contents')
+@user_required
 def api_queue_contents():
-    contents = queue_manager.get_queue_contents()
+    queue_contents = queue_manager.get_queue_contents()
     program_running = program_is_running()
     program_initializing = program_is_initializing()
-
-    for queue_name, items in contents.items():
+    initialization_status = get_initialization_status() if program_initializing else None
+    
+    for queue_name, items in queue_contents.items():
         if queue_name == 'Upgrading':
             for item in items:
                 upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
@@ -87,10 +90,11 @@ def api_queue_contents():
         elif queue_name == 'Sleeping':
             for item in items:
                 if 'wake_count' not in item or item['wake_count'] is None:
-                    item['wake_count'] = wake_count_manager.get_wake_count(item['id'])
+                    item['wake_count'] = queue_manager.get_wake_count(item['id'])
 
     return jsonify({
-        "contents": contents,
+        "contents": queue_contents,
         "program_running": program_running,
-        "program_initializing": program_initializing
+        "program_initializing": program_initializing,
+        "initialization_status": initialization_status
     })

@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 
 {% block head %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
 <!-- Plyr CSS -->
 <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
 <style>
@@ -107,10 +110,18 @@
     border-radius: 4px;
     padding: 8px;
 }
+.alert-warning {
+  --bs-alert-color: #664d03;
+  --bs-alert-bg: #fff3cd;
+  --bs-alert-border-color: #ffecb5;
+}
 </style>
 {% endblock %}
 
 {% block content %}
+<div class="alert alert-warning text-center" role="alert" style="margin: 1rem auto; max-width: 1200px;">
+    <strong>⚠️ Pre-Alpha Feature:</strong> This video player is currently in early development and may have unexpected behavior or limitations.
+</div>
 <div class="container mt-4">
     <h2>{{ video.title }}</h2>
     <div id="errorMessage" class="error-message" style="display: none;"></div>
@@ -197,32 +208,149 @@
             loadSprite: true
         });
 
+        // Store whether we've added the seek listener
+        let seekListenerAdded = false;
+
+        // Wait for player to be ready before adding seek listener
+        player.on('ready', () => {
+            console.log('Player ready, setting up seek listener');
+            hideLoading();
+
+            // Only add the seek listener if we haven't already
+            if (!seekListenerAdded) {
+                console.log('Adding seek listener for the first time');
+                // Try different selectors for the progress bar
+                const progressBar = document.querySelector('.plyr__progress');
+                const progressBarInput = document.querySelector('.plyr__progress input[type="range"]');
+                
+                console.log('Progress bar element:', progressBar);
+                console.log('Progress bar input element:', progressBarInput);
+
+                if (progressBar) {
+                    console.log('Adding click listener to progress bar');
+                    const handleSeekClick = async (e) => {
+                        // Prevent event from bubbling up to avoid double triggers
+                        e.stopPropagation();
+                        e.preventDefault();
+                        
+                        // Immediately pause playback and show loading
+                        player.pause();
+                        showLoading();
+                        
+                        console.log('Progress bar clicked!');
+                        const rect = progressBar.getBoundingClientRect();
+                        const clickPosition = (e.clientX - rect.left) / rect.width;
+                        const seekTime = clickPosition * player.duration;
+                        
+                        console.log('Click details:', {
+                            clickX: e.clientX,
+                            barLeft: rect.left,
+                            barWidth: rect.width,
+                            clickPosition,
+                            seekTime,
+                            currentTime: player.currentTime,
+                            duration: player.duration
+                        });
+
+                        try {
+                            // Clean up the current stream before seeking
+                            cleanupCurrentStream();
+
+                            // First log the seek attempt
+                            await fetch('/video/log_seek', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    video_id: getCurrentVideoId(),
+                                    seek_time: seekTime,
+                                    current_time: player.currentTime,
+                                    total_duration: player.duration
+                                })
+                            });
+
+                            // Then request the seek
+                            const seekResponse = await fetch('/video/seek', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    video_id: getCurrentVideoId(),
+                                    seek_time: seekTime
+                                })
+                            });
+
+                            console.log('Seek response:', seekResponse);
+
+                            if (seekResponse.ok) {
+                                console.log('Seek request successful, reloading video');
+                                // Reload the video with the new seek time
+                                await loadVideo(getCurrentVideoId(), seekTime);
+                            } else {
+                                console.error('Seek request failed:', await seekResponse.json());
+                                hideLoading(); // Hide loading if seek failed
+                            }
+                        } catch (error) {
+                            console.error('Error during seek:', error);
+                            hideLoading(); // Hide loading if there was an error
+                            showError('Failed to seek video: ' + error.message);
+                        }
+                    };
+
+                    // Remove any existing listeners (just in case)
+                    progressBar.removeEventListener('click', handleSeekClick, { capture: true });
+                    // Add the new listener
+                    progressBar.addEventListener('click', handleSeekClick, { capture: true });
+                    seekListenerAdded = true;
+                    console.log('Seek listener added successfully');
+                } else {
+                    console.error('Could not find progress bar element!');
+                }
+            } else {
+                console.log('Seek listener already added, skipping');
+            }
+        });
+
         // Store the expected duration in the player instance
         player.config.duration = videoDuration;
 
-        player.on('ready', () => {
-            console.log('Player is ready, setting duration:', videoDuration);
-            hideLoading();
-            updatePlayerDuration(videoDuration);
-        });
-
-        let hasSetDuration = false;
-        
         player.on('loadedmetadata', () => {
             console.log('Metadata loaded, player duration:', player.duration);
             console.log('Expected duration:', videoDuration);
-            if (!hasSetDuration && videoDuration > 0) {
-                hasSetDuration = true;
+            if (!player.duration || Math.abs(player.duration - videoDuration) > 1) {
+                console.log('Correcting duration on loadedmetadata, current:', player.duration, 'expected:', videoDuration);
                 updatePlayerDuration(videoDuration);
             }
         });
 
-        // Add timeupdate listener to continuously ensure correct duration
+        // Add timeupdate listener to continuously ensure correct duration and progress
         player.on('timeupdate', () => {
+            if (isInitialLoad) return;  // Skip updates during initial load
+            
             const currentDuration = player.duration;
+            const currentTime = player.currentTime;
+            
+            // Update duration if needed
             if (videoDuration > 0 && (!currentDuration || Math.abs(currentDuration - videoDuration) > 1)) {
                 console.log('Correcting duration on timeupdate, current:', currentDuration, 'expected:', videoDuration);
                 updatePlayerDuration(videoDuration);
+            }
+            
+            // Force progress bar update
+            if (player.elements.progress) {
+                const percent = (currentTime / videoDuration) * 100;
+                player.elements.progress.value = percent;
+                player.elements.progress.style.setProperty('--value', `${percent}%`);
+                
+                if (player.elements.inputs.seek) {
+                    player.elements.inputs.seek.value = percent;
+                }
+                
+                if (player.elements.display.currentTime) {
+                    player.elements.display.currentTime.textContent = formatTime(currentTime);
+                }
             }
         });
 
@@ -338,78 +466,79 @@
         });
     }
 
-    function loadVideo(videoId, startTime = 0) {
-        showLoading();
-        hideError();
-        
-        // First fetch video metadata
-        fetch(`/video/${videoId}/start`)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch metadata: ${response.status} ${response.statusText}`);
-                }
-                return response.json();
-            })
-            .then(metadata => {
-                if (metadata.error) {
-                    throw new Error(metadata.error);
-                }
+    let isInitialLoad = false;
+    async function loadVideo(videoId, startTime = 0) {
+        try {
+            showLoading();
+            cleanupCurrentStream();
+            isInitialLoad = true;  // Set flag to prevent timeupdate handling
 
-                console.log('Received metadata:', metadata);
-                videoDuration = parseFloat(metadata.duration);
+            console.log('Loading video:', videoId, 'at time:', startTime);
 
-                if (player) {
-                    player.destroy();
-                }
+            // Initialize the stream
+            const response = await fetch(`/video/${videoId}/start`);
+            const data = await response.json();
+            
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            // Update video duration
+            videoDuration = data.duration;
+            
+            // Create and set up new video element
+            initializePlayer();
+            
+            // Set initial time on the video element before setting source
+            const video = player.elements.original;
+            if (video) {
+                video.currentTime = startTime;
+            }
+            
+            // Set up the source for the player
+            const source = {
+                type: 'video',
+                title: 'Video',
+                sources: [{
+                    src: `/video/${videoId}/stream?t=${startTime}`,
+                    type: 'video/mp4',
+                }]
+            };
+            
+            console.log('Setting player source:', source);
+            player.source = source;
+
+            // Update progress bar immediately
+            if (player.elements.progress) {
+                const percent = (startTime / videoDuration) * 100;
+                player.elements.progress.value = percent;
+                player.elements.progress.style.setProperty('--value', `${percent}%`);
                 
-                player = initializePlayer();
-                
-                const source = {
-                    type: 'video',
-                    title: 'Video',
-                    duration: videoDuration,
-                    sources: [{
-                        src: `/video/${videoId}/stream?t=${startTime}`,
-                        type: 'video/mp4',
-                        size: metadata.size
-                    }]
-                };
-
-                console.log('Setting player source with duration:', videoDuration);
-                player.source = source;
-
-                // Add error handler for video element
-                const video = player.elements.original;
-                video.addEventListener('error', (e) => {
-                    const error = e.target.error;
-                    let errorMessage = 'Video playback error';
-                    
-                    if (error.code === MediaError.MEDIA_ERR_NETWORK) {
-                        errorMessage = 'Network error while loading video. Please try again.';
-                        // Attempt to reload after network error
-                        setTimeout(() => {
-                            console.log('Attempting to reload video after network error...');
-                            loadVideo(videoId, video.currentTime);
-                        }, 5000);
-                    } else if (error.code === MediaError.MEDIA_ERR_DECODE) {
-                        errorMessage = 'Video decode error. The video might be corrupted.';
-                    } else if (error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-                        errorMessage = 'Video format not supported by your browser.';
-                    }
-                    
-                    showError(errorMessage);
-                    console.error('Video Error:', errorMessage, error);
+                if (player.elements.inputs.seek) {
+                    player.elements.inputs.seek.value = percent;
+                }
+            }
+            
+            // Handle canplay event
+            player.once('canplay', () => {
+                console.log('Video can play, setting current time:', startTime);
+                player.currentTime = startTime;  // Set time again after source is loaded
+                isInitialLoad = false;  // Reset flag to allow timeupdate handling
+                hideLoading();
+                player.play().catch(error => {
+                    console.error('Error playing video:', error);
+                    hideLoading();
                 });
-            })
-            .catch(error => {
-                console.error('Error loading video:', error);
-                showError('Failed to load video: ' + error.message);
-                // Attempt to reload after error
-                setTimeout(() => {
-                    console.log('Attempting to reload video after error...');
-                    loadVideo(videoId, startTime);
-                }, 5000);
             });
+
+            hideError();
+            
+        } catch (error) {
+            console.error('Error loading video:', error);
+            showError(error.message);
+            hideLoading();
+            isInitialLoad = false;  // Reset flag in case of error
+        }
     }
 
     function showError(message) {
