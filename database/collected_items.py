@@ -282,7 +282,7 @@ def add_collected_items(media_items_batch, recent=False):
                             matching_cursor.close()
                             
                             current_version = item['version'].strip('*')
-                            matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items)
+                            matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items if m['id'] != item['id'])
                             
                             if matching_version_exists:
                                 # Delete the item if a matching version exists
