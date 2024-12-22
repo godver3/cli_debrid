@@ -5,7 +5,7 @@ from datetime import datetime, date, timedelta
 from database import get_all_media_items, get_media_item_by_id
 from settings import get_setting
 from scraper.scraper import scrape
-from not_wanted_magnets import is_magnet_not_wanted
+from not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 from wake_count_manager import wake_count_manager
 
 class ScrapingQueue:
@@ -86,7 +86,7 @@ class ScrapingQueue:
                     return True
 
                 # Filter and process results
-                filtered_results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
+                filtered_results = [r for r in results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
                 logging.info(f"Found {len(filtered_results)} valid results after filtering for {item_identifier}")
 
                 if not filtered_results:
@@ -94,7 +94,7 @@ class ScrapingQueue:
                     individual_results, individual_filtered_out = self.scrape_with_fallback(item, False, queue_manager)
                     logging.info(f"Individual scraping returned {len(individual_results)} results")
                     
-                    filtered_individual_results = [r for r in individual_results if not is_magnet_not_wanted(r['magnet'])]
+                    filtered_individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
                     logging.info(f"After filtering, individual scraping has {len(filtered_individual_results)} valid results")
                     
                     if not filtered_individual_results:
@@ -161,9 +161,9 @@ class ScrapingQueue:
         for result in results:
             logging.debug(f"Scrape result: {result}")
 
-        # Filter out unwanted magnets
-        filtered_results = [r for r in results if not is_magnet_not_wanted(r['magnet'])]
-        logging.info(f"After filtering unwanted magnets: {len(filtered_results)} results remain for {item_identifier}")
+        # Filter out unwanted magnets and URLs
+        filtered_results = [r for r in results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
+        logging.info(f"After filtering unwanted magnets/URLs: {len(filtered_results)} results remain for {item_identifier}")
 
         if filtered_results or item['type'] != 'episode':
             return filtered_results, filtered_out
@@ -187,8 +187,8 @@ class ScrapingQueue:
         individual_results = individual_results if individual_results is not None else []
         individual_filtered_out = individual_filtered_out if individual_filtered_out is not None else []
 
-        # Filter out unwanted magnets for individual results
-        individual_results = [r for r in individual_results if not is_magnet_not_wanted(r['magnet'])]
+        # Filter out unwanted magnets and URLs for individual results
+        individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
 
         if individual_results:
             logging.info(f"Found results for individual episode scraping of {item_identifier}.")

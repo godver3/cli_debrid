@@ -4,7 +4,23 @@ from metadata.metadata import refresh_release_dates
 from database import update_media_item_state, get_all_media_items
 from settings import get_all_settings
 
+# Global variable to track initialization progress
+initialization_status = {
+    'current_step': '',
+    'total_steps': 4,  # Reset status, Plex update, Get wanted content, Refresh dates
+    'current_step_number': 0
+}
+
+def get_initialization_status():
+    return initialization_status
+
+def update_initialization_step(step_name):
+    initialization_status['current_step'] = step_name
+    initialization_status['current_step_number'] += 1
+    logging.info(f"Initialization step {initialization_status['current_step_number']}/{initialization_status['total_steps']}: {step_name}")
+
 def reset_queued_item_status():
+    update_initialization_step("Resetting queued item status")
     logging.info("Resetting queued item status...")
     states_to_reset = ['Scraping', 'Adding', 'Checking', 'Sleeping']
     for state in states_to_reset:
@@ -16,6 +32,7 @@ def reset_queued_item_status():
 def plex_collection_update(skip_initial_plex_update):
     from run_program import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex
 
+    update_initialization_step("Updating Plex collection")
     logging.info("Updating Plex collection...")
 
     try:
@@ -63,16 +80,20 @@ def get_all_wanted_from_enabled_sources():
     logging.info("Finished processing all enabled content sources")
 
 def initialize(skip_initial_plex_update=False):
+    # Reset initialization status
+    initialization_status['current_step'] = ''
+    initialization_status['current_step_number'] = 0
+    
     logging.info("Starting initialization...")
     
-    # Only update collection if Plex scan is successful
-    plex_success = plex_collection_update(skip_initial_plex_update)
+    reset_queued_item_status()
+    plex_result = plex_collection_update(skip_initial_plex_update)
     
-    if not plex_success:
-        logging.warning("Skipping initial collection update due to Plex scan failure")
-    else:
+    if plex_result:
+        update_initialization_step("Gathering wanted content")
         get_all_wanted_from_enabled_sources()
     
+    update_initialization_step("Refreshing release dates")
     refresh_release_dates()
-
     
+    return plex_result

@@ -137,12 +137,20 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
     # Prepare query title for guessit
     guessit_query_title = query_title.replace('.', ' ')
     
+    logging.debug(f"Original query title: '{query_title}'")
+    logging.debug(f"Prepared guessit query title: '{guessit_query_title}'")
+    logging.debug(f"Original result title: '{result_title}'")
+    
     # Use guessit with content type and prepared query title
     guessit_type = 'movie' if content_type.lower() == 'movie' else 'episode'
     guessit_result = guessit(result_title, {'type': guessit_type, 'expected_title': [guessit_query_title]})
     
+    logging.debug(f"Full guessit result: {guessit_result}")
+    
     guessit_title = guessit_result.get('title', '')
     guessit_title = normalize_title(guessit_title).replace('&', 'and').replace('-','.')
+    
+    logging.debug(f"Final normalized guessit title: '{guessit_title}'")
 
     logging.debug(f"Comparing cleaned titles - Query: '{query_title}', Guessit: '{guessit_title}'")
 
@@ -834,16 +842,25 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         # New pre-filtering step using parse_title
         release_name = result.get('title', '')
         parsed_info = parse_title(release_name)
+        logging.debug(f"Parse title result for '{release_name}': {parsed_info}")
+        
         if parsed_info and isinstance(parsed_info, dict):
             parsed_title = parsed_info.get('title', '')
+            # If 'convert' is detected as a flag, append it to the title
+            if parsed_info.get('convert') and parsed_title.lower() == 'the':
+                parsed_title = 'the convert'
+                logging.debug(f"Detected 'convert' flag, using full title: {parsed_title}")
+            
             if parsed_title:
                 # Normalize both titles before comparison
                 normalized_parsed_title = normalize_title(parsed_title)
                 normalized_query_title = normalize_title(title)
+                logging.debug(f"Comparing normalized titles - Parsed: '{normalized_parsed_title}', Query: '{normalized_query_title}'")
                 title_similarity = fuzz.ratio(normalized_parsed_title.lower(), normalized_query_title.lower())
+                logging.debug(f"Initial title similarity score: {title_similarity}%")
                 if title_similarity < 75:
                     result['filter_reason'] = f"Low parsed title similarity: {title_similarity}%"
-                    logging.info(f"Parsing out result due to similarity mismatch: {result.get('title', 'Unknown')}")
+                    logging.debug(f"Filtering out result due to low similarity: {result.get('title', 'Unknown')}")
                     continue
 
         parsed_info = result.get('parsed_info', {})
