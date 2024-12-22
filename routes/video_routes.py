@@ -471,8 +471,11 @@ def start_stream(video_id):
 
 @video_routes.route('/<int:video_id>/stream')
 def stream_video(video_id):
-    """Stream video content directly from FFmpeg"""
     try:
+        # Get start time from query parameter, default to 0
+        start_time = float(request.args.get('t', 0))
+        logger.info(f"Starting stream for video {video_id} at time {start_time}")
+        
         logger.info(f"Attempting to stream video {video_id}")
         video = get_video_by_id(video_id)
         if not video:
@@ -496,8 +499,7 @@ def stream_video(video_id):
 
         # Parse range header and time parameter
         range_header = request.headers.get('Range')
-        start_time = request.args.get('t', type=float, default=0)
-
+        
         if range_header:
             match = re.search(r'bytes=(\d+)-', range_header)
             if match:
@@ -572,8 +574,14 @@ def stream_video(video_id):
                     # Hardware acceleration setup
                     '-hwaccel', 'vaapi',
                     '-hwaccel_device', '/dev/dri/renderD128',
-                    '-hwaccel_output_format', 'vaapi',
-                    
+                    '-hwaccel_output_format', 'vaapi'
+                ]
+                
+                # Add seek time if specified
+                if start_time > 0:
+                    ffmpeg_cmd.extend(['-ss', str(start_time)])
+                
+                ffmpeg_cmd.extend([
                     # Input options
                     '-i', file_path,
                     
@@ -613,11 +621,18 @@ def stream_video(video_id):
                     # Output format
                     '-f', 'mp4',
                     'pipe:1'
-                ]
+                ])
             else:
                 # Software encoding fallback
                 ffmpeg_cmd = [
-                    'ffmpeg',
+                    'ffmpeg'
+                ]
+                
+                # Add seek time if specified
+                if start_time > 0:
+                    ffmpeg_cmd.extend(['-ss', str(start_time)])
+                
+                ffmpeg_cmd.extend([
                     '-i', file_path,
                     '-vf', 'scale=1920:1080',
                     '-c:v', 'libx264',
@@ -635,7 +650,7 @@ def stream_video(video_id):
                     '-movflags', '+faststart+delay_moov+frag_keyframe+empty_moov',
                     '-f', 'mp4',
                     'pipe:1'
-                ]
+                ])
 
         logger.info(f"Starting FFmpeg with command: {' '.join(ffmpeg_cmd)}")
 
@@ -741,6 +756,50 @@ def cleanup_video(video_id):
         logger.error(f"Error cleaning up stream data: {str(e)}")
     cleanup_stream(video_id)
     return jsonify({'status': 'success'})
+
+@video_routes.route('/log_seek', methods=['POST'])
+def log_seek():
+    """Log video seek events"""
+    try:
+        data = request.get_json()
+        video_id = data.get('video_id')
+        seek_time = data.get('seek_time')
+        current_time = data.get('current_time')
+        total_duration = data.get('total_duration')
+        
+        logger.info(f"Seek event - Video ID: {video_id}, "
+                   f"From: {current_time:.2f}s, "
+                   f"To: {seek_time:.2f}s, "
+                   f"Duration: {total_duration:.2f}s")
+        
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error logging seek event: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@video_routes.route('/seek', methods=['POST'])
+def seek_video():
+    """Handle video seek requests"""
+    try:
+        data = request.get_json()
+        video_id = data.get('video_id')
+        seek_time = data.get('seek_time')
+        
+        if not video_id or seek_time is None:
+            return jsonify({'error': 'Missing video_id or seek_time'}), 400
+            
+        # Clean up existing stream
+        cleanup_stream(video_id)
+        
+        # Return success - the frontend will request a new stream
+        return jsonify({
+            'status': 'success',
+            'seek_time': seek_time
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in seek_video: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 # Register cleanup functions
 atexit.register(cleanup_temp_files)

@@ -14,11 +14,26 @@ global_profiler = cProfile.Profile()
 
 def start_global_profiling():
     global global_profiler
-    global_profiler.enable()
+    try:
+        # First try to disable any existing profiler
+        try:
+            global_profiler.disable()
+        except:
+            pass
+        # Create a new profiler instance
+        global_profiler = cProfile.Profile()
+        global_profiler.enable()
+    except Exception as e:
+        logging.warning(f"Failed to start profiling: {str(e)}")
+        # Continue without profiling if it fails
+        pass
 
 def stop_global_profiling():
     global global_profiler
-    global_profiler.disable()
+    try:
+        global_profiler.disable()
+    except Exception as e:
+        logging.warning(f"Failed to stop profiling: {str(e)}")
 
 class OverwriteFileHandler(logging.FileHandler):
     def __init__(self, filename, mode='w', encoding=None, delay=False):
