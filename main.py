@@ -814,6 +814,8 @@ def main():
     print("Running in console mode.")
 
     if get_setting('Debug', 'auto_run_program'):
+        # Add delay to ensure server is ready
+        time.sleep(2)  # Wait for server to initialize
         # Call the start_program route
         try:
             response = requests.post('http://localhost:5000/program_operation/api/start_program')

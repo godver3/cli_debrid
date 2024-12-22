@@ -85,6 +85,10 @@ def check_service_connectivity():
 def start_program():
     global program_runner
     if program_runner is None or not program_runner.is_running():
+        # Add delay if auto-start is enabled
+        if get_setting('Debug', 'auto_run_program', default=False):
+            time.sleep(1)  # 1 second delay for auto-start
+
         # Check service connectivity before starting the program
         if not check_service_connectivity():
             return jsonify({"status": "error", "message": "Failed to connect to Plex, Real Debrid, or Metadata Battery. Check logs for details."})
