@@ -34,5 +34,12 @@ EXPOSE 5000 5001
 # Copy supervisord configuration
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Start supervisord
-CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Create a startup script
+RUN echo '#!/bin/bash\n\
+supervisord -n -c /etc/supervisor/conf.d/supervisord.conf & \n\
+sleep 2\n\
+exec tail -f /user/logs/debug.log' > /app/start.sh && \
+chmod +x /app/start.sh
+
+# Start supervisord and tail the log file
+CMD ["/app/start.sh"]

@@ -23,7 +23,7 @@ class AddingQueue:
     def __init__(self):
         self.items = []
         self.api_key = None
-        self.episode_count_cache = {}  # Add this line
+        self.episode_count_cache = {}  
         self.anime_matcher = AnimeMatcher(self.calculate_absolute_episode)
 
     def get_api_key(self):
@@ -43,7 +43,7 @@ class AddingQueue:
 
     def process(self, queue_manager):
         if self.items:
-            item = self.items[0]  # Process the first item in the queue
+            item = self.items[0]  
             item_identifier = queue_manager.generate_identifier(item)
             updated_item = get_media_item_by_id(item['id'])
             if updated_item:
@@ -100,14 +100,14 @@ class AddingQueue:
             if isinstance(result, dict):
                 logging.info(f"Index: {index} - Scrape result: {result.get('title', 'No title')}")
             elif isinstance(result, str):
-                logging.info(f"Index: {index} - Scrape result (string): {result[:50]}...")  # Log first 50 characters
+                logging.info(f"Index: {index} - Scrape result (string): {result[:50]}...")  
             else:
                 logging.info(f"Index: {index} - Scrape result type: {type(result)}")
     
         if get_setting('Debug', 'sort_by_uncached_status'):
             scrape_results = self.sort_results_by_cache_status(scrape_results)
     
-        uncached_results = []  # Initialize the list of uncached results
+        uncached_results = []  
         cached_successfully_processed = False
         for index, result in enumerate(scrape_results):
             title = result.get('title', '')
@@ -164,7 +164,8 @@ class AddingQueue:
                 
                 if success:
                     logging.info(f"Successfully processed result {index + 1} for {item_identifier}")
-                    add_to_not_wanted_urls(link)
+                    self.add_to_not_wanted(current_hash, item_identifier, item)
+                    self.add_to_not_wanted_url(link, item_identifier, item)
                     logging.info(f"Added to not_wanted_url {link} for {item_identifier}")
                     return True
     
@@ -178,7 +179,7 @@ class AddingQueue:
             for result, current_hash in uncached_results:
                 success = self.process_result(queue_manager, item, result, current_hash, is_cached=False, scrape_results=scrape_results)
                 if success:
-                    return True  # Successfully processed an uncached result
+                    return True  
     
         # If we reach here, no results were successfully processed
         logging.warning(f"No valid results found for {item_identifier}")
@@ -206,6 +207,17 @@ class AddingQueue:
                     logging.info(f"Successfully processed individual result {index + 1} for {item_identifier}")
                     return True
                 else:
+                    # Check if failure was due to not_wanted - if so, continue to next result
+                    link = result.get('magnet', '')
+                    if link.startswith('magnet:'):
+                        current_hash = extract_hash_from_magnet(link)
+                    else:
+                        current_hash, _ = self.download_and_extract_hash(link)
+                        
+                    if current_hash and is_magnet_not_wanted(current_hash):
+                        logging.debug(f"Skipping result {index + 1} as it's in not_wanted, trying next result")
+                        continue
+                        
                     logging.debug(f"Failed to process individual result {index + 1} for {item_identifier}")
                     # Clean up the torrent if we have an ID
                     if torrent_id:
@@ -272,7 +284,7 @@ class AddingQueue:
                 else:
                     logging.warning(f"No matching file found for movie: {item_identifier}")
                     return False, torrent_id
-            else:  # TV show
+            else:  
                 success, message = self.process_multi_pack(queue_manager, item, title, link, files, torrent_id)
                 if success:
                     logging.info(f"Successfully processed TV show item: {item_identifier}. {message}")
@@ -298,7 +310,7 @@ class AddingQueue:
             logging.error(f"No magnet link found for {item_identifier}")
             return False
         
-        # Check if the hash is in the not_wanted list
+        # Check if the hash is in the not wanted list
         if is_magnet_not_wanted(current_hash):
             logging.info(f"Hash {current_hash} for {item_identifier} is in not_wanted_magnets. Skipping.")
             if temp_file_path and os.path.exists(temp_file_path):
@@ -322,12 +334,17 @@ class AddingQueue:
                     if torrent_id:
                         self.remove_unwanted_torrent(torrent_id)
                         logging.debug(f"Removed torrent {torrent_id} due to non-downloaded status")
+                        # Add to not_wanted since we've determined it's not usable
+                        self.add_to_not_wanted(current_hash, item_identifier, item)
+                        self.add_to_not_wanted_url(link, item_identifier, item)
                     return False
 
                 # Process only if downloaded or in full mode
                 if status == 'downloaded' or mode == 'full':
                     logging.info(f"Processing {'cached' if status == 'downloaded' else 'uncached'} content for {item_identifier}")
-                    self.add_to_not_wanted(current_hash, item_identifier)
+                    if status == 'downloaded':  # Only add to not_wanted if it's actually downloaded
+                        self.add_to_not_wanted(current_hash, item_identifier, item)
+                        self.add_to_not_wanted_url(link, item_identifier, item)
                     success, returned_torrent_id = self.process_torrent(queue_manager, item, title, link, add_result)
                     
                     if success:
@@ -397,7 +414,7 @@ class AddingQueue:
             return (datetime.now().date() - release_date).days > 7
         except ValueError as e:
             logging.error(f"Error parsing release date for item {self.generate_identifier(item)}: {str(e)}")
-            return True  # Consider items with unparseable dates as old
+            return True  
 
     def blacklist_old_season_items(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
@@ -519,12 +536,15 @@ class AddingQueue:
 
             # Pass the temp_file_path to add_to_real_debrid
             result = add_to_real_debrid(link, temp_file_path)
-            logging.debug(f"add_to_real_debrid result: {result}")
+            
+            # Clean up the temporary file
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
 
             if not result:
                 return {"success": False, "message": "Failed to add content to Real-Debrid"}
 
-            if isinstance(result, list):  # Cached torrent
+            if isinstance(result, list):  
                 logging.info(f"Added cached content for {item_identifier}")
                 torrent_files = get_magnet_files(link) if link.startswith('magnet:') else self.get_torrent_files(current_hash)
                 logging.debug(f"Torrent files: {json.dumps(torrent_files, indent=2)}")
@@ -538,7 +558,7 @@ class AddingQueue:
                     "files": torrent_files.get('cached_files', []) if torrent_files else [],
                     "torrent_id": torrent_info.get('id') if torrent_info else None
                 }
-            elif isinstance(result, dict) and result.get('status') == 'downloaded':  # New case for downloaded torrent
+            elif isinstance(result, dict) and result.get('status') == 'downloaded':  
                 logging.info(f"Added downloaded content for {item_identifier}")
                 return {
                     "success": True,
@@ -548,14 +568,8 @@ class AddingQueue:
                     "files": result.get('files', []),
                     "torrent_id": result.get('torrent_id')
                 }
-            elif result in ['downloading', 'queued']:  # Uncached torrent
+            elif result in ['downloading', 'queued']:  
                 logging.info(f"Added uncached content for {item_identifier}. Status: {result}")
-    
-                # Add to not wanted list only for uncached torrents
-                add_to_not_wanted(current_hash)
-                add_to_not_wanted_urls(link)
-                logging.info(f"Added hash {current_hash} to not_wanted_magnets for {item_identifier}")
-                logging.info(f"Added URL {link} to not_wanted_urls for {item_identifier}")
     
                 # Poll for torrent status and retrieve file list
                 torrent_info = self.get_torrent_info(current_hash)
@@ -570,8 +584,6 @@ class AddingQueue:
                         "files": files,
                         "torrent_id": torrent_info.get('id')
                     }
-                else:
-                    return {"success": False, "message": "Failed to retrieve torrent information"}
             else:
                 return {"success": False, "message": f"Unexpected result from Real-Debrid: {result}"}
     
@@ -583,7 +595,7 @@ class AddingQueue:
         self.api_key = self.get_api_key()
         headers = {'Authorization': f'Bearer {self.api_key}'}
 
-        for _ in range(10):  # Try for about 100 seconds
+        for _ in range(10):  
             time.sleep(10)
             torrents = api.get(f"{API_BASE_URL}/torrents", headers=headers).json()
             for torrent in torrents:
@@ -601,15 +613,86 @@ class AddingQueue:
             return {'cached_files': [file['path'] for file in torrent_info['files']]}
         return None
 
-    def add_to_not_wanted(self, hash_value: str, item_identifier: str):
+    def add_to_not_wanted(self, hash_value: str, item_identifier: str, item: Dict[str, Any]):
+        identifier = self.generate_identifier(item)
+        if not self.is_item_past_24h(item):
+            logging.info(f"Not adding hash {hash_value} to not_wanted_magnets for {item_identifier} as it's less than 24h old")
+            return
+
+        add_to_not_wanted(hash_value, item_identifier, item)
+        logging.info(f"Added hash {hash_value} to not_wanted_magnets for {item_identifier}")
+        
+        # Add this line to log the current contents of the not_wanted list
+        logging.debug(f"Current not_wanted_magnets: {get_not_wanted_magnets()}")
+    
+    def add_to_not_wanted_url(self, url: str, item_identifier: str, item: Dict[str, Any]):
+        identifier = self.generate_identifier(item)
+        if not self.is_item_past_24h(item):
+            logging.info(f"Not adding URL {url} to not_wanted_urls for {item_identifier} as it's less than 24h old")
+            return
+
+        add_to_not_wanted_urls(url)
+        logging.info(f"Added URL {url} to not_wanted_urls for {item_identifier}")
+        
+        # Add this line to log the current contents of the not_wanted list
+        logging.debug(f"Current not_wanted_urls: {get_not_wanted_urls()}")
+    
+    def is_item_past_24h(self, item: Dict[str, Any]) -> bool:
+        identifier = self.generate_identifier(item)
+        
+        # Get latest state from database since item in memory might be outdated
+        current_item = get_media_item_by_id(item['id'])
+        if current_item and current_item.get('state') == 'Checking':
+            logging.info(f"Item {identifier} is in Checking queue - allowing not_wanted additions")
+            return True
+        
+        # First try using airtime as it's most accurate
+        if 'airtime' in item and item['airtime'] and 'release_date' in item and item['release_date']:
+            try:
+                # Combine release date with airtime
+                release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+                air_time = datetime.strptime(item['airtime'], '%H:%M').time()
+                airtime = datetime.combine(release_date, air_time)
+                current_time = datetime.now()
+                
+                time_since_air = current_time - airtime
+                hours_since_air = time_since_air.total_seconds() / 3600
+                
+                logging.info(f"Item {identifier} - Using airtime - Air time: {airtime}, Current time: {current_time}")
+                logging.info(f"Hours since air: {hours_since_air:.1f}")
+                
+                is_past_24h = hours_since_air >= 24
+                if not is_past_24h:
+                    logging.info(f"Item {identifier} is too new ({hours_since_air:.1f} hours since air time). Not adding to not_wanted.")
+                return is_past_24h
+            except (ValueError, TypeError) as e:
+                logging.warning(f"Error parsing airtime for {identifier}: {e}. Falling back to release date.")
+        
+        # Fall back to release date if no airtime or error parsing airtime
+        if 'release_date' not in item or not item['release_date']:
+            logging.info(f"Item {identifier} has no release date. Considering it past 24h.")
+            return True
+        
         try:
-            add_to_not_wanted(hash_value)
-            logging.info(f"Added hash {hash_value} to not_wanted_magnets for {item_identifier}")
+            # Assume release is at midnight of the release date
+            release_date = datetime.strptime(item['release_date'], '%Y-%m-%d')
+            current_time = datetime.now()
             
-            # Add this line to log the current contents of the not_wanted list
-            logging.debug(f"Current not_wanted_magnets: {get_not_wanted_magnets()}")
-        except Exception as e:
-            logging.error(f"Error adding hash {hash_value} to not_wanted_magnets for {item_identifier}: {str(e)}")
+            # Calculate hours since release
+            time_since_release = current_time - release_date
+            hours_since_release = time_since_release.total_seconds() / 3600
+            
+            logging.info(f"Item {identifier} - Using release date - Release date: {release_date}, Current time: {current_time}")
+            logging.info(f"Hours since release: {hours_since_release:.1f}")
+            
+            is_past_24h = hours_since_release >= 24
+            if not is_past_24h:
+                logging.info(f"Item {identifier} is too new ({hours_since_release:.1f} hours old). Not adding to not_wanted.")
+            return is_past_24h
+            
+        except (ValueError, TypeError) as e:
+            logging.error(f"Error checking if item {identifier} is past 24h: {e}")
+            return False
 
     def process_multi_pack(self, queue_manager, item, title, link, files, torrent_id):
         item_identifier = queue_manager.generate_identifier(item)
@@ -617,7 +700,7 @@ class AddingQueue:
 
         # Get all matching items from other queues
         matching_items = self.get_matching_items_from_queues(queue_manager, item)
-        matching_items.append(item)  # Include the original item
+        matching_items.append(item)  
         logging.info(f"Total matching items (including original): {len(matching_items)}")
 
         # Check if the item is an anime
@@ -671,7 +754,7 @@ class AddingQueue:
                     if len(file_episodes) > 1:
                         self.handle_multi_episode_file(file, file_season, file_episodes, items, matches)
                     
-                    break  # Move to next file after finding a match
+                    break  
         
         return matches
 
@@ -682,7 +765,6 @@ class AddingQueue:
                     int(item['episode_number']) == episode and 
                     (file, item) not in matches):
                     matches.append((file, item))
-
 
     def get_matching_items_from_queues(self, queue_manager, item):
         matching_items = []
@@ -756,7 +838,7 @@ class AddingQueue:
         item_identifier = queue_manager.generate_identifier(item)
         title = result.get('title', '')
         link = result.get('magnet', '')
-        torrent_id = None  # Initialize torrent_id
+        torrent_id = None  
 
         try:
             if link.startswith('magnet:'):
@@ -773,7 +855,7 @@ class AddingQueue:
                 return False
 
             add_result = self.add_to_real_debrid_helper(link, item_identifier, current_hash)
-            torrent_id = add_result.get('torrent_id')  # Store torrent_id from add_result
+            torrent_id = add_result.get('torrent_id')  
 
             if add_result['success']:
                 status = add_result.get('status')
@@ -784,11 +866,13 @@ class AddingQueue:
                     if torrent_id:
                         self.remove_unwanted_torrent(torrent_id)
                         logging.debug(f"Removed torrent {torrent_id} due to non-downloaded status")
+                        # Add to not_wanted since we've determined it's not usable
+                        self.add_to_not_wanted(current_hash, item_identifier, item)
+                        self.add_to_not_wanted_url(link, item_identifier, item)
                     return False
 
                 # Process only if downloaded or not in cached_only mode
                 if status == 'downloaded' or not cached_only:
-                    self.add_to_not_wanted(current_hash, item_identifier)
                     if self.process_torrent(queue_manager, item, title, link, add_result):
                         return True
                     else:
@@ -845,7 +929,7 @@ class AddingQueue:
             multi=False,
             genres=item['genres']
         )
-        return results  # We're not using filtered_out here, but you could if needed
+        return results  
 
     @staticmethod
     def generate_identifier(item: Dict[str, Any]) -> str:
@@ -855,21 +939,3 @@ class AddingQueue:
             return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
-
-    def get_new_item_values(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        # Fetch the updated item from the database
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            # Extract the new values that need to be updated
-            new_values = {
-                'filled_by_title': updated_item.get('filled_by_title'),
-                'filled_by_magnet': updated_item.get('filled_by_magnet'),
-                'filled_by_file': updated_item.get('filled_by_file'),
-                'filled_by_torrent_id': updated_item.get('filled_by_torrent_id'),
-                'version': updated_item.get('version'),
-                # Include any other fields that were updated
-            }
-            return new_values
-        else:
-            logging.warning(f"Could not retrieve updated item for ID {item['id']}")
-            return {}

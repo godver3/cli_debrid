@@ -86,16 +86,34 @@ class ScrapingQueue:
                     return True
 
                 # Filter and process results
-                filtered_results = [r for r in results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
-                logging.info(f"Found {len(filtered_results)} valid results after filtering for {item_identifier}")
+                filtered_results = []
+                for result in results:
+                    if is_magnet_not_wanted(result['magnet']):
+                        logging.info(f"Result '{result['title']}' filtered out by not_wanted_magnets check")
+                        continue
+                    if is_url_not_wanted(result['magnet']):
+                        logging.info(f"Result '{result['title']}' filtered out by not_wanted_urls check")
+                        continue
+                    filtered_results.append(result)
+                
+                logging.info(f"Found {len(filtered_results)} valid results after filtering for {item_identifier} (filtered out {len(results) - len(filtered_results)} results)")
 
                 if not filtered_results:
                     logging.warning(f"All results filtered out for {item_identifier}. Retrying individual scraping.")
                     individual_results, individual_filtered_out = self.scrape_with_fallback(item, False, queue_manager)
                     logging.info(f"Individual scraping returned {len(individual_results)} results")
                     
-                    filtered_individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
-                    logging.info(f"After filtering, individual scraping has {len(filtered_individual_results)} valid results")
+                    filtered_individual_results = []
+                    for result in individual_results:
+                        if is_magnet_not_wanted(result['magnet']):
+                            logging.info(f"Individual result '{result['title']}' filtered out by not_wanted_magnets check")
+                            continue
+                        if is_url_not_wanted(result['magnet']):
+                            logging.info(f"Individual result '{result['title']}' filtered out by not_wanted_urls check")
+                            continue
+                        filtered_individual_results.append(result)
+                    
+                    logging.info(f"After filtering, individual scraping has {len(filtered_individual_results)} valid results (filtered out {len(individual_results) - len(filtered_individual_results)} results)")
                     
                     if not filtered_individual_results:
                         logging.warning(f"No valid results after individual scraping for {item_identifier}. Moving to Sleeping.")
