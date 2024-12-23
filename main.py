@@ -8,6 +8,7 @@ import logging
 import platform
 import psutil
 import webbrowser
+import socket
 
 # Import Windows-specific modules only on Windows
 if platform.system() == 'Windows':
@@ -401,8 +402,11 @@ def setup_tray_icon():
     def delayed_browser_launch():
         time.sleep(2)  # Wait for 2 seconds
         try:
-            webbrowser.open(f'http://{ip_address}:5000')
-            logging.info("Browser launched successfully")
+            if check_localhost_binding(5000):
+                webbrowser.open('http://localhost:5000')
+                logging.info("Browser launched successfully")
+            else:
+                logging.error("Failed to bind to localhost:5000")
         except Exception as e:
             logging.error(f"Failed to launch browser: {e}")
     
@@ -531,7 +535,7 @@ def setup_tray_icon():
         image = Image.open(icon_path)
         import socket
         ip_address = socket.gethostbyname(socket.gethostname())
-        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: {ip_address}:5000\nBattery: {ip_address}:5001", menu)
+        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: localhost:5000\nBattery: localhost:5001", menu)
         
         # Set up double-click handler
         icon.on_activate = restore_from_tray
@@ -543,6 +547,17 @@ def setup_tray_icon():
     except Exception as e:
         logging.error(f"Failed to create or run system tray icon: {e}")
         return
+
+def check_localhost_binding(port=5000):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('127.0.0.1', port))
+        sock.close()
+        return True
+    except socket.error:
+        logging.error(f"Failed to bind to localhost:{port}")
+        stop_program()
+        return False
 
 # Modify the stop_program function
 def stop_program(from_signal=False):
@@ -788,7 +803,7 @@ def main():
     """)
     print(f"             {version}\n") 
     print(f"cli_debrid is initialized.")
-    print(f"The web UI is available at http://{ip_address}:5000")
+    print(f"The web UI is available at http://localhost:5000")
     print("Use the web UI to control the program.")
     print("Press Ctrl+C to stop the program.")
 
@@ -837,24 +852,48 @@ def main():
             time.sleep(5)
     except KeyboardInterrupt:
         stop_program()
+        stop_global_profiling()
+        print("Program stopped.")
 
 def package_main():
     setup_logging()
     package_app()
 
+def print_version():
+    try:
+        with open('version.txt', 'r') as f:
+            version = f.read().strip()
+            print(f"Version:\n\n\t     {version}\n")
+    except Exception as e:
+        logging.error(f"Failed to read version: {e}")
+        print("Version: Unknown\n")
+
 if __name__ == "__main__":
-    setup_logging()
-    start_global_profiling()
-        
-    from api_tracker import setup_api_logging
-    setup_api_logging()
-    from web_server import start_server
-    start_server()
     try:
         # Choose whether to run the normal app or package it
         if len(sys.argv) > 1 and sys.argv[1] == "--package":
             package_main()
         else:
+            setup_logging()
+            start_global_profiling()
+            
+            from api_tracker import setup_api_logging
+            setup_api_logging()
+            from web_server import start_server
+            
+            print_version()
+            print("\ncli_debrid is initialized.")
+            
+            def run_flask():
+                if not start_server():
+                    return False
+                return True
+
+            if not run_flask():
+                stop_program()
+                sys.exit(1)
+                
+            print("The web UI is available at http://localhost:5000")
             main()
     except KeyboardInterrupt:
         stop_global_profiling()
