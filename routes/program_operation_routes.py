@@ -11,6 +11,7 @@ from requests.exceptions import RequestException
 from api_tracker import api
 import logging
 import time
+import socket
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -18,17 +19,28 @@ program_runner = None
 
 def run_server():
     from extensions import app
-   
     app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)
 
 def start_server():
     from extensions import app
+    import socket
+    
+    # Check if port is available
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('0.0.0.0', 5000))
+        sock.close()
+    except socket.error:
+        logging.error("Port 5000 is already in use. Please close any other instances or applications using this port.")
+        return False
+        
     with app.app_context():
         perform_database_migration()
         initialize_app()
     server_thread = threading.Thread(target=run_server)
     server_thread.daemon = True
     server_thread.start()
+    return True
 
 def check_service_connectivity():
     plex_url = get_setting('Plex', 'url')
