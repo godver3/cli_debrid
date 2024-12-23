@@ -21,6 +21,11 @@ from notifications import send_notifications
 import requests
 from datetime import datetime, timedelta
 from queue_manager import QueueManager
+from not_wanted_magnets import (
+    get_not_wanted_magnets, get_not_wanted_urls,
+    purge_not_wanted_magnets_file, save_not_wanted_magnets,
+    load_not_wanted_urls, save_not_wanted_urls
+)
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -541,3 +546,50 @@ def get_available_tasks():
         'task_check_trakt_early_releases', 'task_reconcile_queues'
     ]
     return jsonify({'tasks': tasks}), 200
+
+@debug_bp.route('/not_wanted')
+def not_wanted():
+    """Display not wanted magnets and URLs."""
+    magnets = get_not_wanted_magnets()
+    urls = get_not_wanted_urls()
+    return render_template('debug_not_wanted.html', magnets=magnets, urls=urls)
+
+@debug_bp.route('/not_wanted/magnet/remove', methods=['POST'])
+def remove_not_wanted_magnet():
+    """Remove a magnet from the not wanted list."""
+    magnet = request.form.get('magnet')
+    if magnet:
+        magnets = get_not_wanted_magnets()
+        if magnet in magnets:
+            magnets.remove(magnet)
+            save_not_wanted_magnets(magnets)
+            flash('Magnet removed from not wanted list.', 'success')
+        else:
+            flash('Magnet not found in not wanted list.', 'error')
+    return redirect(url_for('debug.not_wanted'))
+
+@debug_bp.route('/not_wanted/url/remove', methods=['POST'])
+def remove_not_wanted_url():
+    """Remove a URL from the not wanted list."""
+    url = request.form.get('url')
+    if url:
+        urls = get_not_wanted_urls()
+        if url in urls:
+            urls.remove(url)
+            save_not_wanted_urls(urls)
+            flash('URL removed from not wanted list.', 'success')
+        else:
+            flash('URL not found in not wanted list.', 'error')
+    return redirect(url_for('debug.not_wanted'))
+
+@debug_bp.route('/not_wanted/purge', methods=['POST'])
+def purge_not_wanted():
+    """Purge all not wanted magnets and URLs."""
+    try:
+        # Create empty sets for both magnets and URLs
+        save_not_wanted_magnets(set())
+        save_not_wanted_urls(set())
+        flash('All not wanted items have been purged.', 'success')
+    except Exception as e:
+        flash(f'Error purging not wanted items: {str(e)}', 'error')
+    return redirect(url_for('debug.not_wanted'))

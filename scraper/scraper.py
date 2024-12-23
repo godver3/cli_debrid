@@ -22,7 +22,7 @@ from pathlib import Path
 
 # Add our own adult terms list for additional filtering
 adult_terms = [
-    'xxx', 'porn', 'adult', 'sex', 'hentai', 'brazzers', 'playboy', 'penthouse',
+    'xxx', 'porn', 'adult', 'hentai', 'brazzers', 'playboy', 'penthouse',
     'bangbros', 'naughtyamerica', 'blacked', 'tushy', 'vixen', 'pornhub',
     'xvideos', 'xhamster', 'redtube', 'youporn', 'eporner', 'xnxx', 'spankbang',
     'pornhd', 'xmovies', 'beeg', 'porntrex', 'chaturbate', 'myfreecams',
@@ -858,7 +858,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 logging.debug(f"Comparing normalized titles - Parsed: '{normalized_parsed_title}', Query: '{normalized_query_title}'")
                 title_similarity = fuzz.ratio(normalized_parsed_title.lower(), normalized_query_title.lower())
                 logging.debug(f"Initial title similarity score: {title_similarity}%")
-                if title_similarity < 75:
+                if title_similarity < 70:
                     result['filter_reason'] = f"Low parsed title similarity: {title_similarity}%"
                     logging.debug(f"Filtering out result due to low similarity: {result.get('title', 'Unknown')}")
                     continue
