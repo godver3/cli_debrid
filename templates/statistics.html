@@ -922,10 +922,7 @@
                             <p class="year">{{ movie.year }}</p>
                         </div>
                         <div class="hover-content">
-                            <p class="filename">{{ movie.filled_by_file }}</p>
-                            {% if movie.version %}
-                            <p class="episode-info">Quality: {{ movie.version }}</p>
-                            {% endif %}
+                            <p>{{ movie.filled_by_file }}</p>
                         </div>
                     </div>
                     {% endfor %}
@@ -947,13 +944,7 @@
                             <p class="year">{{ show.year }}</p>
                         </div>
                         <div class="hover-content">
-                            <p class="filename">{{ show.filled_by_title[0] }}</p>
-                            {% if show.latest_episode %}
-                            <p class="episode-info">Latest: S{{ '%02d' | format(show.latest_episode[0]) }}E{{ '%02d' | format(show.latest_episode[1]) }}</p>
-                            {% endif %}
-                            {% if show.versions %}
-                            <p class="episode-info">Quality: {{ show.versions[0] }}</p>
-                            {% endif %}
+                            <p>{{ show.filled_by_title[0] }}</p>
                         </div>
                     </div>
                     {% endfor %}
@@ -976,7 +967,7 @@
                             <p class="year">{{ item.year }}</p>
                         </div>
                         <div class="hover-content">
-                            <p>{{ item.upgrading_from[0] }} → {{ item.filled_by_file }}</p>
+                            <p>{{ item.filled_by_file }}</p>
                         </div>
                     </div>
                     {% endfor %}

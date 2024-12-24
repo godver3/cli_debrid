@@ -117,17 +117,17 @@ def get_version():
             application_path = os.path.dirname(os.path.abspath(__file__))
         
         version_path = os.path.join(application_path, 'version.txt')
-        # logging.info(f"Reading version from: {version_path}")
         
         with open(version_path, 'r') as version_file:
-            version = version_file.read().strip()
+            # Read the exact contents and only strip whitespace
+            version = version_file.readline().strip()
+            return version  # Return immediately to avoid any further processing
     except FileNotFoundError:
         logging.error("version.txt not found")
-        version = "0.0.0"
+        return "0.0.0"
     except Exception as e:
         logging.error(f"Error reading version: {e}")
-        version = "0.0.0"
-    return version
+        return "0.0.0"
 
 def signal_handler(signum, frame):
     stop_program(from_signal=True)
