@@ -38,7 +38,7 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN echo '#!/bin/bash\n\
 supervisord -n -c /etc/supervisor/conf.d/supervisord.conf & \n\
 sleep 2\n\
-exec tail -f /user/logs/debug.log' > /app/start.sh && \
+exec tail -F /user/logs/debug.log' > /app/start.sh && \
 chmod +x /app/start.sh
 
 # Start supervisord and tail the log file

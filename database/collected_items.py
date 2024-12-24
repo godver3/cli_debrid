@@ -187,9 +187,9 @@ def add_collected_items(media_items_batch, recent=False):
                                 UPDATE media_items
                                 SET state = ?, last_updated = ?, collected_at = ?, 
                                     original_collected_at = COALESCE(original_collected_at, ?),
-                                    location_on_disk = ?
+                                    location_on_disk = ?, upgraded = ?
                                 WHERE id = ?
-                            ''', (new_state, datetime.now(), collected_at, existing_collected_at, location, item_id))
+                            ''', (new_state, datetime.now(), collected_at, existing_collected_at, location, is_upgrade, item_id))
                             
                             logging.info(f"Updated existing item from Checking to {new_state}: {item_identifier} (ID: {item_id})")
 
@@ -218,12 +218,12 @@ def add_collected_items(media_items_batch, recent=False):
                             # For movies
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), location
+                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), location, False
                             ))
                         else:
                             if imdb_id not in airtime_cache:
@@ -237,13 +237,13 @@ def add_collected_items(media_items_batch, recent=False):
                             # For episodes
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), location
+                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), location, False
                             ))
                             logging.info(f"Added new item as Collected: {item_identifier} location: {location}")
 
