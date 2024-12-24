@@ -58,6 +58,9 @@ class ProgramRunner:
             logging.error(f"Missing queues during initialization: {missing_queues}")
             raise RuntimeError(f"Queue initialization failed. Missing queues: {missing_queues}")
         
+        # Always resume queue on startup to ensure we're not stuck in paused state
+        self.queue_manager.resume_queue()
+        
         logging.info("Successfully initialized QueueManager with queues: " + ", ".join(self.queue_manager.queues.keys()))
         
         self.tick_counter = 0
@@ -214,7 +217,7 @@ class ProgramRunner:
 
     def pause_queue(self):
         from queue_manager import QueueManager
-
+        
         QueueManager().pause_queue()
         self.queue_paused = True
         logging.info("Queue paused")
