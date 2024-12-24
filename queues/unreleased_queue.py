@@ -40,8 +40,13 @@ class UnreleasedQueue:
                 release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
                 release_datetime = datetime.combine(release_date, datetime.min.time())
                 logging.info(f"Item {item_identifier} release date: {release_datetime}")
-                # Check if the item should be moved to Wanted queue (24 hours before release)
-                if current_datetime >= release_datetime - timedelta(hours=24):
+                
+                # If it's an early release, move it to Wanted immediately
+                if item.get('early_release', False):
+                    logging.info(f"Item {item_identifier} is an early release. Moving to Wanted queue immediately.")
+                    items_to_move.append(item)
+                # Otherwise check if it's within 24 hours of release
+                elif current_datetime >= release_datetime - timedelta(hours=24):
                     logging.info(f"Item {item_identifier} is within 24 hours of release. Moving to Wanted queue.")
                     items_to_move.append(item)
                 else:

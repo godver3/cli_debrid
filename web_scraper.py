@@ -572,8 +572,13 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     imdb_id = metadata.get('imdb_id')
 
     if not imdb_id:
+        # Try to get IMDb ID directly from our database mapping
+        from cli_battery.app.direct_api import DirectAPI
+        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show' if media_type == 'tv' else media_type)
+
+    if not imdb_id:
         logging.error(f"Could not find IMDB ID for TMDB ID {tmdb_id}")
-        return []
+        return [], []  # Return empty lists for both torrent results and cache status
 
     movie_or_episode = 'episode' if media_type == 'tv' or media_type == 'show' else 'movie'
 
