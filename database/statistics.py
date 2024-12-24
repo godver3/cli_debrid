@@ -246,22 +246,41 @@ async def get_recently_upgraded_items(upgraded_limit=5):
     try:
         cursor = conn.cursor()
         
-        # Query for upgrades
+        # Query for upgrades using the new upgraded flag
         upgraded_query = """
-        SELECT title, year, type, collected_at, imdb_id, tmdb_id, version, filled_by_title, filled_by_file, upgrading_from
-        FROM media_items
-        WHERE upgrading_from IS NOT NULL
-        GROUP BY title, year
-        ORDER BY MAX(collected_at) DESC
+        WITH LatestUpgrades AS (
+            SELECT 
+                title,
+                year,
+                type,
+                collected_at,
+                imdb_id,
+                tmdb_id,
+                version,
+                filled_by_title,
+                filled_by_file,
+                ROW_NUMBER() OVER (PARTITION BY title, year ORDER BY collected_at DESC) as rn
+            FROM media_items
+            WHERE upgraded = 1
+        )
+        SELECT 
+            title,
+            year,
+            type,
+            collected_at,
+            imdb_id,
+            tmdb_id,
+            version,
+            filled_by_title,
+            filled_by_file
+        FROM LatestUpgrades
+        WHERE rn = 1
+        ORDER BY collected_at DESC
         LIMIT ?
         """
         
         cursor.execute(upgraded_query, (upgraded_limit,))
         upgrade_results = cursor.fetchall()
-        
-        #logging.debug(f"Initial upgraded results: {len(upgrade_results)}")
-        #for media in upgrade_results:
-        #    logging.debug(f"Upgraded: {media['title']} ({media['year']}) - Type: {media['type']} - Version: {media['version']}")
         
         media_items = {}
         
@@ -277,12 +296,10 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                         **item,
                         'versions': [item['version']],
                         'filled_by_title': [item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']],
-                        'upgrading_from': [item['upgrading_from']],
                         'collected_at': item['collected_at']
                     }
                     # Set media_type based on the item type from database
                     media_type = 'tv' if item['type'] in ['show', 'episode'] else 'movie'
-                    #logging.debug(f"Setting media_type to {media_type} for {item['title']} (type: {item['type']})")
                     
                     cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
                     if cached_url:
@@ -293,11 +310,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                 else:
                     media_items[key]['versions'].append(item['version'])
                     media_items[key]['filled_by_title'].append(item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file'])
-                    media_items[key]['upgrading_from'].append(item['upgrading_from'])
                     media_items[key]['collected_at'] = max(media_items[key]['collected_at'], item['collected_at'])
-                
-                #logging.debug(f"Upgraded Media: {key} - Versions: {media_items[key]['versions']}")
-            
             
             # Wait for all poster URL tasks to complete
             poster_results = await asyncio.gather(*[task for _, task, _ in poster_tasks], return_exceptions=True)
@@ -310,20 +323,15 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                     item['poster_url'] = result
                     cache_poster_url(item['tmdb_id'], media_type, result)
                 else:
-                    #logging.info(f"get_setting('TMDB', 'api_key'): {get_setting('TMDB', 'api_key')}")
                     if get_setting('TMDB', 'api_key') == "":
                         logging.warning("TMDB API key not set, using placeholder images")
-                        
-                        # Generate the placeholder URL
                         placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
                         
                         # Check if the request is secure (HTTPS)
                         if request.is_secure:
-                            # If it's secure, ensure the URL uses HTTPS
                             parsed_url = urlparse(placeholder_url)
                             placeholder_url = parsed_url._replace(scheme='https').geturl()
                         else:
-                            # If it's not secure, use HTTP
                             parsed_url = urlparse(placeholder_url)
                             placeholder_url = parsed_url._replace(scheme='http').geturl()
                         
@@ -333,44 +341,24 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         
         # Convert consolidated_movies dict to list and sort
         upgraded_list = list(media_items.values())
-        
-        # Log the values before sorting
-        #for item in upgraded_list:
-        #    logging.debug(f"Before sorting: {item['title']} - collected_at: {item['collected_at']}")
-        
-        # Update the sorting key to handle None values
         upgraded_list.sort(key=lambda x: x['collected_at'] or '', reverse=True)
         
-        # Log the values after sorting
-        #for item in upgraded_list:
-        #    logging.debug(f"After sorting: {item['title']} - collected_at: {item['collected_at']}")
-        
-        #logging.debug("Before limit_and_process:")
-        #for upgraded in upgraded_list:
-        #    logging.debug(f"Upgraded: {upgraded['title']} ({upgraded['year']}) - Versions: {upgraded['versions']}")
-        
-        # Final processing and limiting to 5 unique items based on title
+        # Final processing and limiting
         def limit_and_process(items, limit=5):
             unique_items = {}
             for item in items:
                 if len(unique_items) >= limit:
                     break
-                # Use both title and year as the key for movies
                 key = f"{item['title']}-{item['year']}" if 'year' in item else item['title']
                 if key not in unique_items:
                     if 'seasons' in item:
                         item['seasons'].sort()
                     item['versions'].sort()
-                    item['versions'] = ', '.join(item['versions'])  # Join versions into a string
+                    item['versions'] = ', '.join(item['versions'])
                     unique_items[key] = item
-                #logging.debug(f"Processed item: {item['title']} ({item.get('year', '')}) - Versions: {item['versions']}")
             return list(unique_items.values())
 
         upgraded_list = limit_and_process(upgraded_list)
-
-        #logging.debug("After limit_and_process:")
-        #for upgraded in upgraded_list:
-        #    logging.debug(f"Upgraded: {upgraded['title']} ({upgraded['year']}) - Versions: {upgraded['versions']}")
 
         # Clean expired cache entries
         clean_expired_cache()

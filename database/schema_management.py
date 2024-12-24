@@ -40,6 +40,9 @@ def migrate_schema():
         if 'location_on_disk' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN location_on_disk TEXT')
             logging.info("Successfully added location_on_disk column to media_items table.")
+        if 'upgraded' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN upgraded BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added upgraded column to media_items table.")
 
         # logging.info("Successfully added new columns to media_items table.")
 
