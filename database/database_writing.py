@@ -35,7 +35,7 @@ def update_year(item_id: int, year: int):
     finally:
         conn.close()
 
-def update_release_date_and_state(item_id, release_date, new_state):
+def update_release_date_and_state(item_id, release_date, new_state, early_release=None):
     conn = get_db_connection()
     try:
         # First, fetch the current item data
@@ -43,11 +43,20 @@ def update_release_date_and_state(item_id, release_date, new_state):
         item = cursor.fetchone()
         
         if item:
-            conn.execute('''
+            update_query = '''
                 UPDATE media_items
                 SET release_date = ?, state = ?, last_updated = ?
-                WHERE id = ?
-            ''', (release_date, new_state, datetime.now(), item_id))
+            '''
+            params = [release_date, new_state, datetime.now()]
+            
+            if early_release is not None:
+                update_query += ', early_release = ?'
+                params.append(early_release)
+                
+            update_query += ' WHERE id = ?'
+            params.append(item_id)
+            
+            conn.execute(update_query, params)
             conn.commit()
             
             # Create item description based on the type of media

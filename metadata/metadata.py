@@ -379,8 +379,8 @@ def refresh_release_dates():
                             for trakt_list in trakt_lists:
                                 if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
                                     logging.info(f"Movie found in early release list: {trakt_list['name']}")
-                                    new_release_date = datetime.now().strftime("%Y-%m-%d")
-                                
+                                    item_dict['early_release'] = True
+                                    break
                 else:  # TV show episode
                     if season_number is not None and episode_number is not None:
                         episode_data = metadata.get('seasons', {}).get(str(season_number), {}).get('episodes', {}).get(str(episode_number), {})
@@ -413,13 +413,19 @@ def refresh_release_dates():
                 else:
                     release_date = datetime.strptime(new_release_date, "%Y-%m-%d").date()
                     today = datetime.now().date()
-                    new_state = "Wanted" if release_date <= today else "Unreleased"
+                    
+                    # If it's an early release and the original release date is in the future,
+                    # keep it marked as Unreleased until the actual release date
+                    if item_dict.get('early_release', False):
+                        new_state = "Wanted" if release_date <= today else "Unreleased"
+                    else:
+                        new_state = "Wanted" if release_date <= today else "Unreleased"
 
                 logging.info(f"New state: {new_state}")
 
                 if new_state != item_dict['state'] or new_release_date != item_dict['release_date']:
                     logging.info("Updating release date and state in database")
-                    update_release_date_and_state(item_dict['id'], new_release_date, new_state)
+                    update_release_date_and_state(item_dict['id'], new_release_date, new_state, early_release=item_dict.get('early_release', False))
                     logging.info(f"Updated: {title} has a release date of: {new_release_date}")
                 else:
                     logging.info("No changes needed for this item")
