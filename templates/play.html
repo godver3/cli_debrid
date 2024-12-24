@@ -1,11 +1,7 @@
 {% extends "base.html" %}
 
 {% block head %}
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
-<!-- Plyr CSS -->
-<link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+<link href="https://vjs.zencdn.net/8.6.1/video-js.css" rel="stylesheet" />
 <style>
 .video-container {
     position: relative;
@@ -15,6 +11,26 @@
     background: #000;
     border-radius: 4px;
     overflow: hidden;
+}
+
+.video-js {
+    width: 100%;
+    height: 100%;
+}
+
+.vjs-error-display {
+    display: none;
+}
+
+.custom-error {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff;
+    text-align: center;
+    z-index: 2;
+    display: none;
 }
 
 .loading-overlay {
@@ -27,8 +43,7 @@
     display: none;
     justify-content: center;
     align-items: center;
-    flex-direction: column;
-    z-index: 1000;
+    z-index: 1;
 }
 
 .loading-overlay.active {
@@ -36,615 +51,154 @@
 }
 
 .loading-spinner {
-    border: 4px solid rgba(255, 255, 255, 0.1);
-    border-top: 4px solid #fff;
+    border: 4px solid rgba(255, 255, 255, 0.3);
     border-radius: 50%;
+    border-top: 4px solid #fff;
     width: 40px;
     height: 40px;
     animation: spin 1s linear infinite;
-}
-
-.error-message {
-    color: #ff4444;
-    margin-top: 10px;
-    text-align: center;
-    padding: 10px;
 }
 
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
-
-.loading-text {
-    margin-top: 10px;
-    color: #fff;
-}
-
-/* Plyr customization */
-.plyr {
-    --plyr-color-main: #00b3ff;
-    height: 100%;
-}
-
-.plyr video {
-    width: 100%;
-    height: 100%;
-}
-
-/* Fix Plyr icon sizing */
-.plyr button svg {
-    width: 18px;
-    height: 18px;
-}
-
-.plyr button.plyr__control--overlaid svg {
-    width: 32px;
-    height: 32px;
-}
-
-.plyr--full-ui input[type=range] {
-    height: 6px;
-}
-
-.plyr__control {
-    padding: 8px;
-}
-
-.plyr__control--overlaid {
-    padding: 20px;
-    background: rgba(0, 179, 255, 0.8);
-}
-
-.plyr__control--overlaid:hover {
-    background: rgba(0, 179, 255, 1);
-}
-
-.plyr--video .plyr__controls {
-    padding: 12px 6px 0;
-    background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7));
-}
-
-.plyr__menu__container {
-    background: rgba(28, 28, 28, 0.9);
-    border-radius: 4px;
-    padding: 8px;
-}
-.alert-warning {
-  --bs-alert-color: #664d03;
-  --bs-alert-bg: #fff3cd;
-  --bs-alert-border-color: #ffecb5;
-}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="alert alert-warning text-center" role="alert" style="margin: 1rem auto; max-width: 1200px;">
-    <strong>⚠️ Pre-Alpha Feature:</strong> This video player is currently in early development and may have unexpected behavior or limitations.
-</div>
 <div class="container mt-4">
     <h2>{{ video.title }}</h2>
-    <div id="errorMessage" class="error-message" style="display: none;"></div>
     <div class="video-container">
-        <div id="loadingOverlay" class="loading-overlay">
+        <div class="custom-error"></div>
+        <div class="loading-overlay">
             <div class="loading-spinner"></div>
-            <div class="loading-text">Loading video...</div>
         </div>
-        <div id="player-wrapper">
-            <video id="player" controls></video>
-        </div>
+        <video 
+            id="my-video" 
+            class="video-js vjs-big-play-centered"
+            controls
+            preload="metadata">
+        </video>
     </div>
 </div>
 
-<!-- Plyr JS -->
-<script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
-
+<script src="https://vjs.zencdn.net/8.6.1/video.min.js"></script>
 <script>
-    let player = null;
-    let retryCount = 0;
-    let lastBufferCheck = 0;
-    const MAX_RETRIES = 3;
-    const BUFFER_THRESHOLD = 90; // Buffer threshold in seconds
-    let videoDuration = 0;
-
-    function formatTime(seconds) {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    }
-
-    function initializePlayer() {
-        const videoElement = document.createElement('video');
-        videoElement.setAttribute('playsinline', '');
-        videoElement.setAttribute('id', 'player');
-        videoElement.setAttribute('preload', 'auto');
-        
-        // Set duration directly on video element
-        if (videoDuration > 0) {
-            videoElement.duration = videoDuration;
-            // Also set it as a data attribute for backup
-            videoElement.setAttribute('data-duration', videoDuration);
-        }
-        
-        // Set reasonable buffer size
-        videoElement.preload = 'auto';
-        if ('buffered' in videoElement) {
-            videoElement.autobuffer = true;
-        }
-
-        const wrapper = document.getElementById('player-wrapper');
-        wrapper.innerHTML = '';
-        wrapper.appendChild(videoElement);
-
-        const controls = [
-            'play-large',
-            'rewind',
-            'play',
-            'fast-forward',
-            'progress',
-            'current-time',
-            'duration',
-            'mute',
-            'volume',
-            'settings',
-            'fullscreen'
-        ];
-
-        // Create player with duration in initial config
-        player = new Plyr('#player', {
-            controls,
-            seekTime: 10,
-            keyboard: { focused: true, global: true },
-            tooltips: { controls: true, seek: true },
-            previewThumbnails: { enabled: false },
-            debug: true,
-            quality: { default: 1080 },
-            buffer: { 
-                threshold: BUFFER_THRESHOLD,
-                preload: true 
-            },
-            duration: videoDuration,
-            loadSprite: true
-        });
-
-        // Store whether we've added the seek listener
-        let seekListenerAdded = false;
-
-        // Wait for player to be ready before adding seek listener
-        player.on('ready', () => {
-            console.log('Player ready, setting up seek listener');
-            hideLoading();
-
-            // Only add the seek listener if we haven't already
-            if (!seekListenerAdded) {
-                console.log('Adding seek listener for the first time');
-                // Try different selectors for the progress bar
-                const progressBar = document.querySelector('.plyr__progress');
-                const progressBarInput = document.querySelector('.plyr__progress input[type="range"]');
-                
-                console.log('Progress bar element:', progressBar);
-                console.log('Progress bar input element:', progressBarInput);
-
-                if (progressBar) {
-                    console.log('Adding click listener to progress bar');
-                    const handleSeekClick = async (e) => {
-                        // Prevent event from bubbling up to avoid double triggers
-                        e.stopPropagation();
-                        e.preventDefault();
-                        
-                        // Immediately pause playback and show loading
-                        player.pause();
-                        showLoading();
-                        
-                        console.log('Progress bar clicked!');
-                        const rect = progressBar.getBoundingClientRect();
-                        const clickPosition = (e.clientX - rect.left) / rect.width;
-                        const seekTime = clickPosition * player.duration;
-                        
-                        console.log('Click details:', {
-                            clickX: e.clientX,
-                            barLeft: rect.left,
-                            barWidth: rect.width,
-                            clickPosition,
-                            seekTime,
-                            currentTime: player.currentTime,
-                            duration: player.duration
-                        });
-
-                        try {
-                            // Clean up the current stream before seeking
-                            cleanupCurrentStream();
-
-                            // First log the seek attempt
-                            await fetch('/video/log_seek', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                },
-                                body: JSON.stringify({
-                                    video_id: getCurrentVideoId(),
-                                    seek_time: seekTime,
-                                    current_time: player.currentTime,
-                                    total_duration: player.duration
-                                })
-                            });
-
-                            // Then request the seek
-                            const seekResponse = await fetch('/video/seek', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                },
-                                body: JSON.stringify({
-                                    video_id: getCurrentVideoId(),
-                                    seek_time: seekTime
-                                })
-                            });
-
-                            console.log('Seek response:', seekResponse);
-
-                            if (seekResponse.ok) {
-                                console.log('Seek request successful, reloading video');
-                                // Reload the video with the new seek time
-                                await loadVideo(getCurrentVideoId(), seekTime);
-                            } else {
-                                console.error('Seek request failed:', await seekResponse.json());
-                                hideLoading(); // Hide loading if seek failed
-                            }
-                        } catch (error) {
-                            console.error('Error during seek:', error);
-                            hideLoading(); // Hide loading if there was an error
-                            showError('Failed to seek video: ' + error.message);
-                        }
-                    };
-
-                    // Remove any existing listeners (just in case)
-                    progressBar.removeEventListener('click', handleSeekClick, { capture: true });
-                    // Add the new listener
-                    progressBar.addEventListener('click', handleSeekClick, { capture: true });
-                    seekListenerAdded = true;
-                    console.log('Seek listener added successfully');
-                } else {
-                    console.error('Could not find progress bar element!');
-                }
-            } else {
-                console.log('Seek listener already added, skipping');
-            }
-        });
-
-        // Store the expected duration in the player instance
-        player.config.duration = videoDuration;
-
-        player.on('loadedmetadata', () => {
-            console.log('Metadata loaded, player duration:', player.duration);
-            console.log('Expected duration:', videoDuration);
-            if (!player.duration || Math.abs(player.duration - videoDuration) > 1) {
-                console.log('Correcting duration on loadedmetadata, current:', player.duration, 'expected:', videoDuration);
-                updatePlayerDuration(videoDuration);
-            }
-        });
-
-        // Add timeupdate listener to continuously ensure correct duration and progress
-        player.on('timeupdate', () => {
-            if (isInitialLoad) return;  // Skip updates during initial load
-            
-            const currentDuration = player.duration;
-            const currentTime = player.currentTime;
-            
-            // Update duration if needed
-            if (videoDuration > 0 && (!currentDuration || Math.abs(currentDuration - videoDuration) > 1)) {
-                console.log('Correcting duration on timeupdate, current:', currentDuration, 'expected:', videoDuration);
-                updatePlayerDuration(videoDuration);
-            }
-            
-            // Force progress bar update
-            if (player.elements.progress) {
-                const percent = (currentTime / videoDuration) * 100;
-                player.elements.progress.value = percent;
-                player.elements.progress.style.setProperty('--value', `${percent}%`);
-                
-                if (player.elements.inputs.seek) {
-                    player.elements.inputs.seek.value = percent;
-                }
-                
-                if (player.elements.display.currentTime) {
-                    player.elements.display.currentTime.textContent = formatTime(currentTime);
-                }
-            }
-        });
-
-        player.on('waiting', () => {
-            console.log('Player is waiting/buffering');
-            showLoading();
-        });
-
-        player.on('playing', () => {
-            console.log('Player is playing');
-            hideLoading();
-            retryCount = 0;
-        });
-
-        player.on('progress', () => {
-            const now = Date.now();
-            if (now - lastBufferCheck < 1000) return;
-            lastBufferCheck = now;
-
-            const video = player.elements.original;
-            if (!video) return;
-
-            const buffered = video.buffered;
-            const currentTime = video.currentTime;
-            
-            if (buffered.length > 0) {
-                const bufferedEnd = buffered.end(buffered.length - 1);
-                const bufferedAmount = bufferedEnd - currentTime;
-                console.log(`Buffer status: ${bufferedAmount.toFixed(2)}s, Current time: ${currentTime.toFixed(2)}, Total duration: ${player.duration}`);
-                
-                if (bufferedAmount > BUFFER_THRESHOLD) {
-                    console.log(`Sufficient buffer (${bufferedAmount.toFixed(2)}s), pausing stream`);
-                    cleanupCurrentStream();
-                }
-            }
-        });
-
-        player.on('error', (error) => {
-            console.error('Player error:', error);
-            handlePlaybackError();
-        });
-
-        const video = player.elements.original;
-        
-        video.addEventListener('waiting', () => {
-            showLoading();
-            console.log('Video is buffering...');
-        });
-
-        video.addEventListener('canplay', () => {
-            hideLoading();
-            console.log('Video can play');
-        });
-
-        video.addEventListener('progress', () => {
-            if (video.buffered.length) {
-                const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-                const duration = video.duration;
-                console.log(`Buffered: ${Math.round((bufferedEnd / duration) * 100)}%`);
-            }
-        });
-
-        return player;
-    }
-
-    function updatePlayerDuration(duration) {
-        if (!duration || duration <= 0) return;
-        
-        console.log('Updating player duration to:', duration);
-        
-        // Update the video element directly
-        const video = player.elements.original;
-        if (video) {
-            video.duration = duration;
-            video.setAttribute('data-duration', duration);
-        }
-        
-        // Update Plyr's internal duration
-        player.duration = duration;
-        player.config.duration = duration;
-        
-        // Update UI elements
-        if (player.elements.display.duration) {
-            player.elements.display.duration.textContent = formatTime(duration);
-        }
-        if (player.elements.progress) {
-            player.elements.progress.setAttribute('aria-valuemax', duration);
-        }
-        if (player.elements.inputs.seek) {
-            player.elements.inputs.seek.setAttribute('aria-valuemax', duration);
-        }
-        
-        // Force progress bar update
-        const progress = player.elements.progress;
-        if (progress && progress.value) {
-            const percent = (player.currentTime / duration) * 100;
-            progress.style.setProperty('--value', `${percent}%`);
-        }
-    }
-
-    function cleanupCurrentStream() {
-        const videoId = getCurrentVideoId();
-        if (!videoId) return;
-
-        fetch(`/video/${videoId}/cleanup`, {
-            method: 'POST',
-        }).then(response => {
-            if (!response.ok) {
-                console.warn('Failed to cleanup stream:', response.statusText);
-            }
-        }).catch(error => {
-            console.error('Error cleaning up stream:', error);
-        });
-    }
-
-    let isInitialLoad = false;
-    async function loadVideo(videoId, startTime = 0) {
+    let player;
+    let realDuration = 0;
+    
+    // Initialize player after getting metadata
+    async function initializePlayer() {
         try {
-            showLoading();
-            cleanupCurrentStream();
-            isInitialLoad = true;  // Set flag to prevent timeupdate handling
-
-            console.log('Loading video:', videoId, 'at time:', startTime);
-
-            // Initialize the stream
-            const response = await fetch(`/video/${videoId}/start`);
-            const data = await response.json();
-            
-            if (data.error) {
-                throw new Error(data.error);
+            console.log('Fetching video metadata...');
+            const response = await fetch('/video/{{ video.id }}/metadata');
+            if (!response.ok) {
+                throw new Error('Failed to fetch video metadata');
             }
+            const metadata = await response.json();
+            console.log('Received metadata:', metadata);
+            
+            realDuration = metadata.duration;
 
-            // Update video duration
-            videoDuration = data.duration;
+            // Register middleware to handle duration
+            videojs.use('*', function(player) {
+                return {
+                    setSource: function(srcObj, next) {
+                        next(null, srcObj);
+                    },
+                    duration: function(dur) {
+                        return realDuration;
+                    },
+                    currentTime: function(ct) {
+                        return ct;
+                    },
+                    setCurrentTime: function(ct) {
+                        return ct;
+                    }
+                };
+            });
             
-            // Create and set up new video element
-            initializePlayer();
-            
-            // Set initial time on the video element before setting source
-            const video = player.elements.original;
-            if (video) {
-                video.currentTime = startTime;
-            }
-            
-            // Set up the source for the player
-            const source = {
-                type: 'video',
-                title: 'Video',
-                sources: [{
-                    src: `/video/${videoId}/stream?t=${startTime}`,
-                    type: 'video/mp4',
-                }]
-            };
-            
-            console.log('Setting player source:', source);
-            player.source = source;
-
-            // Update progress bar immediately
-            if (player.elements.progress) {
-                const percent = (startTime / videoDuration) * 100;
-                player.elements.progress.value = percent;
-                player.elements.progress.style.setProperty('--value', `${percent}%`);
-                
-                if (player.elements.inputs.seek) {
-                    player.elements.inputs.seek.value = percent;
+            // Initialize Video.js
+            player = videojs('my-video', {
+                controls: true,
+                fluid: true,
+                preload: 'metadata',
+                playbackRates: [0.5, 1, 1.5, 2],
+                html5: {
+                    vhs: {
+                        overrideNative: true
+                    }
                 }
-            }
-            
-            // Handle canplay event
-            player.once('canplay', () => {
-                console.log('Video can play, setting current time:', startTime);
-                player.currentTime = startTime;  // Set time again after source is loaded
-                isInitialLoad = false;  // Reset flag to allow timeupdate handling
-                hideLoading();
-                player.play().catch(error => {
-                    console.error('Error playing video:', error);
-                    hideLoading();
+            });
+
+            // Wait for player to be ready
+            player.ready(function() {
+                console.log('Player ready');
+                
+                // Set up event listeners
+                const loadingOverlay = document.querySelector('.loading-overlay');
+                const customError = document.querySelector('.custom-error');
+
+                player.on('loadstart', () => {
+                    console.log('Load started');
+                    // Set initial duration
+                    player.tech_.el_.duration = realDuration;
+                });
+
+                player.on('durationchange', () => {
+                    console.log('Duration change detected');
+                    // Force the duration to our real value
+                    player.tech_.el_.duration = realDuration;
+                });
+
+                player.on('loadedmetadata', () => {
+                    console.log('Metadata loaded');
+                    // Force the duration again after metadata loads
+                    player.tech_.el_.duration = realDuration;
+                });
+
+                player.on('waiting', () => {
+                    console.log('Player waiting');
+                    loadingOverlay.classList.add('active');
+                });
+
+                player.on('playing', () => {
+                    console.log('Player playing');
+                    loadingOverlay.classList.remove('active');
+                });
+
+                player.on('error', () => {
+                    const error = player.error();
+                    console.error('Player error:', error);
+                    customError.textContent = `Error: ${error.message}`;
+                    customError.style.display = 'block';
+                    loadingOverlay.classList.remove('active');
+                });
+
+                // Set the source
+                player.src({
+                    type: 'video/mp4',
+                    src: `/video/{{ video.id }}/stream`
                 });
             });
 
-            hideError();
-            
-        } catch (error) {
-            console.error('Error loading video:', error);
-            showError(error.message);
-            hideLoading();
-            isInitialLoad = false;  // Reset flag in case of error
-        }
-    }
-
-    function showError(message) {
-        const errorMessage = document.getElementById('errorMessage');
-        errorMessage.textContent = message;
-        errorMessage.style.display = 'block';
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        loadingOverlay.classList.remove('active');
-    }
-
-    function hideError() {
-        const errorMessage = document.getElementById('errorMessage');
-        errorMessage.style.display = 'none';
-    }
-
-    function showLoading() {
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        loadingOverlay.classList.add('active');
-    }
-
-    function hideLoading() {
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        loadingOverlay.classList.remove('active');
-    }
-
-    function handlePlaybackError() {
-        console.error('Playback error');
-        if (retryCount < MAX_RETRIES) {
-            console.log(`Retrying playback (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
-            retryCount++;
-            
-            setTimeout(() => {
-                loadVideo(getCurrentVideoId(), player ? player.currentTime : 0);
-            }, 3000);
-        } else {
-            console.error('Max playback retries reached');
-            showError('Failed to play video after multiple attempts. Please refresh the page and try again.');
-        }
-    }
-
-    function getCurrentVideoId() {
-        return {{ video.id }};
-    }
-
-    // Initialize stream when the page loads
-    loadVideo(getCurrentVideoId());
-
-    // Cleanup when leaving the page
-    window.addEventListener('beforeunload', async () => {
-        try {
-            await fetch(`/video/{{ video.id }}/cleanup`, { method: 'POST' });
-        } catch (error) {
-            console.error('Error during cleanup:', error);
-        }
-    });
-
-    document.addEventListener('DOMContentLoaded', function() {
-        const video = document.getElementById('player');
-        let lastBufferCheck = Date.now();
-        let bufferHealth = 1.0; // 1.0 = good, 0.0 = bad
-        
-        // Monitor buffering state
-        video.addEventListener('waiting', function() {
-            // Video is buffering
-            bufferHealth = Math.max(0, bufferHealth - 0.2);
-            sendBufferHealth();
-        });
-
-        video.addEventListener('playing', function() {
-            // Video resumed playing
-            bufferHealth = Math.min(1.0, bufferHealth + 0.1);
-            sendBufferHealth();
-        });
-
-        // Monitor buffer progress
-        setInterval(function() {
-            if (!video.paused) {
-                const buffered = video.buffered;
-                if (buffered.length > 0) {
-                    const currentBuffer = buffered.end(buffered.length - 1) - video.currentTime;
-                    if (currentBuffer < 2) { // Less than 2 seconds buffered
-                        bufferHealth = Math.max(0, bufferHealth - 0.1);
-                    } else if (currentBuffer > 5) { // More than 5 seconds buffered
-                        bufferHealth = Math.min(1.0, bufferHealth + 0.05);
-                    }
-                    sendBufferHealth();
+            // Clean up when leaving the page
+            window.addEventListener('beforeunload', () => {
+                if (player) {
+                    player.dispose();
                 }
-            }
-        }, 1000);
+            });
 
-        function sendBufferHealth() {
-            // Only send updates every 2 seconds at most
-            if (Date.now() - lastBufferCheck > 2000) {
-                lastBufferCheck = Date.now();
-                fetch('/api/buffer_health', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        videoId: getCurrentVideoId(),
-                        health: bufferHealth
-                    })
-                });
-            }
+        } catch (error) {
+            console.error('Error initializing player:', error);
+            const customError = document.querySelector('.custom-error');
+            customError.textContent = `Error: ${error.message}`;
+            customError.style.display = 'block';
         }
-    });
+    }
+
+    // Start initialization when DOM is ready
+    document.addEventListener('DOMContentLoaded', initializePlayer);
 </script>
 {% endblock %}
