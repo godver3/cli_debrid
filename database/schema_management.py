@@ -43,6 +43,9 @@ def migrate_schema():
         if 'upgraded' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN upgraded BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added upgraded column to media_items table.")
+        if 'early_release' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN early_release BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added early_release column to media_items table.")
 
         # logging.info("Successfully added new columns to media_items table.")
 
@@ -116,7 +119,10 @@ def create_tables():
                 runtime INTEGER,  -- Add the runtime column
                 alternate_title TEXT,
                 upgrading_from TEXT,
-                blacklisted_date TIMESTAMP
+                blacklisted_date TIMESTAMP,
+                upgraded BOOLEAN DEFAULT FALSE,
+                location_on_disk TEXT,
+                early_release BOOLEAN DEFAULT FALSE
             )
         ''')
 
