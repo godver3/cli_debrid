@@ -36,7 +36,12 @@ class WantedQueue:
                         episode_airtime_offset = get_setting("Queue", "episode_airtime_offset", 0)
                     episode_airtime_offset = float(episode_airtime_offset) if episode_airtime_offset else 0.0
                     airtime_str = item.get('airtime') or "19:00"  # Use "19:00" if airtime is None
-                    airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                    try:
+                        # First try HH:MM:SS format
+                        airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                    except ValueError:
+                        # If that fails, try HH:MM format
+                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
                     airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(hours=episode_airtime_offset)).time()
                 else:
                     airtime_cutoff = datetime.now().time()
@@ -78,10 +83,13 @@ class WantedQueue:
                 # Handle case where airtime is None or invalid
                 if airtime_str:
                     try:
-                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                        airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
                     except ValueError:
-                        logging.debug(f"Invalid airtime format for item {item_identifier}: {airtime_str}. Using default.")
-                        airtime = datetime.strptime("00:00", '%H:%M').time()
+                        try:
+                            airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                        except ValueError:
+                            logging.debug(f"Invalid airtime format for item {item_identifier}: {airtime_str}. Using default.")
+                            airtime = datetime.strptime("00:00", '%H:%M').time()
                 else:
                     airtime = datetime.strptime("00:00", '%H:%M').time()
 

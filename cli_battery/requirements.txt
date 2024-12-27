@@ -9,3 +9,4 @@ psycopg2-binary==2.9.9
 grpcio==1.66.1 
 grpcio-tools==1.66.1 
 protobuf==5.28.1
+APScheduler==3.10.4
