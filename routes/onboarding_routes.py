@@ -22,7 +22,10 @@ def get_next_onboarding_step():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('RealDebrid', 'api_key'),
+        ('Plex', 'shows_libraries'),
+        ('Plex', 'movie_libraries'),
+        ('Debrid Provider', 'provider'),
+        ('Debrid Provider', 'api_key'),
         ('Trakt', 'client_id'),
         ('Trakt', 'client_secret')
     ]
@@ -95,7 +98,8 @@ def onboarding_step(step):
             ('Plex', 'token'),
             ('Plex', 'shows_libraries'),
             ('Plex', 'movie_libraries'),
-            ('RealDebrid', 'api_key'),
+            ('Debrid Provider', 'provider'),
+            ('Debrid Provider', 'api_key'),
             ('Trakt', 'client_id'),
             ('Trakt', 'client_secret')
         ]
@@ -109,9 +113,19 @@ def onboarding_step(step):
                     'shows_libraries': request.form['shows_libraries'],
                     'movie_libraries': request.form['movie_libraries']
                 }
-                config['RealDebrid'] = {
-                    'api_key': request.form['realdebrid_api_key']
+                
+                # Handle debrid provider selection
+                provider = request.form.get('debrid_provider', 'RealDebrid')
+                if provider == 'RealDebrid':
+                    api_key = request.form.get('realdebrid_api_key', '')
+                else:
+                    api_key = request.form.get('torbox_api_key', '')
+                
+                config['Debrid Provider'] = {
+                    'provider': provider,
+                    'api_key': api_key
                 }
+                
                 config['Trakt'] = {
                     'client_id': request.form['trakt_client_id'],
                     'client_secret': request.form['trakt_client_secret']

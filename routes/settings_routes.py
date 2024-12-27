@@ -355,8 +355,9 @@ def api_program_settings():
             'Metadata Battery': {
                 'url': config.get('Metadata Battery', {}).get('url', '')
             },
-            'RealDebrid': {
-                'api_key': config.get('RealDebrid', {}).get('api_key', '')
+            'Debrid Provider': {
+                'provider': config.get('Debrid Provider', {}).get('provider', ''),
+                'api_key': config.get('Debrid Provider', {}).get('api_key', '')
             }
         }
         return jsonify(program_settings)
@@ -382,8 +383,6 @@ def update_settings():
                         current[key] = {}
                     update_nested_dict(current[key], value)
                 else:
-                    if key.lower().endswith('url'):
-                        value = validate_url(value)
                     current[key] = value
 
         update_nested_dict(config, new_settings)

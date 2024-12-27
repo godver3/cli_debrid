@@ -5,7 +5,7 @@ from database import get_all_media_items
 from run_program import get_and_add_recent_collected_from_plex
 from not_wanted_magnets import add_to_not_wanted
 from queues.adding_queue import AddingQueue
-from debrid.real_debrid import get_torrent_info  # Import the new function
+from debrid import get_debrid_provider
 from settings import get_setting
 
 class CheckingQueue:
@@ -13,6 +13,7 @@ class CheckingQueue:
         self.items = []
         self.checking_queue_times = {}
         self.progress_checks = {}
+        self.debrid_provider = get_debrid_provider()
 
     def update(self):
         db_items = get_all_media_items(state="Checking")
@@ -79,7 +80,7 @@ class CheckingQueue:
         # Now process items with torrent IDs for progress checks
         for torrent_id, items in items_by_torrent.items():
             try:
-                torrent_info = get_torrent_info(torrent_id)
+                torrent_info = self.debrid_provider.get_torrent_info(torrent_id)
                 
                 if torrent_info:
                     current_progress = torrent_info.get('progress', 0)

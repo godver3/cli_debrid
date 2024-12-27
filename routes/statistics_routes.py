@@ -11,7 +11,7 @@ from .models import user_required, onboarding_required
 from extensions import app_start_time
 import time 
 from database import get_recently_added_items, get_poster_url, get_collected_counts, get_recently_upgraded_items
-from debrid.real_debrid import get_active_downloads, check_daily_usage
+from debrid import get_active_downloads, check_daily_usage
 import logging
 from metadata.metadata import get_show_airtime_by_imdb_id
 
@@ -257,8 +257,8 @@ def index():
     stats['total_episodes'] = counts['total_episodes']
     
     # Get active downloads
-    active_downloads = get_active_downloads()
-    stats['active_downloads'] = len(active_downloads) if active_downloads else 0
+    active_downloads, _ = get_active_downloads()
+    stats['active_downloads'] = active_downloads
     
     # Get recently aired and upcoming shows
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
