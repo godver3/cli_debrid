@@ -35,23 +35,33 @@ class MetadataManager:
                 logger.error(f"Item with IMDB ID {imdb_id} not found when adding metadata.")
                 return False
 
-            for key, value in metadata_dict.items():
-                metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
-                if not metadata:
-                    metadata = Metadata(item_id=item.id, key=key)
-                    session.add(metadata)
-                
-                # Store all values as strings, without JSON encoding
-                metadata.value = str(value)
-                metadata.provider = provider
-                metadata.last_updated = func.now()
-            session.commit()
-        return True
+            return MetadataManager._update_metadata_with_session(item, metadata_dict, provider, session)
+
+    @staticmethod
+    def _update_metadata_with_session(item, metadata_dict, provider, session):
+        """Internal method to update metadata using an existing session"""
+        success = False
+        for key, value in metadata_dict.items():
+            metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
+            if not metadata:
+                metadata = Metadata(item_id=item.id, key=key)
+                session.add(metadata)
+            
+            # Store all values as strings, without JSON encoding
+            metadata.value = str(value)
+            metadata.provider = provider
+            metadata.last_updated = func.now()
+            success = True
+        
+        if not success:
+            logger.warning(f"No metadata entries were updated for {item.title} ({item.imdb_id})")
+        return success
 
     @staticmethod
     def is_metadata_stale(last_updated):
         settings = Settings()
         if last_updated is None:
+            logger.debug("Item has no last_updated timestamp, considering stale")
             return True
         
         # Convert last_updated to UTC if it's not already
@@ -67,7 +77,16 @@ class MetadataManager:
         adjusted_threshold = max(settings.staleness_threshold + day_variation, 1)
         
         stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
-        is_stale = (now - last_updated) > stale_threshold
+        age = now - last_updated
+        is_stale = age > stale_threshold
+
+        logger.debug(
+            f"Staleness check: last_updated={last_updated.isoformat()}, "
+            f"age={age.days}d {age.seconds//3600}h, "
+            f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
+            f"(base={settings.staleness_threshold}d, variation={day_variation}d {hour_variation}h) "
+            f"-> {'stale' if is_stale else 'fresh'}"
+        )
                 
         return is_stale
 
@@ -329,7 +348,7 @@ class MetadataManager:
                 new_metadata = MetadataManager.refresh_metadata(imdb_id)
                 return {key: new_metadata.get(key)}
 
-            if MetadataManager.is_metadata_stale(item):
+            if MetadataManager.is_metadata_stale(item.updated_at):
                 new_metadata = MetadataManager.refresh_metadata(imdb_id)
                 return {key: new_metadata.get(key, json.loads(metadata.value))}
 
@@ -338,18 +357,47 @@ class MetadataManager:
     @staticmethod
     def refresh_metadata(imdb_id):
         trakt = TraktMetadata()
+        logger.debug(f"Refreshing metadata for {imdb_id}")
         new_metadata = trakt.refresh_metadata(imdb_id)
         if new_metadata:
+            logger.debug(f"Got new metadata for {imdb_id}")
             with Session() as session:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
                 if item:
-                    for key, value in new_metadata.items():
-                        MetadataManager.add_or_update_metadata(item.id, key, value, 'Trakt')
-                    item.updated_at = datetime.utcnow()
+                    logger.debug(f"Before update: {item.title} last_updated={item.updated_at}")
+                    # Update metadata with the same session
+                    MetadataManager._update_metadata_with_session(item, new_metadata, 'Trakt', session)
+                    # Use func.now() for consistency
+                    item.updated_at = func.now()
                     session.commit()
+                    
+                    # Verify the update by requerying
+                    session.refresh(item)
+                    logger.debug(f"After update: {item.title} last_updated={item.updated_at}")
+        else:
+            logger.warning(f"No new metadata received for {imdb_id}")
         return new_metadata
 
-    # TODO: Implement method to refresh metadata from enabled providers
+    @staticmethod
+    def _update_metadata_with_session(item, metadata_dict, provider, session):
+        """Internal method to update metadata using an existing session"""
+        success = False
+        for key, value in metadata_dict.items():
+            metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
+            if not metadata:
+                metadata = Metadata(item_id=item.id, key=key)
+                session.add(metadata)
+            
+            # Store all values as strings, without JSON encoding
+            metadata.value = str(value)
+            metadata.provider = provider
+            metadata.last_updated = func.now()
+            success = True
+        
+        if not success:
+            logger.warning(f"No metadata entries were updated for {item.title} ({item.imdb_id})")
+        return success
+
     @staticmethod
     def refresh_trakt_metadata(self, imdb_id: str) -> None:
         trakt = TraktMetadata()
@@ -700,4 +748,3 @@ class MetadataManager:
             metadata = Metadata(item_id=item.id, key=key, value=str(value), provider='trakt')
             session.add(metadata)
         session.commit()
-

@@ -37,3 +37,4 @@ python-Levenshtein
 appdirs==1.4.4
 pystray==0.19.5
 tzlocal==5.2
+APScheduler==3.10.4

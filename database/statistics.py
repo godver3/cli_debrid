@@ -259,7 +259,10 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                 version,
                 filled_by_title,
                 filled_by_file,
-                ROW_NUMBER() OVER (PARTITION BY title, year ORDER BY collected_at DESC) as rn
+                last_updated,
+                season_number,
+                episode_number,
+                ROW_NUMBER() OVER (PARTITION BY title, year ORDER BY last_updated DESC) as rn
             FROM media_items
             WHERE upgraded = 1
         )
@@ -272,25 +275,38 @@ async def get_recently_upgraded_items(upgraded_limit=5):
             tmdb_id,
             version,
             filled_by_title,
-            filled_by_file
+            filled_by_file,
+            last_updated,
+            season_number,
+            episode_number
         FROM LatestUpgrades
         WHERE rn = 1
-        ORDER BY collected_at DESC
+        ORDER BY last_updated DESC
         LIMIT ?
         """
         
-        cursor.execute(upgraded_query, (upgraded_limit,))
+        # Fetch more items initially to ensure we get enough unique ones
+        cursor.execute(upgraded_query, (upgraded_limit * 2,))
         upgrade_results = cursor.fetchall()
+        
+        # Debug logging
+        #logging.info(f"Found {len(upgrade_results)} upgraded items")
+        #for row in upgrade_results:
+        #    item = dict(row)
+        #    logging.info(f"Upgraded item: {item['title']} - Type: {item['type']} - Last Updated: {item['last_updated']}")
+        #    if item['type'] == 'episode':
+        #        logging.info(f"  Season: {item['season_number']} Episode: {item['episode_number']}")
         
         media_items = {}
         
         async with aiohttp.ClientSession() as session:
             poster_tasks = []
             
-            # Process items
+            # Process items until we have enough unique ones
             for row in upgrade_results:
                 item = dict(row)
                 key = f"{item['title']}-{item['year']}"
+                
                 if key not in media_items:
                     media_items[key] = {
                         **item,
@@ -298,76 +314,57 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                         'filled_by_title': [item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']],
                         'collected_at': item['collected_at']
                     }
+                    
+                    # Debug logging for items being added to media_items
+                    #logging.info(f"Adding to media_items: {key}")
+                    
                     # Set media_type based on the item type from database
-                    media_type = 'tv' if item['type'] in ['show', 'episode'] else 'movie'
-                    
-                    cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
-                    if cached_url:
-                        media_items[key]['poster_url'] = cached_url
+                    if item['type'] == 'movie':
+                        media_items[key]['media_type'] = 'movie'
                     else:
-                        poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
-                        poster_tasks.append((media_items[key], poster_task, media_type))
-                else:
-                    media_items[key]['versions'].append(item['version'])
-                    media_items[key]['filled_by_title'].append(item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file'])
-                    media_items[key]['collected_at'] = max(media_items[key]['collected_at'], item['collected_at'])
-            
-            # Wait for all poster URL tasks to complete
-            poster_results = await asyncio.gather(*[task for _, task, _ in poster_tasks], return_exceptions=True)
-            
-            # Assign poster URLs to items and cache them
-            for (item, _, media_type), result in zip(poster_tasks, poster_results):
-                if isinstance(result, Exception):
-                    logging.error(f"Error fetching poster for {media_type} with TMDB ID {item['tmdb_id']}: {result}")
-                elif result:
-                    item['poster_url'] = result
-                    cache_poster_url(item['tmdb_id'], media_type, result)
-                else:
-                    if get_setting('TMDB', 'api_key') == "":
-                        logging.warning("TMDB API key not set, using placeholder images")
-                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        media_items[key]['media_type'] = 'tv'
                         
-                        # Check if the request is secure (HTTPS)
-                        if request.is_secure:
-                            parsed_url = urlparse(placeholder_url)
-                            placeholder_url = parsed_url._replace(scheme='https').geturl()
-                        else:
-                            parsed_url = urlparse(placeholder_url)
-                            placeholder_url = parsed_url._replace(scheme='http').geturl()
+                    # Add poster task
+                    if item['tmdb_id']:
+                        poster_task = asyncio.create_task(
+                            get_poster_url(session, item['tmdb_id'], media_items[key]['media_type'])
+                        )
+                        poster_tasks.append((key, poster_task))
                         
-                        item['poster_url'] = placeholder_url
-                    
-                    logging.warning(f"No poster URL found for {media_type} with TMDB ID {item['tmdb_id']}")
+                    # Break if we have enough unique items
+                    if len(media_items) >= upgraded_limit:
+                        break
+                else:
+                    # Debug logging for duplicate items
+                    #logging.info(f"Duplicate item found: {key}")
+                    if item['version'] not in media_items[key]['versions']:
+                        media_items[key]['versions'].append(item['version'])
+                    if item['filled_by_title'] and item['filled_by_title'] not in media_items[key]['filled_by_title']:
+                        media_items[key]['filled_by_title'].append(item['filled_by_title'])
+                    elif item['filled_by_file'] and item['filled_by_file'] not in media_items[key]['filled_by_title']:
+                        media_items[key]['filled_by_title'].append(item['filled_by_file'])
+            
+            # Wait for all poster tasks to complete
+            for key, task in poster_tasks:
+                try:
+                    poster_url = await task
+                    media_items[key]['poster_url'] = poster_url
+                except Exception as e:
+                    logging.error(f"Error getting poster for {key}: {str(e)}")
+                    media_items[key]['poster_url'] = None
         
-        # Convert consolidated_movies dict to list and sort
-        upgraded_list = list(media_items.values())
-        upgraded_list.sort(key=lambda x: x['collected_at'] or '', reverse=True)
+        # Convert to list and sort by last_updated
+        items_list = list(media_items.values())
+        items_list.sort(key=lambda x: x['last_updated'], reverse=True)
         
-        # Final processing and limiting
-        def limit_and_process(items, limit=5):
-            unique_items = {}
-            for item in items:
-                if len(unique_items) >= limit:
-                    break
-                key = f"{item['title']}-{item['year']}" if 'year' in item else item['title']
-                if key not in unique_items:
-                    if 'seasons' in item:
-                        item['seasons'].sort()
-                    item['versions'].sort()
-                    item['versions'] = ', '.join(item['versions'])
-                    unique_items[key] = item
-            return list(unique_items.values())
-
-        upgraded_list = limit_and_process(upgraded_list)
-
-        # Clean expired cache entries
-        clean_expired_cache()
-
-        return {
-            'upgraded': upgraded_list
-        }
+        # Debug logging for final sorted list
+        #logging.info("Final sorted items:")
+        for item in items_list:
+            logging.info(f"  {item['title']} - Last Updated: {item['last_updated']}")
+        
+        return items_list
     except Exception as e:
         logging.error(f"Error in get_recently_upgraded_items: {str(e)}", exc_info=True)
-        return {'upgraded': []}
+        return []
     finally:
         conn.close()

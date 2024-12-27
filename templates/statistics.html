@@ -85,6 +85,13 @@
         justify-content: flex-start;
     }
 
+    /* Hide compact selector on mobile */
+    @media (max-width: 768px) {
+        #compact_toggle {
+            display: none;
+        }
+    }
+
     /* Row 2: Collection stats */
     .stats-box.collection-stats {
         margin-bottom: 10px;
@@ -768,6 +775,16 @@
 
 </style>
 
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check if on mobile
+        if (window.innerWidth <= 768) {
+            // Add compact-view class to statistics-wrapper
+            document.querySelector('.statistics-wrapper').classList.add('compact-view');
+        }
+    });
+</script>
+
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
         <div class="toggle-item">
@@ -780,7 +797,7 @@
                 <span class="toggle-slider"></span>
             </label>
         </div>
-        <div class="toggle-item">
+        <div class="toggle-item" id="compact_toggle">
             <span class="toggle-label">Compact</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="compact-toggle">

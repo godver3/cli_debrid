@@ -114,15 +114,43 @@ class TraktMetadata:
 
         return None
 
+    def _search_by_imdb(self, imdb_id: str):
+        """Search for content by IMDB ID to get Trakt slug"""
+        url = f"{self.base_url}/search/imdb/{imdb_id}?type=show,movie"
+        response = self._make_request(url)
+        if response and response.status_code == 200:
+            results = response.json()
+            if results:
+                return results[0]  # Return first match
+        return None
+
     def _get_show_data(self, imdb_id):
-        url = f"{self.base_url}/shows/{imdb_id}?extended=full"
+        # First search to get the show's Trakt slug
+        search_result = self._search_by_imdb(imdb_id)
+        if not search_result or search_result['type'] != 'show':
+            return None
+            
+        show = search_result['show']
+        slug = show['ids']['slug']
+        
+        # Now get the full show data using the slug
+        url = f"{self.base_url}/shows/{slug}?extended=full"
         response = self._make_request(url)
         if response and response.status_code == 200:
             return response.json()
         return None
 
     def _get_movie_data(self, imdb_id):
-        url = f"{self.base_url}/movies/{imdb_id}?extended=full"
+        # First search to get the movie's Trakt slug
+        search_result = self._search_by_imdb(imdb_id)
+        if not search_result or search_result['type'] != 'movie':
+            return None
+            
+        movie = search_result['movie']
+        slug = movie['ids']['slug']
+        
+        # Now get the full movie data using the slug
+        url = f"{self.base_url}/movies/{slug}?extended=full"
         response = self._make_request(url)
         if response and response.status_code == 200:
             return response.json()
@@ -230,7 +258,15 @@ class TraktMetadata:
         return None
 
     def refresh_metadata(self, imdb_id: str) -> Dict[str, Any]:
-        return self.get_metadata(imdb_id)
+        """Refresh metadata for either a show or movie"""
+        logger.debug(f"TraktMetadata: Refreshing metadata for {imdb_id}")
+        metadata = self.get_metadata(imdb_id)
+        if metadata:
+            logger.debug(f"TraktMetadata: Successfully got metadata for {imdb_id}")
+            return metadata
+        else:
+            logger.warning(f"TraktMetadata: Failed to get metadata for {imdb_id}")
+            return None
 
     def get_movie_metadata(self, imdb_id, max_retries=3, retry_delay=5):
         url = f"{self.base_url}/movies/{imdb_id}?extended=full"
