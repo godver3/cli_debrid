@@ -32,10 +32,16 @@
             <h3>Delete Database</h3>
             <form action="{{ url_for('debug.delete_database') }}" method="POST" id="delete-database-form">
                 <div class="form-group">
-                    <label for="confirm_delete">Type 'DELETE' to confirm:</label>
+                    <label for="confirm_delete">Type DELETE to confirm:</label>
                     <input type="text" id="confirm_delete" name="confirm_delete" required>
                 </div>
-                <button type="submit">Delete Database</button>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="retain_blacklist" name="retain_blacklist">
+                        Retain blacklisted items
+                    </label>
+                </div>
+                <button type="submit" class="btn">Delete Database</button>
             </form>
         </div>
         <div class="debug_item">
@@ -86,6 +92,7 @@
                         <option value="Unreleased">Unreleased</option>
                         <option value="Wanted">Wanted</option>
                         <option value="Pending Uncached">Pending Uncached</option>
+                        <option value="Upgrading">Upgrading</option>
                     </select>
                 </div>
                 <div id="queue_items_container" class="queue-items-container">
@@ -114,6 +121,8 @@
                         <option value="Unreleased">Unreleased</option>
                         <option value="Wanted">Wanted</option>
                         <option value="Pending Uncached">Pending Uncached</option>
+                        <option value="Upgrading">Upgrading</option>
+                        <option value="Collected">Collected</option>
                     </select>
                 </div>
                 <button type="submit">Apply Action</button>
@@ -126,70 +135,110 @@
             </div>
             <button id="refresh-rate-limits">Refresh Rate Limits</button>
         </div>
+        <div class="debug_item">
+            <h3>Refresh Release Dates</h3>
+            <form action="{{ url_for('debug.refresh_release_dates_route') }}" method="POST" id="refresh-release-dates-form">
+                <button type="submit">Refresh Release Dates</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Send Test Notification</h3>
+            <form id="send-test-notification-form">
+                <button type="submit">Send Test Notification</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Move Item ID to Upgrading</h3>
+            <form action="{{ url_for('debug.move_to_upgrading') }}" method="POST" id="move-to-upgrading-form">
+                <div class="form-group">
+                    <label for="item_id">Item ID:</label>
+                    <input type="text" id="item_id" name="item_id" required>
+                </div>
+                <button type="submit">Move to Upgrading</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Run Task Manually</h3>
+            <form id="run-task-form">
+                <div class="form-group">
+                    <label for="task_select">Select Task:</label>
+                    <select id="task_select" name="task_name">
+                        <!-- Options will be populated dynamically -->
+                    </select>
+                </div>
+                <button type="submit">Run Task</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Version Propagator</h3>
+            <form action="{{ url_for('debug.propagate_version') }}" method="POST" id="version-propagator-form">
+                <div class="form-group">
+                    <label for="original_version">Original Version:</label>
+                    <select id="original_version" name="original_version" required>
+                        <option value="">Select Version</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="propagated_version">Propagated Version:</label>
+                    <select id="propagated_version" name="propagated_version" required>
+                        <option value="">Select Version</option>
+                    </select>
+                </div>
+                <button type="submit">Propagate Version</button>
+            </form>
+        </div>
     </div>
 </div>
 
-<div id="loading" class="loading">
-    <div class="loading-content">
-        <div class="spinner"></div>
-        <p>Processing command, please wait...</p>
-    </div>
-</div>
-
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const forms = document.querySelectorAll('form:not(#bulk-queue-action-form)');
-        const loading = document.getElementById('loading');
-        const bulkActionForm = document.getElementById('bulk-queue-action-form');
         
         forms.forEach(form => {
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                const url = form.action;
-                const method = form.method;
+            if (form.id !== 'send-test-notification-form' && form.id !== 'get-collected-form' && form.id !== 'get-wanted-form' && form.id !== 'run-task-form' && form.id !== 'bulk-queue-action-form') {
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    const url = form.action;
+                    const method = form.method;
 
-                if (form.id === 'download-logs-form') {
-                    downloadLogs();
-                    return;
-                }
-
-                let confirmMessage = 'Are you sure you want to perform this action?';
-                if (form.id === 'delete-database-form') {
-                    const confirmDelete = document.getElementById('confirm_delete').value;
-                    if (confirmDelete !== 'DELETE') {
-                        showPopup({
-                            type: POPUP_TYPES.ERROR,
-                            message: 'Please type DELETE to confirm database deletion',
-                            title: 'Error'
-                        });
+                    if (form.id === 'download-logs-form') {
+                        downloadLogs();
                         return;
                     }
-                    confirmMessage = 'Are you sure you want to delete the entire database? This action cannot be undone.';
-                } else if (form.id === 'get-collected-form') {
-                    confirmMessage = 'Are you sure you want to get collected items from Plex?';
-                } else if (form.id === 'get-wanted-form') {
-                    confirmMessage = 'Are you sure you want to get wanted items from the selected source?';
-                }
 
-                showPopup({
-                    type: POPUP_TYPES.CONFIRM,
-                    message: confirmMessage,
-                    title: 'Confirmation',
-                    onConfirm: () => {
-                        loading.style.display = 'flex';
-                        submitForm(url, method, new FormData(form));
+                    let confirmMessage = 'Are you sure you want to perform this action?';
+                    if (form.id === 'delete-database-form') {
+                        const confirmDelete = document.getElementById('confirm_delete').value;
+                        if (confirmDelete !== 'DELETE') {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Please type DELETE to confirm database deletion',
+                                title: 'Error'
+                            });
+                            return;
+                        }
+                        confirmMessage = 'Are you sure you want to delete the entire database? This action cannot be undone.';
+                    } else if (form.id === 'get-collected-form') {
+                        confirmMessage = 'Are you sure you want to get collected items from Plex?';
+                    } else if (form.id === 'get-wanted-form') {
+                        confirmMessage = 'Are you sure you want to get wanted items from the selected source?';
+                    } else if (form.id === 'propagate-version-form') {
+                        confirmMessage = 'Are you sure you want to add a propagated version for every original version found?';
                     }
-                });
-            });
-        });
 
-        // Keep only this listener for the bulk action form
-        if (bulkActionForm) {
-            bulkActionForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-                performBulkAction();
-            });
-        }
+                    showPopup({
+                        type: POPUP_TYPES.CONFIRM,
+                        message: confirmMessage,
+                        title: 'Confirmation',
+                        onConfirm: () => {
+                            Loading.show();
+                            submitForm(url, method, new FormData(form));
+                        }
+                    });
+                });
+            }
+        });
 
         function submitForm(url, method, formData) {
             fetch(url, {
@@ -198,7 +247,7 @@
             })
             .then(response => response.json())
             .then(data => {
-                loading.style.display = 'none';
+                Loading.hide();
                 if (data.success) {
                     showPopup({
                         type: POPUP_TYPES.SUCCESS,
@@ -220,7 +269,7 @@
                 }
             })
             .catch(error => {
-                loading.style.display = 'none';
+                Loading.hide();
                 console.error('Error:', error);
                 showPopup({
                     type: POPUP_TYPES.ERROR,
@@ -266,7 +315,7 @@
             fetch('/program_operation/api/program_status')
                 .then(response => response.json())
                 .then(data => {
-                    const isRunning = data.running;
+                    const isRunning = false;
                     const buttons = document.querySelectorAll('button[type="submit"]');
                     buttons.forEach(button => {
                         button.disabled = isRunning;
@@ -391,6 +440,15 @@
             lastChecked = e.target;
         }
 
+
+        const bulkActionForm = document.getElementById('bulk-queue-action-form');
+        if (bulkActionForm) {
+            bulkActionForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                performBulkAction();
+            });
+        }
+
         function performBulkAction() {
             const selectedItems = document.querySelectorAll('input[name="selected_items"]:checked');
             if (selectedItems.length === 0) {
@@ -412,14 +470,14 @@
                 title: 'Confirm Bulk Action',
                 onConfirm: () => {
                     const formData = new FormData(bulkActionForm);
-                    loading.style.display = 'flex';
+                    Loading.show();
                     fetch('/database/bulk_queue_action', {
                         method: 'POST',
                         body: formData
                     })
                     .then(response => response.json())
                     .then(data => {
-                        loading.style.display = 'none';
+                        Loading.hide();
                         if (data.success) {
                             showPopup({
                                 type: POPUP_TYPES.SUCCESS,
@@ -436,7 +494,7 @@
                         }
                     })
                     .catch(error => {
-                        loading.style.display = 'none';
+                        Loading.hide();
                         console.error('Error performing bulk action:', error);
                         showPopup({
                             type: POPUP_TYPES.ERROR,
@@ -481,6 +539,293 @@
 
         // Add event listener for the refresh button
         document.getElementById('refresh-rate-limits').addEventListener('click', fetchRateLimitInfo);
+
+        const sendTestNotificationForm = document.getElementById('send-test-notification-form');
+        if (sendTestNotificationForm) {
+            sendTestNotificationForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                sendTestNotification();
+            });
+        }
+
+        function sendTestNotification() {
+            console.log('sendTestNotification function called');
+            const url = '/debug/send_test_notification';
+            console.log('Sending request to:', url);
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({})  // Send an empty object as body
+            })
+            .then(response => {
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                return response.text().then(text => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
+                    }
+                    try {
+                        return JSON.parse(text);
+                    } catch (e) {
+                        console.error('Error parsing JSON:', e);
+                        throw new Error(`Invalid JSON response: ${text}`);
+                    }
+                });
+            })
+            .then(data => {
+                if (data.success) {
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: data.message || 'Test notification sent successfully',
+                        title: 'Success'
+                    });
+                } else {
+                    throw new Error(data.error || 'An error occurred while sending the test notification');
+                }
+            })
+            .catch(error => {
+                console.error('Error details:', error);
+                console.error('Error name:', error.name);
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: `An error occurred: ${error.message}. Please check the server logs for more details.`,
+                    title: 'Error'
+                });
+            });
+        }
+
+        // Define pollTaskStatus function once
+        function pollTaskStatus(taskId) {
+            fetch(`/debug/api/task_status/${taskId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'PENDING' || data.status === 'RUNNING') {
+                        setTimeout(() => pollTaskStatus(taskId), 2000);  // Poll every 2 seconds
+                    } else {
+                        Loading.hide();
+                        if (data.status === 'SUCCESS') {
+                            // Handle data.result appropriately
+                            let message = 'Task completed successfully';
+                            if (typeof data.result === 'string') {
+                                message = data.result;
+                            } else if (typeof data.result === 'object') {
+                                // You can adjust this based on the actual structure of data.result
+                                message = data.result.message || JSON.stringify(data.result);
+                            }
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: message,
+                                title: 'Success'
+                            });
+                        } else {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: data.result || 'Task failed',
+                                title: 'Error'
+                            });
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'An error occurred while checking task status',
+                        title: 'Error'
+                    });
+                });
+        }
+
+        // Handler for getCollectedForm
+        const getCollectedForm = document.getElementById('get-collected-form');
+        getCollectedForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: 'Are you sure you want to get collected items from Plex?',
+                title: 'Confirmation',
+                onConfirm: () => {
+                    Loading.show();
+                    fetch(this.action, {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.task_id) {
+                            pollTaskStatus(data.task_id);
+                        } else {
+                            Loading.hide();
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Failed to start task',
+                                title: 'Error'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'An error occurred',
+                            title: 'Error'
+                        });
+                    });
+                }
+            });
+        });
+
+        // Handler for getWantedForm
+        const getWantedForm = document.getElementById('get-wanted-form');
+        getWantedForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+
+            // Adding a confirmation popup similar to getCollectedForm
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: 'Are you sure you want to get wanted items?',
+                title: 'Confirmation',
+                onConfirm: () => {
+                    Loading.show();
+                    fetch(this.action, {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.task_id) {
+                            pollTaskStatus(data.task_id);
+                        } else {
+                            Loading.hide();
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Failed to start task',
+                                title: 'Error'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'An error occurred',
+                            title: 'Error'
+                        });
+                    });
+                }
+            });
+        });
+
+        // Fetch available tasks and populate the select element
+        fetch('/debug/get_available_tasks')
+            .then(response => response.json())
+            .then(data => {
+                const taskSelect = document.getElementById('task_select');
+                data.tasks.forEach(task => {
+                    const option = document.createElement('option');
+                    option.value = task;
+                    option.textContent = task;
+                    taskSelect.appendChild(option);
+                });
+            })
+            .catch(error => console.error('Error fetching available tasks:', error));
+
+        // Add event listener for the run task form
+        const runTaskForm = document.getElementById('run-task-form');
+        runTaskForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const taskName = document.getElementById('task_select').value;
+            
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: `Are you sure you want to run the task "${taskName}"?`,
+                title: 'Confirmation',
+                onConfirm: () => {
+                    Loading.show();
+                    fetch('/debug/run_task', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ task_name: taskName }),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        Loading.hide();
+                        if (data.success) {
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: data.message,
+                                title: 'Success'
+                            });
+                        } else {
+                            throw new Error(data.error);
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: error.message || 'An error occurred while running the task',
+                            title: 'Error'
+                        });
+                    });
+                }
+            });
+        });
+
+        // Load versions for the version propagator dropdowns
+        function loadVersions() {
+            fetch('/debug/get_versions')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const originalSelect = document.getElementById('original_version');
+                        const propagatedSelect = document.getElementById('propagated_version');
+                        
+                        // Clear existing options except the first one
+                        while (originalSelect.options.length > 1) originalSelect.remove(1);
+                        while (propagatedSelect.options.length > 1) propagatedSelect.remove(1);
+                        
+                        // Add new options
+                        data.versions.forEach(version => {
+                            const originalOption = new Option(version, version);
+                            const propagatedOption = new Option(version, version);
+                            originalSelect.add(originalOption);
+                            propagatedSelect.add(propagatedOption);
+                        });
+                    } else {
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: data.error,
+                            title: 'Error Loading Versions'
+                        });
+                    }
+                })
+                .catch(error => {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error loading versions: ' + error,
+                        title: 'Error'
+                    });
+                });
+        }
+
+        // Load versions when the page loads
+        loadVersions();
+
+        // Removed the duplicate handler for version propagator form since it's handled by the generic form handler
     });
 </script>
 {% endblock %}

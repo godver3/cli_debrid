@@ -291,6 +291,9 @@ def index():
         # Ensure 'UI Settings' exists in the config
         if 'UI Settings' not in config:
             config['UI Settings'] = {}
+
+        if 'Sync Deletions' not in config:
+            config['Sync Deletions'] = {}
         
         # Ensure 'enable_user_system' exists in 'UI Settings'
         if 'enable_user_system' not in config['UI Settings']:
@@ -349,9 +352,8 @@ def api_program_settings():
                 'url': config.get('Plex', {}).get('url', ''),
                 'token': config.get('Plex', {}).get('token', '')
             },
-            'Overseerr': {
-                'url': config.get('Overseerr', {}).get('url', ''),
-                'api_key': config.get('Overseerr', {}).get('api_key', '')
+            'Metadata Battery': {
+                'url': config.get('Metadata Battery', {}).get('url', '')
             },
             'RealDebrid': {
                 'api_key': config.get('RealDebrid', {}).get('api_key', '')
@@ -392,12 +394,61 @@ def update_settings():
                 source: int(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
             }
         
+        # Handle Reverse Parser settings
+        if 'Reverse Parser' in new_settings:
+            reverse_parser = new_settings['Reverse Parser']
+            config['Reverse Parser'] = {
+                'version_terms': reverse_parser['version_terms'],
+                'default_version': reverse_parser['default_version'],
+                'version_order': reverse_parser['version_order']
+            }
+
         save_config(config)
         
         return jsonify({"status": "success", "message": "Settings updated successfully"})
     except Exception as e:
         logging.error(f"Error updating settings: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@settings_bp.route('/api/reverse_parser_settings', methods=['GET'])
+def get_reverse_parser_settings():
+    config = load_config()
+    reverse_parser_settings = config.get('Reverse Parser', {})
+    
+    # Get all scraping versions
+    all_scraping_versions = set(config.get('Scraping', {}).get('versions', {}).keys())
+    
+    # Get the current version order, or initialize it if it doesn't exist
+    version_order = reverse_parser_settings.get('version_order', [])
+    
+    # Ensure version_terms exists
+    version_terms = reverse_parser_settings.get('version_terms', {})
+    
+    # Create a new ordered version_terms dictionary
+    ordered_version_terms = {}
+    
+    # First, add versions in the order specified by version_order
+    for version in version_order:
+        if version in all_scraping_versions:
+            ordered_version_terms[version] = version_terms.get(version, [])
+            all_scraping_versions.remove(version)
+    
+    # Then, add any remaining versions that weren't in version_order
+    for version in all_scraping_versions:
+        ordered_version_terms[version] = version_terms.get(version, [])
+    
+    # Update version_order to include any new versions
+    version_order = list(ordered_version_terms.keys())
+    
+    # Update the settings
+    reverse_parser_settings['version_terms'] = ordered_version_terms
+    reverse_parser_settings['version_order'] = version_order
+    
+    # Ensure default_version is set and valid
+    if 'default_version' not in reverse_parser_settings or reverse_parser_settings['default_version'] not in ordered_version_terms:
+        reverse_parser_settings['default_version'] = next(iter(ordered_version_terms), None)
+    
+    return jsonify(reverse_parser_settings)
 
 def update_nested_settings(current, new):
     for key, value in new.items():
@@ -595,7 +646,44 @@ def update_required_settings(form_data):
     config['Plex']['token'] = form_data.get('plex_token')
     config['Plex']['shows_libraries'] = form_data.get('shows_libraries')
     config['Plex']['movies_libraries'] = form_data.get('movies_libraries')
-    config['Overseerr']['url'] = form_data.get('overseerr_url')
-    config['Overseerr']['api_key'] = form_data.get('overseerr_api_key')
     config['RealDebrid']['api_key'] = form_data.get('realdebrid_api_key')
+    config['Metadata Battery']['url'] = form_data.get('metadata_battery_url')
     save_config(config)
+
+@settings_bp.route('/notifications/enabled', methods=['GET'])
+def get_enabled_notifications():
+    try:
+        config = load_config()
+        notifications = config.get('Notifications', {})
+        
+        enabled_notifications = {}
+        for notification_id, notification_config in notifications.items():
+            if notification_config.get('enabled', False):
+                # Only include notifications that are enabled and have non-empty required fields
+                if notification_config['type'] == 'Discord':
+                    if notification_config.get('webhook_url'):
+                        enabled_notifications[notification_id] = notification_config
+                elif notification_config['type'] == 'Email':
+                    if all([
+                        notification_config.get('smtp_server'),
+                        notification_config.get('smtp_port'),
+                        notification_config.get('smtp_username'),
+                        notification_config.get('smtp_password'),
+                        notification_config.get('from_address'),
+                        notification_config.get('to_address')
+                    ]):
+                        enabled_notifications[notification_id] = notification_config
+                elif notification_config['type'] == 'Telegram':
+                    if all([
+                        notification_config.get('bot_token'),
+                        notification_config.get('chat_id')
+                    ]):
+                        enabled_notifications[notification_id] = notification_config
+        
+        return jsonify({
+            'success': True,
+            'enabled_notifications': enabled_notifications
+        })
+    except Exception as e:
+        logging.error(f"Error getting enabled notifications: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500

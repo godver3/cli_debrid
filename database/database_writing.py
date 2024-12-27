@@ -2,6 +2,9 @@ from .core import get_db_connection, retry_on_db_lock
 import logging
 from datetime import datetime
 import json
+import pickle
+from pathlib import Path
+import os
 
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
@@ -32,7 +35,7 @@ def update_year(item_id: int, year: int):
     finally:
         conn.close()
 
-def update_release_date_and_state(item_id, release_date, new_state):
+def update_release_date_and_state(item_id, release_date, new_state, early_release=None):
     conn = get_db_connection()
     try:
         # First, fetch the current item data
@@ -40,11 +43,20 @@ def update_release_date_and_state(item_id, release_date, new_state):
         item = cursor.fetchone()
         
         if item:
-            conn.execute('''
+            update_query = '''
                 UPDATE media_items
                 SET release_date = ?, state = ?, last_updated = ?
-                WHERE id = ?
-            ''', (release_date, new_state, datetime.now(), item_id))
+            '''
+            params = [release_date, new_state, datetime.now()]
+            
+            if early_release is not None:
+                update_query += ', early_release = ?'
+                params.append(early_release)
+                
+            update_query += ' WHERE id = ?'
+            params.append(item_id)
+            
+            conn.execute(update_query, params)
             conn.commit()
             
             # Create item description based on the type of media
@@ -75,7 +87,7 @@ def update_media_item_state(item_id, state, **kwargs):
         params = [state, datetime.now()]
 
         # Add optional fields to the query if they are provided
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results']
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'version']
         for field in optional_fields:
             if field in kwargs:
                 query += f", {field} = ?"
@@ -83,11 +95,6 @@ def update_media_item_state(item_id, state, **kwargs):
                 if field == 'scrape_results':
                     value = json.dumps(value) if value else None
                 params.append(value)
-
-        # Update collected_at if the state is changing to 'Collected'
-        if state == 'Collected':
-            query += ", collected_at = ?"
-            params.append(datetime.now())
 
         # Complete the query
         query += " WHERE id = ?"
@@ -124,5 +131,69 @@ def remove_from_media_items(item_id):
         logging.info(f"Removed item (ID: {item_id}) from media items")
     except Exception as e:
         logging.error(f"Error removing item (ID: {item_id}) from media items: {str(e)}")
+    finally:
+        conn.close()
+
+def add_to_collected_notifications(media_item):
+    # Get db_content directory from environment variable with fallback
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    notifications_file = Path(db_content_dir) / "collected_notifications.pkl"
+    
+    try:
+        os.makedirs(notifications_file.parent, exist_ok=True)
+        
+        if notifications_file.exists():
+            with open(notifications_file, "rb") as f:
+                notifications = pickle.load(f)
+        else:
+            notifications = []
+        
+        notifications.append(media_item)
+        
+        with open(notifications_file, "wb") as f:
+            pickle.dump(notifications, f)
+        
+        logging.debug(f"Added notification for collected item: {media_item['title']} (ID: {media_item['id']})")
+    except Exception as e:
+        logging.error(f"Error adding notification for collected item (ID: {media_item['id']}): {str(e)}")
+
+def update_media_item(item_id: int, **kwargs):
+    conn = get_db_connection()
+    try:
+        # Build the SET clause dynamically from kwargs
+        set_clause = ', '.join(f"{key} = ?" for key in kwargs.keys())
+        params = list(kwargs.values())
+        params.append(datetime.now())  # For 'last_updated'
+        params.append(item_id)
+
+        query = f'''
+            UPDATE media_items
+            SET {set_clause}, last_updated = ?
+            WHERE id = ?
+        '''
+
+        conn.execute(query, params)
+        conn.commit()
+
+        logging.info(f"Updated media item ID {item_id} with values: {kwargs}")
+    except Exception as e:
+        logging.error(f"Error updating media item ID {item_id}: {str(e)}")
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def update_blacklisted_date(item_id: int, blacklisted_date: datetime | None):
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET blacklisted_date = ?, last_updated = ?
+            WHERE id = ?
+        ''', (blacklisted_date, datetime.now(), item_id))
+        conn.commit()
+        logging.info(f"Updated blacklisted_date to {blacklisted_date} for item ID {item_id}")
+    except Exception as e:
+        logging.error(f"Error updating blacklisted_date for item ID {item_id}: {str(e)}")
+        raise
     finally:
         conn.close()

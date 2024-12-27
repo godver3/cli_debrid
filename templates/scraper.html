@@ -3,14 +3,59 @@
 {% block content %}
 <style>
     @import url('{{ url_for('static', filename='css/scraper.css') }}');
+    @import url('{{ url_for('static', filename='css/scraper_trending.css') }}');
 
     .trending-container p {
         font-style: italic;
         color: #888;
         text-align: center;
     }
+
+    .tmdb-info {
+        margin-top: 10px;
+        margin-bottom: 0px;
+        padding: 10px;
+        color: #be1600;
+        font-style: italic;
+        text-align: center;
+    }
+
+    .loading {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 9999;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .loading-content {
+        background-color: #333;
+        padding: 20px;
+        border-radius: 5px;
+        text-align: center;
+    }
+
+    .spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
 </style>
-    <div id="scraper-container">
+    <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
         <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">
             <input type="text" name="search_term" placeholder="Enter search term" required>
             <select name="version" id="version-select">
@@ -20,6 +65,11 @@
             </select>
             <button id="searchformButton" type="submit">Search</button>
         </form>
+        {% if not compact_view and not tmdb_api_key_set %}
+        <div class="tmdb-info">
+            <p>To load movie and TV show posters, please set your TMDB API key in the settings.</p>
+        </div>
+        {% endif %}
         <div class="trending-container" id="trendingContainer">
             <div class="trending-movies">
                 <div class="trending-header">
@@ -58,12 +108,17 @@
         <div id="overlay" class="overlay">
             <div class="overlay-content">                
                 <span class="close-btn">&times;</span>
-                <div id="overlayStatus"></div>
                 <div id="overlayContent"></div>
-                <!-- <div id="overlayContentRes"></div> -->
             </div>
         </div>
         <div id="searchResult"></div>
+        <!-- Add this div for search results -->
+        <div id="searchResults" style="display: none;">
+            <h2>Search Results</h2>
+            <div id="resultsList"></div>
+        </div>
     </div>
+    <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/notifications.js')}}"></script>
 {% endblock %}

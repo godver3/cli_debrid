@@ -3,6 +3,13 @@
 {% block content %}
 <div class="container">
     <h2>Queues</h2>
+    <div id="initialization-status" class="alert alert-info" style="display: none;">
+        <i class="fas fa-sync fa-spin"></i> 
+        <span id="init-step-text">Initializing system...</span>
+        <div class="progress mt-2">
+            <div id="init-progress" class="progress-bar" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
     <div id="queue-contents" class="queue-container">
         <!-- Queue contents will be dynamically inserted here -->
     </div>
@@ -137,13 +144,22 @@
                 itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
             }
 
-            if (queueName === 'Upgrading') {
+            if (queueName === 'Upgrading' || queueName === 'Pending Uncached') {
+                let formattedTime = 'N/A';
+                if (item.time_added) {
+                    // Convert the timestamp to a Date object and format it
+                    formattedTime = new Date(item.time_added).toLocaleString();
+                }
                 itemContent += `
-                    - Current Quality: ${item.current_quality || 'N/A'}
-                    - Target Quality: ${item.target_quality || 'N/A'}
-                    - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
-                    - Upgrades Found: ${item.upgrades_found || 0}
+                    - Time Added: ${formattedTime}
                 `;
+                
+                if (queueName === 'Upgrading') {
+                    itemContent;
+                }
+                if (queueName === 'Pending Uncached') {
+                    itemContent += `- Magnet Link: ${item.magnet_link || 'Unknown'}`;
+                }
             }
 
             if (queueName === 'Sleeping') {
@@ -159,6 +175,10 @@
                 `;
             }
 
+            if (queueName === 'Wanted' && item.formatted_scrape_time) {
+                itemContent += ` - Scrape Time: ${item.formatted_scrape_time}`;
+            }
+
             itemContent += `</div>`;
             return itemContent;
         }).join('');
@@ -169,40 +189,59 @@
             .then(response => response.json())
             .then(data => {
                 let queueContents = document.getElementById('queue-contents');
+                let initializationStatus = document.getElementById('initialization-status');
                 if (queueContents) {
-                    queueContents.innerHTML = '';
-                    const queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
-                    
-                    let hasContent = false;
-                    queueOrder.forEach(queueName => {
-                        if (data[queueName] && data[queueName].length > 0) {
-                            hasContent = true;
-                            let queueDiv = document.createElement('div');
-                            queueDiv.className = 'queue';
-                            let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
+                    if (data.program_running) {
+                        if (data.program_initializing) {
+                            initializationStatus.style.display = 'block';
+                            if (data.initialization_status) {
+                                const progress = (data.initialization_status.current_step_number / data.initialization_status.total_steps) * 100;
+                                document.getElementById('init-step-text').textContent = `Initializing: ${data.initialization_status.current_step}`;
+                                document.getElementById('init-progress').style.width = `${progress}%`;
+                                document.getElementById('init-progress').setAttribute('aria-valuenow', progress);
+                            }
+                            queueContents.innerHTML = '<p>Program is currently initializing...</p>';
+                        } else {
+                            initializationStatus.style.display = 'none';
+                            let hasContent = false;
+                            let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
                             
-                            queueDiv.innerHTML = `
-                                <div class="queue-title" onclick="toggleQueue(this)">
-                                    <span>${queueName}</span>
-                                    ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
-                                    <span class="queue-count">${data[queueName].length} items</span>
-                                </div>
-                                <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
-                                    ${queueName === 'Blacklisted' ? generateConsolidatedItems(data[queueName], 'Blacklisted') :
-                                      queueName === 'Unreleased' ? generateConsolidatedItems(data[queueName], 'Unreleased') :
-                                      generateRegularItems(queueName, data[queueName])}
-                                </div>
-                            `;
-                            queueContents.appendChild(queueDiv);
+                            queueContents.innerHTML = ''; // Clear existing content
+
+                            queueOrder.forEach(queueName => {
+                                if (data.contents[queueName] && data.contents[queueName].length > 0) {
+                                    hasContent = true;
+                                    let queueDiv = document.createElement('div');
+                                    queueDiv.className = 'queue';
+                                    let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
+                                    
+                                    queueDiv.innerHTML = `
+                                        <div class="queue-title" onclick="toggleQueue(this)">
+                                            <span>${queueName}</span>
+                                            ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
+                                            <span class="queue-count">${data.contents[queueName].length} items</span>
+                                        </div>
+                                        <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
+                                            ${queueName === 'Blacklisted' ? generateConsolidatedItems(data.contents[queueName], 'Blacklisted') :
+                                              queueName === 'Unreleased' ? generateConsolidatedItems(data.contents[queueName], 'Unreleased') :
+                                              generateRegularItems(queueName, data.contents[queueName])}
+                                        </div>
+                                    `;
+                                    queueContents.appendChild(queueDiv);
+                                }
+                            });
+
+                            if (!hasContent) {
+                                queueContents.innerHTML = '<p>Program is currently idle.</p>';
+                            }
+
+                            // Update filename visibility after refreshing
+                            updateFilenameVisibility();
                         }
-                    });
-
-                    if (!hasContent) {
-                        queueContents.innerHTML = '<p>Program is currently idle.</p>';
+                    } else {
+                        initializationStatus.style.display = 'none';
+                        queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
                     }
-
-                    // Update filename visibility after refreshing
-                    updateFilenameVisibility();
                 }
             })
             .catch(error => console.error('Error fetching queue contents:', error));

@@ -1,0 +1,17 @@
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Advanced Settings</h4>
+    </div>
+    <div class="settings-section-content active">
+        <div class="settings-form-group">
+            <label for="log_level" class="settings-title">Log Level:</label>
+            <select id="log_level" name="log_level" class="settings-input">
+                <option value="DEBUG" {% if settings.log_level == 'DEBUG' %}selected{% endif %}>Debug</option>
+                <option value="INFO" {% if settings.log_level == 'INFO' %}selected{% endif %}>Info</option>
+                <option value="WARNING" {% if settings.log_level == 'WARNING' %}selected{% endif %}>Warning</option>
+                <option value="ERROR" {% if settings.log_level == 'ERROR' %}selected{% endif %}>Error</option>
+            </select>
+            <p class="settings-description">Set the logging level for the application.</p>
+        </div>
+    </div>
+</div>

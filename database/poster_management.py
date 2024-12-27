@@ -4,41 +4,60 @@ import asyncio
 from aiohttp import ClientConnectorError, ServerTimeoutError, ClientResponseError
 
 async def get_poster_url(session, tmdb_id, media_type):
-    from content_checkers.overseerr import get_overseerr_headers
-    from poster_cache import cache_unavailable_poster
+    from poster_cache import get_cached_poster_url, cache_poster_url, cache_unavailable_poster, UNAVAILABLE_POSTER
+
+    # Log incoming parameters
+    logging.info(f"get_poster_url called with tmdb_id: {tmdb_id}, original media_type: {media_type}")
+
+    # Normalize media type early
+    normalized_type = 'tv' if media_type.lower() in ['tv', 'show', 'series'] else 'movie'
+    logging.info(f"Normalized media_type from '{media_type}' to '{normalized_type}'")
+
+    # First check the cache using normalized type
+    cached_url = get_cached_poster_url(tmdb_id, normalized_type)
+    if cached_url:
+        logging.info(f"Cache hit for {tmdb_id}_{normalized_type}: {cached_url}")
+        return cached_url
 
     if not tmdb_id:
-        cache_unavailable_poster(tmdb_id, media_type)
-        return None
+        logging.warning("No TMDB ID provided")
+        cache_unavailable_poster(tmdb_id, normalized_type)
+        return UNAVAILABLE_POSTER
 
-    overseerr_url = get_setting('Overseerr', 'url', '').rstrip('/')
-    overseerr_api_key = get_setting('Overseerr', 'api_key', '')
+    tmdb_api_key = get_setting('TMDB', 'api_key', '')
     
-    if not overseerr_url or not overseerr_api_key:
-        logging.warning("Overseerr URL or API key is missing")
-        cache_unavailable_poster(tmdb_id, media_type)
-        return None
+    if not tmdb_api_key:
+        logging.warning("TMDB API key is missing")
+        cache_unavailable_poster(tmdb_id, normalized_type)
+        return UNAVAILABLE_POSTER
     
-    headers = get_overseerr_headers(overseerr_api_key)
-    
-    url = f"{overseerr_url}/api/v1/{media_type}/{tmdb_id}"
+    url = f"https://api.themoviedb.org/3/{normalized_type}/{tmdb_id}/images?api_key={tmdb_api_key}"
+    logging.info(f"Fetching poster from TMDB API for {tmdb_id} as type '{normalized_type}'")
     
     try:
-        async with session.get(url, headers=headers, timeout=10) as response:
+        async with session.get(url, timeout=10) as response:
+            logging.info(f"TMDB API response status: {response.status} for {tmdb_id}_{normalized_type}")
             if response.status == 200:
                 data = await response.json()
-                poster_path = data.get('posterPath')
-                if poster_path:
-                    return f"https://image.tmdb.org/t/p/w300{poster_path}"
-                else:
-                    logging.warning(f"No poster path found for {media_type} with TMDB ID {tmdb_id}")
-            else:
-                logging.error(f"Overseerr API returned status {response.status} for {media_type} with TMDB ID {tmdb_id}")
+                posters = data.get('posters', [])
+                
+                if posters:
+                    # First try English posters
+                    english_posters = [p for p in posters if p.get('iso_639_1') == 'en']
+                    poster = english_posters[0] if english_posters else posters[0]
+                    poster_url = f"https://image.tmdb.org/t/p/w300{poster['file_path']}"
+                    logging.info(f"Found poster for {tmdb_id}_{normalized_type}: {poster_url}")
+                    cache_poster_url(tmdb_id, normalized_type, poster_url)
+                    return poster_url
+                
+                logging.warning(f"No posters found for {normalized_type} with TMDB ID {tmdb_id}")
+                cache_unavailable_poster(tmdb_id, normalized_type)
+                return UNAVAILABLE_POSTER
             
-    except (ClientConnectorError, ServerTimeoutError, ClientResponseError, asyncio.TimeoutError) as e:
-        logging.error(f"Error fetching poster URL for {media_type} with TMDB ID {tmdb_id}: {e}")
+            logging.error(f"TMDB API returned status {response.status} for {normalized_type} with TMDB ID {tmdb_id}")
+            
     except Exception as e:
-        logging.error(f"Unexpected error fetching poster URL for {media_type} with TMDB ID {tmdb_id}: {e}")
+        logging.error(f"Error fetching poster URL for {normalized_type} with TMDB ID {tmdb_id}: {e}")
     
-    cache_unavailable_poster(tmdb_id, media_type)
-    return None
+    cache_unavailable_poster(tmdb_id, normalized_type)
+    return UNAVAILABLE_POSTER

@@ -19,67 +19,25 @@ form#search-form input, select, button {
     font-family: inherit;
 }
 
-
-.trending-container {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding-top: 20px;
+/* Override autofill styles */
+form#search-form input:-webkit-autofill,
+form#search-form input:-webkit-autofill:hover,
+form#search-form input:-webkit-autofill:focus,
+form#search-form input:-webkit-autofill:active {
+    -webkit-text-fill-color: #fff !important;
+    -webkit-box-shadow: 0 0 0 30px #444 inset !important;
+    transition: background-color 5000s ease-in-out 0s;
 }
 
-.trending-movies {
-    background-color: #1e1e1e;
-    border-radius: 8px;
-    padding: 20px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    margin-bottom: 30px;
+/* For Firefox */
+form#search-form input:autofill {
+    color: #fff;
+    background-color: #444;
 }
 
-.trending-shows {
-    background-color: #1e1e1e;
-    border-radius: 8px;
-    padding: 20px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-.trending-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-}
-
-.trending-title {
-    font-size: 24px;
-    font-weight: bold;
-    color: #ffffff;
-}
-
-.trending-navigation {
-    display: flex;
-    gap: 10px;
-}
-
-.trending-nav-button {
-    background-color: transparent;
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-    transition: color 0.3s ease;
-}
-
-.trending-nav-button:hover {
-    opacity: 0.8;
-}
-
-.trending-nav-button:disabled {
-    color: #4a4a4a;    
-    cursor: not-allowed;
+/* For Edge */
+form#search-form input:-ms-input-placeholder {
+    color: #fff !important;
 }
 
 .movie-list {
@@ -150,6 +108,10 @@ form#search-form input, select, button {
     padding-top: 10px;
 }
 
+.no-tmdb-api .media-title {
+    opacity: 1;
+}
+
 .media-poster:hover .media-poster-img {
     transform: scale(1.1);
 }
@@ -162,36 +124,7 @@ form#search-form input, select, button {
     cursor: pointer;
 }
 
-#trending-rating {
-    position: absolute;
-    margin: 5px;
-    width: 26px;
-    height: 16px;
-    color: rgba(255, 255, 255, 0.8);
-    font-size: 11px;
-    font-weight: bold;
-    line-height: 16px;
-    text-align: center;
-    border-radius: 11px;
-    background-color: #ed1c23c0;
-    z-index: 1;
-}
 
-#trending-watchers {
-    position: absolute;
-    right: 0;
-    margin: 5px;
-    width: 52px;
-    height: 16px;
-    color: rgba(255, 255, 255, 0.8);
-    font-size: 11px;
-    font-weight: bold;
-    line-height: 16px;
-    text-align: center;
-    border-radius: 11px;
-    background-color: rgb(0 0 0 / 72%);
-    z-index: 1;
-}
 .sresult {
     transition: transform 0.3s ease;
     width: 200px;
@@ -349,24 +282,26 @@ button#seasonPackButton {
 
 .season-bg-image {
     position: absolute;
-    top: 128px;
+    top: 64px;
     left: 0;
     width: 100%;
-    height: 29%;
+    height: 85%;
     background-size: cover;
-    background-position: center;
+    background-position: center top;
     z-index: 0;
+
+    /* Apply a mask to fade the bottom of the image to transparent */
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 40%, rgba(0, 0, 0, 0) 55%);
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 40%, rgba(0, 0, 0, 0) 55%);
 }
 
-.season-bg-image::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgb(36 34 34 / 88%);
-    z-index: 1;
+
+
+#episodeResults > div {
+    position: relative;
+    width: 1600px;
+    margin: 0 auto;
+    top: 140px;
 }
 
 
@@ -452,13 +387,6 @@ h2.episode-title {
     padding-top: 10px;
 }
 
-#episodeResults > div {
-    position: relative;
-    width: 1600px;
-    margin: 0 auto;
-    top: 70px;
-}
-
 .overlay {
     display: none;
     position: fixed;
@@ -466,7 +394,9 @@ h2.episode-title {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(17, 16, 16, 0.678);
+    background-color: rgba(17, 16, 16, 0.5);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px); /* For Safari */
     z-index: 1000;
 }
 
@@ -475,17 +405,67 @@ h2.episode-title {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: rgba(41, 36, 36, 0.849);
+    background-color: rgba(41, 36, 36, 0.95);
     padding: 20px;
-    border-radius: 5px;
-    max-width: 80%;
-    max-height: 80%;
+    border-radius: 10px;
+    max-width: 85%; /* Increased from 90% to 95% */
+    max-height: 80%; /* Increased from 80% to 90% */
     overflow-y: auto;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.overlay-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    table-layout: fixed; /* Added to ensure fixed column widths */
+}
+
+.overlay-content th,
+.overlay-content td {
+    padding: 12px;
+    text-align: left;
+    overflow: hidden; /* Added to handle overflow */
+    text-overflow: ellipsis; /* Added to show ellipsis for overflowing text */
+    border-bottom: none;
+}
+
+/* Add styles for the title column */
+.overlay-content td:first-child {
+    white-space: normal; /* Allow wrapping for the title column */
+    max-height: 4.5em; /* Approximately 3 lines of text */
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.overlay-content tr {
+    border: 1px solid #444;
+}
+
+/* Update button styles */
+.overlay-content td button {
+    background-color: #4CAF50;
+    border: none;
+    color: white;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 12px; /* Reduced font size */
+    margin: 2px 1px; /* Reduced margin */
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+    text-wrap: pretty;
+}
+
+.overlay-content td button:hover {
+    background-color: #45a049;
 }
 
 .torresult {
     width: 300px;
-    border: 1px solid #ededed63;
     margin-bottom: 5px;
     border-radius: 12px;
     background-color: #161515a8;
@@ -543,14 +523,6 @@ p.torresult-title {
     max-width: 1024px; /* (300px * 5) + (20px * 4) for gaps */
     min-width: 312px;
     margin: 0 auto; /* Centers the container if it's narrower than its parent */
-}
-
-.overlay-content td button {
-    background-color: #d3d3d3;
-    border: solid;
-    border-color: #2220;
-    padding: 10px;
-    border-radius: 10px;
 }
 
 .mediatype-tv {

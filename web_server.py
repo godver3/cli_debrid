@@ -15,6 +15,7 @@ from extensions import db, app, app_start_time
 from routes.auth_routes import init_db
 from flask_login import current_user
 import logging
+import sys
 
 from routes import register_blueprints, auth_bp
 
@@ -24,7 +25,8 @@ app.secret_key = '9683650475'
 
 queue_manager = QueueManager()
 
-db_directory = os.path.join(app.root_path, 'db_content')
+# Get db_content directory from environment variable with fallback
+db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 os.makedirs(db_directory, exist_ok=True)
 
 if not os.access(db_directory, os.W_OK):
@@ -46,7 +48,9 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 # Global variables for statistics
 start_time = time.time()
 
-CONFIG_FILE = './config/config.json'
+# Get config directory from environment variable with fallback
+config_dir = os.environ.get('USER_CONFIG', '/user/config')
+CONFIG_FILE = os.path.join(config_dir, 'config.json')
 
 register_blueprints(app)
 
@@ -62,9 +66,23 @@ def utility_processor():
 @app.context_processor
 def inject_version():
     try:
-        with open('version.txt', 'r') as f:
+        # Get the application's root directory
+        if getattr(sys, 'frozen', False):
+            # If frozen (exe), look in the PyInstaller temp directory
+            base_dir = os.path.dirname(__file__)  # This will be the _MEI* directory
+        else:
+            # If running from source, use the directory containing this script
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        version_path = os.path.join(base_dir, 'version.txt')
+        
+        with open(version_path, 'r') as f:
             version = f.read().strip()
     except FileNotFoundError:
+        logging.warning(f"version.txt not found at {version_path}")
+        version = "Unknown"
+    except Exception as e:
+        logging.error(f"Error reading version.txt: {str(e)}")
         version = "Unknown"
     return dict(version=version)
     

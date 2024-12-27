@@ -5,8 +5,9 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
 from settings import get_setting
 import time
-from metadata.metadata import get_overseerr_movie_details, get_overseerr_cookies, get_overseerr_show_details, get_overseerr_show_episodes, get_all_season_episode_counts
+from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
 from fuzzywuzzy import fuzz
+from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
 import os
 from utilities.plex_functions import filter_genres
 from guessit import guessit
@@ -15,6 +16,28 @@ from babelfish import Language
 from .scraper_manager import ScraperManager
 from config_manager import load_config
 import unicodedata
+import sys
+from PTT import parse_title
+from pathlib import Path
+
+# Add our own adult terms list for additional filtering
+adult_terms = [
+    'xxx', 'porn', 'adult', 'hentai', 'brazzers', 'playboy', 'penthouse',
+    'bangbros', 'naughtyamerica', 'blacked', 'tushy', 'vixen', 'pornhub',
+    'xvideos', 'xhamster', 'redtube', 'youporn', 'eporner', 'xnxx', 'spankbang',
+    'pornhd', 'xmovies', 'beeg', 'porntrex', 'chaturbate', 'myfreecams',
+    'cam4', 'camsoda', 'livejasmin', 'streamate', 'stripchat', 'bongacams',
+    'adultfriendfinder', 'fling', 'ashleymadison', 'seekingarrangement',
+    'onlyfans', 'manyvids', 'clips4sale', 'pornhubpremium', 'brazzersnetwork',
+    'realitykings', 'mofos', 'digitalplayground', 'twistys', 'babes', 'wicked',
+    'evilangel', 'kink', 'gfrevenge', 'puba', 'fakehub', 'naughtyamerica',
+    'teamskeet', 'bangbros', 'blacked', 'blackedraw', 'tushy', 'tushyraw', 'vixen',
+    'deeper', 'sweetsinner', 'sweetheartvideo', 'girlsway', 'whiteghetto',
+    'devilsfilm', 'peternorth', 'roccocontent', 'julesjordan', 'manuelferrara',
+    'legalpornonetwork', 'private', 'vivid', 'wicked', 'wickedpictures', 'hustler',
+    'penthouse', 'playboy', 'playboyplus', 'adulttime', 'brazzers', 'realitykings',
+    'mofos', 'babes', 'twistys', 'digitalplayground', 'fakehub'
+]
 
 def romanize_japanese(text):
     kks = pykakasi.kakasi()
@@ -22,9 +45,12 @@ def romanize_japanese(text):
     return ' '.join([item['hepburn'] for item in result])
 
 def setup_scraper_logger():
-    log_dir = 'logs'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    # Use environment variable for log directory with fallback
+    log_dir = os.environ.get('USER_LOGS', '/user/logs')
+    log_dir = Path(log_dir)
+    
+    # Create log directory if it doesn't exist
+    log_dir.mkdir(parents=True, exist_ok=True)
     
     scraper_logger = logging.getLogger('scraper_logger')
     scraper_logger.setLevel(logging.DEBUG)
@@ -34,7 +60,8 @@ def setup_scraper_logger():
     for handler in scraper_logger.handlers[:]:
         scraper_logger.removeHandler(handler)
     
-    file_handler = logging.FileHandler(os.path.join(log_dir, 'scraper.log'))
+    log_file = log_dir / 'scraper.log'
+    file_handler = logging.FileHandler(str(log_file))
     file_handler.setLevel(logging.DEBUG)
     
     formatter = logging.Formatter('%(asctime)s - %(message)s')
@@ -81,11 +108,14 @@ def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
 
 def is_regex(pattern):
     """Check if a pattern is likely to be a regex."""
-    return any(char in pattern for char in r'.*?+^$()[]{}|\\')
+    return any(char in pattern for char in r'.*?+^$()[]{}|\\') and not (pattern.startswith('"') and pattern.endswith('"'))
 
 def smart_search(pattern, text):
     """Perform either regex search or simple string matching."""
-    if is_regex(pattern):
+    if pattern.startswith('"') and pattern.endswith('"'):
+        # Remove quotes and perform case-insensitive substring search
+        return pattern[1:-1].lower() in text.lower()
+    elif is_regex(pattern):
         try:
             return re.search(pattern, text, re.IGNORECASE) is not None
         except re.error:
@@ -97,13 +127,30 @@ def smart_search(pattern, text):
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False) -> float:
+def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime: bool = False, content_type: str = None) -> float:
     # Normalize titles
-    query_title = normalize_title(query_title)
+    query_title = normalize_title(query_title).replace('&', 'and').replace('-','.')
     
     parsed_info = result.get('parsed_info', {})
-    guessit_title = parsed_info.get('title', '')
-    guessit_title = normalize_title(guessit_title)
+    result_title = result.get('title', '')
+    
+    # Prepare query title for guessit
+    guessit_query_title = query_title.replace('.', ' ')
+    
+    logging.debug(f"Original query title: '{query_title}'")
+    logging.debug(f"Prepared guessit query title: '{guessit_query_title}'")
+    logging.debug(f"Original result title: '{result_title}'")
+    
+    # Use guessit with content type and prepared query title
+    guessit_type = 'movie' if content_type.lower() == 'movie' else 'episode'
+    guessit_result = guessit(result_title, {'type': guessit_type, 'expected_title': [guessit_query_title]})
+    
+    logging.debug(f"Full guessit result: {guessit_result}")
+    
+    guessit_title = guessit_result.get('title', '')
+    guessit_title = normalize_title(guessit_title).replace('&', 'and').replace('-','.')
+    
+    logging.debug(f"Final normalized guessit title: '{guessit_title}'")
 
     logging.debug(f"Comparing cleaned titles - Query: '{query_title}', Guessit: '{guessit_title}'")
 
@@ -117,31 +164,36 @@ def improved_title_similarity(query_title: str, result: Dict[str, Any], is_anime
             alternative_titles = [alternative_titles]
         official_titles.extend(alternative_titles)
         
+        # Normalize alternative titles
+        official_titles = [normalize_title(title).replace('&', 'and') for title in official_titles]
+        
         similarity = match_any_title(guessit_title, official_titles)
         
         logging.debug(f"Anime title similarity: {similarity}")
 
     else:
-        # For non-anime, use the existing logic
+        # For non-anime, use the existing logic with improved word matching
         token_sort_similarity = fuzz.token_sort_ratio(query_title, guessit_title) / 100
         
-        query_words = set(query_title.split())
-        guessit_words = set(guessit_title.split())
-        all_words_present = query_words.issubset(guessit_words)
+        # Split into words and remove 's' from the end of words for comparison
+        query_words = set(word.rstrip('s') for word in query_title.split())
+        guessit_words = set(word.rstrip('s') for word in guessit_title.split())
+        
+        # Check if all base words (without 's') are present
+        all_words_present = query_words.issubset(guessit_words) or guessit_words.issubset(query_words)
 
-        if all_words_present:
+        # If token sort similarity is very high (>0.95), don't penalize as heavily
+        if token_sort_similarity > 0.95:
             similarity = token_sort_similarity
         else:
-            similarity = token_sort_similarity * 0.5  # Penalize if not all words are present
+            similarity = token_sort_similarity * (0.75 if all_words_present else 0.5)
 
         logging.debug(f"Token sort ratio: {token_sort_similarity}")
-        logging.debug(f"All query words present: {all_words_present}")
+        logging.debug(f"All base words present: {all_words_present}")
 
     logging.debug(f"Final similarity score: {similarity}")
 
     return similarity  # Already a float between 0 and 1
-
-
 
 def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
     max_similarity = 0
@@ -203,52 +255,90 @@ def detect_resolution(parsed_info: Dict[str, Any]) -> str:
 
 def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[str, Any]:
     try:
-        parsed_info = guessit(title)
+        logging.debug(f"Starting torrent info parsing for: '{title}'")
+        
+        # Add safety check for unreasonable season ranges
+        season_range_match = re.search(r's(\d+)-s(\d+)', title.lower())
+        if season_range_match:
+            start_season = int(season_range_match.group(1))
+            end_season = int(season_range_match.group(2))
+            if end_season - start_season > 50:  # Arbitrary reasonable limit
+                logging.warning(f"Unreasonable season range detected in '{title}'. Skipping parsing.")
+                return {'title': title, 'invalid_season_range': True}
+        
+        # Try guessit parsing with thread-based timeout
+        try:
+            import threading
+            from queue import Queue
+            
+            def parse_with_guessit(title, result_queue):
+                try:
+                    result = guessit(title)
+                    result_queue.put(('success', result))
+                except Exception as e:
+                    result_queue.put(('error', str(e)))
+            
+            result_queue = Queue()
+            parser_thread = threading.Thread(
+                target=parse_with_guessit, 
+                args=(title, result_queue)
+            )
+            parser_thread.daemon = True
+            parser_thread.start()
+            parser_thread.join(timeout=5)  # 5 second timeout
+            
+            if parser_thread.is_alive():
+                logging.warning(f"Guessit parsing timed out for '{title}'")
+                return {'title': title, 'parsing_timeout': True}
+            
+            status, result = result_queue.get_nowait()
+            if status == 'error':
+                logging.error(f"Guessit parsing error: {result}")
+                return {'title': title, 'parsing_error': True}
+            parsed_info = result
+            
+        except Exception as e:
+            logging.error(f"Guessit parsing failed for '{title}': {str(e)}")
+            return {'title': title, 'parsing_error': True}
+        
+        # Process the parsed info
+        try:
+            # Basic validation of parsed info
+            if not isinstance(parsed_info, dict):
+                logging.error(f"Invalid parsed_info type for '{title}': {type(parsed_info)}")
+                return {'title': title, 'invalid_parse': True}
+            
+            # Convert Language objects and handle year
+            for key, value in list(parsed_info.items()):
+                if isinstance(value, Language):
+                    parsed_info[key] = str(value)
+                elif key == 'year' and not isinstance(value, list):
+                    parsed_info[key] = [value]
+                elif isinstance(value, list):
+                    parsed_info[key] = [str(item) if isinstance(item, Language) else item for item in value]
+            
+            # Handle size if provided
+            if size is not None:
+                parsed_info['size'] = parse_size(size)
+            
+            # Add additional information
+            resolution = detect_resolution(parsed_info)
+            parsed_info['resolution'] = resolution
+            parsed_info['resolution_rank'] = get_resolution_rank(resolution)
+            parsed_info['is_hdr'] = detect_hdr(parsed_info)
+            
+            season_episode_info = detect_season_episode_info(parsed_info)
+            parsed_info['season_episode_info'] = season_episode_info
+            
+            return parsed_info
+            
+        except Exception as e:
+            logging.error(f"Error processing parsed info for '{title}': {str(e)}", exc_info=True)
+            return {'title': title, 'processing_error': True}
+            
     except Exception as e:
-        logging.error(f"Error parsing title with guessit: {str(e)}")
-        parsed_info = {'title': title}  # Fallback to using the raw title
-
-    # Convert Language objects to strings and ensure year is always a list
-    for key, value in parsed_info.items():
-        if isinstance(value, Language):
-            parsed_info[key] = str(value)
-        elif key == 'year' and not isinstance(value, list):
-            parsed_info[key] = [value]
-        elif isinstance(value, list):
-            parsed_info[key] = [str(item) if isinstance(item, Language) else item for item in value]
-
-
-    # Handle size
-    if size is not None:
-        parsed_info['size'] = parse_size(size)
-
-    # Convert Language and Size-like objects to strings
-    for key, value in parsed_info.items():
-        if isinstance(value, Language):
-            parsed_info[key] = str(value)
-        elif hasattr(value, 'bytes'):  # Check for Size-like objects
-            parsed_info[key] = str(value.bytes)
-        elif isinstance(value, list):
-            parsed_info[key] = [
-                str(item) if isinstance(item, Language) else
-                str(item.bytes) if hasattr(item, 'bytes') else
-                item
-                for item in value
-            ]
-
-    # Detect resolution and rank
-    resolution = detect_resolution(parsed_info)
-    parsed_info['resolution'] = resolution
-    parsed_info['resolution_rank'] = get_resolution_rank(resolution)
-
-    # Detect HDR
-    parsed_info['is_hdr'] = detect_hdr(parsed_info)
-
-    # Detect season and episode info
-    season_episode_info = detect_season_episode_info(parsed_info)
-    parsed_info['season_episode_info'] = season_episode_info
-
-    return parsed_info
+        logging.error(f"Error in parse_torrent_info for '{title}': {str(e)}", exc_info=True)
+        return {'title': title, 'parsing_error': True}
 
 def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Optional[Dict[str, Any]]:
     url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}"
@@ -263,68 +353,51 @@ def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Opti
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching TMDB season info: {e}")
         return None
-
+    
 def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Retrieve episode count and runtime information for given media items.
-    
-    Args:
-    media_items (List[Dict[str, Any]]): List of media items to process.
-    
-    Returns:
-    List[Dict[str, Any]]: List of media items with additional 'episode_count' and 'runtime' fields.
-    """
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    if not overseerr_url or not overseerr_api_key:
-        logging.error("Overseerr URL or API key not set. Please configure in settings.")
-        return []
-
-    cookies = get_overseerr_cookies(overseerr_url)
     processed_items = []
 
     for item in media_items:
         try:
             if item['media_type'] == 'movie':
-                details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-                if details:
+                db_runtime = get_movie_runtime(item['tmdb_id'])
+                if db_runtime:
                     item['episode_count'] = 1
-                    item['runtime'] = details.get('runtime', 100)  # Default to 100 minutes if not available
+                    item['runtime'] = db_runtime
                 else:
-                    logging.warning(f"Could not fetch details for movie: {item['title']}")
+                    logging.info(f"Fetching metadata for movie: {item['title']}")
+                    metadata = get_metadata(tmdb_id=item['tmdb_id'], item_media_type='movie')
+                    item['runtime'] = metadata.get('runtime', 100)  # Default to 100 if not found
                     item['episode_count'] = 1
-                    item['runtime'] = 100  # Default value
-            
+                    logging.info(f"Runtime for movie: {item['runtime']}")
+        
             elif item['media_type'] == 'episode':
-                show_details = get_overseerr_show_details(overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-                if show_details:
-                    seasons = show_details.get('seasons', [])
-                    item['episode_count'] = sum(season.get('episodeCount', 0) for season in seasons if season.get('seasonNumber', 0) != 0)
-                    
-                    # Try to get runtime from TMDB API first
-                    tmdb_api_key = get_setting('TMDB', 'api_key')
-                    if tmdb_api_key:
-                        try:
-                            first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
-                            if first_season:
-                                season_info = get_tmdb_season_info(item['tmdb_id'], first_season['seasonNumber'], tmdb_api_key)
-                                if season_info and season_info.get('episodes'):
-                                    item['runtime'] = season_info['episodes'][0].get('runtime', 30)
-                                else:
-                                    raise Exception("Failed to get episode runtime from TMDB")
-                            else:
-                                raise Exception("No valid season found")
-                        except Exception as e:
-                            logging.warning(f"Error fetching TMDB data: {str(e)}. Falling back to Overseerr data.")
-                            # Fall back to Overseerr data
-                            item['runtime'] = get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
-                    else:
-                        # Use Overseerr data if TMDB API key is not available
-                        item['runtime'] = get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, item['tmdb_id'], cookies)
+                db_runtime = get_episode_runtime(item['tmdb_id'])
+                if db_runtime:
+                    item['runtime'] = db_runtime
+                    item['episode_count'] = get_episode_count(item['tmdb_id'])
                 else:
-                    logging.warning(f"Could not fetch details for TV show: {item['title']}")
-                    item['episode_count'] = 1
-                    item['runtime'] = 30  # Default value
+                    logging.info(f"Fetching metadata for TV show: {item['title']}")
+                    if 'imdb_id' in item:
+                        tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
+                    elif 'tmdb_id' in item:
+                        tmdb_id, media_type = item['tmdb_id'], 'tv'
+                    else:
+                        logging.warning(f"No IMDb ID or TMDB ID found for TV show: {item['title']}")
+                        tmdb_id, media_type = None, None
+
+                    if tmdb_id and media_type == 'tv':
+                        metadata = get_metadata(tmdb_id=tmdb_id, item_media_type='tv')
+                        item['runtime'] = metadata.get('runtime', 30)  # Default to 30 if not found
+                        seasons = metadata.get('seasons', {})
+                        item['episode_count'] = sum(season.get('episode_count', 0) for season in seasons.values())
+                    else:
+                        logging.warning(f"Could not fetch details for TV show: {item['title']}")
+                        item['episode_count'] = 1
+                        item['runtime'] = 30  # Default value
+                    
+                    logging.info(f"Runtime for TV show: {item['runtime']}")
+                    logging.info(f"Episode count for TV show: {item['episode_count']}")
             
             logging.debug(f"Processed {item['title']}: {item['episode_count']} episodes, {item['runtime']} minutes per episode/movie")
             processed_items.append(item)
@@ -337,15 +410,6 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
             processed_items.append(item)
 
     return processed_items
-
-def get_runtime_from_overseerr(seasons, overseerr_url, overseerr_api_key, tmdb_id, cookies):
-    if seasons:
-        first_season = next((s for s in seasons if s.get('seasonNumber', 0) != 0), None)
-        if first_season:
-            season_details = get_overseerr_show_episodes(overseerr_url, overseerr_api_key, tmdb_id, first_season['seasonNumber'], cookies)
-            first_episode = season_details.get('episodes', [{}])[0]
-            return first_episode.get('runtime', 30)
-    return 30  # Default runtime if no data is available
 
 def parse_size(size):
     if isinstance(size, (int, float)):
@@ -717,6 +781,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     filter_in = version_settings.get('filter_in', [])
     filter_out = version_settings.get('filter_out', [])
     enable_hdr = version_settings.get('enable_hdr', False)
+    disable_adult = get_setting('Scraping', 'disable_adult', False)
 
     def resolution_filter(result_resolution, max_resolution, resolution_wanted):
         comparison = compare_resolutions(result_resolution, max_resolution)
@@ -728,11 +793,16 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             return comparison >= 0
         return False
 
+
+
     # Fetch alternate title for anime
     alternate_title = None
     original_title = None
     is_anime = genres and 'anime' in [genre.lower() for genre in genres]
     if is_anime:
+        # TODO: Add metadata battery cache for aliases from Trakt
+        logging.info(f"Anime detected for {title}. Using current title until this function is built.")
+        '''
         logging.info(f"Anime detected for {title}. Fetching original title.")
         overseerr_url = get_setting('Overseerr', 'url')
         overseerr_api_key = get_setting('Overseerr', 'api_key')
@@ -748,7 +818,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             if original_title:
                 # Split the title into Japanese and non-Japanese parts
                 japanese_part = ''.join([char for char in original_title if '\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u309f' or '\u30a0' <= char <= '\u30ff'])
-                non_japanese_part = ''.join([char for char in original_title if not ('\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u309f' or '\u30a0' <= char <= '\u30ff')])
+                non_japanese_part = ''.join([char for char in original_title if not ('\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u309f' or '\u30a0' <= char <= '\u30ff')]
                 
                 # Romanize only the Japanese part
                 romanized_japanese = romanize_japanese(japanese_part)
@@ -762,11 +832,36 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 logging.info("No original title found in Overseerr details.")
         else:
             logging.info("No details found in Overseerr.")
+        '''
 
     pre_size_filtered_results = []
 
     for result in results:
         result['filter_reason'] = "Passed all filters"  # Default reason
+
+        # New pre-filtering step using parse_title
+        release_name = result.get('title', '')
+        parsed_info = parse_title(release_name)
+        logging.debug(f"Parse title result for '{release_name}': {parsed_info}")
+        
+        if parsed_info and isinstance(parsed_info, dict):
+            parsed_title = parsed_info.get('title', '')
+            # If 'convert' is detected as a flag, append it to the title
+            if parsed_info.get('convert') and parsed_title.lower() == 'the':
+                parsed_title = 'the convert'
+                logging.debug(f"Detected 'convert' flag, using full title: {parsed_title}")
+            
+            if parsed_title:
+                # Normalize both titles before comparison
+                normalized_parsed_title = normalize_title(parsed_title)
+                normalized_query_title = normalize_title(title)
+                logging.debug(f"Comparing normalized titles - Parsed: '{normalized_parsed_title}', Query: '{normalized_query_title}'")
+                title_similarity = fuzz.ratio(normalized_parsed_title.lower(), normalized_query_title.lower())
+                logging.debug(f"Initial title similarity score: {title_similarity}%")
+                if title_similarity < 70:
+                    result['filter_reason'] = f"Low parsed title similarity: {title_similarity}%"
+                    logging.debug(f"Filtering out result due to low similarity: {result.get('title', 'Unknown')}")
+                    continue
 
         parsed_info = result.get('parsed_info', {})
         season_episode_info = parsed_info.get('season_episode_info', {})
@@ -777,9 +872,11 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         detected_resolution = parsed_info.get('resolution', 'Unknown')
         
         # Check title similarity
-        title_sim = improved_title_similarity(title, result, is_anime)
-        alternate_title_sim = improved_title_similarity(alternate_title, result, is_anime) if alternate_title else 0
+        title_sim = improved_title_similarity(title, result, is_anime, content_type)
+        alternate_title_sim = improved_title_similarity(alternate_title, result, is_anime, content_type) if alternate_title else 0
         
+        logging.debug(f"Title similarity: {title_sim}, Alternate title similarity: {alternate_title_sim}")
+
         if "UFC" in result['title'].upper():
             similarity_threshold = 0.35
         else:
@@ -937,6 +1034,11 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
             continue
 
+        # Apply adult content filter
+        if disable_adult and any(term in original_title.lower() for term in adult_terms):
+            result['filter_reason'] = "Adult content filtered"
+            continue
+
         # If the result passed all filters, add it to filtered_results
         if result['filter_reason'] == "Passed all filters":
             filtered_results.append(result)
@@ -950,10 +1052,26 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 def normalize_title(title: str) -> str:
     """
     Normalize the title by replacing spaces with periods, removing certain punctuation,
-    standardizing the format, and removing non-English letters while keeping accented English letters.
+    standardizing the format, and removing non-English letters while keeping accented English letters and '&'.
     """
+    # Handle HTML encoded characters
+    title = title.replace('&039;', "'").replace('&039s', "'s").replace('&#39;', "'")
+    
     # Normalize Unicode characters
     normalized = unicodedata.normalize('NFKD', title)
+    
+    # Handle percentage signs and variations
+    normalized = normalized.replace('1%', '1.percent')
+    normalized = normalized.replace('1.%', '1.percent')
+    normalized = normalized.replace('1.percent', '1.percent')
+    
+    # Handle common acronyms (add more as needed)
+    normalized = re.sub(r'S\.H\.I\.E\.L\.D', 'SHIELD', normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'S\.H\.I\.E\.L\.D\.', 'SHIELD', normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'S\.W\.A\.T', 'SWAT', normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'S\.W\.A\.T\.', 'SWAT', normalized, flags=re.IGNORECASE)
+    # Also handle spaced versions
+    normalized = re.sub(r'S\s+W\s+A\s+T', 'SWAT', normalized, flags=re.IGNORECASE)
     
     # Remove apostrophes, colons, and parentheses
     normalized = re.sub(r"[':()\[\]{}]", "", normalized)
@@ -964,11 +1082,11 @@ def normalize_title(title: str) -> str:
     # Replace multiple periods with a single period
     normalized = re.sub(r'\.+', '.', normalized)
     
-    # Keep only English letters (including accented ones), numbers, periods, and hyphens
-    normalized = ''.join(c for c in normalized if c.isalnum() or c in '.-' or (unicodedata.category(c).startswith('L') and ord(c) < 0x300))
+    # Keep only English letters (including accented ones), numbers, periods, hyphens, and '&'
+    normalized = ''.join(c for c in normalized if c.isalnum() or c in '.-&' or (unicodedata.category(c).startswith('L') and ord(c) < 0x300))
     
-    # Remove any remaining non-ASCII characters
-    normalized = re.sub(r'[^\x00-\x7F]+', '', normalized)
+    # Remove any remaining non-ASCII characters, except '&'
+    normalized = ''.join(c for c in normalized if ord(c) < 128 or c == '&')
     
     # Remove leading and trailing periods
     normalized = normalized.strip('.')
@@ -976,8 +1094,12 @@ def normalize_title(title: str) -> str:
     return normalized.lower()  # Convert to lowercase for case-insensitive comparison
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}")
 
+    logging.info(f"Pre-filter genres: {genres}")
     genres = filter_genres(genres)
+    logging.info(f"Post-filter genres: {genres}")
+
 
     try:
         start_time = time.time()
@@ -989,11 +1111,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         if content_type.lower() not in ['movie', 'episode']:
             logging.warning(f"Invalid content_type: {content_type}. Defaulting to 'movie'.")
             content_type = 'movie'
-
-        # Get TMDB ID and runtime once for all results
-        overseerr_url = get_setting('Overseerr', 'url')
-        overseerr_api_key = get_setting('Overseerr', 'api_key')
-        cookies = get_overseerr_cookies(overseerr_url)
 
         # Get media info for bitrate calculation
         media_item = {
@@ -1012,7 +1129,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Pre-calculate episode counts for TV shows
         season_episode_counts = {}
         if content_type.lower() == 'episode':
-            season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, tmdb_id, cookies)
+            season_episode_counts = get_all_season_episode_counts(tmdb_id)
+
 
         logging.debug(f"Retrieved runtime for {title}: {runtime} minutes, Episode count: {episode_count}")
 
@@ -1024,7 +1142,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             version_settings = {}
         logging.debug(f"Using version settings: {version_settings}")
 
+        original_title = title
         title = normalize_title(title)
+
+        logging.info(f"Normalized title: {title}")
+        logging.info(f"Original title: {original_title}")
 
         # Use ScraperManager to handle scraping
         scraper_manager = ScraperManager(load_config())
@@ -1037,21 +1159,61 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         all_results = deduplicate_results(all_results)
         logging.debug(f"Total results after deduplication: {len(all_results)}")
 
-        # Normalize and parse results
+        logging.info(f"Starting normalization of {len(all_results)} results")
         normalized_results = []
-        for result in all_results:
-            normalized_result = result.copy()
-            normalized_result['title'] = normalize_title(result.get('title', ''))
-            normalized_result['parsed_info'] = parse_torrent_info(normalized_result['title'])
-            normalized_results.append(normalized_result)
+        for index, result in enumerate(all_results):
+            try:
+                logging.debug(f"Normalizing result {index + 1}/{len(all_results)}: {result.get('title', 'Unknown')}")
+                normalized_result = result.copy()
+                
+                # Track title normalization
+                original_title = result.get('title', '')
+                try:
+                    normalized_title = normalize_title(original_title)
+                    normalized_result['title'] = normalized_title
+                    logging.debug(f"Title normalized: '{original_title}' -> '{normalized_title}'")
+                except Exception as e:
+                    logging.error(f"Error normalizing title '{original_title}': {str(e)}", exc_info=True)
+                    continue
+                
+                # Track parsing info with timeout protection
+                try:
+                    parsed_info = parse_torrent_info(normalized_result['title'])
+                    
+                    # Check for error indicators
+                    if any(key in parsed_info for key in ['invalid_season_range', 'invalid_parse', 'processing_error', 'parsing_error']):
+                        logging.warning(f"Skipping result due to parsing issues: {parsed_info}")
+                        continue
+                        
+                    normalized_result['parsed_info'] = parsed_info
+                    logging.debug(f"Successfully parsed torrent info for '{normalized_title}'")
+                except Exception as e:
+                    logging.error(f"Error parsing torrent info for '{normalized_title}': {str(e)}", exc_info=True)
+                    continue
+                
+                normalized_results.append(normalized_result)
+                
+                # Log progress periodically
+                if (index + 1) % 10 == 0:  # Changed from 50 to 10 for more frequent updates
+                    logging.info(f"Normalized {index + 1}/{len(all_results)} results")
+                
+            except Exception as e:
+                logging.error(f"Error processing result {index + 1}: {str(e)}", exc_info=True)
+                continue
+        
+        logging.info(f"Normalization complete. Processed {len(normalized_results)}/{len(all_results)} results")
+        
+        # Continue with the rest of the function...
+
+        logging.info(f"Filtering {len(normalized_results)} results")
 
         # Filter results
         filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
         filtered_out_results = [result for result in normalized_results if result not in filtered_results]
 
         logging.debug(f"Filtering took {time.time() - start_time:.2f} seconds")
-        logging.debug(f"Total results after filtering: {len(filtered_results)}")
-        logging.debug(f"Total filtered out results: {len(filtered_out_results)}")
+        logging.info(f"Total results after filtering: {len(filtered_results)}")
+        logging.info(f"Total filtered out results: {len(filtered_out_results)}")
 
         # Add is_multi_pack information to each result
         for result in filtered_results:
@@ -1136,9 +1298,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             result_info = (
                 f"- {result.get('title', '')}: "
                 f"Size: {result.get('size', 'N/A')} GB, "
+                f"Length: {result.get('runtime', 'N/A')} minutes, "
                 f"Bitrate: {result.get('bitrate', 'N/A')} Mbps, "
                 f"Multi-pack: {'Yes' if result.get('is_multi_pack', False) else 'No'}, "
-                f"Season pack: {result.get('season_pack', 'N/A')}"
+                f"Season pack: {result.get('season_pack', 'N/A')}, "
+                f"Source: {result.get('source', 'N/A')}"
             )
             scraper_logger.info(result_info)
 

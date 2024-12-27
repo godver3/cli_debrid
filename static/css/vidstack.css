@@ -1,0 +1,32 @@
+media-player {
+  --media-brand: #f5f5f5;
+  --media-focus-ring: #4f46e5;
+  --media-focus-ring-offset: 2px;
+  aspect-ratio: 16/9;
+  border-radius: 4px;
+  color-scheme: dark;
+}
+
+media-player[data-view-type='audio'] {
+  --media-aspect-ratio: 16/9;
+}
+
+.vds-slider-track {
+  background-color: rgb(255 255 255 / 0.2);
+}
+
+.vds-slider-track-fill {
+  background-color: rgb(255 255 255 / 0.8);
+}
+
+.vds-slider-thumb {
+  background-color: rgb(255 255 255);
+}
+
+.vds-time-slider .vds-slider-thumb {
+  display: none;
+}
+
+.vds-time-slider:hover .vds-slider-thumb {
+  display: block;
+}

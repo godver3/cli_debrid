@@ -5,10 +5,13 @@ import logging
 class WakeCountManager:
     def __init__(self):
         self.wake_counts = {}
-        self.file_path = os.path.join('db_content', 'wake_counts.pkl')
+        # Get db_content directory from environment variable with fallback
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        self.file_path = os.path.join(db_content_dir, 'wake_counts.pkl')
         self.load_wake_counts()
 
     def load_wake_counts(self):
+        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         if os.path.exists(self.file_path):
             with open(self.file_path, 'rb') as f:
                 self.wake_counts = pickle.load(f)

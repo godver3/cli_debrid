@@ -22,6 +22,12 @@ document.addEventListener('DOMContentLoaded', function() {
     let modifiedVersionSettings = {};
 
     searchButton.addEventListener('click', performSearch);
+    searchInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            performSearch();
+        }
+    });
+    
     runScrapeButton.addEventListener('click', runScrape);
     newSearchButton.addEventListener('click', startNewSearch);
 
@@ -51,6 +57,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function performSearch() {
+        Loading.show();
         const searchTerm = searchInput.value;
         fetch('/scraper/scraper_tester', {
             method: 'POST',
@@ -65,10 +72,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             return response.json();
         })
-        .then(data => displaySearchResults(data))
+        .then(data => {
+
+            displaySearchResults(data);
+        })
         .catch(error => {
             console.error('Error:', error);
             searchResults.innerHTML = '<p>Error performing search. Please try again.</p>';
+        })
+        .finally(() => {
+            Loading.hide();
         });
     }
 
@@ -88,41 +101,64 @@ document.addEventListener('DOMContentLoaded', function() {
             headerRow.appendChild(th);
         });
         
-        // Filter results to only include those with an IMDB ID
-        const validResults = results.filter(result => result.imdbId && result.imdbId !== 'N/A');
-        
-        if (validResults.length === 0) {
-            searchResultsElement.innerHTML = '<p>No results found with valid IMDB IDs.</p>';
-            return;
-        }
-        
-        validResults.forEach(result => {
-            console.log('Processing result:', result);  // Debug log
-            const row = table.insertRow();
-            row.className = 'search-result';
-            
-            const title = result.title || result.name;
-            const year = result.releaseDate ? result.releaseDate.substring(0, 4) : 
-                         result.firstAirDate ? result.firstAirDate.substring(0, 4) : 'N/A';
-            const mediaType = result.mediaType === 'tv' ? 'TV Show' : 'Movie';
-            const imdbId = result.imdbId;
-            
-            console.log(`Title: ${title}, Year: ${year}, Type: ${mediaType}, IMDB ID: ${imdbId}`);  // Debug log
-            
-            [title, year, mediaType, imdbId].forEach(cellText => {
-                const cell = row.insertCell();
-                cell.textContent = cellText;
-            });
-            
-            row.addEventListener('click', () => {
-                selectItem(result);
-                showScrapeSection();
-            });
+        // Process results and convert TMDB IDs to IMDB IDs if necessary
+        const processedResults = results.map(result => {
+            if (!result.imdbId || result.imdbId === 'N/A') {
+                return fetch(`/scraper/convert_tmdb_to_imdb/${result.id}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        result.imdbId = data.imdb_id;
+                        return result;
+                    })
+                    .catch(error => {
+                        console.error('Error converting TMDB ID to IMDB ID:', error);
+                        return result;
+                    });
+            }
+            return Promise.resolve(result);
         });
-        
-        searchResultsElement.appendChild(table);
-        
-        console.log(`Displayed ${validResults.length} results with valid IMDB IDs`);  // Debug log
+    
+        Promise.all(processedResults).then(validResults => {
+            validResults = validResults.filter(result => result.imdbId && result.imdbId !== 'N/A');
+            
+            console.log(`Valid results: ${validResults.length} out of ${results.length}`);
+            
+            if (validResults.length === 0) {
+                searchResultsElement.innerHTML = `
+                    <p>No results found with valid IMDB IDs.</p>
+                    <p>Total results received: ${results.length}</p>
+                    <p>Check the console for more details on filtered results.</p>
+                `;
+                return;
+            }
+            
+            validResults.forEach(result => {
+                console.log('Processing result:', result);  // Debug log
+                const row = table.insertRow();
+                row.className = 'search-result';
+                
+                const title = result.title || 'N/A';
+                const year = result.year || 'N/A';
+                const mediaType = result.mediaType === 'tv' ? 'TV Show' : 'Movie';
+                const imdbId = result.imdbId || 'N/A';
+                
+                console.log(`Title: ${title}, Year: ${year}, Type: ${mediaType}, IMDB ID: ${imdbId}`);  // Debug log
+                
+                [title, year, mediaType, imdbId].forEach(cellText => {
+                    const cell = row.insertCell();
+                    cell.textContent = cellText;
+                });
+                
+                row.addEventListener('click', () => {
+                    selectItem(result);
+                    showScrapeSection();
+                });
+            });
+            
+            searchResultsElement.appendChild(table);
+            
+            console.log(`Displayed ${validResults.length} results with valid IMDB IDs`);  // Debug log
+        });
     }
     
     // Update event listeners
@@ -139,6 +175,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         runScrapeButton.addEventListener('click', runScrape);
+
+
     });
 
     function selectItem(item) {
@@ -148,8 +186,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedItemElement = document.getElementById('selected-item');
         if (selectedItemElement) {
             const title = item.title || item.name;
-            const year = item.releaseDate ? item.releaseDate.substring(0, 4) : 
-                         item.firstAirDate ? item.firstAirDate.substring(0, 4) : 'N/A';
+            const year = item.year || (item.releaseDate ? item.releaseDate.substring(0, 4) : 
+                         item.firstAirDate ? item.firstAirDate.substring(0, 4) : 'N/A');
             const mediaType = item.mediaType === 'tv' ? 'TV Show' : 'Movie';
             const imdbId = item.imdbId || 'N/A';
             
@@ -530,6 +568,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function runScrape() {
+        Loading.show();
         const version = document.getElementById('version-select').value;
         const modifiedSettings = getModifiedVersionSettings();
     
@@ -580,6 +619,9 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error:', error);
             // Display an error message to the user
             document.getElementById('scrape-results').innerHTML = '<p>An error occurred while fetching results. Please try again.</p>';
+        })
+        .finally(() => {
+            Loading.hide();
         });
     }
    
@@ -781,6 +823,8 @@ document.addEventListener('DOMContentLoaded', function() {
         scrapeSection.style.display = 'none';
         searchSection.style.display = 'block';
     }
+
+    Loading.init()
 
     // Call this function whenever a setting is changed
 document.getElementById('modifiedSettings').addEventListener('input', updateSaveButtonState);

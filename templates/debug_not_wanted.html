@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Not Wanted Items</h2>
+    
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>Magnets ({{ magnets|length }})</h4>
+        </div>
+        <div class="card-body">
+            {% if magnets %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Hash</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for magnet in magnets %}
+                            <tr>
+                                <td style="word-break: break-all;">{{ magnet }}</td>
+                                <td>
+                                    <form method="POST" action="{{ url_for('debug.remove_not_wanted_magnet') }}" style="display: inline;">
+                                        <input type="hidden" name="magnet" value="{{ magnet }}">
+                                        <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p>No magnets in not wanted list.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h4>URLs ({{ urls|length }})</h4>
+        </div>
+        <div class="card-body">
+            {% if urls %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>URL</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for url in urls %}
+                            <tr>
+                                <td style="word-break: break-all;">{{ url }}</td>
+                                <td>
+                                    <form method="POST" action="{{ url_for('debug.remove_not_wanted_url') }}" style="display: inline;">
+                                        <input type="hidden" name="url" value="{{ url }}">
+                                        <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p>No URLs in not wanted list.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="mt-4">
+        <form method="POST" action="{{ url_for('debug.purge_not_wanted') }}" onsubmit="return confirm('Are you sure you want to purge all not wanted items?');">
+            <button type="submit" class="btn btn-danger">Purge All Not Wanted Items</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

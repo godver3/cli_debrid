@@ -1,14 +1,15 @@
 services:
   cli_debrid:
-    image: godver3/cli_debrid:latest
+    image: godver3/cli_debrid:dev
     pull_policy: always
     container_name: cli_debrid
     ports:
       - "5000:5000"
+      - "5001:5001"
     volumes:
-      - ./db_content:/app/db_content
-      - ./config:/app/config
-      - ./logs:/app/logs
+      - /host/location/db_content:/user/db_content
+      - /host/location/config:/user/config
+      - /host/location/logs:/user/logs
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped

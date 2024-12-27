@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 from flask import current_app
 from requests.exceptions import RequestException
+import os
 
 def setup_api_logging():
     print("Setting up API logging")
@@ -14,7 +15,12 @@ def setup_api_logging():
     api_logger = logging.getLogger('api_calls')
     api_logger.setLevel(logging.INFO)
     api_logger.propagate = False  # Prevent propagation to root logger
-    handler = logging.FileHandler('logs/api_calls.log')
+    
+    # Use the environment variable, with a fallback to the Unix-style path
+    log_dir = os.environ.get('USER_LOGS', '/user/logs')
+    log_path = os.path.join(log_dir, 'api_calls.log')
+    
+    handler = logging.FileHandler(log_path)
     formatter = logging.Formatter('%(asctime)s - %(message)s')
     handler.setFormatter(formatter)
     api_logger.addHandler(handler)

@@ -1,0 +1,12 @@
+colorlog==6.8.2
+Flask==3.0.3
+iso8601==2.1.0
+Pillow==10.4.0
+pytrakt==3.4.32
+Requests==2.32.3
+SQLAlchemy==2.0.31
+psycopg2-binary==2.9.9
+grpcio==1.66.1 
+grpcio-tools==1.66.1 
+protobuf==5.28.1
+APScheduler==3.10.4

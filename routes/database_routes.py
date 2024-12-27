@@ -1,15 +1,22 @@
 from flask import jsonify, request, render_template, session, flash, Blueprint, current_app
 import sqlite3
 import string
-from database import get_db_connection
+from database import get_db_connection, get_all_media_items, update_media_item_state
 import logging
 from sqlalchemy import text, inspect
 from extensions import db
 from database import remove_from_media_items
+from settings import get_setting
+import json
+from reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
+from .models import admin_required
+from utilities.plex_functions import remove_file_from_plex
+from database.database_reading import get_media_item_by_id
 
 database_bp = Blueprint('database', __name__)
 
 @database_bp.route('/', methods=['GET', 'POST'])
+@admin_required
 def index():
     try:
         conn = get_db_connection()
@@ -184,7 +191,15 @@ def delete_item():
     if not item_id:
         return jsonify({'success': False, 'error': 'No item ID provided'}), 400
 
-    try:
+    try:        
+        if get_setting('Sync Deletions', 'sync_deletions', False):
+            item = get_media_item_by_id(item_id)
+            if item['state'] == 'Collected':
+                if item['type'] == 'movie':
+                    remove_file_from_plex(item['title'], item['filled_by_file'])
+                elif item['type'] == 'episode':
+                    remove_file_from_plex(item['title'], item['filled_by_file'], item['episode_title'])
+
         remove_from_media_items(item_id)
         return jsonify({'success': True})
     except Exception as e:
@@ -192,7 +207,7 @@ def delete_item():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def perform_database_migration():
-    logging.info("Performing database migration...")
+    # logging.info("Performing database migration...")
     inspector = inspect(db.engine)
     if not inspector.has_table("user"):
         # If the user table doesn't exist, create all tables
@@ -208,3 +223,122 @@ def perform_database_migration():
     
     # Commit the changes
     db.session.commit()
+
+@database_bp.route('/reverse_parser', methods=['GET', 'POST'])
+def reverse_parser():
+    logging.debug("Entering reverse_parser function")
+    data = {
+        'selected_columns': ['title', 'filled_by_file', 'version'],
+        'sort_column': 'title',
+        'sort_order': 'asc'
+    }
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        page = int(request.args.get('page', 1))
+        items_per_page = 100
+        filter_default = request.args.get('filter_default', 'false').lower() == 'true'
+
+        logging.debug(f"page: {page}, items_per_page: {items_per_page}, filter_default: {filter_default}")
+
+        # Fetch the latest settings every time
+        version_terms = get_version_settings()
+        default_version = get_default_version()
+        version_order = get_version_order()
+
+        # Construct the base query
+        query = f"""
+            SELECT id, {', '.join(data['selected_columns'])}
+            FROM media_items
+            WHERE state = 'Collected'
+        """
+        
+        params = []
+
+        # Add filtering logic
+        if filter_default:
+            version_conditions = []
+            for version, terms in version_terms.items():
+                if terms:
+                    term_conditions = " OR ".join(["filled_by_file LIKE ?" for _ in terms])
+                    version_conditions.append(f"({term_conditions})")
+                    params.extend([f"%{term}%" for term in terms])
+            
+            if version_conditions:
+                query += f" AND NOT ({' OR '.join(version_conditions)})"
+
+        # Add sorting and pagination
+        query += f" ORDER BY {data['sort_column']} {data['sort_order']}"
+        query += f" LIMIT {items_per_page} OFFSET {(page - 1) * items_per_page}"
+
+        logging.debug(f"Executing query: {query}")
+        logging.debug(f"Query parameters: {params}")
+
+        cursor.execute(query, params)
+        items = cursor.fetchall()
+
+        logging.debug(f"Fetched {len(items)} items from the database")
+
+        conn.close()
+
+        items = [dict(zip(['id'] + data['selected_columns'], item)) for item in items]
+
+        # Parse versions using parse_filename_for_version function
+        for item in items:
+            parsed_version = parse_filename_for_version(item['filled_by_file'])
+            item['parsed_version'] = parsed_version
+            logging.debug(f"Filename: {item['filled_by_file']}, Parsed Version: {parsed_version}")
+
+        data.update({
+            'items': items,
+            'page': page,
+            'filter_default': filter_default,
+            'default_version': default_version,
+            'version_terms': version_terms,
+            'version_order': version_order
+        })
+
+        if request.args.get('ajax') == '1':
+            return jsonify(data)
+        else:
+            return render_template('reverse_parser.html', **data)
+        
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in reverse_parser route: {str(e)}")
+        error_message = f"Database error: {str(e)}"
+    except Exception as e:
+        logging.error(f"Unexpected error in reverse_parser route: {str(e)}")
+        error_message = "An unexpected error occurred. Please try again later."
+
+    if request.args.get('ajax') == '1':
+        return jsonify({'error': error_message}), 500
+    else:
+        flash(error_message, "error")
+        return render_template('reverse_parser.html', **data)
+    
+@database_bp.route('/apply_parsed_versions', methods=['POST'])
+def apply_parsed_versions():
+    try:
+        items = get_all_media_items()
+        updated_count = 0
+        for item in items:
+            if item['filled_by_file']:
+                parsed_version = parse_filename_for_version(item['filled_by_file'])
+                
+                # Only update if the parsed version is different from the current version
+                current_version = item['version'] if 'version' in item.keys() else None
+                if parsed_version != current_version:
+                    try:
+                        update_media_item_state(item['id'], item['state'], version=parsed_version)
+                        updated_count += 1
+                    except Exception as e:
+                        logging.error(f"Error updating item {item['id']}: {str(e)}")
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Parsed versions applied successfully. Updated {updated_count} items.'
+        })
+    except Exception as e:
+        logging.error(f"Error applying parsed versions: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500

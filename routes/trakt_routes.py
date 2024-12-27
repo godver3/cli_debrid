@@ -1,16 +1,20 @@
-from flask import jsonify, Blueprint
+from flask import jsonify, Blueprint, current_app
 from settings import get_setting
 from trakt.core import get_device_code, get_device_token
 import time
 import json
 import os
 import sys
-from flask import current_app
 import traceback
+from api_tracker import api
+import logging
+from pathlib import Path
 
 trakt_bp = Blueprint('trakt', __name__)
 
-TRAKT_CONFIG_PATH = './config/.pytrakt.json'
+# Use environment variable for config directory with fallback
+CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
+TRAKT_CONFIG_PATH = Path(CONFIG_DIR) / '.pytrakt.json'
 
 @trakt_bp.route('/trakt_auth', methods=['POST'])
 def trakt_auth():
@@ -32,8 +36,8 @@ def trakt_auth():
             'device_code': device_code_response['device_code']
         })
     except Exception as e:
-        current_app.logger.error(f"Error in trakt_auth: {str(e)}")
-        current_app.logger.error(traceback.format_exc())
+        logging.error(f"Error in trakt_auth: {str(e)}")
+        logging.error(traceback.format_exc())
         return jsonify({'error': f'Unable to start authorization process: {str(e)}'}), 500
 
 @trakt_bp.route('/trakt_auth_status', methods=['POST'])
@@ -68,8 +72,14 @@ def trakt_auth_status():
             
             # TODO: - Purge and reload Trakt auth
 
+            # Push the new auth data to the battery
+            push_result = push_trakt_auth_to_battery()
+            if push_result.status_code != 200:
+                logging.warning(f"Failed to push Trakt auth to battery: {push_result.json().get('message')}")
+
             return jsonify({
                 'status': 'authorized', 
+                'battery_push_status': 'success' if push_result.status_code == 200 else 'failed'
             })
         elif response.status_code == 400:
             return jsonify({'status': 'pending'})
@@ -88,16 +98,63 @@ def check_trakt_auth_status():
     return jsonify({'status': 'unauthorized'})
 
 def get_trakt_config():
-    if os.path.exists(TRAKT_CONFIG_PATH):
-        with open(TRAKT_CONFIG_PATH, 'r') as f:
+    if TRAKT_CONFIG_PATH.exists():
+        with TRAKT_CONFIG_PATH.open('r') as f:
             return json.load(f)
     return {}
 
 def save_trakt_config(config):
-    with open(TRAKT_CONFIG_PATH, 'w') as f:
+    TRAKT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with TRAKT_CONFIG_PATH.open('w') as f:
         json.dump(config, f, indent=2)
 
 def update_trakt_config(key, value):
     config = get_trakt_config()
     config[key] = value
     save_trakt_config(config)
+
+@trakt_bp.route('/push_trakt_auth_to_battery', methods=['POST'])
+def push_trakt_auth_to_battery():
+    try:
+        trakt_config = get_trakt_config()
+        battery_url = get_setting('Metadata Battery', 'url', 'http://localhost:5001')
+
+        if not battery_url:
+            logging.error("Battery URL not set in settings")
+            return jsonify({'error': 'Battery URL not set in settings'}), 400
+
+        # Trim :50051/ or :50051 and replace with :5001
+        battery_url = battery_url.replace(':50051/', ':5001/').replace(':50051', ':5001')
+
+        auth_data = {
+            'CLIENT_ID': trakt_config.get('CLIENT_ID'),
+            'CLIENT_SECRET': trakt_config.get('CLIENT_SECRET'),
+            'OAUTH_TOKEN': trakt_config.get('OAUTH_TOKEN'),
+            'OAUTH_REFRESH': trakt_config.get('OAUTH_REFRESH'),
+            'OAUTH_EXPIRES_AT': trakt_config.get('OAUTH_EXPIRES_AT')
+        }
+
+        logging.info(f"Attempting to push Trakt auth to battery at URL: {battery_url}")
+        
+        try:
+            response = api.post(f"{battery_url}/receive_trakt_auth", json=auth_data)
+            logging.info(f"Response status code: {response.status_code}")
+            logging.info(f"Response content: {response.text}")
+        except Exception as request_error:
+            logging.error(f"Request to battery failed: {str(request_error)}")
+            logging.error(f"Request exception type: {type(request_error).__name__}")
+            logging.error(f"Request exception details: {traceback.format_exc()}")
+            return jsonify({'status': 'error', 'message': f'Request to battery failed: {str(request_error)}'}), 500
+        
+        if response.status_code == 200:
+            logging.info("Successfully pushed Trakt auth to battery")
+            return jsonify({'status': 'success', 'message': 'Trakt auth pushed to battery successfully'})
+        else:
+            logging.error(f"Failed to push Trakt auth to battery. Status code: {response.status_code}, Response: {response.text}")
+            return jsonify({'status': 'error', 'message': f'Failed to push Trakt auth to battery: {response.text}'}), 500
+
+    except Exception as e:
+        logging.error(f"Error pushing Trakt auth to battery: {str(e)}")
+        logging.error(f"Exception type: {type(e).__name__}")
+        logging.error(f"Exception traceback: {traceback.format_exc()}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500

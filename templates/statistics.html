@@ -4,6 +4,64 @@
 
 {% block content %}
 <style>
+    /* Toggle switch styles */
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 48px;
+        height: 24px;
+        margin-left: 8px;
+    }
+
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #555;
+        transition: .4s;
+        border-radius: 24px;
+    }
+
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: #fff;
+        transition: .4s;
+        border-radius: 50%;
+    }
+
+    input:checked + .toggle-slider {
+        background-color: #FFA500;
+    }
+
+    input:checked + .toggle-slider:before {
+        transform: translateX(24px);
+    }
+
+    .toggle-item {
+        display: flex;
+        align-items: center;
+        margin-right: 20px;
+    }
+
+    .toggle-label {
+        margin-right: 8px;
+        color: #fff;
+    }
+
     /* Main container */
     .statistics-wrapper {
         display: flex;
@@ -13,7 +71,7 @@
     }
 
     .stats-container {
-        width: 70%;
+        width: 80%;
     }
 
     /* Row 1: Toggle container */
@@ -27,9 +85,46 @@
         justify-content: flex-start;
     }
 
+    /* Hide compact selector on mobile */
+    @media (max-width: 768px) {
+        #compact_toggle {
+            display: none;
+        }
+    }
+
     /* Row 2: Collection stats */
     .stats-box.collection-stats {
         margin-bottom: 10px;
+        background-color: #2c2c2c;
+        border-radius: 8px;
+        padding: 15px;
+    }
+
+    .stats-box.collection-stats .stat-items {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        justify-content: space-around;
+    }
+
+    .stats-box.collection-stats .stat-item {
+        flex: 1;
+        min-width: 150px;
+        text-align: center;
+    }
+
+    .stats-box.collection-stats .stat-item p {
+        margin: 0;
+        color: #FFA500;
+        font-size: 1.1em;
+    }
+
+    .stats-box.collection-stats .stat-item p::before {
+        content: attr(data-label);
+        display: block;
+        color: #fff;
+        font-weight: bold;
+        margin-bottom: 4px;
     }
 
     /* Row 3: Recently aired, Airing soon, Upcoming releases */
@@ -44,12 +139,206 @@
     .stats-box.airing-soon,
     .stats-box.upcoming-releases {
         width: 100%;
+        background-color: #2c2c2c;
+        border-radius: 8px;
+        padding: 15px;
+    }
+
+    .stats-box.recently-aired ul,
+    .stats-box.airing-soon ul,
+    .stats-box.upcoming-releases ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .stats-box.recently-aired li,
+    .stats-box.airing-soon li,
+    .stats-box.upcoming-releases li {
+        display: flex;
+        flex-direction: column;
+        padding: 8px 0;
+        border-bottom: 1px solid #3a3a3a;
+    }
+
+    .stats-box.recently-aired li:last-child,
+    .stats-box.airing-soon li:last-child,
+    .stats-box.upcoming-releases li:last-child {
+        border-bottom: none;
+    }
+
+    .stats-box.recently-aired .show-title,
+    .stats-box.airing-soon .show-title,
+    .stats-box.upcoming-releases .titles {
+        color: #FFA500;
+        text-align: left;
+    }
+
+    .stats-box.recently-aired .air-time,
+    .stats-box.airing-soon .air-time,
+    .stats-box.upcoming-releases .release-date {
+        color: #fff;
+        margin-left: 20px;
+        font-style: italic;
+        font-size: 0.9em;
+    }
+
+    /* Compact view specific styles */
+    .compact-view .stats-box.recently-aired li,
+    .compact-view .stats-box.airing-soon li,
+    .compact-view .stats-box.upcoming-releases li {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .compact-view .stats-box.recently-aired .air-time,
+    .compact-view .stats-box.airing-soon .air-time,
+    .compact-view .stats-box.upcoming-releases .release-date {
+        margin-left: 10px;
     }
 
     /* Row 4: Recently added */
     .stats-box.recently-added {
         width: 100%;
         margin-bottom: 20px;
+    }
+
+    /* Recently Added Sections */
+    .stats-box.recently-added-section-top,
+    .stats-box.recently-added-section-bottom,
+    .stats-box.recently-upgraded-section {
+        background-color: #2c2c2c;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+
+    .stats-box h3 {
+        color: #fff;
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 1.2em;
+    }
+
+    .cards-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        justify-content: center;
+        margin: 0 auto;
+        max-width: 1200px;
+    }
+
+    .card {
+        width: 200px;
+        height: 300px;
+        position: relative;
+        overflow: hidden;
+        margin: 0 auto;
+    }
+
+    .card:hover {
+        transform: translateY(-2px);
+    }
+
+    .card:hover .hover-content {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .card .poster {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    .card .poster img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .card .content {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 40px 12px 12px;
+        background: linear-gradient(transparent, rgba(0,0,0,0.9));
+        color: #fff;
+        z-index: 1;
+    }
+
+    .card .hover-content {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.9);
+        color: #fff;
+        padding: 20px;
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.2s;
+        display: flex;
+        flex-direction: column;
+        z-index: 2;
+        overflow: hidden;
+    }
+
+    .card .hover-content .filename {
+        font-size: 0.9em;
+        margin-bottom: 10px;
+        overflow-wrap: break-word;
+        word-break: break-all;
+        line-height: 1.4;
+    }
+
+    .card .hover-content .episode-info {
+        color: #FFA500;
+        font-size: 0.9em;
+        margin-top: auto;
+    }
+
+    .card h5 {
+        color: #fff;
+        margin: 0 0 4px 0;
+        font-size: 1.1em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .card .year {
+        color: #FFA500;
+        font-size: 0.9em;
+        margin: 0;
+    }
+
+    .card .date,
+    .card .quality {
+        display: none;
+    }
+
+    .card .content .upgrade-info {
+        font-size: 0.9em;
+        color: #FFA500;  /* Orange to highlight the upgrade */
+        margin-top: 4px;
+    }
+
+    /* Compact view adjustments */
+    .compact-view .cards-container {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+
+    .compact-view .card .content {
+        padding: 30px 8px 8px;
+    }
+
+    .compact-view .card h5 {
+        font-size: 1em;
     }
 
     /* Common styles for stats boxes */
@@ -235,6 +524,12 @@
         margin: 0 0 10px 0;
         font-size: 1em;
         font-weight: bold;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-height: 3em; /* Adjust this value based on your font size and line height */
     }
 
     .truncate {
@@ -316,13 +611,14 @@
         display: flex;
         flex-direction: row;
         gap: 10px;
+        flex-wrap: wrap;
     }
 
     .compact-view .stats-box.recently-aired,
     .compact-view .stats-box.airing-soon,
     .compact-view .stats-box.upcoming-releases {
-        flex: 1;
-        width: calc(33.33% - 7px);
+        flex: 1 1 calc(33.33% - 7px);
+        min-width: 250px;
     }
 
     .compact-view .stats-box {
@@ -397,556 +693,305 @@
         display: flex;
         flex-direction: row;
         gap: 10px;
-    }
-    .compact-view .recently-added-section{
-        flex: 1;
-    }
-
-    .compact-view .recently-added-section .card-container {
-        display: table;
+        flex-wrap: wrap;
         width: 100%;
-        border-collapse: collapse;
     }
 
-    .compact-view .recently-added-section .card {
-        display: table-row;
-        width: 100%;
-        height: auto;
-        box-shadow: none;
-        transition: none;
+    .compact-view .recently-added-section-top,
+    .compact-view .recently-added-section-bottom,
+    .compact-view .recently-upgraded-section {
+        flex: 1 1 calc(33.33% - 7px);
+        min-width: 250px;
     }
 
-    .compact-view .recently-added-section .card:hover {
-        transform: none;
-        color: #fff;
-    }
-
-    .compact-view .recently-added-section .card-content,
-    .compact-view .recently-added-section .card-hover-content {
-        display: table-cell;
-        position: static;
-        padding: 8px;
-        border-bottom: 1px solid #555;
-        background: none;
-        opacity: 1;
-    }
-
-    .compact-view .recently-added-section .card-img {
-        display: none;
-    }
-
-    .compact-view .recently-added-section .card-content {
-        display: none;
-    }
-    
-    .compact-view .recently-added-section .card h5 {
-        font-size: 0.9em;
-        margin: 0;
-        white-space: normal;
-        overflow: visible;
-        text-overflow: clip;
-        display: inline;
-        color: #FFA500;
-    }
-
-    .compact-view .recently-added-section .card .info-line {
-        font-size: 0.8em;
-        margin: 0 0 0 5px;
-        color: #aaa;
-        display: inline;
-    }
-
-    @media (max-width: 768px) {
-        .compact-view .card {
-            width: calc(33.33% - 7px);
-        }
-    }
-
-    @media (max-width: 480px) {
-        .compact-view .card {
-            width: calc(50% - 5px);
-        }
-    }
-
+    /* Media query adjustments */
     @media (max-width: 1200px) {
-        .compact-view .top-stats {
-            display: grid;
-        }
-        .compact-view .stats-box.recently-aired, .compact-view .stats-box.airing-soon, .compact-view .stats-box.upcoming-releases {
-            width: 100%;
-        }
-
         .compact-view .recently-added {
             display: block;
         }
-
-        .compact-view .recently-added-section {
+        
+        .compact-view .recently-added-section-top,
+        .compact-view .recently-added-section-bottom,
+        .compact-view .recently-upgraded-section {
+            width: 100%;
             margin-bottom: 10px;
         }
+    }
 
-        .compact-view .recently-added-section .card-container {
-            display: block;
-        }
+    .tmdb-info {
+        margin-top: 10px;
+        padding: 10px;
+        color: #be1600;
+        font-style: italic;
+        text-align: center;
+    }
 
-        .compact-view .recently-added-section .card {
-            display: grid;
-        }
+    /* Compact view styles for cards */
+    .compact-view .card-container {
+        display: block;
+    }
 
-        .compact-view .recently-added-section .card-hover-content {
-            display: inline-grid;
-            padding: 0px;
-            margin-bottom: 8px;
-            overflow-wrap: anywhere;
-        }
+    .compact-view .card {
+        width: 100%;
+        height: auto;
+        margin-bottom: 5px;
+        background-color: #555;
+        border-radius: 3px;
+        position: relative;
+        overflow: visible;
+        box-shadow: none;
+    }
 
-        .compact-view .recently-added-section .card .info-line {
-            font-size: 0.8em;
-            margin: 0px;
-        }
+    .compact-view .card-img {
+        display: none;
+    }
+
+    .compact-view .card-content {
+        display: none;
+    }
+
+    .compact-view .card-hover-content {
+        position: relative;
+        opacity: 1;
+        background: none;
+        padding: 5px;
+        display: block;
+    }
+
+    .compact-view .card:hover {
+        transform: none;
+    }
+
+    .compact-view .card h5 {
+        font-size: 0.9em;
+        margin: 0;
+        color: #FFA500;
+    }
+
+    .compact-view .card .info-line {
+        font-size: 0.8em;
+        margin: 2px 0;
     }
 
 </style>
 
-<div class="statistics-wrapper">
-    <div class="toggle-container" data-tooltip="home.toggle_container">
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check if on mobile
+        if (window.innerWidth <= 768) {
+            // Add compact-view class to statistics-wrapper
+            document.querySelector('.statistics-wrapper').classList.add('compact-view');
+        }
+    });
+</script>
+
+<div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
+    <div class="toggle-container" id="toggle_container">
         <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-globe"></i> <span id="current-timezone">{{ stats.timezone }}</span></span>
+            <span class="toggle-label"><i class="fas fa-globe"></i> {{ stats.timezone }}</span>
         </div>
         <div class="toggle-item">
             <span class="toggle-label">24h</span>
             <label class="toggle-switch">
-                <input type="checkbox" id="time-format-toggle" {% if stats.use_24hour_format %}checked{% endif %}>
+                <input type="checkbox" id="time-format-toggle">
                 <span class="toggle-slider"></span>
             </label>
         </div>
-        <div class="toggle-item">
+        <div class="toggle-item" id="compact_toggle">
             <span class="toggle-label">Compact</span>
             <label class="toggle-switch">
-                <input type="checkbox" id="compact-toggle" {% if compact_view %}checked{% endif %}>
+                <input type="checkbox" id="compact-toggle">
                 <span class="toggle-slider"></span>
             </label>
-        </div>
-        <div class="toggle-item"><span id="active-downloads"></span></div>
-        <div class="stat-item">
-            <p>Usage: <span id="daily-usage">{{ stats.daily_usage }} / {{ stats.daily_limit }} GB</span></p>
         </div>
     </div>
 
+    <script>
+        // Initialize toggles based on session state
+        document.addEventListener('DOMContentLoaded', function() {
+            const timeFormatToggle = document.getElementById('time-format-toggle');
+            const compactToggle = document.getElementById('compact-toggle');
+            
+            // Set initial states
+            timeFormatToggle.checked = {{ 'true' if use_24hour_format else 'false' }};
+            compactToggle.checked = {{ 'true' if compact_view else 'false' }};
+        });
+
+        document.getElementById('time-format-toggle').addEventListener('change', function() {
+            const isChecked = this.checked;
+            fetch('/statistics/set_time_preference', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    use24HourFormat: isChecked
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'OK') {
+                    window.location.reload();
+                }
+            });
+        });
+
+        document.getElementById('compact-toggle').addEventListener('change', function() {
+            const isChecked = this.checked;
+            fetch(`/statistics?toggle_compact=${isChecked}`, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.reload();
+                }
+            });
+        });
+    </script>
+
     <div class="stats-container">
-        <div class="stats-box collection-stats" data-tooltip="home.collection_stats">
+        <div class="stats-box collection-stats" id="collection_stats">
             <div class="stat-items">
                 <div class="stat-item">
-                    <p>Total Movies: <span id="total-movies">{{ stats.total_movies }}</span></p>
+                    <p data-label="Total Movies">{{ stats.total_movies }}</p>
                 </div>
                 <div class="stat-item">
-                    <p>Total TV Shows: <span id="total-shows">{{ stats.total_shows }}</span></p>
+                    <p data-label="Total Shows">{{ stats.total_shows }}</p>
                 </div>
                 <div class="stat-item">
-                    <p>Total Episodes: <span id="total-episodes">{{ stats.total_episodes }}</span></p>
+                    <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
                 </div>
-                <div class="stat-item uptime">
-                    <p>Uptime: <span id="uptime">{{ '%d days, %d hours, %d minutes' % (stats.uptime // 86400, (stats.uptime % 86400) // 3600, (stats.uptime % 3600) // 60) }}</span></p>
+                <div class="stat-item">
+                    <p data-label="Active Downloads">{{ stats.active_downloads }}</p>
+                </div>
+                <div class="stat-item">
+                    <p data-label="Uptime">{{ '%d days %d hours %d minutes' | format(
+                        stats.uptime // 86400,
+                        (stats.uptime % 86400) // 3600,
+                        (stats.uptime % 3600) // 60
+                    ) }}</p>
                 </div>
             </div>
         </div>
 
         <div class="top-stats">
-            <div class="stats-box recently-aired" data-tooltip="home.recently_aired">
+            <div class="stats-box recently-aired" id="recently_aired">
                 <h3>Recently Aired</h3>
-                {% if stats.recently_aired %}
-                    <ul>
-                    {% for item in stats.recently_aired %}
-                        <li>
-                            <span>{{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }}</span>
-                            <span class="air-date">{{ item.formatted_time }}</span>
-                        </li>
+                <ul>
+                    {% for item in recently_aired %}
+                    <li>
+                        <span class="show-title">{{ item.title }}</span>
+                        <span class="air-time">{{ item.formatted_datetime }}</span>
+                    </li>
                     {% endfor %}
-                    </ul>
-                {% else %}
-                    <p>No shows aired recently.</p>
-                {% endif %}
+                </ul>
             </div>
-            
-            <div class="stats-box airing-soon" data-tooltip="home.airing_soon">
+
+            <div class="stats-box airing-soon" id="airing_soon">
                 <h3>Airing Soon</h3>
-                {% if stats.airing_soon %}
-                    <ul>
-                    {% for item in stats.airing_soon %}
-                        <li>
-                            <span>{{ item.title }} S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }}</span>
-                            <span class="air-date" data-original-time="{{ item.air_datetime.strftime('%H:%M') }}">{{ item.formatted_time }}</span>
-                        </li>
+                <ul>
+                    {% for item in airing_soon %}
+                    <li>
+                        <span class="show-title">{{ item.title }}</span>
+                        <span class="air-time">{{ item.formatted_datetime }}</span>
+                    </li>
                     {% endfor %}
-                    </ul>
-                {% else %}
-                    <p>No shows airing soon.</p>
-                {% endif %}
+                </ul>
             </div>
-            
-            <div class="stats-box upcoming-releases" data-tooltip="home.upcoming_releases">
+
+            <div class="stats-box upcoming-releases" id="upcoming_releases">
                 <h3>Upcoming Releases</h3>
-                {% if stats.upcoming_releases %}
-                    <ul>
-                    {% for item in stats.upcoming_releases %}
-                        <li>
-                            <span>{{ item.titles|join(', ') }}</span>
-                            <span class="release-date">
-                                {% if item.release_date is not none %}
-                                    {% if item.release_date is string %}
-                                        {{ item.release_date }}
-                                    {% else %}
-                                        {{ item.release_date.strftime('%Y-%m-%d') }}
-                                    {% endif %}
-                                {% else %}
-                                    Date unknown
-                                {% endif %}
-                            </span>
-                        </li>
+                <ul>
+                    {% for release in upcoming_releases %}
+                    <li>
+                        <span class="titles">{{ release.titles | join(', ') }}</span>
+                        <span class="release-date">{{ release.formatted_date }}</span>
+                    </li>
                     {% endfor %}
-                    </ul>
-                {% else %}
-                    <p>No upcoming releases in the next week.</p>
-                {% endif %}
+                </ul>
             </div>
         </div>
 
-        <div class="recently-added">
-            <div class="stats-box recently-added-section" data-tooltip="home.recently_added_movies">
-                <h4>Recently Added Movies</h4>
-                {% if stats.recently_added_movies %}
-                    <div class="card-container">
-                    {% for movie in stats.recently_added_movies %}
-                        <div class="card">
-                            {% if movie.poster_url %}
-                                <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="card-img">
-                            {% endif %}
-                            <div class="card-content">
-                                <h5 class="truncate">{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
-                            </div>
-                            <div class="card-hover-content">
-                                <h5>{{ movie.title }} {% if movie.year %}({{ movie.year }}){% endif %}</h5>
-                                <p class="info-line">Added: {{ movie.collected_at }}</p>
-                                <p class="info-line">Versions: {{ movie.versions }}</p>
-                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${movie.filled_by_title}</span></p>
-                            </div>
-                        </div>
-                    {% endfor %}
-                    </div>
-                {% endif %}
-            </div>
-            <div class="stats-box recently-added-section" data-tooltip="home.recently_added_shows">
-                <h4>Recently Added Shows</h4>
-                {% if stats.recently_added_shows %}
-                    <div class="card-container">
-                    {% for show in stats.recently_added_shows %}
-                        <div class="card">
-                            {% if show.poster_url %}
-                                <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="card-img">
-                            {% endif %}
-                            <div class="card-content">
-                                <h5 class="truncate">{{ show.title }}</h5>
-                            </div>
-                            <div class="card-hover-content">
-                                <h5>{{ show.title }}</h5>
-                                <p class="info-line">Added: {{ show.collected_at }}</p>
-                                <p class="info-line">Versions: {{ show.versions }}</p>
-                                <p class="info-line">Seasons: {{ show.seasons|join(', ') }}</p>
-                                <p class="info-line">Latest: S{{ show.latest_episode[0] }}E{{ show.latest_episode[1] }}</p>
-                                <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${show.filled_by_title}</span></p>
+        {% if not compact_view and not stats.tmdb_api_key_set %}
+        <div class="tmdb-info">
+            <p>To load movie and TV show posters, please set your TMDB API key in the settings.</p>
+        </div>
+        {% endif %}
 
-                            </div>
+        <div class="recently-added">
+            <div class="stats-box recently-added-section-top" id="recently_added_movies">
+                <h3>Recently Added Movies</h3>
+                <div class="cards-container">
+                    {% for movie in recently_added.movies %}
+                    <div class="card">
+                        {% if stats.tmdb_api_key_set %}
+                        <div class="poster">
+                            <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster">
                         </div>
-                    {% endfor %}
+                        {% endif %}
+                        <div class="content">
+                            <h5>{{ movie.title }}</h5>
+                            <p class="year">{{ movie.year }}</p>
+                        </div>
+                        <div class="hover-content">
+                            <p>{{ movie.filled_by_file }}</p>
+                        </div>
                     </div>
-                {% endif %}
+                    {% endfor %}
+                </div>
             </div>
+
+            <div class="stats-box recently-added-section-bottom" id="recently_added_shows">
+                <h3>Recently Added Shows</h3>
+                <div class="cards-container">
+                    {% for show in recently_added.shows %}
+                    <div class="card">
+                        {% if stats.tmdb_api_key_set %}
+                        <div class="poster">
+                            <img src="{{ show.poster_url }}" alt="{{ show.title }} poster">
+                        </div>
+                        {% endif %}
+                        <div class="content">
+                            <h5>{{ show.title }}</h5>
+                            <p class="year">{{ show.year }}</p>
+                        </div>
+                        <div class="hover-content">
+                            <p>{{ show.filled_by_title[0] }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            {% if recently_upgraded %}
+            <div class="stats-box recently-upgraded-section" id="recently_upgraded">
+                <h3>Recently Upgraded</h3>
+                <div class="cards-container">
+                    {% for item in recently_upgraded %}
+                    <div class="card">
+                        {% if stats.tmdb_api_key_set %}
+                        <div class="poster">
+                            <img src="{{ item.poster_url }}" alt="{{ item.title }} poster">
+                        </div>
+                        {% endif %}
+                        <div class="content">
+                            <h5>{{ item.title }}</h5>
+                            <p class="year">{{ item.year }}</p>
+                        </div>
+                        <div class="hover-content">
+                            <p>{{ item.filled_by_file }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
-<script>
-// Use the server-side preference to set the initial state
-let use24HourFormat = {{ 'true' if stats.use_24hour_format else 'false' }};
-// Immediately set the checkbox state
-document.getElementById('time-format-toggle').checked = use24HourFormat;
-
-function updateAllTimes(data) {
-    // Update recently aired
-    const recentlyAiredList = document.querySelector('.recently-aired ul');
-    if (recentlyAiredList) {
-        recentlyAiredList.innerHTML = data.recently_aired.map(item => `
-            <li>
-                <span>${item.title} S${item.season.toString().padStart(2, '0')}E${item.episode.toString().padStart(2, '0')}</span>
-                <span class="air-date">${item.formatted_time}</span>
-            </li>
-        `).join('');
-    }
-
-    // Update airing soon
-    const airingSoonList = document.querySelector('.airing-soon ul');
-    if (airingSoonList) {
-        airingSoonList.innerHTML = data.airing_soon.map(item => `
-            <li>
-                <span>${item.title} S${item.season.toString().padStart(2, '0')}E${item.episode.toString().padStart(2, '0')}</span>
-                <span class="air-date">${item.formatted_time}</span>
-            </li>
-        `).join('');
-    }
-
-    // Update upcoming releases
-    const upcomingReleasesList = document.querySelector('.upcoming-releases ul');
-    if (upcomingReleasesList) {
-        upcomingReleasesList.innerHTML = data.upcoming_releases.map(item => `
-            <li>
-                <span>${item.titles.join(', ')}</span>
-                <span class="release-date">
-                    ${item.release_date ? new Date(item.release_date).toISOString().split('T')[0] : 'Date unknown'}
-                </span>
-            </li>
-        `).join('');
-    }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const timeFormatToggle = document.getElementById('time-format-toggle');
-    const compactToggle = document.getElementById('compact-toggle');
-    const statisticsWrapper = document.querySelector('.statistics-wrapper');
-    
-    // Replace the existing time format toggle event listener with this:
-    timeFormatToggle.addEventListener('change', function() {
-        use24HourFormat = this.checked;
-        
-        fetch('/statistics/set_time_preference', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ use24HourFormat: use24HourFormat }),
-            credentials: 'include',
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Server response:', data);
-            updateAllTimes(data);
-        })
-        .catch(error => {
-            console.error('Error saving preference:', error);
-        });
-    });
-
-    // Replace the existing compact toggle event listener with this:
-    compactToggle.addEventListener('change', function() {
-        if (this.checked) {
-            statisticsWrapper.classList.add('compact-view');
-        } else {
-            statisticsWrapper.classList.remove('compact-view');
-        }
-        
-        // Save the compact view preference
-        fetch('/statistics/set_compact_preference', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ compactView: this.checked }),
-            credentials: 'include',
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Compact view preference saved:', data);
-        })
-        .catch(error => {
-            console.error('Error saving compact view preference:', error);
-        });
-    });
-
-    // Set initial compact view state
-    if (compactToggle.checked) {
-        statisticsWrapper.classList.add('compact-view');
-    }
-
-    function updateStatistics() {
-        console.log('Attempting to fetch statistics...');
-        const protocol = window.location.protocol;
-        const host = window.location.host;
-        fetch(`/statistics?ajax=1`, {
-            method: 'GET',
-            credentials: 'include'
-        })
-        .then(response => {
-            console.log('Response received:', response);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log('Data received:', data);
-            // Update the statistics on the page
-            document.getElementById('total-movies').textContent = data.total_movies;
-            document.getElementById('total-shows').textContent = data.total_shows;
-            document.getElementById('total-episodes').textContent = data.total_episodes;
-            
-            // Update the uptime
-            const uptimeSeconds = data.uptime;
-            const days = Math.floor(uptimeSeconds / 86400);
-            const hours = Math.floor((uptimeSeconds % 86400) / 3600);
-            const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-            document.getElementById('uptime').textContent = `${days} days, ${hours} hours, ${minutes} minutes`;
-        
-            // Update all sections, including on initial load
-            updateRecentlyAired(data.recently_aired);
-            updateAiringSoon(data.airing_soon);
-            updateUpcomingReleases(data.upcoming_releases);
-            updateRecentlyAdded(data.recently_added_movies, data.recently_added_shows);
-            
-            // Update timezone information
-            updateTimezone(data.timezone);
-            getActiveDownloads(data.active_downloads,data.limit_downloads);
-        })
-        .catch(error => {
-            console.error('Error updating statistics:', error);
-            console.error('Error details:', error.message);
-            // Display an error message to the user
-            const errorElement = document.createElement('div');
-            errorElement.textContent = 'Failed to update statistics. Please refresh the page or try again later.';
-            errorElement.style.color = 'red';
-            document.querySelector('.statistics-wrapper').prepend(errorElement);
-        });
-    }
-
-    function updateTimezone(timezone) {
-        const timezoneElement = document.getElementById('current-timezone');
-        if (timezoneElement) {
-            timezoneElement.textContent = timezone;
-        }
-    }
-    function getActiveDownloads(active_downloads, limit_downloads) {
-    const rdActiveDownloads = document.getElementById('active-downloads');
-    if (rdActiveDownloads) {
-        console.log(`Updating RD active downloads: ${active_downloads}/${limit_downloads}`);
-        rdActiveDownloads.textContent = `RD: ${active_downloads}/${limit_downloads}`;
-    } else {
-        console.error('Element with id "active-downloads" not found');
-    }
-}
-
-    function updateRecentlyAired(recentlyAired) {
-        const container = document.querySelector('.stats-box.recently-aired');
-        if (container) {
-            const ul = container.querySelector('ul') || document.createElement('ul');
-            ul.innerHTML = recentlyAired.map(item => `
-                <li>
-                    <span>${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}</span>
-                    <span class="air-date">${item.formatted_time}</span>
-                </li>
-            `).join('');
-            if (!container.contains(ul)) container.appendChild(ul);
-        }
-    }
-
-    function updateAiringSoon(airingSoon) {
-        const container = document.querySelector('.stats-box.airing-soon');
-        if (container) {
-            const ul = container.querySelector('ul') || document.createElement('ul');
-            ul.innerHTML = airingSoon.map(item => `
-                <li>
-                    <span>${item.title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}</span>
-                    <span class="air-date">${item.formatted_time}</span>
-                </li>
-            `).join('');
-            if (!container.contains(ul)) container.appendChild(ul);
-        }
-    }
-
-    function updateUpcomingReleases(upcomingReleases) {
-        const container = document.querySelector('.stats-box.upcoming-releases');
-        if (container) {
-            const ul = container.querySelector('ul') || document.createElement('ul');
-            ul.innerHTML = upcomingReleases.map(item => `
-                <li>
-                    <span>${item.titles.join(', ')}</span>
-                    <span class="release-date">
-                        ${item.release_date ? (typeof item.release_date === 'string' ? item.release_date : new Date(item.release_date).toISOString().split('T')[0]) : 'Date unknown'}
-                    </span>
-                </li>
-            `).join('');
-            if (!container.contains(ul)) container.appendChild(ul);
-        }
-    }
-
-    function updateRecentlyAdded(movies, shows) {
-        console.log('Recently added movies:', movies);
-        console.log('Recently added shows:', shows);
-        updateRecentlyAddedSection('Recently Added Movies', movies);
-        updateRecentlyAddedSection('Recently Added Shows', shows);
-    }
-
-    function updateRecentlyAddedSection(type, items) {
-        const sections = document.querySelectorAll('.stats-box.recently-added-section');
-        let section = null;
-        for (let s of sections) {
-            if (s.querySelector('h4').textContent.trim() === type) {
-                section = s;
-                break;
-            }
-        }
-        if (!section) {
-            console.error(`Section for ${type} not found`);
-            return;
-        }
-        const container = section.querySelector('.card-container') || document.createElement('div');
-        container.className = 'card-container';
-        if (Array.isArray(items) && items.length > 0) {
-            container.innerHTML = items.map(item => {
-                // Format the collected_at date
-                const collectedDate = new Date(item.collected_at);
-                const formattedDate = `${collectedDate.toLocaleDateString()} ${collectedDate.getHours().toString().padStart(2, '0')}:${collectedDate.getMinutes().toString().padStart(2, '0')}`;
-
-                let additionalInfo = '';
-                if (type === 'TV Shows' && item.seasons && item.latest_episode) {
-                    additionalInfo = ` | Seasons: ${item.seasons.join(', ')} | Latest: S${item.latest_episode[0]}E${item.latest_episode[1]}`;
-                }
-
-                return `
-                    <div class="card">
-                        ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title} poster" class="card-img">` : ''}
-                        <div class="card-content">
-                            <h5 class="truncate">${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                        </div>
-                        <div class="card-hover-content">
-                            <h5>${item.title} ${item.year ? `(${item.year})` : ''}</h5>
-                            <p class="info-line"><span style="color: #f4f4f4;">Added:</span> ${formattedDate}</p>
-                            <p class="info-line"><span style="color: #f4f4f4;">Versions:</span> ${item.versions}</p>
-                            ${type === 'TV Shows' && item.seasons && item.latest_episode ? 
-                                `<p class="info-line"><span style="color: #f4f4f4;">Seasons:</span> ${item.seasons.join(', ')}</p>
-                                <p class="info-line"><span style="color: #f4f4f4;">Latest:</span> S${item.latest_episode[0]}E${item.latest_episode[1]}</p>` : ''}
-                            <p class="info-line" style="display: inherit;"><span style="text-transform: uppercase;">${item.filled_by_title}</span></p>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        } else {
-            container.innerHTML = `<p>No recent additions</p>`;
-        }
-        if (!section.contains(container)) {
-            section.appendChild(container);
-        }
-    }
-
-    // Update statistics every 5 minutes
-    setInterval(updateStatistics, 300000);
-
-    console.log('Timezone from server:', '{{ stats.timezone }}');
-    const timezoneElement = document.getElementById('current-timezone');
-    if (timezoneElement) {
-        console.log('Timezone displayed in HTML:', timezoneElement.textContent);
-    } else {
-        console.log('Timezone element not found in HTML');
-    }
-
-    // Initial updates
-    updateStatistics();
-});
-
-</script>
 {% endblock %}

@@ -4,62 +4,171 @@ from manual_blacklist import is_blacklisted
 from typing import List, Dict, Any
 import json
 from datetime import datetime
+from metadata.metadata import get_tmdb_id_and_media_type
+import random
 
-def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str, bool]):
+def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
     from metadata.metadata import get_show_airtime_by_imdb_id
-
-    logging.debug(f"add_wanted_items called with versions type: {type(versions)}")
-    logging.debug(f"versions content: {versions}")
 
     conn = get_db_connection()
     try:
         items_added = 0
         items_updated = 0
         items_skipped = 0
-        airtime_cache = {}  # Cache to store airtimes for each show
+        airtime_cache = {}
 
         # Handle different types of versions input
-        if isinstance(versions, str):
+        if isinstance(versions_input, str):
             try:
-                versions = json.loads(versions)
+                versions = json.loads(versions_input)
             except json.JSONDecodeError:
-                logging.error(f"Invalid JSON string for versions: {versions}")
+                logging.error(f"Invalid JSON string for versions: {versions_input}")
                 versions = {}
-        elif isinstance(versions, list):
-            versions = {version: True for version in versions}
+        elif isinstance(versions_input, list):
+            versions = {version: True for version in versions_input}
+        else:
+            versions = versions_input
 
-        logging.debug(f"Processed versions: {versions}")
+        # Prepare sets of unique identifiers for movies and episodes
+        movie_imdb_ids = set()
+        movie_tmdb_ids = set()
+        episode_imdb_ids = set()
+        episode_tmdb_ids = set()
+        episode_imdb_keys = set()
+        episode_tmdb_keys = set()
 
         for item in media_items_batch:
-            if not item.get('imdb_id'):
-                logging.warning(f"Skipping item without valid IMDb ID: {item.get('title', 'Unknown')}")
-                items_skipped += 1
-                continue
+            imdb_id = item.get('imdb_id')
+            tmdb_id = item.get('tmdb_id')
 
-            if is_blacklisted(item['imdb_id']):
-                logging.debug(f"Skipping blacklisted item: {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
-                items_skipped += 1
-                continue
+            # Ensure consistent types for IDs
+            if tmdb_id is not None:
+                tmdb_id = str(tmdb_id)
+                item['tmdb_id'] = tmdb_id  # Update item to use consistent tmdb_id
 
-            normalized_title = normalize_string(item.get('title', 'Unknown'))
+            if imdb_id is not None:
+                imdb_id = str(imdb_id)
+                item['imdb_id'] = imdb_id  # Update item to use consistent imdb_id
+
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
-            # Check if any version of the item is already collected
             if item_type == 'movie':
-                any_version_collected = conn.execute('''
-                    SELECT id FROM media_items
-                    WHERE imdb_id = ? AND type = 'movie' AND state = 'Collected'
-                ''', (item['imdb_id'],)).fetchone()
+                if imdb_id:
+                    movie_imdb_ids.add(imdb_id)
+                if tmdb_id:
+                    movie_tmdb_ids.add(tmdb_id)
             else:
-                any_version_collected = conn.execute('''
-                    SELECT id FROM media_items
-                    WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
-                ''', (item['imdb_id'], item['season_number'], item['episode_number'])).fetchone()
+                season_number = item.get('season_number')
+                episode_number = item.get('episode_number')
+                if imdb_id:
+                    episode_imdb_ids.add(imdb_id)
+                    episode_imdb_keys.add((imdb_id, season_number, episode_number))
+                if tmdb_id:
+                    episode_tmdb_ids.add(tmdb_id)
+                    episode_tmdb_keys.add((tmdb_id, season_number, episode_number))
 
-            if any_version_collected:
-                logging.debug(f"Skipping item as it's already collected in some version: {normalized_title}")
+        # Fetch existing movies from the database
+        existing_movies = set()
+        if movie_imdb_ids:
+            placeholders = ', '.join(['?'] * len(movie_imdb_ids))
+            query = f'''
+                SELECT imdb_id FROM media_items
+                WHERE type = 'movie' AND imdb_id IN ({placeholders})
+            '''
+            rows = conn.execute(query, tuple(movie_imdb_ids)).fetchall()
+            existing_movies.update(str(row['imdb_id']) for row in rows)
+
+        if movie_tmdb_ids:
+            placeholders = ', '.join(['?'] * len(movie_tmdb_ids))
+            query = f'''
+                SELECT tmdb_id FROM media_items
+                WHERE type = 'movie' AND tmdb_id IN ({placeholders})
+            '''
+            rows = conn.execute(query, tuple(movie_tmdb_ids)).fetchall()
+            existing_movies.update(str(row['tmdb_id']) for row in rows)
+
+        # Fetch existing episodes from the database
+        existing_episodes = set()
+
+        # For episodes with imdb_id
+        if episode_imdb_ids:
+            placeholders = ', '.join(['?'] * len(episode_imdb_ids))
+            query = f'''
+                SELECT imdb_id, season_number, episode_number FROM media_items
+                WHERE type = 'episode' AND imdb_id IN ({placeholders})
+            '''
+            rows = conn.execute(query, tuple(episode_imdb_ids)).fetchall()
+            for row in rows:
+                key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
+                existing_episodes.add(key)
+
+        # For episodes with tmdb_id
+        if episode_tmdb_ids:
+            placeholders = ', '.join(['?'] * len(episode_tmdb_ids))
+            query = f'''
+                SELECT tmdb_id, season_number, episode_number FROM media_items
+                WHERE type = 'episode' AND tmdb_id IN ({placeholders})
+            '''
+            rows = conn.execute(query, tuple(episode_tmdb_ids)).fetchall()
+            for row in rows:
+                key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
+                existing_episodes.add(key)
+
+        # Filter out existing items from media_items_batch
+        filtered_media_items_batch = []
+        for item in media_items_batch:
+            imdb_id = item.get('imdb_id')
+            tmdb_id = item.get('tmdb_id')
+            item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+
+            if item_type == 'movie':
+                skip = False
+                if imdb_id and imdb_id in existing_movies:
+                    skip = True
+                if tmdb_id and tmdb_id in existing_movies:
+                    skip = True
+                if skip:
+                    items_skipped += 1
+                    logging.debug(f"Skipping existing movie: {item.get('title', 'Unknown')} (IMDb ID: {imdb_id}, TMDb ID: {tmdb_id})")
+                    continue
+            else:
+                season_number = item.get('season_number')
+                episode_number = item.get('episode_number')
+                skip = False
+                if imdb_id and (imdb_id, season_number, episode_number) in existing_episodes:
+                    skip = True
+                if tmdb_id and (tmdb_id, season_number, episode_number) in existing_episodes:
+                    skip = True
+                if skip:
+                    items_skipped += 1
+                    logging.debug(f"Skipping existing episode: {item.get('title', 'Unknown')} S{season_number}E{episode_number} (IMDb ID: {imdb_id}, TMDb ID: {tmdb_id})")
+                    continue
+
+            filtered_media_items_batch.append(item)
+
+        # Proceed with adding new items
+        media_items_batch = filtered_media_items_batch
+
+        for item in media_items_batch:
+            if not item.get('imdb_id') and not item.get('tmdb_id'):
+                logging.warning(f"Skipping item without valid IMDb ID or TMDb ID: {item.get('title', 'Unknown')}")
                 items_skipped += 1
                 continue
+
+            if is_blacklisted(item.get('imdb_id', '')) or is_blacklisted(item.get('tmdb_id', '')):
+                logging.debug(f"Skipping blacklisted item: {item.get('title', 'Unknown')} (IMDb ID: {item.get('imdb_id')}, TMDb ID: {item.get('tmdb_id')})")
+                items_skipped += 1
+                continue
+
+            if not item.get('tmdb_id'):
+                tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
+                if tmdb_id:
+                    item['tmdb_id'] = str(tmdb_id)  # Ensure tmdb_id is a string
+                else:
+                    logging.warning(f"Unable to retrieve tmdb_id for {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
+
+            normalized_title = normalize_string(str(item.get('title', 'Unknown')))
+            item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
             genres = json.dumps(item.get('genres', []))  # Convert genres list to JSON string
 
@@ -67,84 +176,56 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions: Dict[str
                 if not enabled:
                     continue
 
-                # Check if item exists for this version
+                # Insert new items into the database
                 if item_type == 'movie':
-                    existing_item = conn.execute('''
-                        SELECT id, release_date, state FROM media_items
-                        WHERE imdb_id = ? AND type = 'movie' AND version = ?
-                    ''', (item['imdb_id'], version)).fetchone()
+                    conn.execute('''
+                        INSERT INTO media_items
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
+                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime')
+                    ))
+                    logging.debug(f"Adding new movie as Wanted in DB: {normalized_title} (Version: {version})")
+                    items_added += 1
                 else:
-                    existing_item = conn.execute('''
-                        SELECT id, release_date, state FROM media_items
-                        WHERE imdb_id = ? AND type = 'episode' AND season_number = ? AND episode_number = ? AND version = ?
-                    ''', (item['imdb_id'], item['season_number'], item['episode_number'], version)).fetchone()
+                    '''
+                    # For episodes, get the airtime
+                    show_id = item.get('imdb_id') or item.get('tmdb_id')
+                    if show_id not in airtime_cache:
+                        airtime_cache[show_id] = get_existing_airtime(conn, show_id)
+                        if airtime_cache[show_id] is None:
+                            logging.debug(f"No existing airtime found for show {show_id}, fetching from metadata")
+                            airtime_cache[show_id] = get_show_airtime_by_imdb_id(show_id)
 
-                if existing_item:
-                    # Item exists, check if we need to update
-                    if existing_item['state'] == 'Blacklisted':
-                        logging.debug(f"Skipping update for blacklisted item: {normalized_title} (Version: {version})")
-                        items_skipped += 1
-                    elif existing_item['state'] != 'Collected':
-                        if existing_item['release_date'] != item.get('release_date'):
-                            conn.execute('''
-                                UPDATE media_items
-                                SET release_date = ?, last_updated = ?, state = ?
-                                WHERE id = ?
-                            ''', (item.get('release_date'), datetime.now(), 'Wanted', existing_item['id']))
-                            logging.debug(f"Updated release date for existing item: {normalized_title} (Version: {version})")
-                            items_updated += 1
-                        else:
-                            logging.debug(f"Skipping update for existing item: {normalized_title} (Version: {version})")
-                            items_skipped += 1
-                    else:
-                        logging.debug(f"Skipping update for collected item: {normalized_title} (Version: {version})")
-                        items_skipped += 1
-                else:
-                    # Insert new item
-                    if item_type == 'movie':
-                        conn.execute('''
-                            INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                            item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres
-                        ))
-                    else:
-                        # For episodes, get the airtime
-                        if item['imdb_id'] not in airtime_cache:
-                            airtime_cache[item['imdb_id']] = get_existing_airtime(conn, item['imdb_id'])
-                            if airtime_cache[item['imdb_id']] is None:
-                                logging.debug(f"No existing airtime found for show {item['imdb_id']}, fetching from metadata")
-                                airtime_cache[item['imdb_id']] = get_show_airtime_by_imdb_id(item['imdb_id'])
-                            
-                            # Ensure we always have a default airtime
-                            if not airtime_cache[item['imdb_id']]:
-                                airtime_cache[item['imdb_id']] = '19:00'
-                                logging.debug(f"No airtime found, defaulting to 19:00 for show {item['imdb_id']}")
-                            
-                            logging.debug(f"Airtime for show {item['imdb_id']} set to {airtime_cache[item['imdb_id']]}")
-                        
-                        airtime = airtime_cache[item['imdb_id']]
-                        
-                        conn.execute('''
-                            INSERT INTO media_items
-                            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, airtime, genres)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            item['imdb_id'], item.get('tmdb_id'), normalized_title, item.get('year'),
-                            item.get('release_date'), 'Wanted', 'episode',
-                            item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                            datetime.now(), version, airtime, genres
-                        ))
-                    logging.debug(f"Adding new {'movie' if item_type == 'movie' else 'episode'} as Wanted in DB: {normalized_title} (Version: {version}, Airtime: {airtime if item_type == 'episode' else 'N/A'})")
+                        # Ensure we always have a default airtime
+                        if not airtime_cache[show_id]:
+                            airtime_cache[show_id] = '19:00'
+                            logging.debug(f"No airtime found, defaulting to 19:00 for show {show_id}")
+
+                        logging.debug(f"Airtime for show {show_id} set to {airtime_cache[show_id]}")
+                    '''
+
+                    airtime = item.get('airtime') or '19:00'
+
+                    conn.execute('''
+                        INSERT INTO media_items
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, runtime, airtime, genres)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
+                        item.get('release_date'), 'Wanted', 'episode',
+                        item['season_number'], item['episode_number'], item.get('episode_title', ''),
+                        datetime.now(), version, item.get('runtime'), airtime, genres
+                    ))
+                    logging.debug(f"Adding new episode as Wanted in DB: {normalized_title} S{item['season_number']}E{item['episode_number']} (Version: {version})")
                     items_added += 1
 
         conn.commit()
         logging.debug(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
-        logging.debug(f"Airtime cache contents: {airtime_cache}")
     except Exception as e:
-        logging.error(f"Error adding wanted items: {str(e)}")
+        logging.error(f"Error adding wanted items: {str(e)}", exc_info=True)
         conn.rollback()
+        raise
     finally:
         conn.close()

@@ -1,7 +1,6 @@
 from api_tracker import api
 import logging
 from typing import List, Dict, Any, Tuple
-from metadata.metadata import get_year_from_imdb_id
 from settings import get_setting, load_config as get_jackett_settings
 from urllib.parse import quote, urlencode
 import json
@@ -11,7 +10,7 @@ JACKETT_FILTER = "!status:failing,test:passed"
 
 def rename_special_characters(text: str) -> str:
     replacements = [
-        ("&", "and"),
+        ("&", ""),
         ("\u00fc", "ue"),
         ("\u00e4", "ae"),
         ("\u00e2", "a"),
@@ -68,6 +67,8 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     enabled_indexers = settings.get('enabled_indexers', '').lower()
     seeders_only = settings.get('seeders_only', False)
 
+    logging.info(f"Scraping Jackett for title: {title}")
+
     if "UFC" in title.upper():
         ufc_number = title.upper().split("UFC")[-1].strip()
         params = f"UFC {ufc_number}"
@@ -88,9 +89,11 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     query_params = {'Query': params}
     
     if enabled_indexers:
-        query_params.update({f'Tracker[]': enabled_indexers.split(',')})
+        query_params['Tracker'] = [indexer.strip() for indexer in enabled_indexers.split(',')]
 
     full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
+
+    logging.info(f"Jackett URL: {full_url}")
 
     try:
         response = api.get(full_url, headers={'accept': 'application/json'})

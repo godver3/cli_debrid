@@ -4,7 +4,7 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 
-{% for section in ['Plex', 'Overseerr', 'RealDebrid', 'Metadata Battery'] %}
+{% for section in ['Plex', 'RealDebrid', 'Trakt', 'File Management'] %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -16,9 +16,15 @@
                 <div class="settings-form-group">
                     <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value.type == 'boolean' %}
-                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if settings[section][key] %}checked{% endif %}>
+                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if settings.get(section, {}).get(key) %}checked{% endif %}>
+                    {% elif value.choices %}
+                        <select id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" class="settings-input">
+                            {% for choice in value.choices %}
+                                <option value="{{ choice }}" {% if settings.get(section, {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            {% endfor %}
+                        </select>
                     {% else %}
-                        <input type="{{ value.type }}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ settings[section][key] }}" class="settings-input" {% if value.sensitive %}type="password"{% endif %}>
+                        <input type="{{ value.type }}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input" {% if value.sensitive %}type="password"{% endif %}>
                     {% endif %}
                     {% if value.description %}
                         <p class="settings-description">{{ value.description }}</p>
@@ -29,3 +35,22 @@
         </div>
     </div>
 {% endfor %}
+
+<!-- Trakt Authorization Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Trakt Authorization</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <p class="settings-description">Click the button below to authorize Trakt. You must first enter your Client ID and Client Secret. These can be retrieved by creating an app at 
+            <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a>
+        </p>
+        <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
+        <div id="trakt-auth-status" class="trakt-status"></div>
+        <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
+            <p>Your authorization code is: <strong id="trakt-code"></strong></p>
+            <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
+        </div>
+    </div>
+</div>

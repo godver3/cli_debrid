@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, redirect, url_for, render_template, g, req
 from functools import wraps
 import json
 import os
+import sys
 from requests.exceptions import RequestException
 from werkzeug.exceptions import TooManyRequests
 
@@ -20,16 +21,29 @@ from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
+from .video_routes import video_routes
 from api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from extensions import app
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
+def get_tooltip_schema():
+    if getattr(sys, 'frozen', False):
+        # If the application is run as a bundle, the PyInstaller bootloader
+        # extends the sys module by a flag frozen=True and sets the app 
+        # path into variable _MEIPASS'.
+        application_path = sys._MEIPASS
+    else:
+        application_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    tooltip_path = os.path.join(application_path, 'tooltip_schema.json')
+    
+    with open(tooltip_path, 'r') as f:
+        return json.load(f)
+
 @tooltip_bp.route('/tooltips')
 def get_tooltips():
-    tooltip_path = os.path.join(os.path.dirname(__file__), '..', 'tooltip_schema.json')
-    with open(tooltip_path, 'r') as f:
-        tooltips = json.load(f)
+    tooltips = get_tooltip_schema()
     return jsonify(tooltips)
 
 def is_api_request():
@@ -117,6 +131,7 @@ def register_blueprints(app):
         (real_time_api_bp, '/realtime_api_calls'),
         (tooltip_bp, '/tooltip'),
         (over_usage_bp, '/over_usage'),
+        (video_routes, '/video'),
     ]
     
     for blueprint, url_prefix in blueprints:
