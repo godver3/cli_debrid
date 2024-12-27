@@ -1,6 +1,6 @@
 from flask import jsonify, request, render_template, session, Blueprint
 import logging
-from debrid.real_debrid import add_to_real_debrid
+from debrid import add_to_real_debrid
 from .models import user_required, onboarding_required, admin_required
 from settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts

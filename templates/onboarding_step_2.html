@@ -79,13 +79,19 @@
         <label for="shows_libraries" class="onboarding-label">TV Libraries:</label>
         <input type="text" id="shows_libraries" name="shows_libraries" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}">
 
-        <label for="realdebrid_api_key" class="onboarding-label">Real Debrid API Key:</label>
-        <input type="text" id="realdebrid_api_key" name="realdebrid_api_key" required class="onboarding-input" value="{{ settings.get('RealDebrid', {}).get('api_key', '') }}">
+        <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
+        <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">
+            <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
+            <option value="Torbox" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Torbox' %}selected{% endif %}>Torbox</option>
+        </select>
+
+        <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
+        <input type="text" id="debrid_api_key" name="debrid_api_key" required class="onboarding-input" value="{{ settings.get('Debrid Provider', {}).get('api_key', '') }}">
 
         <label for="file_collection_management" class="onboarding-label">File Collection Management:</label>
         <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
             <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
-            <option value="Zurg" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Zurg' %}selected{% endif %}>Zurg</option>
+            <!-- <option value="Zurg" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Zurg' %}selected{% endif %}>Zurg</option> -->
         </select>
 
         <p class="settings-description">Enter your Client ID and Client Secret. These can be retrieved by creating an app at
@@ -124,6 +130,17 @@ document.addEventListener('DOMContentLoaded', function() {
     settingsForm.addEventListener('submit', function(event) {
         event.preventDefault();
         const formData = new FormData(settingsForm);
+        
+        // Add the provider's API key to the correct provider section based on selection
+        const provider = formData.get('debrid_provider');
+        const apiKey = formData.get('debrid_api_key');
+        
+        if (provider === 'RealDebrid') {
+            formData.set('realdebrid_api_key', apiKey);
+        } else if (provider === 'Torbox') {
+            formData.set('torbox_api_key', apiKey);
+        }
+        
         fetch('{{ url_for("onboarding.onboarding_step", step=2) }}', {
             method: 'POST',
             body: formData

@@ -262,7 +262,7 @@ function addToRealDebrid(magnetLink) {
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Confirm Action',
-        message: 'Are you sure you want to add this torrent to Real-Debrid?',
+        message: 'Are you sure you want to add this torrent to your Debrid Provider?',
         confirmText: 'Add',
         cancelText: 'Cancel',
         onConfirm: () => {
@@ -520,7 +520,7 @@ function displayTorrentResults(data, title, year) {
                     <td style="color: rgb(191 191 190);">${torrent.source}</td>
                     <td style="color: rgb(191 191 190);">${torrent.score_breakdown.total_score}</td>
                     <td style="color: rgb(191 191 190);">
-                        <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Real-Debrid</button>
+                        <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Debrid</button>
                     </td>
                 `;
                 tbody.appendChild(row);
