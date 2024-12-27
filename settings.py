@@ -232,4 +232,10 @@ def ensure_settings_file():
             }
         }
 
+    # Ensure Debrid Provider is set to Torbox if not already set
+    if 'Debrid Provider' not in config:
+        config['Debrid Provider'] = {}
+    if 'provider' not in config['Debrid Provider'] or not config['Debrid Provider']['provider']:
+        config['Debrid Provider']['provider'] = 'Torbox'
+
     save_config(config)
