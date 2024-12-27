@@ -1,5 +1,6 @@
 from app import create_app
 from app.database import init_db, Session, Base
+from app.background_jobs import background_jobs
 import logging
 import time
 from sqlalchemy import inspect, text
@@ -7,6 +8,7 @@ from sqlalchemy.exc import OperationalError
 import threading
 from app.logger_config import logger
 import sys
+import atexit
 
 def initialize_database(app):
     max_retries = 5
@@ -50,14 +52,21 @@ def main():
         if engine is None:
             logger.error("Failed to initialize database after multiple attempts")
             sys.exit(1)
+            
+        # Initialize and start background jobs with Flask app
+        background_jobs.init_app(app)
+        background_jobs.start()
+        # Ensure background jobs are stopped on exit
+        atexit.register(background_jobs.stop)
+        
         logger.info("Database initialized successfully")
+        
+        # Run Flask server
+        logger.info("Starting Flask server")
+        app.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)
     except Exception as e:
-        logger.exception("Error initializing database")
+        logger.error(f"Error during startup: {e}")
         sys.exit(1)
-
-    # Run Flask server
-    logger.info("Starting Flask server")
-    app.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
     main()

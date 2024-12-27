@@ -939,3 +939,21 @@ class AddingQueue:
             return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
+
+    def get_new_item_values(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        # Fetch the updated item from the database
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            # Extract the new values that need to be updated
+            new_values = {
+                'filled_by_title': updated_item.get('filled_by_title'),
+                'filled_by_magnet': updated_item.get('filled_by_magnet'),
+                'filled_by_file': updated_item.get('filled_by_file'),
+                'filled_by_torrent_id': updated_item.get('filled_by_torrent_id'),
+                'version': updated_item.get('version'),
+                # Include any other fields that were updated
+            }
+            return new_values
+        else:
+            logging.warning(f"Could not retrieve updated item for ID {item['id']}")
+            return {}
