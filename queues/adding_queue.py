@@ -9,7 +9,7 @@ from datetime import datetime
 import os
 from database import get_all_media_items, get_media_item_by_id, update_media_item_state
 from settings import get_setting
-from debrid.real_debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, API_BASE_URL, get_active_downloads
+from debrid import add_to_real_debrid, is_cached_on_rd, extract_hash_from_magnet, get_magnet_files, get_active_downloads, get_debrid_provider
 from not_wanted_magnets import add_to_not_wanted, is_magnet_not_wanted, get_not_wanted_magnets, is_url_not_wanted, add_to_not_wanted_urls, get_not_wanted_urls
 from scraper.scraper import scrape
 from database.database_reading import get_all_season_episode_counts
@@ -25,6 +25,7 @@ class AddingQueue:
         self.api_key = None
         self.episode_count_cache = {}  
         self.anime_matcher = AnimeMatcher(self.calculate_absolute_episode)
+        self.debrid_provider = get_debrid_provider()
 
     def get_api_key(self):
         return get_setting('RealDebrid', 'api_key')
@@ -274,10 +275,10 @@ class AddingQueue:
             logging.info(f"Files in torrent for {item_identifier}: {json.dumps(files, indent=2)}")
 
             if item['type'] == 'movie':
-                matching_files = [file for file in files if self.file_matches_item(file, item)]
+                matching_files = [file for file in files if self.file_matches_item(file['path'] if isinstance(file, dict) else file, item)]
                 if matching_files:
                     logging.info(f"Matching file(s) found for movie: {item_identifier}")
-                    filled_by_file = os.path.basename(matching_files[0])
+                    filled_by_file = os.path.basename(matching_files[0]['path'] if isinstance(matching_files[0], dict) else matching_files[0])
                     queue_manager.move_to_checking(item, "Adding", title, link, filled_by_file, torrent_id)
                     logging.debug(f"Moved movie {item_identifier} to Checking queue with filled_by_file: {filled_by_file}")
                     return True, torrent_id
@@ -473,145 +474,16 @@ class AddingQueue:
         logging.info(f"Moved item {item_identifier} to Blacklisted state")
       
     def download_and_extract_hash(self, url: str) -> tuple:
-        def obfuscate_url(url: str) -> str:
-            parts = url.split('/')
-            if len(parts) > 3:
-                return '/'.join(parts[:3] + ['...'] + parts[-1:])
-            return url
-
-        obfuscated_url = obfuscate_url(url)
-        try:
-            logging.debug(f"Attempting to download torrent file from URL: {obfuscated_url}")
-            response = api.get(url, timeout=30, stream=True)
-            torrent_content = response.content
-            logging.debug(f"Successfully downloaded torrent file from {obfuscated_url}. Content length: {len(torrent_content)} bytes")
-            
-            # Save the torrent content to a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as temp_file:
-                temp_file.write(torrent_content)
-                temp_file_path = temp_file.name
-
-            # Decode the torrent file
-            torrent_data = bencodepy.decode(torrent_content)
-            
-            # Extract the info dictionary
-            info = torrent_data[b'info']
-            
-            # Encode the info dictionary
-            encoded_info = bencodepy.encode(info)
-            
-            # Calculate the SHA1 hash
-            hash_result = hashlib.sha1(encoded_info).hexdigest()
-            logging.debug(f"Successfully extracted hash: {hash_result}")
-            return hash_result, temp_file_path
-        except api.exceptions.RequestException as e:
-            logging.error(f"Network error while downloading torrent file from {obfuscated_url}: {str(e)}")
-        except bencodepy.exceptions.BencodeDecodeError as e:
-            logging.error(f"Error decoding torrent file from {obfuscated_url}: {str(e)}")
-        except KeyError as e:
-            logging.error(f"Error extracting info from torrent file from {obfuscated_url}: {str(e)}")
-        except Exception as e:
-            logging.error(f"Unexpected error processing torrent file from {obfuscated_url}: {str(e)}")
-        return None, None
-
-
-    def add_to_real_debrid_helper(self, link: str, item_identifier: str, hash_result, add_if_uncached: bool = True) -> Dict[str, Any]:
-        try:
-            # Extract just the hash if it's a tuple (hash, temp_file_path)
-            current_hash = hash_result[0] if isinstance(hash_result, tuple) else hash_result
-            temp_file_path = hash_result[1] if isinstance(hash_result, tuple) else None
-
-            logging.info(f"Processing link for {item_identifier}. Hash: {current_hash}")
-
-            # Check if the hash is already in the not wanted list
-            if is_magnet_not_wanted(current_hash):
-                logging.info(f"Hash {current_hash} for {item_identifier} is already in not_wanted_magnets. Skipping.")
-                return {"success": False, "message": "Hash already in not wanted list"}
-
-            cache_status = is_cached_on_rd(current_hash)
-            logging.info(f"Cache status for {item_identifier}: {cache_status}")
-
-            if not cache_status[current_hash] and not add_if_uncached:
-                return {"success": False, "message": "Skipping uncached content in hybrid mode"}
-
-            # Pass the temp_file_path to add_to_real_debrid
-            result = add_to_real_debrid(link, temp_file_path)
-            
-            # Clean up the temporary file
-            if temp_file_path and os.path.exists(temp_file_path):
-                os.unlink(temp_file_path)
-
-            if not result:
-                return {"success": False, "message": "Failed to add content to Real-Debrid"}
-
-            if isinstance(result, list):  
-                logging.info(f"Added cached content for {item_identifier}")
-                torrent_files = get_magnet_files(link) if link.startswith('magnet:') else self.get_torrent_files(current_hash)
-                logging.debug(f"Torrent files: {json.dumps(torrent_files, indent=2)}")
-                torrent_info = self.get_torrent_info(current_hash)
-                logging.debug(f"Torrent info: {json.dumps(torrent_info, indent=2)}")
-                return {
-                    "success": True,
-                    "message": "Cached torrent added successfully",
-                    "status": "cached",
-                    "links": result,
-                    "files": torrent_files.get('cached_files', []) if torrent_files else [],
-                    "torrent_id": torrent_info.get('id') if torrent_info else None
-                }
-            elif isinstance(result, dict) and result.get('status') == 'downloaded':  
-                logging.info(f"Added downloaded content for {item_identifier}")
-                return {
-                    "success": True,
-                    "message": "Downloaded torrent added successfully",
-                    "status": "downloaded",
-                    "links": result.get('links', []),
-                    "files": result.get('files', []),
-                    "torrent_id": result.get('torrent_id')
-                }
-            elif result in ['downloading', 'queued']:  
-                logging.info(f"Added uncached content for {item_identifier}. Status: {result}")
-    
-                # Poll for torrent status and retrieve file list
-                torrent_info = self.get_torrent_info(current_hash)
-                logging.debug(f"Torrent info for uncached torrent: {json.dumps(torrent_info, indent=2)}")
-                if torrent_info:
-                    files = [file['path'] for file in torrent_info.get('files', []) if file.get('selected') == 1]
-                    return {
-                        "success": True,
-                        "message": f"Uncached torrent added successfully. Status: {result}",
-                        "status": "uncached",
-                        "torrent_info": torrent_info,
-                        "files": files,
-                        "torrent_id": torrent_info.get('id')
-                    }
-            else:
-                return {"success": False, "message": f"Unexpected result from Real-Debrid: {result}"}
-    
-        except Exception as e:
-            logging.error(f"Error adding content to Real-Debrid for {item_identifier}: {str(e)}")
-            return {"success": False, "message": f"Error: {str(e)}"}
+        return self.debrid_provider.download_and_extract_hash(url)
 
     def get_torrent_info(self, hash_value: str) -> Dict[str, Any] or None:
-        self.api_key = self.get_api_key()
-        headers = {'Authorization': f'Bearer {self.api_key}'}
-
-        for _ in range(10):  
-            time.sleep(10)
-            torrents = api.get(f"{API_BASE_URL}/torrents", headers=headers).json()
-            for torrent in torrents:
-                if torrent['hash'].lower() == hash_value.lower():
-                    torrent_id = torrent['id']
-                    info_url = f"{API_BASE_URL}/torrents/info/{torrent_id}"
-                    return api.get(info_url, headers=headers).json()
-
-        logging.warning(f"Could not find torrent info for hash: {hash_value}")
-        return None
+        return self.debrid_provider.get_torrent_info(hash_value)
 
     def get_torrent_files(self, hash_value: str) -> Dict[str, List[str]] or None:
-        torrent_info = self.get_torrent_info(hash_value)
-        if torrent_info and 'files' in torrent_info:
-            return {'cached_files': [file['path'] for file in torrent_info['files']]}
-        return None
+        return self.debrid_provider.get_torrent_files(hash_value)
+
+    def remove_unwanted_torrent(self, torrent_id):
+        return self.debrid_provider.remove_torrent(torrent_id)
 
     def add_to_not_wanted(self, hash_value: str, item_identifier: str, item: Dict[str, Any]):
         identifier = self.generate_identifier(item)
@@ -623,7 +495,7 @@ class AddingQueue:
         logging.info(f"Added hash {hash_value} to not_wanted_magnets for {item_identifier}")
         
         # Add this line to log the current contents of the not_wanted list
-        logging.debug(f"Current not_wanted_magnets: {get_not_wanted_magnets()}")
+        #logging.debug(f"Current not_wanted_magnets: {get_not_wanted_magnets()}")
     
     def add_to_not_wanted_url(self, url: str, item_identifier: str, item: Dict[str, Any]):
         identifier = self.generate_identifier(item)
@@ -635,7 +507,7 @@ class AddingQueue:
         logging.info(f"Added URL {url} to not_wanted_urls for {item_identifier}")
         
         # Add this line to log the current contents of the not_wanted list
-        logging.debug(f"Current not_wanted_urls: {get_not_wanted_urls()}")
+        #logging.debug(f"Current not_wanted_urls: {get_not_wanted_urls()}")
     
     def is_item_past_24h(self, item: Dict[str, Any]) -> bool:
         identifier = self.generate_identifier(item)
@@ -735,36 +607,48 @@ class AddingQueue:
     def match_regular_tv_show(self, files, items):
         matches = []
         for file in files:
-            file_info = guessit(file)
-            file_season = file_info.get('season')
-            file_episodes = file_info.get('episode')
-            
-            # Convert to list if it's a single episode
-            if isinstance(file_episodes, int):
-                file_episodes = [file_episodes]
-            
+            file_path = file['path'] if isinstance(file, dict) else file
+            try:
+                file_info = guessit(file_path)
+                file_season = file_info.get('season')
+                file_episodes = file_info.get('episode')
+                
+                # Convert to list if it's a single episode
+                if isinstance(file_episodes, int):
+                    file_episodes = [file_episodes]
+                elif file_episodes is None:
+                    continue  # Skip files with no episode info
+                
+                for item in items:
+                    item_season = int(item['season_number'])
+                    item_episode = int(item['episode_number'])
+                    
+                    if file_season == item_season and item_episode in file_episodes:
+                        matches.append((file_path, item))
+                        
+                        # For multi-episode files, we need to find all matching items
+                        if len(file_episodes) > 1:
+                            self.handle_multi_episode_file(file_path, file_season, file_episodes, items, matches)
+                        
+                        break  
+            except Exception as e:
+                logging.error(f"Error parsing file {file_path}: {str(e)}")
+                continue
+        
+        return matches
+
+    def handle_multi_episode_file(self, file_path, file_season, file_episodes, items, matches):
+        """Handle matching multiple episodes in a single file"""
+        for episode in file_episodes:
             for item in items:
                 item_season = int(item['season_number'])
                 item_episode = int(item['episode_number'])
                 
-                if file_season == item_season and item_episode in file_episodes:
-                    matches.append((file, item))
-                    
-                    # For multi-episode files, we need to find all matching items
-                    if len(file_episodes) > 1:
-                        self.handle_multi_episode_file(file, file_season, file_episodes, items, matches)
-                    
-                    break  
-        
-        return matches
-
-    def handle_multi_episode_file(self, file, file_season, file_episodes, items, matches):
-        for episode in file_episodes:
-            for item in items:
-                if (int(item['season_number']) == file_season and 
-                    int(item['episode_number']) == episode and 
-                    (file, item) not in matches):
-                    matches.append((file, item))
+                if file_season == item_season and item_episode == episode:
+                    # Don't add if this item is already matched
+                    if not any(matched_item == item for _, matched_item in matches):
+                        matches.append((file_path, item))
+                    break
 
     def get_matching_items_from_queues(self, queue_manager, item):
         matching_items = []
@@ -823,16 +707,6 @@ class AddingQueue:
 
         return False
 
-
-    def remove_unwanted_torrent(self, torrent_id):
-        self.api_key = self.get_api_key()
-        try:
-            headers = {'Authorization': f'Bearer {self.api_key}'}
-            response = api.delete(f"{API_BASE_URL}/torrents/delete/{torrent_id}", headers=headers)
-            response.raise_for_status()
-            logging.info(f"Successfully removed unwanted torrent with ID: {torrent_id}")
-        except api.exceptions.RequestException as e:
-            logging.error(f"Error removing unwanted torrent with ID {torrent_id}: {str(e)}")
 
     def process_single_result(self, queue_manager, item, result, cached_only=False):
         item_identifier = queue_manager.generate_identifier(item)
@@ -939,21 +813,3 @@ class AddingQueue:
             return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
-
-    def get_new_item_values(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        # Fetch the updated item from the database
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            # Extract the new values that need to be updated
-            new_values = {
-                'filled_by_title': updated_item.get('filled_by_title'),
-                'filled_by_magnet': updated_item.get('filled_by_magnet'),
-                'filled_by_file': updated_item.get('filled_by_file'),
-                'filled_by_torrent_id': updated_item.get('filled_by_torrent_id'),
-                'version': updated_item.get('version'),
-                # Include any other fields that were updated
-            }
-            return new_values
-        else:
-            logging.warning(f"Could not retrieve updated item for ID {item['id']}")
-            return {}

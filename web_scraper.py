@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Tuple, Optional
 from settings import get_setting
 from api_tracker import api
 from scraper.scraper import scrape
-from debrid.real_debrid import extract_hash_from_magnet, add_to_real_debrid, is_cached_on_rd
+from debrid import extract_hash_from_magnet, add_to_real_debrid, is_cached_on_rd
 from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
