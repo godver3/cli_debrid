@@ -20,7 +20,7 @@ def get_debrid_provider() -> DebridProvider:
     
     if provider_name == 'RealDebrid':
         _provider_instance = RealDebridProvider()
-    elif provider_name == 'Torbox':
+    elif provider_name == 'Torbox' or provider_name is None:
         _provider_instance = TorboxProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name}")
