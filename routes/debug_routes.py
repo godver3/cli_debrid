@@ -4,6 +4,7 @@ from initialization import get_all_wanted_from_enabled_sources
 from run_program import get_and_add_recent_collected_from_plex, get_and_add_all_collected_from_plex, ProgramRunner
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
 from settings import get_all_settings, get_setting, set_setting
+from config_manager import load_config
 import logging
 from routes import admin_required
 from content_checkers.overseerr import get_wanted_from_overseerr
@@ -86,41 +87,69 @@ def refresh_release_dates_route():
 @debug_bp.route('/delete_database', methods=['POST'])
 @admin_required
 def delete_database():
-    confirm_delete = request.form.get('confirm_delete')
-    if confirm_delete != 'DELETE':
-        return jsonify({'success': False, 'error': 'Invalid confirmation'})
-
-    conn = get_db_connection()
- 
     try:
-        # Close any open database connections
-        conn.close()
-
-        # Get db_content directory from environment variable with fallback
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        confirm = request.form.get('confirm_delete', '')
+        retain_blacklist = request.form.get('retain_blacklist') == 'on'
         
-        # Delete the media_items.db file
-        db_path = os.path.join(db_content_dir, 'media_items.db')
-        if os.path.exists(db_path):
-            os.remove(db_path)
-            logging.info(f"Deleted media_items.db file: {db_path}")
-        else:
-            logging.info(f"media_items.db file not found: {db_path}")
-
-        # Recreate the tables
-        create_tables()
-        verify_database()
-
-        # Delete the trakt cache file
-        from content_checkers.trakt import CACHE_FILE
-        if os.path.exists(CACHE_FILE):
-            os.remove(CACHE_FILE)
-            logging.info(f"Deleted trakt cache file: {CACHE_FILE}")
+        if confirm != 'DELETE':
+            return jsonify({'success': False, 'error': 'Please type DELETE to confirm database deletion'})
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if retain_blacklist:
+            logging.info("Retaining blacklisted items while deleting database")
+            # Get blacklisted items first
+            cursor.execute("""
+                SELECT * FROM media_items 
+                WHERE blacklisted_date IS NOT NULL
+            """)
+            blacklisted_items = cursor.fetchall()
             
-        return jsonify({'success': True, 'message': 'Database deleted and tables recreated successfully'})
+            # Delete all tables except media_items and sqlite_sequence
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' 
+                AND name NOT IN ('media_items', 'sqlite_sequence')
+            """)
+            tables = cursor.fetchall()
+            for table in tables:
+                cursor.execute(f"DROP TABLE IF EXISTS {table['name']}")
+            
+            # Delete non-blacklisted items from media_items
+            cursor.execute("""
+                DELETE FROM media_items 
+                WHERE blacklisted_date IS NULL
+            """)
+            
+            logging.info(f"Retained {len(blacklisted_items)} blacklisted items")
+        else:
+            logging.info("Deleting entire database including blacklisted items")
+            # Delete all tables except sqlite_sequence
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' 
+                AND name != 'sqlite_sequence'
+            """)
+            tables = cursor.fetchall()
+            for table in tables:
+                cursor.execute(f"DROP TABLE IF EXISTS {table['name']}")
+        
+        conn.commit()
+        conn.close()
+        
+        # Recreate tables
+        create_tables()
+        
+        message = 'Database deleted successfully'
+        if retain_blacklist:
+            message += f' (retained {len(blacklisted_items)} blacklisted items)'
+        
+        return jsonify({'success': True, 'message': message})
+        
     except Exception as e:
-        logging.error(f"Error deleting database: {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'})
+        logging.error(f"Error deleting database: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
 
 def move_item_to_queue(item_id, target_queue):
     conn = get_db_connection()
@@ -593,3 +622,116 @@ def purge_not_wanted():
     except Exception as e:
         flash(f'Error purging not wanted items: {str(e)}', 'error')
     return redirect(url_for('debug.not_wanted'))
+
+@debug_bp.route('/propagate_version', methods=['POST'])
+@admin_required
+def propagate_version():
+    try:
+        original_version = request.form.get('original_version', '').strip('*')
+        propagated_version = request.form.get('propagated_version', '').strip('*')
+        
+        logging.info(f"Starting version propagation from {original_version} to {propagated_version}")
+        
+        if not original_version or not propagated_version:
+            return jsonify({'success': False, 'error': 'Both versions are required'})
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Find all items with original version (including asterisk variations)
+        cursor.execute("""
+            SELECT title, year, type, imdb_id, tmdb_id,
+                   episode_title, season_number, episode_number,
+                   airtime, release_date
+            FROM media_items 
+            WHERE REPLACE(version, '*', '') = ?
+        """, (original_version,))
+        items = cursor.fetchall()
+        
+        logging.info(f"Found {len(items)} items with version {original_version}")
+        
+        # For each item, check if propagated version exists (including asterisk variations)
+        added_count = 0
+        for item in items:
+            cursor.execute("""
+                SELECT COUNT(*) 
+                FROM media_items 
+                WHERE title = ? 
+                AND year = ? 
+                AND type = ? 
+                AND COALESCE(season_number, -1) = COALESCE(?, -1)
+                AND COALESCE(episode_number, -1) = COALESCE(?, -1)
+                AND REPLACE(version, '*', '') = ?
+            """, (
+                item['title'], item['year'], item['type'],
+                item['season_number'], item['episode_number'],
+                propagated_version
+            ))
+            exists = cursor.fetchone()[0] > 0
+            
+            if not exists:
+                now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                logging.debug(f"Adding {propagated_version} version for {item['title']} ({item['year']}) - " + 
+                           (f"S{item['season_number']}E{item['episode_number']}" if item['type'] == 'show' else 'movie'))
+                
+                # Add as wanted with propagated version
+                cursor.execute("""
+                    INSERT INTO media_items (
+                        title, year, type, imdb_id, tmdb_id,
+                        episode_title, season_number, episode_number,
+                        airtime, release_date,
+                        version, state, last_updated, metadata_updated
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Wanted', ?, ?)
+                """, (
+                    item['title'], item['year'], item['type'],
+                    item['imdb_id'], item['tmdb_id'],
+                    item['episode_title'], item['season_number'], item['episode_number'],
+                    item['airtime'], item['release_date'],
+                    propagated_version, now, now
+                ))
+                added_count += 1
+        
+        conn.commit()
+        conn.close()
+        
+        logging.info(f"Successfully added {added_count} items with version {propagated_version}")
+        message = f'Successfully added {added_count} items with version {propagated_version}'
+        return jsonify({'success': True, 'message': message})
+        
+    except Exception as e:
+        logging.error(f"Error in propagate_version: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+
+def get_available_versions():
+    config = load_config()
+    versions = []
+    
+    # Get versions from Scraping.versions
+    scraping_config = config.get('Scraping', {})
+    version_configs = scraping_config.get('versions', {})
+    
+    # Add versions from config
+    for version in version_configs.keys():
+        clean_version = version.strip('*')
+        if clean_version:
+            versions.append(clean_version)
+    
+    # Get versions from the database as backup
+    if not versions:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT version FROM media_items WHERE version IS NOT NULL")
+        versions = [row['version'].strip('*') for row in cursor.fetchall()]
+        conn.close()
+    
+    return sorted(versions)
+
+@debug_bp.route('/get_versions', methods=['GET'])
+@admin_required
+def get_versions():
+    try:
+        versions = get_available_versions()
+        return jsonify({'success': True, 'versions': versions})
+    except Exception as e:
+        logging.error(f"Error getting versions: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
