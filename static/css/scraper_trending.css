@@ -1,0 +1,92 @@
+.trending-container {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding-top: 20px;
+}
+
+.trending-movies {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    margin-bottom: 30px;
+}
+
+.trending-shows {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.trending-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.trending-title {
+    font-size: 24px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.trending-navigation {
+    display: flex;
+    gap: 10px;
+}
+
+.trending-nav-button {
+    background-color: transparent;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.trending-nav-button:hover {
+    opacity: 0.8;
+}
+
+.trending-nav-button:disabled {
+    color: #4a4a4a;    
+    cursor: not-allowed;
+}
+
+#trending-rating {
+    position: absolute;
+    margin: 5px;
+    width: 26px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: #ed1c23c0;
+    z-index: 1;
+}
+
+#trending-watchers {
+    position: absolute;
+    right: 0;
+    margin: 5px;
+    width: 52px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: rgb(0 0 0 / 72%);
+    z-index: 1;
+}

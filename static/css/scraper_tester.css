@@ -30,6 +30,27 @@
     color: #f4f4f4;
 }
 
+/* Override autofill styles for #search-input */
+#search-input:-webkit-autofill,
+#search-input:-webkit-autofill:hover,
+#search-input:-webkit-autofill:focus,
+#search-input:-webkit-autofill:active {
+    -webkit-text-fill-color: #f4f4f4 !important;
+    -webkit-box-shadow: 0 0 0 30px #333 inset !important;
+    transition: background-color 5000s ease-in-out 0s;
+}
+
+/* For Firefox */
+#search-input:autofill {
+    color: #f4f4f4;
+    background-color: #333;
+}
+
+/* For Edge */
+#search-input:-ms-input-placeholder {
+    color: #f4f4f4 !important;
+}
+
 #search-button {
     padding: 10px 20px;
     font-size: 16px;

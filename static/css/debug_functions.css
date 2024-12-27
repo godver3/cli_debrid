@@ -41,6 +41,17 @@ form {
     margin-bottom: 20px;
 }
 
+.form-group label {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    color: #ddd;
+}
+
+.form-group input[type="checkbox"] {
+    margin-right: 8px;
+}
+
 label {
     color: #f4f4f4;
     margin-bottom: 8px;
@@ -53,7 +64,11 @@ select#collection_type,
 select#wanted_source,
 select#queue_select,
 select#action_select,
-select#target_queue, .debug-container a {
+select#target_queue, .debug-container a,
+select#task_select,
+select#original_version,
+select#propagated_version {
+    width: 100%;
     padding: 10px;
     background-color: #3a3a3a;
     border: 1px solid #555;
@@ -223,4 +238,3 @@ button:hover {
 #refresh-rate-limits:hover {
     background-color: #218838;
 }
-

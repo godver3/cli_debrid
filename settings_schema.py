@@ -34,20 +34,29 @@ SETTINGS_SCHEMA = {
             "default": ""
         }
     },
-    "Overseerr": {
+    "File Management": {
         "tab": "Required Settings",
-        "url": {
+        "file_collection_management": {
             "type": "string",
-            "description": "Overseerr server URL. Overseerr is used here not as a content source, but for processing metadata. If using as a content source ensure you add it to the Content Sources tab.",
-            "default": "",
-            "validate": "url"
+            "description": "Manage files collected in Plex or use Zurg rename functionality",
+            "default": "Plex",
+            "choices": ["Plex", "Zurg"]
         },
-        "api_key": {
+        "zurg_all_folder": {
             "type": "string",
-            "description": "Overseerr API key",
+            "description": "Zurg __all__ Folder",
             "default": "",
-            "sensitive": True
-        }
+        },
+        "zurg_movies_folder": {
+            "type": "string",
+            "description": "Zurg Movies Folder",
+            "default": "",
+        },
+        "zurg_shows_folder": {
+            "type": "string",
+            "description": "Zurg Shows Folder",
+            "default": "",
+        },
     },
     "RealDebrid": {
         "tab": "Required Settings",
@@ -62,17 +71,33 @@ SETTINGS_SCHEMA = {
         "tab": "Additional Settings",
         "api_key": {
             "type": "string",
-            "description": "TMDB Read Access Token",
+            "description": "TMDB API key - used for Poster URL retrieval",
             "default": "",
             "sensitive": True
+        }
+    },
+    "Staleness Threshold": {
+        "tab": "Additional Settings",
+        "staleness_threshold": {
+            "type": "integer",
+            "description": "Staleness threshold for metadata (in days)",
+            "default": 7
+        }
+    },
+    "Sync Deletions": {
+        "tab": "Additional Settings",
+        "sync_deletions": {
+            "type": "boolean",
+            "description": "Sync deletions from the Database to Plex",
+            "default": False
         }
     },
     "Metadata Battery": {
         "tab": "Required Settings",
         "url": {
             "type": "string",
-            "description": "Metadata Battery URL",
-            "default": ""
+            "description": "Metadata Battery URL. Leave as default unless you have set up the Metadata Battery in a different location.",
+            "default": "http://localhost:50051"
         }
     },
     "Queue": {
@@ -91,6 +116,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Offset from the show's airtime to start scraping for new episodes. Positive values are to delay scraping, negative values are to scrape early. Requires Trakt login for accurate airtime, otherwise default of 19:00 will be used.",
             "default": "0"
+        },
+        "blacklist_duration": {
+            "type": "string",
+            "description": "Number of days after which to automatically remove blacklisted items for a re-scrape",
+            "default": "30"
         }
     },
     "Scraping": {
@@ -100,11 +130,11 @@ SETTINGS_SCHEMA = {
             "description": [
                 "Uncached content management in the program queue:",
                 "None: Only take the best Cached result",
-                "Hybrid: Take the first best Cached result, and if no Cached results found, take the best Uncached result",
+                #"Hybrid: Take the first best Cached result, and if no Cached results found, take the best Uncached result",
                 "Full: Take the best result, whether it's Cached or Uncached"
             ],
             "default": "None",
-            "choices": ["None", "Hybrid", "Full"]
+            "choices": ["None", "Full"]
         },
         "jackett_seeders_only": {
             "type": "boolean",
@@ -122,8 +152,30 @@ SETTINGS_SCHEMA = {
             "description": "If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available",
             "default": False
         },
+        "enable_upgrading": {
+            "type": "boolean",
+            "description": "Enable upgrading of items in the queue",
+            "default": False
+        },
+        "enable_upgrading_cleanup": {
+            "type": "boolean",
+            "description": "Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid)",
+            "default": False
+        },
+        "disable_adult": {
+            "type": "boolean",
+            "description": "Filter out adult content",
+            "default": True
+        },
+        "trakt_early_releases": {
+            "type": "boolean",
+            "description": "Check Trakt for early releases",
+            "default": False
+        },
         "versions": {
             "type": "dict",
+
+
             "description": "Scraping versions configuration",
             "default": {},
             "schema": {
@@ -153,7 +205,7 @@ SETTINGS_SCHEMA = {
         }
     },
     "Trakt": {
-        "tab": "Additional Settings",
+        "tab": "Required Settings",
         "client_id": {
             "type": "string",
             "description": "Trakt client ID",
@@ -207,9 +259,25 @@ SETTINGS_SCHEMA = {
             "type": "integer",
             "description": "Checking queue max period (in minutes) before moving items back to Wanted queue",
             "default": 3600
+        },
+        "rescrape_missing_files": {
+            "type": "boolean",
+            "description": "Rescrape items that are missing their associated file (i.e. if Plex Library cleanup is enabled)",
+            "default": False
+        },
+        "enable_reverse_order_scraping": {
+            "type": "boolean",
+            "description": "Enable reverse order scraping",
+            "default": False
+        },
+        "disable_not_wanted_check": {
+            "type": "boolean",
+            "description": "Disable the not wanted check for items in the queue",
+            "default": False
         }
     },
     "Scrapers": {
+
         "tab": "Scrapers",
         "type": "dict",
         "description": "Scraper configurations",
@@ -299,6 +367,19 @@ SETTINGS_SCHEMA = {
                 "from_address": {"type": "string", "default": ""},
                 "to_address": {"type": "string", "default": ""}
             }
+        }
+    },
+    "Reverse Parser": {
+        "tab": "Reverse Parser",
+        "version_terms": {
+            "type": "dict",
+            "description": "Version terms for reverse parsing",
+            "default": {}
+        },
+        "default_version": {
+            "type": "string",
+            "description": "Default version for reverse parsing if no other version is selected",
+            "default": ""
         }
     }
 }

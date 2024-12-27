@@ -65,14 +65,13 @@ document.addEventListener('DOMContentLoaded', function() {
                         type: POPUP_TYPES.SUCCESS,
                         title: 'Success',
                         message: 'Admin account created successfully!',
-                        autoClose: 3000
+                        autoClose: 5000
                     });
                 } else {
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         title: 'Error',
                         message: 'Error: ' + data.error,
-                        autoClose: 5000
                     });
                 }
             })
@@ -82,7 +81,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     type: POPUP_TYPES.ERROR,
                     title: 'Error',
                     message: 'An unexpected error occurred.',
-                    autoClose: 5000
                 });
             });
         });

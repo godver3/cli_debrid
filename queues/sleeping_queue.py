@@ -17,11 +17,13 @@ class SleepingQueue:
         for item in self.items:
             if item['id'] not in self.sleeping_queue_times:
                 self.sleeping_queue_times[item['id']] = datetime.now()
+            item['wake_count'] = wake_count_manager.get_wake_count(item['id'])
 
     def get_contents(self):
         return self.items
 
     def add_item(self, item: Dict[str, Any]):
+        item['wake_count'] = wake_count_manager.get_wake_count(item['id'])
         self.items.append(item)
         self.sleeping_queue_times[item['id']] = datetime.now()
         logging.debug(f"Added item to Sleeping queue: {item['id']}")

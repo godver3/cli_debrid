@@ -15,11 +15,19 @@ class CheckingQueue:
         self.progress_checks = {}
 
     def update(self):
-        self.items = [dict(row) for row in get_all_media_items(state="Checking")]
+        db_items = get_all_media_items(state="Checking")
+        # logging.debug(f"Database returned {len(db_items)} items in Checking state")
+        # if db_items:
+            # logging.debug(f"First checking item from DB: {dict(db_items[0])}")
+        
+        self.items = [dict(row) for row in db_items]
         # Initialize checking times for new items
         for item in self.items:
             if item['id'] not in self.checking_queue_times:
                 self.checking_queue_times[item['id']] = time.time()
+        # logging.debug(f"Updated checking queue - current item count: {len(self.items)}")
+        # if self.items:
+            # logging.debug(f"Items in queue: {[item['id'] for item in self.items]}")
 
     def get_contents(self):
         return self.items
@@ -27,13 +35,16 @@ class CheckingQueue:
     def add_item(self, item: Dict[str, Any]):
         self.items.append(item)
         self.checking_queue_times[item['id']] = time.time()
+        logging.debug(f"Added item {item['id']} to checking queue")
 
     def remove_item(self, item: Dict[str, Any]):
         self.items = [i for i in self.items if i['id'] != item['id']]
         if item['id'] in self.checking_queue_times:
             del self.checking_queue_times[item['id']]
+        logging.debug(f"Removed item {item['id']} from checking queue")
 
     def process(self, queue_manager):
+        logging.debug(f"Starting to process checking queue with {len(self.items)} items")
         logging.debug("Processing checking queue")
         current_time = time.time()
 
@@ -44,14 +55,28 @@ class CheckingQueue:
 
         # Group items by torrent ID
         items_by_torrent = {}
+        items_to_remove = []
+        current_time = time.time()
+
+        # First check all items for timeout, regardless of torrent ID
         for item in self.items:
+            item_time = self.checking_queue_times.get(item['id'], current_time)
+            time_in_queue = current_time - item_time
+            logging.debug(f"Item {item['id']} has been in checking queue for {time_in_queue:.0f} seconds (timeout: {get_setting('Debug', 'checking_queue_period')} seconds)")
+            
+            if current_time - item_time > get_setting('Debug', 'checking_queue_period'):
+                logging.info(f"Item {item['id']} has been in queue for over {get_setting('Debug', 'checking_queue_period')} seconds. Moving back to Wanted queue.")
+                queue_manager.move_to_wanted(item, "Checking")
+                items_to_remove.append(item)
+                continue
+
             torrent_id = item.get('filled_by_torrent_id')
             if torrent_id:
                 if torrent_id not in items_by_torrent:
                     items_by_torrent[torrent_id] = []
                 items_by_torrent[torrent_id].append(item)
 
-        items_to_remove = []
+        # Now process items with torrent IDs for progress checks
         for torrent_id, items in items_by_torrent.items():
             try:
                 torrent_info = get_torrent_info(torrent_id)
@@ -93,22 +118,6 @@ class CheckingQueue:
             self.remove_item(item)
 
         logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
-
-    def move_items_to_wanted(self, items, queue_manager, adding_queue, torrent_id):
-        for item in items:
-            item_identifier = queue_manager.generate_identifier(item)
-            magnet = item.get('filled_by_magnet')
-            if magnet:
-                add_to_not_wanted(magnet)
-                logging.info(f"Marked magnet as unwanted for item: {item_identifier}")
-
-        # Remove the unwanted torrent only once for all items
-        adding_queue.remove_unwanted_torrent(torrent_id)
-        logging.info(f"Removed unwanted torrent {torrent_id} from Real-Debrid for all associated items")
-
-        for item in items:
-            queue_manager.move_to_wanted(item, "Checking")
-            logging.info(f"Moving item back to Wanted: {queue_manager.generate_identifier(item)}")
 
     def move_items_to_wanted(self, items, queue_manager, adding_queue, torrent_id):
         for item in items:

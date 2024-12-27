@@ -63,27 +63,27 @@
         border-bottom: 1px solid #333;
     }
 
-    .log-entry[data-level="debug"] {
+    .log-entry.debug {
         border-left-color: #3498db;
         color: #3498db;
     }
 
-    .log-entry[data-level="info"] {
+    .log-entry.info {
         border-left-color: #2ecc71;
         color: #2ecc71;
     }
 
-    .log-entry[data-level="warning"] {
+    .log-entry.warning {
         border-left-color: #f39c12;
         color: #f39c12;
     }
 
-    .log-entry[data-level="error"] {
+    .log-entry.error {
         border-left-color: #e74c3c;
         color: #e74c3c;
     }
 
-    .log-entry[data-level="critical"] {
+    .log-entry.critical {
         border-left-color: #9b59b6;
         color: #9b59b6;
     }
@@ -137,6 +137,19 @@
         z-index: 10;
     }
 
+    /* Style for the new hidden div */
+    #hidden-div {
+        position: fixed;
+        bottom: 30px;
+        left: 20px;
+        background-color: #333;
+        color: #f4f4f4;
+        padding: 10px;
+        border-radius: 5px;
+        opacity: 0;
+        z-index: 1000;
+        font-size: 0.3em;
+    }
 </style>
 
 <div class="log-container">
@@ -154,36 +167,36 @@
     </div>
     <div id="log-entries">
     {% for log in logs %}
-    <div class="log-entry" data-level="{{ log.level }}">{{ log.timestamp }} - {{ log.level.upper() }} - {{ log.message }}</div>
+    <div class="log-entry {{ log.level }}" data-level="{{ log.level }}">{{ log.timestamp }} - {{ log.level.upper() }} - {{ log.message }}</div>
     {% endfor %}
     </div>
 </div>
+
+<!-- New hidden div -->
+<div id="hidden-div">godver3 was here</div>
 
 {% endblock %}
 
 {% block scripts %}
 <script>
-let lastLogTimestamp = null;
-let isScrolledToBottom = true;
+let lastLogTimestamp = '';
+let currentLevel = 'all';
 let isPaused = false;
-const MAX_LOGS = 1000;
+let isScrolledToBottom = true;
+const MAX_LOGS = 500; // Adjusted to 500 as per your requirement
 
 function checkScrollPosition() {
     const logEntries = document.getElementById('log-entries');
-    const wasScrolledToBottom = isScrolledToBottom;
+    const previousScrolledToBottom = isScrolledToBottom;
     isScrolledToBottom = logEntries.scrollHeight - logEntries.clientHeight <= logEntries.scrollTop + 1;
     
-    // If the user has scrolled up, pause the updates
-    if (wasScrolledToBottom && !isScrolledToBottom) {
-        isPaused = true;
-        document.getElementById('pause-indicator').style.display = 'block';
-    }
-    
-    // If the user has scrolled to the bottom, resume updates
-    if (!wasScrolledToBottom && isScrolledToBottom) {
+    if (!previousScrolledToBottom && isScrolledToBottom) {
         isPaused = false;
         document.getElementById('pause-indicator').style.display = 'none';
         updateLogs(); // Fetch any logs we missed while paused
+    } else if (previousScrolledToBottom && !isScrolledToBottom) {
+        isPaused = true;
+        document.getElementById('pause-indicator').style.display = 'block';
     }
 }
 
@@ -191,91 +204,86 @@ function scrollToBottom(element) {
     element.scrollTop = element.scrollHeight;
 }
 
-function updateLogs() {
-    if (isPaused) return; // Don't update if paused
+function updateLogs(forceRefresh = false) {
+    if (isPaused && !forceRefresh) return;
 
     const logEntries = document.getElementById('log-entries');
+    const levelFilter = document.getElementById('log-level-filter').value.toLowerCase();
 
-    return fetch('/logs/api/logs?lines=' + MAX_LOGS + (lastLogTimestamp ? `&since=${encodeURIComponent(lastLogTimestamp)}` : ''))
+    // If the level has changed, we need to reset and fetch all logs
+    if (levelFilter !== currentLevel || forceRefresh) {
+        lastLogTimestamp = '';
+        logEntries.innerHTML = ''; // Clear existing logs
+        currentLevel = levelFilter;
+    }
+
+    const searchTerm = document.getElementById('log-search').value.toLowerCase();
+
+    fetch('/logs/api/logs?lines=' + MAX_LOGS +
+                 (lastLogTimestamp ? `&since=${encodeURIComponent(lastLogTimestamp)}` : '') +
+                 `&level=${encodeURIComponent(levelFilter)}`)
         .then(response => response.json())
         .then(data => {
             if (Array.isArray(data) && data.length > 0) {
-                const newLogEntries = data.map(log => 
-                    `<div class="log-entry" data-level="${log.level}">${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}</div>`
-                ).join('');
+                const fragment = document.createDocumentFragment();
+                data.forEach(log => {
+                    // Check if the log matches the search term
+                    const logText = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`.toLowerCase();
+                    if (!searchTerm || logText.includes(searchTerm)) {
+                        const div = document.createElement('div');
+                        div.className = `log-entry ${log.level}`;
+                        div.textContent = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`;
+                        fragment.appendChild(div);
+                    }
+                });
+
+                // Append new logs to the end
+                logEntries.appendChild(fragment);
 
                 // Remove old logs if we're over the limit
-                const currentEntries = logEntries.children;
-                if (currentEntries.length + data.length > MAX_LOGS) {
-                    const removeCount = currentEntries.length + data.length - MAX_LOGS;
-                    for (let i = 0; i < removeCount; i++) {
-                        currentEntries[0].remove();
-                    }
+                while (logEntries.children.length > MAX_LOGS) {
+                    logEntries.removeChild(logEntries.firstChild);
                 }
 
-                logEntries.innerHTML += newLogEntries;
                 lastLogTimestamp = data[data.length - 1].timestamp;
                 
                 if (isScrolledToBottom) {
                     scrollToBottom(logEntries);
                 }
-                
-                filterLogs();
             }
         })
         .catch(error => {
-            // Silently handle the error
+            console.error('Error fetching logs:', error);
         });
 }
 
 function filterLogs() {
-    const levelFilter = document.getElementById('log-level-filter').value.toLowerCase();
-    const searchTerm = document.getElementById('log-search').value.toLowerCase();
-    const logEntries = document.querySelectorAll('.log-entry');
-    const logLevels = ['critical', 'error', 'warning', 'info', 'debug'];
-
-    logEntries.forEach(entry => {
-        const level = entry.dataset.level.toLowerCase();
-        const text = entry.textContent.toLowerCase();
-        const levelIndex = logLevels.indexOf(level);
-        const filterIndex = logLevels.indexOf(levelFilter);
-
-        let levelMatch;
-        if (levelFilter === 'all') {
-            levelMatch = true;
-        } else if (levelIndex === -1) {
-            levelMatch = false; // If level is not recognized, don't show it
-        } else {
-            levelMatch = levelIndex <= filterIndex; // Show equal or lower severity
-        }
-
-        const searchMatch = text.includes(searchTerm);
-
-        entry.style.display = levelMatch && searchMatch ? '' : 'none';
-    });
-
-    localStorage.setItem('selectedLogLevel', levelFilter);
+    updateLogs(true); // Force refresh to apply search filter
 }
 
 function loadSavedLogLevel() {
     const savedLevel = localStorage.getItem('selectedLogLevel');
     if (savedLevel) {
         document.getElementById('log-level-filter').value = savedLevel;
-        filterLogs();
     }
 }
 
-document.getElementById('log-level-filter').addEventListener('change', filterLogs);
-document.getElementById('log-search').addEventListener('input', filterLogs);
+document.getElementById('log-level-filter').addEventListener('change', (event) => {
+    localStorage.setItem('selectedLogLevel', event.target.value);
+    updateLogs(true);  // Force a refresh when the level changes
+});
+
 document.getElementById('log-entries').addEventListener('scroll', checkScrollPosition);
 
+document.getElementById('log-search').addEventListener('input', filterLogs);
+
 function initialLoad() {
-    updateLogs().then(() => {
+    loadSavedLogLevel();
+    updateLogs(true).then(() => {
         const logEntries = document.getElementById('log-entries');
         scrollToBottom(logEntries);
     });
-    loadSavedLogLevel();
-    document.body.classList.add('logs-page'); // Add this line
+    document.body.classList.add('logs-page');
 }
 
 window.addEventListener('load', initialLoad);
@@ -286,6 +294,5 @@ setInterval(() => {
         updateLogs();
     }
 }, 5000);
-
 </script>
 {% endblock %}

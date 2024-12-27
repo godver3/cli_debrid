@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Tuple
 from database import get_media_item_presence
 
 DEFAULT_TAKE = 100
-REQUEST_TIMEOUT = 3  # seconds
+REQUEST_TIMEOUT = 15  # seconds
 
 def get_overseerr_headers(api_key: str) -> Dict[str, str]:
     return {

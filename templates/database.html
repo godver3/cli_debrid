@@ -88,6 +88,7 @@
             <thead>
                 <tr>
                     <th>Delete</th>
+                    <th>Rescrape</th>
                     {% for column in selected_columns %}
                         <th>{{ column }}</th>
                     {% endfor %}
@@ -98,6 +99,9 @@
                     <tr>
                         <td>
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
+                        </td>
+                        <td>
+                            <button class="rescrape-item" data-item-id="{{ item['id'] }}">↻</button>
                         </td>
                         {% for column in selected_columns %}
                             <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
@@ -111,8 +115,11 @@
     {% endif %}
 </div>
 
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
+
 import { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips } from '/static/js/tooltips.js';
+
 
 document.addEventListener('DOMContentLoaded', function() {
     let currentContentType = '{{ content_type }}';
@@ -261,6 +268,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderTable(items, selectedColumns) {
         let tableHTML = '<table><thead><tr>';
         tableHTML += '<th>Delete</th>'; // Add delete column header
+        tableHTML += '<th>Rescrape</th>'; // Add rescrape column header
         selectedColumns.forEach(column => {
             tableHTML += `<th>${column}</th>`;
         });
@@ -269,6 +277,7 @@ document.addEventListener('DOMContentLoaded', function() {
         items.forEach(item => {
             tableHTML += '<tr>';
             tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`; // Add delete button
+            tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`; // Add rescrape button
             selectedColumns.forEach(column => {
                 let cellContent = item[column];
                 if (cellContent === null || cellContent === undefined || cellContent === '') {
@@ -287,14 +296,6 @@ document.addEventListener('DOMContentLoaded', function() {
         // Preserve current states if not explicitly changed
         params.content_type = params.content_type || currentContentType;
         params.letter = params.letter || currentLetter;
-
-        // Reset to default values when clearing filters
-        if (params.content_type && !params.letter) {
-            params.letter = 'A';
-        }
-        if (params.letter && !params.content_type) {
-            params.content_type = 'movie';
-        }
 
         // Add default sort parameters if not present
         if (!params.sort_column) params.sort_column = '{{ sort_column }}';
@@ -348,10 +349,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Reattach event listeners
                 attachEventListeners();
                 attachDeleteListeners();
+                attachRescrapeListeners();
 
-                // Reinitialize tooltips after content update
+                // Clean up existing tooltips
+                // cleanupExistingTooltips();
+
+                // Reinitialize tooltips
                 initializeTooltips();
-                initializeDatabaseTooltips();
             })
             .catch(error => {
                 console.error('Error updating content:', error);
@@ -396,7 +400,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var contentType = this.getAttribute('data-content-type');
                 clearFilter();
-                updateContent('{{ url_for('database.index') }}', { content_type: contentType, letter: 'A' });
+                updateContent('{{ url_for('database.index') }}', { content_type: contentType });
             });
         });
 
@@ -405,7 +409,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var letter = this.getAttribute('data-letter');
                 clearFilter();
-                updateContent('{{ url_for('database.index') }}', { letter: letter, content_type: 'movie' });
+                updateContent('{{ url_for('database.index') }}', { letter: letter });
             });
         });
     }
@@ -416,6 +420,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 const itemId = this.getAttribute('data-item-id');
                 showDeleteConfirmation(itemId);
+            });
+        });
+    }
+
+    function attachRescrapeListeners() {
+        document.querySelectorAll('.rescrape-item').forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                const itemId = this.getAttribute('data-item-id');
+                showRescrapeConfirmation(itemId);
             });
         });
     }
@@ -432,7 +446,20 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function showRescrapeConfirmation(itemId) {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Rescrape',
+            message: 'Are you sure you want to move this item back to the Wanted queue for rescraping?',
+            confirmText: 'Rescrape',
+            cancelText: 'Cancel',
+            onConfirm: () => rescrapeItem(itemId),
+            onCancel: () => {} // Do nothing on cancel
+        });
+    }
+
     function deleteItem(itemId) {
+        Loading.show();
         fetch('{{ url_for('database.delete_item') }}', {
             method: 'POST',
             headers: {
@@ -469,7 +496,50 @@ document.addEventListener('DOMContentLoaded', function() {
                 type: POPUP_TYPES.ERROR,
                 title: 'Error',
                 message: 'An error occurred while deleting the item: ' + error.message,
-                autoClose: 5000 // Close after 5 seconds
+            });
+        })
+        .finally(() => {
+            Loading.hide();
+        });
+    }
+
+    function rescrapeItem(itemId) {
+        fetch('{{ url_for('debug.rescrape_item') }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ item_id: itemId })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                // Remove the row from the table
+                const row = document.querySelector(`button[data-item-id="${itemId}"]`).closest('tr');
+                row.remove();
+                // Show success popup
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: 'Item moved to Wanted queue for rescraping',
+                    autoClose: 3000 // Close after 3 seconds
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            // Show error popup
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'An error occurred while moving the item to the Wanted queue: ' + error.message,
             });
         });
     }
@@ -484,10 +554,17 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial attachment of event listeners
     attachEventListeners();
     attachDeleteListeners();
+    attachRescrapeListeners();
 
     // Initialize tooltips
     initializeTooltips();
-    initializeDatabaseTooltips();
+
+    document.addEventListener('DOMContentLoaded', function() {
+        initializeTooltips();
+        initializeDatabaseTooltips();
+    });
 });
+
+Loading.init();
 </script>
 {% endblock %}

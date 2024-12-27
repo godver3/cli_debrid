@@ -3,44 +3,64 @@ import pickle
 from datetime import datetime, timedelta
 import logging
 
-CACHE_FILE = 'db_content/poster_cache.pkl'
+# Get db_content directory from environment variable with fallback
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+
+# Update the path to use the environment variable
+CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'poster_cache.pkl')
 CACHE_EXPIRY_DAYS = 7  # Cache expires after 7 days
 
-UNAVAILABLE_POSTER = "UNAVAILABLE"
+UNAVAILABLE_POSTER = "/static/images/placeholder.png"
 
 def load_cache():
-    if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, 'rb') as f:
-            return pickle.load(f)
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'rb') as f:
+                return pickle.load(f)
+    except (EOFError, pickle.UnpicklingError, FileNotFoundError) as e:
+        logging.warning(f"Error loading cache: {e}. Creating a new cache.")
     return {}
 
 def save_cache(cache):
-    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-    with open(CACHE_FILE, 'wb') as f:
-        pickle.dump(cache, f)
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, 'wb') as f:
+            pickle.dump(cache, f)
+    except Exception as e:
+        logging.error(f"Error saving cache: {e}")
+
+def normalize_media_type(media_type):
+    """Normalize media type to either 'tv' or 'movie'"""
+    return 'tv' if media_type.lower() in ['tv', 'show', 'series'] else 'movie'
 
 def get_cached_poster_url(tmdb_id, media_type):
+    if not tmdb_id:
+        return UNAVAILABLE_POSTER
+        
     cache = load_cache()
-    cache_key = f"{tmdb_id}_{media_type}"
+    normalized_type = normalize_media_type(media_type)
+    cache_key = f"{tmdb_id}_{normalized_type}"
     cache_item = cache.get(cache_key)
+    
     if cache_item:
         url, timestamp = cache_item
-        if url == UNAVAILABLE_POSTER:
-            return None
         if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
             return url
         else:
             logging.info(f"Cache expired for {cache_key}")
-    else:
-        logging.info(f"Cache miss for {cache_key}")
+            
     return None
 
 def cache_poster_url(tmdb_id, media_type, url):
+    if not tmdb_id:
+        return
+        
     cache = load_cache()
-    cache_key = f"{tmdb_id}_{media_type}"
+    normalized_type = normalize_media_type(media_type)
+    cache_key = f"{tmdb_id}_{normalized_type}"
     cache[cache_key] = (url, datetime.now())
     save_cache(cache)
-    logging.info(f"Cached poster URL for {cache_key}")
+    logging.info(f"Cached poster URL for {cache_key}: {url}")
 
 def clean_expired_cache():
     cache = load_cache()
@@ -60,7 +80,6 @@ def get_cached_media_meta(tmdb_id, media_type):
     if cache_item:
         media_meta, timestamp = cache_item
         if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
-            #logging.info(f"Cache hit for media meta {cache_key}")
             return media_meta
         else:
             logging.info(f"Cache expired for media meta {cache_key}")
@@ -76,8 +95,4 @@ def cache_media_meta(tmdb_id, media_type, media_meta):
     logging.info(f"Cached media meta for {cache_key}")
 
 def cache_unavailable_poster(tmdb_id, media_type):
-    cache = load_cache()
-    cache_key = f"{tmdb_id}_{media_type}"
-    cache[cache_key] = (UNAVAILABLE_POSTER, datetime.now())
-    save_cache(cache)
-    logging.info(f"Cached unavailable poster for {cache_key}")
+    cache_poster_url(tmdb_id, media_type, UNAVAILABLE_POSTER)

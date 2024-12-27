@@ -2,7 +2,7 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
 
-from database import get_all_media_items, get_media_item_by_id, update_media_item_state
+from database import get_all_media_items, get_media_item_by_id, update_media_item_state, update_blacklisted_date
 from settings import get_setting
 
 class BlacklistedQueue:
@@ -37,13 +37,32 @@ class BlacklistedQueue:
         items_to_unblacklist = []
 
         for item in self.items:
-            item_id = item['id']
+            if 'blacklisted_date' not in item or item['blacklisted_date'] is None:
+                item['blacklisted_date'] = current_time
+                update_blacklisted_date(item['id'], item['blacklisted_date'])
+                logging.warning(f"Item {queue_manager.generate_identifier(item)} had no blacklisted_date. Setting it to current time.")
+            
             item_identifier = queue_manager.generate_identifier(item)
-            time_blacklisted = current_time - self.blacklist_times[item_id]
-
-            if time_blacklisted >= blacklist_duration:
-                items_to_unblacklist.append(item)
-                logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Unblacklisting.")
+            try:
+                # Convert blacklisted_date to datetime if it's a string
+                if isinstance(item['blacklisted_date'], str):
+                    item['blacklisted_date'] = datetime.fromisoformat(item['blacklisted_date'])
+                
+                # Ensure both times are naive (no timezone) for comparison
+                if hasattr(item['blacklisted_date'], 'tzinfo') and item['blacklisted_date'].tzinfo is not None:
+                    item['blacklisted_date'] = item['blacklisted_date'].replace(tzinfo=None)
+                
+                time_blacklisted = current_time - item['blacklisted_date']
+                days_until_unblacklist = blacklist_duration.days - time_blacklisted.days
+                
+                logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Will be unblacklisted in {days_until_unblacklist} days.")
+                if time_blacklisted >= blacklist_duration:
+                    items_to_unblacklist.append(item)
+                    logging.info(f"Item {item_identifier} has been blacklisted for {time_blacklisted.days} days. Unblacklisting.")
+            except (TypeError, ValueError) as e:
+                logging.error(f"Error processing blacklisted item {item_identifier}: {str(e)}")
+                logging.error(f"Item details: {item}")
+                continue
 
         for item in items_to_unblacklist:
             self.unblacklist_item(queue_manager, item)
@@ -55,6 +74,9 @@ class BlacklistedQueue:
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Unblacklisting item: {item_identifier}")
         
+        # Reset the blacklisted_date to None when unblacklisting
+        update_blacklisted_date(item['id'], None)
+        
         # Move the item back to the Wanted queue
         queue_manager.move_to_wanted(item, "Blacklisted")
         self.remove_item(item)
@@ -64,7 +86,12 @@ class BlacklistedQueue:
         item_identifier = queue_manager.generate_identifier(item)
         update_media_item_state(item_id, 'Blacklisted')
         
+        # Update the blacklisted_date in the database
+        blacklisted_date = datetime.now()
+        update_blacklisted_date(item_id, blacklisted_date)
+        
         # Add to blacklisted queue
+        item['blacklisted_date'] = blacklisted_date  # Store as datetime object
         self.add_item(item)
         
         # Remove from current queue
@@ -72,7 +99,7 @@ class BlacklistedQueue:
         if current_queue:
             queue_manager.queues[current_queue].remove_item(item)
         
-        logging.info(f"Moved item {item_identifier} to Blacklisted state")
+        logging.info(f"Moved item {item_identifier} to Blacklisted state and updated blacklisted_date")
 
     def blacklist_old_season_items(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
@@ -111,12 +138,24 @@ class BlacklistedQueue:
         return related_items
 
     def is_item_old(self, item: Dict[str, Any]) -> bool:
-        if 'release_date' not in item or item['release_date'] == 'Unknown':
-            logging.info(f"Item {self.generate_identifier(item)} has no release date or unknown release date. Considering it as old.")
+        if 'release_date' not in item or item['release_date'] is None or item['release_date'] == 'Unknown':
+            logging.info(f"Item {self.generate_identifier(item)} has no release date, None, or unknown release date. Considering it as old.")
             return True
         try:
             release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
-            return (datetime.now().date() - release_date).days > 7
+            days_since_release = (datetime.now().date() - release_date).days
+            
+            # Define thresholds for considering items as old
+            movie_threshold = 7  # Consider movies old after 30 days
+            episode_threshold = 7  # Consider episodes old after 7 days
+            
+            if item['type'] == 'movie':
+                return days_since_release > movie_threshold
+            elif item['type'] == 'episode':
+                return days_since_release > episode_threshold
+            else:
+                logging.warning(f"Unknown item type: {item['type']}. Considering it as old.")
+                return True
         except ValueError as e:
             logging.error(f"Error parsing release date for item {self.generate_identifier(item)}: {str(e)}")
             return True  # Consider items with unparseable dates as old

@@ -1,0 +1,181 @@
+<h3>Reverse Parser Settings</h3>
+
+<link rel="stylesheet" href="{{ url_for('static', filename='css/reverse_parser.css') }}">
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Version Terms</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div id="version-terms-container" class="version-terms-container">
+            <!-- Version terms will be dynamically added here -->
+        </div>
+    </div>
+</div>
+
+<div class="settings-section default-version-container">
+    <div class="settings-section-header">
+        <h4>Default Version</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <select id="default-version" name="Reverse Parser.default_version" class="settings-input">
+            <!-- Options will be dynamically populated -->
+        </select>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const versionTermsContainer = document.getElementById('version-terms-container');
+    const defaultVersionSelect = document.getElementById('default-version');
+
+    function createVersionTermsInput(version, terms) {
+        const div = document.createElement('div');
+        div.className = 'version-terms-input';
+        div.setAttribute('data-version', version);
+        div.innerHTML = `
+            <span class="version-name">${version}</span>
+            <input type="text" class="settings-input version-terms" value="${terms.join(', ')}" placeholder="Enter terms separated by commas">
+            <button type="button" class="move-btn move-up" title="Move Up">↑</button>
+            <button type="button" class="move-btn move-down" title="Move Down">↓</button>
+        `;
+        versionTermsContainer.appendChild(div);
+
+        div.querySelector('.move-up').addEventListener('click', () => moveVersion(div, 'up'));
+        div.querySelector('.move-down').addEventListener('click', () => moveVersion(div, 'down'));
+    }
+
+    function moveVersion(versionDiv, direction) {
+        const sibling = direction === 'up' ? versionDiv.previousElementSibling : versionDiv.nextElementSibling;
+        if (sibling) {
+            const moveUp = direction === 'up';
+            versionDiv.classList.add(moveUp ? 'moving-up' : 'moving-down');
+            sibling.classList.add(moveUp ? 'moving-down' : 'moving-up');
+
+            setTimeout(() => {
+                versionDiv.classList.remove(moveUp ? 'moving-up' : 'moving-down');
+                sibling.classList.remove(moveUp ? 'moving-down' : 'moving-up');
+                
+                // Swap the elements directly in the DOM
+                const parent = versionDiv.parentNode;
+                const placeholder = document.createElement('div');
+                
+                parent.insertBefore(placeholder, moveUp ? sibling : versionDiv);
+                parent.insertBefore(sibling, moveUp ? versionDiv : placeholder);
+                parent.insertBefore(versionDiv, placeholder);
+                parent.removeChild(placeholder);
+                
+                updateMoveButtons();
+                updateDefaultVersionOptions();
+            }, 300);
+        }
+    }
+
+    function updateMoveButtons() {
+        const versionDivs = versionTermsContainer.querySelectorAll('.version-terms-input');
+        versionDivs.forEach((div, index) => {
+            div.querySelector('.move-up').disabled = index === 0;
+            div.querySelector('.move-down').disabled = index === versionDivs.length - 1;
+        });
+    }
+
+    function updateDefaultVersionOptions() {
+        const versions = Array.from(document.querySelectorAll('.version-terms-input')).map(div => div.getAttribute('data-version'));
+        const currentValue = defaultVersionSelect.value;
+        defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
+        // Restore the previously selected value if it still exists
+        if (versions.includes(currentValue)) {
+            defaultVersionSelect.value = currentValue;
+        }
+    }
+
+    // Load existing versions and terms
+    Promise.all([
+        fetch('/settings/get_scraping_versions').then(response => response.json()),
+        fetch('/settings/api/reverse_parser_settings').then(response => response.json())
+    ]).then(([versionsData, reverseParserData]) => {
+        const allVersions = versionsData.versions;
+        const versionTerms = reverseParserData.version_terms || {};
+        const versionOrder = reverseParserData.version_order || [];
+        
+        // Create a Set of all versions for quick lookup
+        const allVersionsSet = new Set(allVersions);
+        
+        // First, add versions in the order specified by version_order
+        versionOrder.forEach(version => {
+            if (allVersionsSet.has(version)) {
+                createVersionTermsInput(version, versionTerms[version] || []);
+                allVersionsSet.delete(version);
+            }
+        });
+        
+        // Then, add any remaining versions that weren't in version_order
+        allVersions.forEach(version => {
+            if (allVersionsSet.has(version)) {
+                createVersionTermsInput(version, versionTerms[version] || []);
+            }
+        });
+        
+        updateMoveButtons();
+        updateDefaultVersionOptions();
+        
+        // Set the default version from the configuration
+        defaultVersionSelect.value = reverseParserData.default_version || '';
+        
+        // If the default version from config is not available, fall back to the first option
+        if (!defaultVersionSelect.value && defaultVersionSelect.options.length > 0) {
+            defaultVersionSelect.value = defaultVersionSelect.options[0].value;
+        }
+    });
+
+    // Add event listener for saving settings
+    document.addEventListener('saveSettings', function() {
+        const versionTerms = {};
+        const versionOrder = [];
+        const versionDivs = versionTermsContainer.querySelectorAll('.version-terms-input');
+        
+        versionDivs.forEach((div) => {
+            const version = div.getAttribute('data-version');
+            const termsInput = div.querySelector('.version-terms');
+            if (termsInput) {
+                const terms = termsInput.value.split(',').map(term => term.trim()).filter(term => term !== '');
+                versionTerms[version] = terms;
+                versionOrder.push(version);
+            }
+        });
+
+        const defaultVersion = defaultVersionSelect.value;
+
+        // Prepare the settings object
+        const settings = {
+            'Reverse Parser': {
+                version_terms: versionTerms,
+                version_order: versionOrder,
+                default_version: defaultVersion
+            }
+        };
+
+        // Send the settings to the server
+        fetch('/settings/api/reverse_parser_settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(settings),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('Settings saved successfully');
+            } else {
+                console.error('Failed to save settings:', data.error);
+            }
+        })
+        .catch((error) => {
+            console.error('Error:', error);
+        });
+    });
+});
+</script>

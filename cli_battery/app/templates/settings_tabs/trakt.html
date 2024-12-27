@@ -1,0 +1,149 @@
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Trakt Settings</h4>
+    </div>
+    <div class="settings-section-content active">
+        <div class="settings-form-group">
+            <label for="trakt_client_id" class="settings-title">Client ID:</label>
+            <input type="text" id="trakt_client_id" name="Trakt[client_id]" class="settings-input" value="{{ settings.Trakt.client_id }}">
+        </div>
+        <div class="settings-form-group">
+            <label for="trakt_client_secret" class="settings-title">Client Secret:</label>
+            <input type="password" id="trakt_client_secret" name="Trakt[client_secret]" class="settings-input" value="{{ settings.Trakt.client_secret }}">
+        </div>
+        <div class="settings-form-group">
+            <button type="button" id="authorizeTraktButton" class="btn btn-primary">Authorize Trakt</button>
+            <p id="traktAuthStatus" class="settings-description"></p>
+        </div>
+        <div id="traktAuthInstructions" style="display: none;">
+            <p>Please go to <a id="traktVerificationUrl" target="_blank" rel="noopener noreferrer">this URL</a> and enter the following code:</p>
+            <p><strong id="traktUserCode"></strong></p>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const authStatus = document.getElementById('traktAuthStatus');
+    const authorizeButton = document.getElementById('authorizeTraktButton');
+    const authInstructions = document.getElementById('traktAuthInstructions');
+    const verificationUrl = document.getElementById('traktVerificationUrl');
+    const userCode = document.getElementById('traktUserCode');
+
+    const clientIdInput = document.getElementById('trakt_client_id');
+    const clientSecretInput = document.getElementById('trakt_client_secret');
+
+    function checkTraktAuth() {
+        fetch('/check_trakt_auth')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'authorized') {
+                    authStatus.textContent = 'Trakt is authorized.';
+                    authStatus.style.color = 'green';
+                    authorizeButton.textContent = 'Reauthorize Trakt';
+                } else {
+                    authStatus.textContent = 'Trakt is not authorized.';
+                    authStatus.style.color = 'red';
+                    authorizeButton.textContent = 'Authorize Trakt';
+                }
+            });
+    }
+
+    checkTraktAuth();
+
+    authorizeButton.addEventListener('click', function() {
+        fetch('/trakt_auth', { 
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.user_code && data.verification_url) {
+                    verificationUrl.href = data.verification_url;
+                    userCode.textContent = data.user_code;
+                    authInstructions.style.display = 'block';
+                    authStatus.textContent = 'Please complete the authorization process.';
+                    
+                    // Start polling for auth status
+                    pollAuthStatus();
+                } else {
+                    authStatus.textContent = 'Failed to start authorization process.';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                authStatus.textContent = 'Error initiating Trakt authorization.';
+            });
+    });
+
+    function pollAuthStatus() {
+        const pollInterval = setInterval(() => {
+            fetch('/trakt_auth_status', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'authorized') {
+                        clearInterval(pollInterval);
+                        authStatus.textContent = 'Trakt successfully authorized!';
+                        authStatus.style.color = 'green';
+                        authInstructions.style.display = 'none';
+                        checkTraktAuth(); // Update button text
+                    } else if (data.status === 'error') {
+                        clearInterval(pollInterval);
+                        authStatus.textContent = 'Error during authorization: ' + data.message;
+                        authStatus.style.color = 'red';
+                    }
+                    // If status is 'pending', continue polling
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    clearInterval(pollInterval);
+                    authStatus.textContent = 'Error checking authorization status.';
+                });
+        }, 5000); // Poll every 5 seconds
+    }
+
+    function autoSaveField(field) {
+        field.addEventListener('input', debounce(function() {
+            const form = document.getElementById('settingsForm');
+            const formData = new FormData(form);
+
+            fetch('/save_settings', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('saveStatus').textContent = 'Settings saved successfully!';
+                } else {
+                    document.getElementById('saveStatus').textContent = 'Error saving settings: ' + data.error;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('saveStatus').textContent = 'Error saving settings: ' + error.message;
+            });
+        }, 500));
+    }
+
+    autoSaveField(document.getElementById('trakt_client_id'));
+    autoSaveField(document.getElementById('trakt_client_secret'));
+
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    autoSaveField(clientIdInput);
+    autoSaveField(clientSecretInput);
+});
+</script>

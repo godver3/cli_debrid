@@ -1,4 +1,4 @@
-from flask import jsonify, request, current_app, Blueprint
+from flask import jsonify, request, current_app, Blueprint, logging, render_template
 from routes import admin_required
 from .database_routes import perform_database_migration 
 from extensions import initialize_app 
@@ -7,6 +7,11 @@ from settings import get_setting
 import threading
 from run_program import ProgramRunner
 from flask_login import login_required
+from requests.exceptions import RequestException
+from api_tracker import api
+import logging
+import time
+import socket
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -14,22 +19,92 @@ program_runner = None
 
 def run_server():
     from extensions import app
-   
     app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)
 
 def start_server():
     from extensions import app
+    import socket
+    
+    # Check if port is available
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('0.0.0.0', 5000))
+        sock.close()
+    except socket.error:
+        logging.error("Port 5000 is already in use. Please close any other instances or applications using this port.")
+        return False
+        
     with app.app_context():
         perform_database_migration()
         initialize_app()
     server_thread = threading.Thread(target=run_server)
     server_thread.daemon = True
     server_thread.start()
+    return True
+
+def check_service_connectivity():
+    plex_url = get_setting('Plex', 'url')
+    plex_token = get_setting('Plex', 'token')
+    rd_api_key = get_setting('RealDebrid', 'api_key')
+    metadata_battery_url = get_setting('Metadata Battery', 'url')
+    
+    # Update this line in your settings to use:
+    # metadata_battery_url = "http://cli_battery_app:5001"
+
+    services_reachable = True
+
+    # Check Plex connectivity
+    try:
+        response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
+        response.raise_for_status()
+    except RequestException as e:
+        logging.error(f"Failed to connect to Plex server: {str(e)}")
+        services_reachable = False
+
+    # Check Real Debrid connectivity
+    try:
+        response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {rd_api_key}"}, timeout=5)
+        response.raise_for_status()
+    except RequestException as e:
+        logging.error(f"Failed to connect to Real Debrid API: {str(e)}")
+        services_reachable = False
+
+    # Check Metadata Battery connectivity and Trakt authorization
+    try:
+        # Remove trailing ":5000" or ":5000/" if present
+        metadata_battery_url = metadata_battery_url.rstrip('/').removesuffix(':5001')
+        metadata_battery_url = metadata_battery_url.rstrip('/').removesuffix(':50051')
+        
+        # Append ":50051"
+        metadata_battery_url += ':5001'
+        response = api.get(f"{metadata_battery_url}/check_trakt_auth", timeout=5)
+        response.raise_for_status()
+        trakt_status = response.json().get('status')
+        if trakt_status != 'authorized':
+            logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
+            services_reachable = False
+    except RequestException as e:
+        if hasattr(e, 'response') and e.response is not None:
+            logging.error(f"Failed to connect to Metadata Battery: {e.response.status_code} {e.response.reason}")
+            logging.error(f"Response content: {e.response.text}")
+        else:
+            logging.error(f"Failed to connect to Metadata Battery: {str(e)}")
+        services_reachable = False
+
+    return services_reachable
 
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 def start_program():
     global program_runner
     if program_runner is None or not program_runner.is_running():
+        # Add delay if auto-start is enabled
+        if get_setting('Debug', 'auto_run_program', default=False):
+            time.sleep(1)  # 1 second delay for auto-start
+
+        # Check service connectivity before starting the program
+        if not check_service_connectivity():
+            return jsonify({"status": "error", "message": "Failed to connect to Plex, Real Debrid, or Metadata Battery. Check logs for details."})
+
         program_runner = ProgramRunner()
         # Start the program runner in a separate thread to avoid blocking the Flask server
         threading.Thread(target=program_runner.start).start()
@@ -66,11 +141,16 @@ def update_program_state():
 def program_status():
     global program_runner
     is_running = program_runner.is_running() if program_runner else False
-    return jsonify({"running": is_running})
+    is_initializing = program_runner.is_initializing() if program_runner else False
+    return jsonify({"running": is_running, "initializing": is_initializing})
 
 def program_is_running():
     global program_runner
     return program_runner.is_running() if program_runner else False
+
+def program_is_initializing():  # Add this function
+    global program_runner
+    return program_runner.is_initializing() if program_runner else False
 
 @program_operation_bp.route('/api/check_program_conditions')
 @login_required
@@ -83,9 +163,8 @@ def check_program_conditions():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('Overseerr', 'url'),
-        ('Overseerr', 'api_key'),
-        ('RealDebrid', 'api_key')
+        ('RealDebrid', 'api_key'),
+        ('Metadata Battery', 'url')
     ]
     
     missing_fields = []
@@ -103,3 +182,66 @@ def check_program_conditions():
         'requiredSettingsComplete': required_settings_complete,
         'missingFields': missing_fields
     })
+
+@program_operation_bp.route('/api/task_timings', methods=['GET'])
+@login_required
+def get_task_timings():
+    global program_runner
+    
+    if not program_runner or not program_runner.is_running():
+        return jsonify({
+            "status": "error",
+            "message": "Program is not running"
+        }), 404
+
+    current_time = time.time()
+    task_timings = {}
+    
+    # Get all task intervals and their last run times
+    for task, interval in program_runner.task_intervals.items():
+        last_run = program_runner.last_run_times.get(task, current_time)
+        time_until_next_run = interval - (current_time - last_run)
+        
+        # Convert to hours, minutes, seconds
+        hours, remainder = divmod(int(time_until_next_run), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        task_timings[task] = {
+            "next_run_in": {
+                "hours": hours,
+                "minutes": minutes,
+                "seconds": seconds,
+                "total_seconds": time_until_next_run
+            },
+            "interval": interval,
+            "last_run": last_run,
+            "enabled": task in program_runner.enabled_tasks
+        }
+
+    # Group tasks by type
+    grouped_timings = {
+        "queues": {},
+        "content_sources": {},
+        "system_tasks": {}
+    }
+
+    for task, timing in task_timings.items():
+        if task in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
+                   'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
+            grouped_timings["queues"][task] = timing
+        elif task.endswith('_wanted'):
+            grouped_timings["content_sources"][task] = timing
+        else:
+            grouped_timings["system_tasks"][task] = timing
+
+    return jsonify({
+        "status": "success",
+        "data": grouped_timings,
+        "current_time": current_time
+    })
+
+@program_operation_bp.route('/task_timings')
+@login_required
+@admin_required
+def task_timings():
+    return render_template('task_timings.html')

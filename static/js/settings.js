@@ -235,7 +235,7 @@ function updateSettings() {
     }
 
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -422,6 +422,187 @@ function updateSettings() {
     settingsData['Debug'] = settingsData['Debug'] || {};
     settingsData['Debug']['content_source_check_period'] = contentSourceCheckPeriods;
 
+    // Handle Reverse Parser settings
+    const reverseParserSettings = {
+        version_terms: {},
+        default_version: document.getElementById('default-version').value,
+        version_order: [] // New array to store the order
+    };
+
+    // Get the container of all version inputs
+    const versionContainer = document.querySelector('#version-terms-container');
+    
+    // Get all version inputs in their current order
+    const versionInputs = Array.from(versionContainer.children);
+    
+    versionInputs.forEach((input, index) => {
+        const version = input.getAttribute('data-version');
+        const terms = input.querySelector('.version-terms').value.split(',').map(term => term.trim()).filter(term => term);
+        reverseParserSettings.version_terms[version] = terms;
+        reverseParserSettings.version_order.push(version); // Add version to order array
+    });
+
+    settingsData['Reverse Parser'] = reverseParserSettings;
+
+
+    const rescrapeMissingFiles = document.getElementById('debug-rescrape_missing_files');
+    console.log("Rescrape Missing Files element:", rescrapeMissingFiles);
+    
+    if (rescrapeMissingFiles) {
+        settingsData['Debug']['rescrape_missing_files'] = rescrapeMissingFiles.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Rescrape Missing Files checkbox element not found!");
+    }
+
+    const enableUpgrading = document.getElementById('scraping-enable_upgrading'); 
+    console.log("Enable Upgrading element:", enableUpgrading);
+    
+    if (enableUpgrading) {
+        settingsData['Scraping']['enable_upgrading'] = enableUpgrading.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Enable Upgrading checkbox element not found!");
+    }
+
+    const enableUpgradingCleanup = document.getElementById('scraping-enable_upgrading_cleanup');
+    console.log("Enable Upgrading Cleanup element:", enableUpgradingCleanup);
+    
+    if (enableUpgradingCleanup) {
+        settingsData['Scraping']['enable_upgrading_cleanup'] = enableUpgradingCleanup.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Enable Upgrading Cleanup checkbox element not found!");
+    }
+
+
+    const stalenessThreshold = document.getElementById('staleness threshold-staleness_threshold');
+    console.log("Staleness Threshold element:", stalenessThreshold);
+    
+    if (stalenessThreshold) {
+        // Ensure 'Staleness Threshold' object exists in settingsData
+        if (!settingsData['Staleness Threshold']) {
+            settingsData['Staleness Threshold'] = {};
+        }
+        settingsData['Staleness Threshold']['staleness_threshold'] = parseInt(stalenessThreshold.value) || 7;
+    
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Staleness Threshold input element not found!");
+    }
+    
+    const enableReverseOrderScraping = document.getElementById('scraping-enable_reverse_order_scraping');
+    console.log("Enable Reverse Order Scraping element:", enableReverseOrderScraping);
+    
+    if (enableReverseOrderScraping) {
+        settingsData['Scraping']['enable_reverse_order_scraping'] = enableReverseOrderScraping.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Enable Reverse Order Scraping checkbox element not found!");
+    }
+    
+    const disableAdult = document.getElementById('scraping-disable_adult');
+    console.log("Disable Adult Content element:", disableAdult);
+    
+    if (disableAdult) {
+        settingsData['Scraping']['disable_adult'] = disableAdult.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Disable Adult Content checkbox element not found!");
+    }
+
+    const syncDeletions = document.getElementById('sync deletions-sync_deletions');
+    console.log("Sync Deletions element:", syncDeletions);
+    
+    if (syncDeletions) {
+        settingsData['Sync Deletions']['sync_deletions'] = syncDeletions.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Sync Deletions checkbox element not found!");
+    }
+
+    const traktEarlyReleases = document.getElementById('scraping-trakt_early_releases');
+    console.log("Trakt Early Releases element:", traktEarlyReleases);
+    
+    if (traktEarlyReleases) {
+        settingsData['Scraping']['trakt_early_releases'] = traktEarlyReleases.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Trakt Early Releases checkbox element not found!");
+    }
+
+    const fileCollectionManagement = document.getElementById('file management-file_collection_management');
+    console.log("File Collection Management element:", fileCollectionManagement);
+    
+    if (fileCollectionManagement) {
+        settingsData['File Management']['file_collection_management'] = fileCollectionManagement.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("File Collection Management select element not found!");
+    }
+
+    const zurgAllFolder = document.getElementById('file management-zurg_all_folder');
+    console.log("Zurg All Folder element:", zurgAllFolder);
+    
+    if (zurgAllFolder) {
+        settingsData['File Management']['zurg_all_folder'] = zurgAllFolder.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Zurg All Folder input element not found!");
+    }
+
+    const zurgMoviesFolder = document.getElementById('file management-zurg_movies_folder');
+    console.log("Zurg Movies Folder element:", zurgMoviesFolder);
+    
+    if (zurgMoviesFolder) {
+        settingsData['File Management']['zurg_movies_folder'] = zurgMoviesFolder.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Zurg Movies Folder input element not found!");
+    }
+
+    const zurgShowsFolder = document.getElementById('file management-zurg_shows_folder');
+    console.log("Zurg Shows Folder element:", zurgShowsFolder);
+    
+    if (zurgShowsFolder) {
+        settingsData['File Management']['zurg_shows_folder'] = zurgShowsFolder.value;
+    
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Zurg Shows Folder input element not found!");
+    }
+
+    const disableNotWantedCheck = document.getElementById('debug-disable_not_wanted_check');
+    console.log("Disable Not Wanted Check element:", disableNotWantedCheck);
+    
+    if (disableNotWantedCheck) {
+        settingsData['Debug']['disable_not_wanted_check'] = disableNotWantedCheck.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Disable Not Wanted Check checkbox element not found!");
+    }
+
+    const blacklistDuration = document.getElementById('queue-blacklist_duration');
+    console.log("Blacklist Duration element:", blacklistDuration);
+    
+    if (blacklistDuration) {
+        settingsData['Queue']['blacklist_duration'] = parseInt(blacklistDuration.value) || 30;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Blacklist Duration input element not found!");
+    }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
@@ -448,9 +629,13 @@ function updateSettings() {
     });
 }
 
-// Update this function to use the loaded settingsData
 function updateContentSourceCheckPeriods() {
     const contentSourcesDiv = document.getElementById('content-source-check-periods');
+    if (!contentSourcesDiv) {
+        console.warn("Element with id 'content-source-check-periods' not found. Skipping update.");
+        return;
+    }
+
     const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);
     
     contentSourcesDiv.innerHTML = '';
@@ -468,7 +653,12 @@ function updateContentSourceCheckPeriods() {
 // Update the DOMContentLoaded event listener
 document.addEventListener('DOMContentLoaded', () => {
     loadSettingsData().then(() => {
-        updateContentSourceCheckPeriods();
+        // Ensure the content-source-check-periods element exists before calling the function
+        if (document.getElementById('content-source-check-periods')) {
+            updateContentSourceCheckPeriods();
+        } else {
+            console.warn("Element with id 'content-source-check-periods' not found. Make sure it exists in your HTML.");
+        }
         // Add any other initialization functions here
     });
 });

@@ -9,7 +9,10 @@ import time
 import random
 
 def get_db_connection():
-    db_path = os.path.join('db_content', 'media_items.db')
+    # Get db_content directory from environment variable with fallback
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    db_path = os.path.join(db_content_dir, 'media_items.db')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute('PRAGMA journal_mode=WAL')  # Enable WAL mode
     conn.row_factory = sqlite3.Row
@@ -52,3 +55,25 @@ def get_existing_airtime(conn, imdb_id):
     ''', (imdb_id,))
     result = cursor.fetchone()
     return result[0] if result else None
+
+@retry_on_db_lock()
+def reset_item_to_upgrading(imdb_id: str, original_file: str, original_version: str):
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE media_items
+            SET state = 'Upgrading',
+                filled_by_file = ?,
+                filled_by_title = ?,
+                version = ?,
+                upgrading_from = NULL
+            WHERE imdb_id = ?
+        ''', (original_file, original_file, original_version, imdb_id))
+        conn.commit()
+        logging.info(f"Reset item with IMDB ID {imdb_id} to Upgrading state with original file: {original_file}")
+    except sqlite3.Error as e:
+        logging.error(f"Database error: {e}")
+        conn.rollback()
+    finally:
+        conn.close()

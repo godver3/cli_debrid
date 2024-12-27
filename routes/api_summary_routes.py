@@ -11,7 +11,13 @@ import logging
 api_summary_bp = Blueprint('api_summary', __name__)
 real_time_api_bp = Blueprint('real_time_api', __name__)
 
-CACHE_FILE = 'db_content/api_summary_cache.pkl'
+# Get db_content directory from environment variable with fallback
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'api_summary_cache.pkl')
+
+# Get logs directory from environment variable with fallback
+LOGS_DIR = os.environ.get('USER_LOGS', '/user/logs')
+API_LOG_FILE = os.path.join(LOGS_DIR, 'api_calls.log')
 
 def load_cache():
     if os.path.exists(CACHE_FILE):
@@ -32,6 +38,7 @@ def load_cache():
     return {'hour': {}, 'day': {}, 'month': {}, 'last_processed_line': 0}
 
 def save_cache(cache_data):
+    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
     with open(CACHE_FILE, 'wb') as f:
         pickle.dump(cache_data, f)
 
@@ -44,12 +51,11 @@ except Exception as e:
 
 def update_cache_with_new_entries():
     global cache
-    log_path = 'logs/api_calls.log'
     last_processed_line = cache['last_processed_line']
     
     logging.debug(f"Updating cache from line {last_processed_line}")
     
-    with open(log_path, 'r') as f:
+    with open(API_LOG_FILE, 'r') as f:
         lines = f.readlines()[last_processed_line:]
     
     if not lines:
@@ -161,7 +167,7 @@ def clear_api_summary_cache():
 
 def get_latest_api_calls(limit=100):
     calls = []
-    with open('logs/api_calls.log', 'r') as log_file:
+    with open(API_LOG_FILE, 'r') as log_file:
         for line in reversed(list(log_file)):
             parts = line.strip().split(' - ', 1)
             if len(parts) == 2:

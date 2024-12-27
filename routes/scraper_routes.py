@@ -3,13 +3,35 @@ import logging
 from debrid.real_debrid import add_to_real_debrid
 from .models import user_required, onboarding_required, admin_required
 from settings import get_setting, get_all_settings, load_config, save_config
-from metadata.metadata import get_all_season_episode_counts, get_overseerr_cookies
+from database.database_reading import get_all_season_episode_counts
 from web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
-from web_scraper import search_overseerr, get_media_details
+from web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
+from web_scraper import search_trakt
+from database.database_reading import get_all_season_episode_counts
+from metadata.metadata import get_imdb_id_if_missing
+import re
 
 scraper_bp = Blueprint('scraper', __name__)
+
+@scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
+def convert_tmdb_to_imdb(tmdb_id):
+    imdb_id = get_imdb_id_if_missing({'tmdb_id': tmdb_id})
+    return jsonify({'imdb_id': imdb_id or 'N/A'})
+
+def obfuscate_magnet_link(magnet_link: str) -> str:
+    """
+    Obfuscate the magnet link by hiding the domain and API key if present.
+    """
+    # Check if the magnet link contains 'jackett_apikey'
+    if 'jackett_apikey' in magnet_link:
+        # Use regex to find and replace the domain and API key
+        # Replace the domain (e.g., http://192.168.1.51:9117) with '***'
+        magnet_link = re.sub(r'^http:\/\/[^\/]+', '***', magnet_link)
+        # Replace the jackett_apikey value with '***'
+        magnet_link = re.sub(r'jackett_apikey=[^&]+', 'jackett_apikey=***', magnet_link)
+    return magnet_link
 
 @scraper_bp.route('/add_to_real_debrid', methods=['POST'])
 def add_torrent_to_real_debrid():
@@ -18,9 +40,14 @@ def add_torrent_to_real_debrid():
         if not magnet_link:
             return jsonify({'error': 'No magnet link provided'}), 400
 
+        # Obfuscate the magnet link for logging
+        obfuscated_magnet_link = obfuscate_magnet_link(magnet_link)
+        logging.info(f"Magnet link: {obfuscated_magnet_link}")
+
         result = add_to_real_debrid(magnet_link)
         logging.info(f"Torrent result: {result}")
-        logging.info(f"Magnet link: {magnet_link}")
+        logging.info(f"Magnet link: {obfuscated_magnet_link}")
+        
         if result:
             if isinstance(result, dict):
                 status = result.get('status', '').lower()
@@ -72,7 +99,7 @@ def shows_trending():
 @user_required
 @onboarding_required
 def index():
-    from web_scraper import get_available_versions
+    from web_scraper import get_available_versions, web_scrape
 
     versions = get_available_versions()
     if request.method == 'POST':
@@ -82,11 +109,14 @@ def index():
             session['search_term'] = search_term  # Store the search term in the session
             session['version'] = version  # Store the version in the session
             results = web_scrape(search_term, version)
-            return jsonify(results)
+            logging.info(f"Search results for '{search_term}': {results}")  # Log the results
+            return jsonify({'results': results})  # Wrap results in a dictionary here
         else:
             return jsonify({'error': 'No search term provided'})
-    
-    return render_template('scraper.html', versions=versions)
+        # Check if TMDB API key is set
+    tmdb_api_key = get_setting('TMDB', 'api_key', '')
+    tmdb_api_key_set = bool(tmdb_api_key)
+    return render_template('scraper.html', versions=versions, tmdb_api_key_set=tmdb_api_key_set)
 
 @scraper_bp.route('/select_season', methods=['GET', 'POST'])
 def select_season():
@@ -139,7 +169,7 @@ def select_media():
         details = get_media_details(media_id, media_type)
 
         # Extract keywords and genres
-        genres = details.get('keywords', [])
+        genres = details.get('genres', [])
 
         logging.info(f"Retrieved genres: {genres}")
 
@@ -213,7 +243,7 @@ def scraper_tester():
             search_term = request.form.get('search_term')
         
         if search_term:
-            search_results = search_overseerr(search_term)
+            search_results = search_trakt(search_term)
             
             # Fetch IMDB IDs and season/episode counts for each result
             for result in search_results:
@@ -221,13 +251,13 @@ def scraper_tester():
                 
                 if details:
                     imdb_id = details.get('externalIds', {}).get('imdbId', 'N/A')
+                    tmdb_id = details.get('id', 'N/A')
                     result['imdbId'] = imdb_id
                     
                     if result['mediaType'] == 'tv':
                         overseerr_url = get_setting('Overseerr', 'url')
                         overseerr_api_key = get_setting('Overseerr', 'api_key')
-                        cookies = get_overseerr_cookies(overseerr_url)
-                        season_episode_counts = get_all_season_episode_counts(overseerr_url, overseerr_api_key, result['id'], cookies)
+                        season_episode_counts = get_all_season_episode_counts(tmdb_id)
                         result['seasonEpisodeCounts'] = season_episode_counts
                 else:
                     result['imdbId'] = 'N/A'
