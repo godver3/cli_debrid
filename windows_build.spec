@@ -86,7 +86,9 @@ a = Analysis(
         'PTT',
         'PTT.adult',
         'PTT.handlers',
-        'PTT.parse'
+        'PTT.parse',
+        'apscheduler',
+        'apscheduler.schedulers.background'
     ],
     hookspath=['hooks'],
     hooksconfig={},
