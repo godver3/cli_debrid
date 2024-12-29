@@ -364,6 +364,13 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "webhook_url": {"type": "string", "default": "", "sensitive": True}
             },
+            "NTFY": {
+                "enabled": {"type": "boolean", "default": False},
+                "host": {"type": "string", "default": "", "sensitive": True},
+                "topic": {"type": "string", "default": "", "sensitive": True},
+                "api_key": {"type": "string", "default": ""},
+                "priority": {"type": "string", "default": ""}
+            },
             "Email": {
                 "enabled": {"type": "boolean", "default": False},
                 "smtp_server": {"type": "string", "default": ""},
