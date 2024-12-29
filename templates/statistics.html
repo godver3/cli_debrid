@@ -4,775 +4,7 @@
 
 {% block content %}
 <style>
-    /* Toggle switch styles */
-    .toggle-switch {
-        position: relative;
-        display: inline-block;
-        width: 48px;
-        height: 24px;
-        margin-left: 8px;
-    }
-
-    .toggle-switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-    }
-
-    .toggle-slider {
-        position: absolute;
-        cursor: pointer;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: #555;
-        transition: .4s;
-        border-radius: 24px;
-    }
-
-    .toggle-slider:before {
-        position: absolute;
-        content: "";
-        height: 18px;
-        width: 18px;
-        left: 3px;
-        bottom: 3px;
-        background-color: #fff;
-        transition: .4s;
-        border-radius: 50%;
-    }
-
-    input:checked + .toggle-slider {
-        background-color: #FFA500;
-    }
-
-    input:checked + .toggle-slider:before {
-        transform: translateX(24px);
-    }
-
-    .toggle-item {
-        display: flex;
-        align-items: center;
-        margin-right: 20px;
-    }
-
-    .toggle-label {
-        margin-right: 8px;
-        color: #fff;
-    }
-
-    /* Main container */
-    .statistics-wrapper {
-        display: flex;
-        flex-direction: column;
-        width: 100%;
-        align-items: center;
-    }
-
-    .stats-container {
-        width: 80%;
-    }
-
-    /* Row 1: Toggle container */
-    .toggle-container {
-        display: flex;
-        align-items: center;
-        width: 100%;
-        padding: 0px 5%;
-        margin-bottom: 10px;
-        font-size: 0.9em;
-        justify-content: flex-start;
-    }
-
-    /* Hide compact selector on mobile */
-    @media (max-width: 768px) {
-        #compact_toggle {
-            display: none;
-        }
-    }
-
-    /* Row 2: Collection stats */
-    .stats-box.collection-stats {
-        margin-bottom: 10px;
-        background-color: #2c2c2c;
-        border-radius: 8px;
-        padding: 15px;
-    }
-
-    .stats-box.collection-stats .stat-items {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 20px;
-        justify-content: space-around;
-    }
-
-    .stats-box.collection-stats .stat-item {
-        flex: 1;
-        min-width: 150px;
-        text-align: center;
-    }
-
-    .stats-box.collection-stats .stat-item p {
-        margin: 0;
-        color: #FFA500;
-        font-size: 1.1em;
-    }
-
-    .stats-box.collection-stats .stat-item p::before {
-        content: attr(data-label);
-        display: block;
-        color: #fff;
-        font-weight: bold;
-        margin-bottom: 4px;
-    }
-
-    /* Row 3: Recently aired, Airing soon, Upcoming releases */
-    .top-stats {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 15px;
-        margin-bottom: 10px;
-    }
-
-    .stats-box.recently-aired,
-    .stats-box.airing-soon,
-    .stats-box.upcoming-releases {
-        width: 100%;
-        background-color: #2c2c2c;
-        border-radius: 8px;
-        padding: 15px;
-    }
-
-    .stats-box.recently-aired ul,
-    .stats-box.airing-soon ul,
-    .stats-box.upcoming-releases ul {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    .stats-box.recently-aired li,
-    .stats-box.airing-soon li,
-    .stats-box.upcoming-releases li {
-        display: flex;
-        flex-direction: column;
-        padding: 8px 0;
-        border-bottom: 1px solid #3a3a3a;
-    }
-
-    .stats-box.recently-aired li:last-child,
-    .stats-box.airing-soon li:last-child,
-    .stats-box.upcoming-releases li:last-child {
-        border-bottom: none;
-    }
-
-    .stats-box.recently-aired .show-title,
-    .stats-box.airing-soon .show-title,
-    .stats-box.upcoming-releases .titles {
-        color: #FFA500;
-        text-align: left;
-    }
-
-    .stats-box.recently-aired .air-time,
-    .stats-box.airing-soon .air-time,
-    .stats-box.upcoming-releases .release-date {
-        color: #fff;
-        margin-left: 20px;
-        font-style: italic;
-        font-size: 0.9em;
-    }
-
-    /* Compact view specific styles */
-    .compact-view .stats-box.recently-aired li,
-    .compact-view .stats-box.airing-soon li,
-    .compact-view .stats-box.upcoming-releases li {
-        flex-direction: row;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .compact-view .stats-box.recently-aired .air-time,
-    .compact-view .stats-box.airing-soon .air-time,
-    .compact-view .stats-box.upcoming-releases .release-date {
-        margin-left: 10px;
-    }
-
-    /* Row 4: Recently added */
-    .stats-box.recently-added {
-        width: 100%;
-        margin-bottom: 20px;
-    }
-
-    /* Recently Added Sections */
-    .stats-box.recently-added-section-top,
-    .stats-box.recently-added-section-bottom,
-    .stats-box.recently-upgraded-section {
-        background-color: #2c2c2c;
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 15px;
-    }
-
-    .stats-box h3 {
-        color: #fff;
-        margin-top: 0;
-        margin-bottom: 15px;
-        font-size: 1.2em;
-    }
-
-    .cards-container {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 15px;
-        justify-content: center;
-        margin: 0 auto;
-        max-width: 1200px;
-    }
-
-    .card {
-        width: 200px;
-        height: 300px;
-        position: relative;
-        overflow: hidden;
-        margin: 0 auto;
-    }
-
-    .card:hover {
-        transform: translateY(-2px);
-    }
-
-    .card:hover .hover-content {
-        opacity: 1;
-        visibility: visible;
-    }
-
-    .card .poster {
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-    }
-
-    .card .poster img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
-
-    .card .content {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        padding: 40px 12px 12px;
-        background: linear-gradient(transparent, rgba(0,0,0,0.9));
-        color: #fff;
-        z-index: 1;
-    }
-
-    .card .hover-content {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0,0,0,0.9);
-        color: #fff;
-        padding: 20px;
-        opacity: 0;
-        visibility: hidden;
-        transition: all 0.2s;
-        display: flex;
-        flex-direction: column;
-        z-index: 2;
-        overflow: hidden;
-    }
-
-    .card .hover-content .filename {
-        font-size: 0.9em;
-        margin-bottom: 10px;
-        overflow-wrap: break-word;
-        word-break: break-all;
-        line-height: 1.4;
-    }
-
-    .card .hover-content .episode-info {
-        color: #FFA500;
-        font-size: 0.9em;
-        margin-top: auto;
-    }
-
-    .card h5 {
-        color: #fff;
-        margin: 0 0 4px 0;
-        font-size: 1.1em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .card .year {
-        color: #FFA500;
-        font-size: 0.9em;
-        margin: 0;
-    }
-
-    .card .date,
-    .card .quality {
-        display: none;
-    }
-
-    .card .content .upgrade-info {
-        font-size: 0.9em;
-        color: #FFA500;  /* Orange to highlight the upgrade */
-        margin-top: 4px;
-    }
-
-    /* Compact view adjustments */
-    .compact-view .cards-container {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    }
-
-    .compact-view .card .content {
-        padding: 30px 8px 8px;
-    }
-
-    .compact-view .card h5 {
-        font-size: 1em;
-    }
-
-    /* Common styles for stats boxes */
-    .stats-box {
-        background-color: #444;
-        border-radius: 5px;
-        padding: 15px;
-    }
-
-    .stats-box h3 {
-        margin-top: 0;
-        margin-bottom: 5px;
-    }
-
-    .stats-box ul {
-        list-style-type: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    /* Content styles */
-    .stats-box.recently-aired li,
-    .stats-box.airing-soon li,
-    .stats-box.upcoming-releases li {
-        margin-bottom: 15px;
-        color: #FFA500;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .added-date,
-    .air-date,
-    .air-time,
-    .release-date {
-        display: block;
-        margin-left: 15px;
-        margin-top: 5px;
-        font-style: italic;
-        color: #f4f4f4;
-    }
-
-    /* Collection stats */
-    .collection-stats .stat-items {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-    }
-
-    .collection-stats .stat-item {
-        flex: 1 1 calc(25% - 10px);
-        min-width: 200px;
-        padding: 10px;
-        background-color: #555;
-        border-radius: 3px;
-    }
-
-    .collection-stats .stat-item p {
-        margin: 0;
-        color: #f4f4f4;
-    }
-
-    .collection-stats .stat-item span {
-        font-weight: bold;
-        color: #4CAF50;
-    }
-
-    /* Toggle styles */
-    .toggle-item {
-        display: flex;
-        align-items: center;
-        margin-right: 15px;
-    }
-
-    .toggle-label {
-        margin-right: 5px;
-    }
-
-    .toggle-switch {
-        position: relative;
-        display: inline-block;
-        width: 40px;
-        height: 20px;
-    }
-
-    .toggle-switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-    }
-
-    .toggle-slider {
-        position: absolute;
-        cursor: pointer;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: #ccc;
-        transition: .4s;
-        border-radius: 20px;
-    }
-
-    .toggle-slider:before {
-        position: absolute;
-        content: "";
-        height: 16px;
-        width: 16px;
-        left: 2px;
-        bottom: 2px;
-        background-color: white;
-        transition: .4s;
-        border-radius: 50%;
-    }
-
-    input:checked + .toggle-slider {
-        background-color: #2196F3;
-    }
-
-    input:checked + .toggle-slider:before {
-        transform: translateX(20px);
-    }
-
-    /* Card styles */
-    .card-container {
-        display: flex;
-        justify-content: center;
-        flex-wrap: wrap;
-        gap: 20px;
-    }
-
-    .card {
-        width: 200px;
-        height: 300px;
-        position: relative;
-        overflow: hidden;
-        border-radius: 8px;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        transition: transform 0.3s ease;
-    }
-
-    .card:hover {
-        transform: scale(1.05);
-    }
-
-    .card-img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
-
-    .card-content,
-    .card-hover-content {
-        position: absolute;
-        left: 0;
-        right: 0;
-        color: white;
-        padding: 10px;
-        transition: opacity 0.3s ease;
-    }
-
-    .card-content {
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.7);
-    }
-
-    .card-hover-content {
-        top: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.9);
-        opacity: 0;
-        overflow-y: auto;
-    }
-
-    .card:hover .card-content {
-        opacity: 0;
-    }
-
-    .card:hover .card-hover-content {
-        opacity: 1;
-    }
-
-    .card h5 {
-        margin: 0 0 10px 0;
-        font-size: 1em;
-        font-weight: bold;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-height: 3em; /* Adjust this value based on your font size and line height */
-    }
-
-    .truncate {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .card .added-date,
-    .card .info-line {
-        font-size: 0.8em;
-        margin: 5px 0;
-        color: #ddd;
-    }
-
-    h4 {
-        margin-bottom: 10px;
-        margin-top: 10px;
-    }
-
-    .stats-box.recently-added h3, h4 {
-        display: flex;
-        justify-content: center;
-    }
-
-    /* Responsive adjustments */
-    @media (max-width: 1200px) {
-        .stats-container {
-            width: 95%;
-        }
-        
-        .top-stats {
-            display: grid;
-            grid-template-columns: 1fr;
-        }
-        
-        .toggle-container {
-            align-items: flex-start;
-        }
-        
-        .toggle-item {
-            margin-bottom: 10px;
-        }
-
-        /* New styles for iPhone screens */
-        .card-container {
-            gap: 10px;
-        }
-
-        .card {
-            width: calc(50% - 5px);
-        }
-
-        .card h5 {
-            font-size: 0.9em;
-        }
-
-        .card .added-date,
-        .card .info-line {
-            font-size: 0.7em;
-        }
-    }
-
-    /* Additional adjustment for very small screens */
-    @media (max-width: 350px) {
-        .card {
-            width: 100%;
-        }
-    }
-
-    /* Compact view styles */
-    .compact-view .stats-container {
-        width: 95%;
-        display: flex;
-        flex-direction: column;
-    }   
-
-    .compact-view .top-stats {
-        display: flex;
-        flex-direction: row;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-
-    .compact-view .stats-box.recently-aired,
-    .compact-view .stats-box.airing-soon,
-    .compact-view .stats-box.upcoming-releases {
-        flex: 1 1 calc(33.33% - 7px);
-        min-width: 250px;
-    }
-
-    .compact-view .stats-box {
-        padding: 10px;
-    }
-
-    .compact-view .collection-stats .stat-item {
-        padding: 5px;
-        width: calc(33.33% - 7px);
-        grid-template-columns: 3fr 1fr;
-    }
-
-    /* Compact view styles */
-    .compact-view .stats-box.recently-aired li,
-    .compact-view .stats-box.airing-soon li,
-    .compact-view .stats-box.upcoming-releases li {
-        margin-bottom: 5px;
-        display: flex;
-        flex-direction: row;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .compact-view .stats-box.recently-aired li > span,
-    .compact-view .stats-box.airing-soon li > span,
-    .compact-view .stats-box.upcoming-releases li > span {
-        display: inline;
-        margin: 0;
-    }
-
-    .compact-view .air-date,
-    .compact-view .release-date {
-        margin-left: 10px;
-        font-style: normal;
-        color: #d4d4d4;
-        white-space: nowrap;
-    }
-
-    .compact-view .stats-box.recently-aired li > span:first-child,
-    .compact-view .stats-box.airing-soon li > span:first-child,
-    .compact-view .stats-box.upcoming-releases li > span:first-child {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        flex: 1;
-        margin-right: 10px;
-    }
-
-    /* Adjust font sizes for compact view */
-    .compact-view .stats-box h3 {
-        font-size: 1em;
-        margin-bottom: 5px;
-        justify-content: left;
-    }
-
-    /* Adjust font sizes for compact view */
-    .compact-view .stats-box h4 {
-        justify-content: left;
-    }
-
-    .compact-view .stats-box li {
-        font-size: 0.9em;
-    }
-
-    .compact-view .air-date,
-    .compact-view .release-date {
-        font-size: 0.9em;
-    }
-
-    /* Compact view styles for recently added section */
-    .compact-view .recently-added {
-        display: flex;
-        flex-direction: row;
-        gap: 10px;
-        flex-wrap: wrap;
-        width: 100%;
-    }
-
-    .compact-view .recently-added-section-top,
-    .compact-view .recently-added-section-bottom,
-    .compact-view .recently-upgraded-section {
-        flex: 1 1 calc(33.33% - 7px);
-        min-width: 250px;
-    }
-
-    /* Media query adjustments */
-    @media (max-width: 1200px) {
-        .compact-view .recently-added {
-            display: block;
-        }
-        
-        .compact-view .recently-added-section-top,
-        .compact-view .recently-added-section-bottom,
-        .compact-view .recently-upgraded-section {
-            width: 100%;
-            margin-bottom: 10px;
-        }
-    }
-
-    .tmdb-info {
-        margin-top: 10px;
-        padding: 10px;
-        color: #be1600;
-        font-style: italic;
-        text-align: center;
-    }
-
-    /* Compact view styles for cards */
-    .compact-view .card-container {
-        display: block;
-    }
-
-    .compact-view .card {
-        width: 100%;
-        height: auto;
-        margin-bottom: 5px;
-        background-color: #555;
-        border-radius: 3px;
-        position: relative;
-        overflow: visible;
-        box-shadow: none;
-    }
-
-    .compact-view .card-img {
-        display: none;
-    }
-
-    .compact-view .card-content {
-        display: none;
-    }
-
-    .compact-view .card-hover-content {
-        position: relative;
-        opacity: 1;
-        background: none;
-        padding: 5px;
-        display: block;
-    }
-
-    .compact-view .card:hover {
-        transform: none;
-    }
-
-    .compact-view .card h5 {
-        font-size: 0.9em;
-        margin: 0;
-        color: #FFA500;
-    }
-
-    .compact-view .card .info-line {
-        font-size: 0.8em;
-        margin: 2px 0;
-    }
-
+    @import url('{{ url_for('static', filename='css/statistics.css') }}');
 </style>
 
 <script>
@@ -819,7 +51,7 @@
 
         document.getElementById('time-format-toggle').addEventListener('change', function() {
             const isChecked = this.checked;
-            fetch('/statistics/set_time_preference', {
+            fetch('/set_time_preference', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -839,11 +71,15 @@
 
         document.getElementById('compact-toggle').addEventListener('change', function() {
             const isChecked = this.checked;
-            fetch(`/statistics?toggle_compact=${isChecked}`, {
-                method: 'GET',
+            fetch('/set_compact_preference', {
+                method: 'POST',
                 headers: {
+                    'Content-Type': 'application/json',
                     'Accept': 'application/json'
-                }
+                },
+                body: JSON.stringify({
+                    compactView: isChecked
+                })
             })
             .then(response => response.json())
             .then(data => {
@@ -929,18 +165,22 @@
                 <div class="cards-container">
                     {% for movie in recently_added.movies %}
                     <div class="card">
-                        {% if stats.tmdb_api_key_set %}
-                        <div class="poster">
-                            <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster">
+                        {% if not compact_view %}
+                        <div class="poster-container">
+                            <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="poster" loading="lazy">
+                            <div class="poster-hover">
+                                <span class="title">{{ movie.title }} ({{ movie.year }})</span>
+                                <span class="metadata">Quality: {{ movie.version }}</span>
+                                <span class="filename">{{ movie.filled_by_file }}</span>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="file-details">
+                            <span class="title">{{ movie.title }} ({{ movie.year }})</span>
+                            <span class="metadata">Quality: {{ movie.version }}</span>
+                            <span class="filename">{{ movie.filled_by_file }}</span>
                         </div>
                         {% endif %}
-                        <div class="content">
-                            <h5>{{ movie.title }}</h5>
-                            <p class="year">{{ movie.year }}</p>
-                        </div>
-                        <div class="hover-content">
-                            <p>{{ movie.filled_by_file }}</p>
-                        </div>
                     </div>
                     {% endfor %}
                 </div>
@@ -951,18 +191,22 @@
                 <div class="cards-container">
                     {% for show in recently_added.shows %}
                     <div class="card">
-                        {% if stats.tmdb_api_key_set %}
-                        <div class="poster">
-                            <img src="{{ show.poster_url }}" alt="{{ show.title }} poster">
+                        {% if not compact_view %}
+                        <div class="poster-container">
+                            <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
+                            <div class="poster-hover">
+                                <span class="title">{{ show.title }}</span>
+                                <span class="metadata">S{{ '%02d'|format(show.season_number|int) }}E{{ '%02d'|format(show.episode_number|int) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
+                                <span class="filename">{{ show.filled_by_file }}</span>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="file-details">
+                            <span class="title">{{ show.title }}</span>
+                            <span class="metadata">S{{ '%02d'|format(show.season_number|int) }}E{{ '%02d'|format(show.episode_number|int) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
+                            <span class="filename">{{ show.filled_by_file }}</span>
                         </div>
                         {% endif %}
-                        <div class="content">
-                            <h5>{{ show.title }}</h5>
-                            <p class="year">{{ show.year }}</p>
-                        </div>
-                        <div class="hover-content">
-                            <p>{{ show.filled_by_title[0] }}</p>
-                        </div>
                     </div>
                     {% endfor %}
                 </div>
@@ -974,18 +218,22 @@
                 <div class="cards-container">
                     {% for item in recently_upgraded %}
                     <div class="card">
-                        {% if stats.tmdb_api_key_set %}
-                        <div class="poster">
-                            <img src="{{ item.poster_url }}" alt="{{ item.title }} poster">
+                        {% if not compact_view %}
+                        <div class="poster-container">
+                            <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
+                            <div class="poster-hover">
+                                <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
+                                <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number|int) }}E{{ '%02d'|format(item.episode_number|int) }} - {% endif %}Quality: {{ item.version }}</span>
+                                <span class="filename">{{ item.filled_by_file }}</span>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="file-details">
+                            <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
+                            <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number|int) }}E{{ '%02d'|format(item.episode_number|int) }} - {% endif %}Quality: {{ item.version }}</span>
+                            <span class="filename">{{ item.filled_by_file }}</span>
                         </div>
                         {% endif %}
-                        <div class="content">
-                            <h5>{{ item.title }}</h5>
-                            <p class="year">{{ item.year }}</p>
-                        </div>
-                        <div class="hover-content">
-                            <p>{{ item.filled_by_file }}</p>
-                        </div>
                     </div>
                     {% endfor %}
                 </div>

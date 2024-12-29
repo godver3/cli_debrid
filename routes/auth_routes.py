@@ -60,12 +60,12 @@ def login():
     # logging.debug("Entering login route")
     
     if not is_user_system_enabled():
-        logging.debug("User system not enabled, redirecting to statistics.index")
-        return redirect(url_for('statistics.index'))
+        logging.debug("User system not enabled, redirecting to root.root")
+        return redirect(url_for('root.root'))
 
     if current_user.is_authenticated:
-        logging.debug("User already authenticated, redirecting to statistics.index")
-        return redirect(url_for('statistics.index'))
+        logging.debug("User already authenticated, redirecting to root.root")
+        return redirect(url_for('root.root'))
 
     # Check if there are any non-default users
     show_login_reminder = User.query.filter_by(is_default=False).count() == 0
@@ -80,7 +80,7 @@ def login():
             login_user(user)
             if user.is_default or not user.onboarding_complete:
                 return redirect(url_for('onboarding.onboarding_step', step=1))
-            return redirect(url_for('statistics.index'))
+            return redirect(url_for('root.root'))
         else:
             flash('Please check your login details and try again.')
     
@@ -92,11 +92,11 @@ def logout():
     from routes.settings_routes import is_user_system_enabled
 
     if not is_user_system_enabled():
-        return redirect(url_for('statistics.index'))  # Update this line if needed
+        return redirect(url_for('root.root'))
     logout_user()
     return redirect(url_for('auth.login'))
 
 @auth_bp.route('/unauthorized')
 def unauthorized():
     flash('You are not authorized to access this page.', 'error')
-    return redirect(url_for('auth.login'))  # Update this line
+    return redirect(url_for('auth.login'))

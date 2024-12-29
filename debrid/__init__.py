@@ -1,5 +1,5 @@
 from typing import Optional
-from settings import get_setting
+from settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from .real_debrid import RealDebridProvider
 from .torbox import TorboxProvider
@@ -15,7 +15,10 @@ def get_debrid_provider() -> DebridProvider:
     
     if _provider_instance is not None:
         return _provider_instance
-        
+    
+    # Ensure settings file exists and is properly initialized
+    ensure_settings_file()
+    
     provider_name = get_setting("Debrid Provider", "provider")
     
     if provider_name == 'RealDebrid':

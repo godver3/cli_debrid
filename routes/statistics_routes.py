@@ -16,6 +16,7 @@ import logging
 from metadata.metadata import get_show_airtime_by_imdb_id
 
 statistics_bp = Blueprint('statistics', __name__)
+root_bp = Blueprint('root', __name__)
 
 def get_airing_soon():
     conn = get_db_connection()
@@ -200,7 +201,7 @@ def get_recently_aired_and_airing_soon():
     
     return recently_aired, airing_soon
 
-@statistics_bp.route('/set_compact_preference', methods=['POST'])
+@root_bp.route('/set_compact_preference', methods=['POST'])
 def set_compact_preference():
     data = request.json
     compact_view = data.get('compactView', False)
@@ -220,11 +221,10 @@ def set_compact_preference():
     
     return response
 
-@statistics_bp.route('/')
-@statistics_bp.route('/statistics')
+@root_bp.route('/')
 @user_required
 @onboarding_required
-def index():
+def root():
     # Initialize session if not already set
     if 'use_24hour_format' not in session:
         session['use_24hour_format'] = True  # Default to 24-hour format
@@ -338,7 +338,7 @@ def index():
                          use_24hour_format=use_24hour_format,
                          compact_view=compact_view)
 
-@statistics_bp.route('/set_time_preference', methods=['POST'])
+@root_bp.route('/set_time_preference', methods=['POST'])
 @user_required
 @onboarding_required
 def set_time_preference():
@@ -374,16 +374,15 @@ def set_time_preference():
     if upgrade_enabled_set:
         upgrading_enabled = True
         recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
-        for item in recently_upgraded['upgraded']:
+        for item in recently_upgraded:
             if 'collected_at' in item and item['collected_at'] is not None:
                 collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
                 item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
             else:
                 item['formatted_collected_at'] = 'Unknown'
-        recently_upgraded = recently_upgraded['upgraded']        
     else:
         upgrading_enabled = False
-        recently_upgraded=''
+        recently_upgraded = []
         
     response = make_response(jsonify({
         'status': 'OK', 
