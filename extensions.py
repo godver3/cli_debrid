@@ -99,7 +99,7 @@ def check_user_system():
     if request.path.startswith('/webhook') or request.path.startswith('/static') or request.path.startswith('/debug'):
         return    
 
-    # Remove any specific handling for statistics.index here
+    # Remove any specific handling for root.root here
     # The decorators will handle the logic now
 
 @app.after_request

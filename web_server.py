@@ -114,8 +114,8 @@ def index():
     from routes.settings_routes import is_user_system_enabled
     logging.debug("Entering index route")
     if not is_user_system_enabled() or current_user.is_authenticated:
-        logging.debug("Redirecting to statistics.index")
-        return redirect(url_for('statistics.index'))
+        logging.debug("Redirecting to root.root")
+        return redirect(url_for('root.root'))
     else:
         logging.debug("Redirecting to auth.login")
         return redirect(url_for('auth.login'))

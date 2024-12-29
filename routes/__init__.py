@@ -14,7 +14,7 @@ from .api_summary_routes import api_summary_bp, real_time_api_bp
 from .onboarding_routes import onboarding_bp
 from .user_management_routes import user_management_bp
 from .database_routes import database_bp
-from .statistics_routes import statistics_bp
+from .statistics_routes import statistics_bp, root_bp
 from .webhook_routes import webhook_bp
 from .debug_routes import debug_bp
 from .trakt_routes import trakt_bp
@@ -110,7 +110,7 @@ admin_bp = Blueprint('admin', __name__)
 def reset_rate_limits():
     api.rate_limiter.reset_limits()
     flash('Rate limits have been reset successfully.', 'success')
-    return redirect(url_for('statistics.index'))
+    return redirect(url_for('root.root'))
 
 def register_blueprints(app):
     blueprints = [
@@ -132,6 +132,7 @@ def register_blueprints(app):
         (tooltip_bp, '/tooltip'),
         (over_usage_bp, '/over_usage'),
         (video_routes, '/video'),
+        (root_bp, '/'),
     ]
     
     for blueprint, url_prefix in blueprints:
