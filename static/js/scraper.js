@@ -290,12 +290,11 @@ function addToRealDebrid(magnetLink) {
                 if (data.error) {
                     throw new Error(data.error);
                 } else {
-                    document.getElementById('overlay').style.display = 'none';
-
                     showPopup({
                         type: POPUP_TYPES.SUCCESS,
                         title: 'Success',
                         message: data.message,
+                        autoClose: 15000  // 15 seconds
                     });
                 }
             })
@@ -450,7 +449,7 @@ function toggleResultsVisibility(section) {
     }
 }
 
-function displayTorrentResults(data, title, year) {
+function displayTorrentResults(data, title, year, version) {
     hideLoadingState();
     const overlay = document.getElementById('overlay');
 

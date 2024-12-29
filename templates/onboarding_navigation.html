@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(response => response.json())
             .then(result => {
                 if (result.success) {
-                    window.location.href = '{{ url_for("statistics.index") }}';
+                    window.location.href = '{{ url_for("root.root") }}';
                 } else {
                     alert('Error: ' + result.error);
                 }
