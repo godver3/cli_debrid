@@ -237,6 +237,8 @@ def ensure_settings_file():
         config['Debrid Provider'] = {}
     if 'provider' not in config['Debrid Provider'] or not config['Debrid Provider']['provider']:
         config['Debrid Provider']['provider'] = 'Torbox'
+    if 'api_key' not in config['Debrid Provider']:
+        config['Debrid Provider']['api_key'] = ''  # Initialize with empty string
     
     # Migrate RealDebrid API key if it exists
     if 'RealDebrid' in config and 'api_key' in config['RealDebrid']:
