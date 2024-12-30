@@ -635,8 +635,9 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
             elif result_hash in cache_status:
                 is_cached = cache_status[result_hash]
                 result['cached'] = 'Yes' if is_cached else 'No'
-            logging.info(f"Cache status for {result['title']} (hash: {result_hash}): {result['cached']}")
-
+            # Use original title for logging
+            original_title = result.get('parsed_info', {}).get('original_title', result.get('original_title', result.get('title', '')))
+            logging.info(f"Cache status for {original_title} (hash: {result_hash}): {result['cached']}")
     return processed_results, cache_status
 
 def get_available_versions():

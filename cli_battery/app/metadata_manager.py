@@ -47,8 +47,13 @@ class MetadataManager:
                 metadata = Metadata(item_id=item.id, key=key)
                 session.add(metadata)
             
-            # Store all values as strings, without JSON encoding
-            metadata.value = str(value)
+            # Convert complex objects to JSON strings
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value)
+            else:
+                value = str(value)
+            
+            metadata.value = value
             metadata.provider = provider
             metadata.last_updated = func.now()
             success = True
@@ -388,8 +393,13 @@ class MetadataManager:
                 metadata = Metadata(item_id=item.id, key=key)
                 session.add(metadata)
             
-            # Store all values as strings, without JSON encoding
-            metadata.value = str(value)
+            # Convert complex objects to JSON strings
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value)
+            else:
+                value = str(value)
+            
+            metadata.value = value
             metadata.provider = provider
             metadata.last_updated = func.now()
             success = True
@@ -625,7 +635,7 @@ class MetadataManager:
             with Session() as session:
                 item = session.query(Item).filter_by(imdb_id=show_imdb_id).first()
                 if not item:
-                    item = Item(imdb_id=show_imdb_id, title=show_metadata.get('title'), type='show', year=show_metadata.get('year'))
+                    item = Item(imdb_id=show_imdb_id)
                     session.add(item)
                     session.flush()
 
@@ -661,8 +671,10 @@ class MetadataManager:
 
             metadata = {}
             for m in item.item_metadata:
-                # No need to attempt JSON decoding, just use the value as is
-                metadata[m.key] = m.value
+                try:
+                    metadata[m.key] = json.loads(m.value)
+                except json.JSONDecodeError:
+                    metadata[m.key] = m.value
 
             if MetadataManager.is_metadata_stale(item.updated_at):
                 return MetadataManager.refresh_movie_metadata(imdb_id)
@@ -671,14 +683,33 @@ class MetadataManager:
             
     @staticmethod
     def refresh_movie_metadata(imdb_id):
-        trakt = TraktMetadata()
-        new_metadata = trakt.get_movie_metadata(imdb_id)
-        if new_metadata:
-            MetadataManager.add_or_update_item(imdb_id, new_metadata.get('title'), new_metadata.get('year'), 'movie')
-            MetadataManager.add_or_update_metadata(imdb_id, new_metadata, 'Trakt')
-            return new_metadata, "trakt"
-        logger.warning(f"Could not fetch metadata for movie {imdb_id} from Trakt")
-        return None, None
+        with Session() as session:
+            trakt = TraktMetadata()
+            new_metadata = trakt.get_movie_metadata(imdb_id)
+            if new_metadata:
+                item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                if not item:
+                    item = Item(imdb_id=imdb_id, title=new_metadata.get('title'), year=new_metadata.get('year'), type='movie')
+                    session.add(item)
+                    session.flush()
+                
+                # Clear out old metadata
+                session.query(Metadata).filter_by(item_id=item.id).delete()
+                
+                # Add new metadata
+                for key, value in new_metadata.items():
+                    if isinstance(value, (dict, list)):
+                        value = json.dumps(value)
+                    else:
+                        value = str(value)
+                    metadata = Metadata(item_id=item.id, key=key, value=value, provider='Trakt')
+                    session.add(metadata)
+                
+                item.updated_at = datetime.now(timezone.utc)
+                session.commit()
+                return new_metadata, "trakt"
+            logger.warning(f"Could not fetch metadata for movie {imdb_id} from Trakt")
+            return None, None
 
     @staticmethod
     def update_movie_metadata(item, movie_data, session):
