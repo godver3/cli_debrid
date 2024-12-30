@@ -54,6 +54,62 @@
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
     }
+
+    /* Table styles */
+    table {
+        border-spacing: 0;
+        border-collapse: separate;
+    }
+
+    td, th {
+        padding: 10px;
+        vertical-align: middle;
+    }
+
+    tr {
+        line-height: 1.4;
+    }
+
+    /* Cache status badges */
+    .cache-status {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.85em;
+        font-weight: bold;
+        text-transform: uppercase;
+        margin-top: 5px;
+        min-width: 120px;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .cache-status.cached {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    .cache-status.not-cached {
+        background-color: #f44336;
+        color: white;
+    }
+
+    .cache-status.not-checked {
+        background-color: #9e9e9e;
+        color: white;
+    }
+
+    .cache-status.check-unavailable {
+        background-color: #7a00e6;
+        color: white;
+    }
+
+    .cache-status.unknown {
+        background-color: #607d8b;
+        color: white;
+    }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
         <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">

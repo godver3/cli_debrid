@@ -6,6 +6,7 @@ import os
 import sys
 import shutil
 from datetime import datetime
+from debrid import reset_provider
 
 # Get the base config directory from an environment variable, with a fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
@@ -127,6 +128,9 @@ def save_config(config):
             logging.error(f"[{process_id}] Verified config does not match cleaned config")
             #logging.debug(f"[{process_id}] Cleaned config: {json.dumps(cleaned_config, indent=2)}")
             #logging.debug(f"[{process_id}] Verified config: {json.dumps(verified_config, indent=2)}")
+        else:
+            # Reset the debrid provider to pick up new settings
+            reset_provider()
     except Exception as e:
         logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
         if os.path.exists(temp_file):

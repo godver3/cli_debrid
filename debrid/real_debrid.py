@@ -347,18 +347,24 @@ def get_active_downloads(check=False):
         'Content-Type': 'application/x-www-form-urlencoded'
     }
     try:
-        response = requests.get(f"{API_BASE_URL}/torrents/activeCount", headers=headers, timeout=60)
+        # Get list of all torrents
+        response = requests.get(f"{API_BASE_URL}/torrents", headers=headers, timeout=60)
         response.raise_for_status()
-        response_json = response.json()
-        logging.debug(f"Real-Debrid active downloads response: {response_json}")
+        torrents = response.json()
         
-        active = response_json.get('nb', 0)
-        limit = round(response_json.get('limit', 0) * 0.75)
+        # Count torrents that are actually active (downloading, queued, or in magnet conversion)
+        active_statuses = ['downloading', 'queued', 'magnet_conversion']
+        active_count = len([t for t in torrents if t.get('status') in active_statuses])
+        
+        # Real-Debrid's default limit is 25, we use 75% of that to be safe
+        limit = round(25 * 0.75)
+        
+        logging.debug(f"Real-Debrid active downloads (from torrent list): {active_count}")
         
         if check:
-            return active < limit
+            return active_count < limit
         else:
-            return active, limit
+            return active_count, limit
     except Exception as e:
         logging.error(f"An error occurred while fetching active downloads: {e}")
         if check:

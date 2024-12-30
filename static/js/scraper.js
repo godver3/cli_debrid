@@ -374,7 +374,7 @@ function hideLoadingState() {
     }
 }
 
-function displayEpisodeResults(episodeResults, title, year) {
+function displayEpisodeResults(episodeResults, title, year, version) {
     toggleResultsVisibility('displayEpisodeResults');
     const episodeResultsDiv = document.getElementById('episodeResults');
     episodeResultsDiv.innerHTML = '';
@@ -468,15 +468,24 @@ function displayTorrentResults(data, title, year, version) {
                 const torResDiv = document.createElement('div');
                 torResDiv.className = 'torresult';
                 torResDiv.style.border = '1px solid white';
+
+                // Create cache status badge
+                const cacheStatus = torrent.cached || 'Unknown';
+                const cacheStatusClass = cacheStatus === 'Yes' ? 'cached' : 
+                                      cacheStatus === 'No' ? 'not-cached' : 
+                                      cacheStatus === 'Not Checked' ? 'not-checked' :
+                                      cacheStatus === 'N/A' ? 'check-unavailable' : 'unknown';
+
                 torResDiv.innerHTML = `
                     <button>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title}</p>
                         <p class="torresult-item">${(torrent.size).toFixed(1)} GB | ${torrent.score_breakdown.total_score}</p>
                         <p class="torresult-item">${torrent.source}</p>
+                        <span class="cache-status ${cacheStatusClass}">${cacheStatus}</span>
                     </div>
                     </button>             
-                `;        
+                `;
                 torResDiv.onclick = function() {
                     addToRealDebrid(torrent.magnet)
                 };
@@ -496,11 +505,12 @@ function displayTorrentResults(data, title, year, version) {
             const thead = document.createElement('thead');
             thead.innerHTML = `
                 <tr>
-                    <th style="color: rgb(191 191 190); width: 100%;">Name</th>
+                    <th style="color: rgb(191 191 190); width: 80%;">Name</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Size</th>
                     <th style="color: rgb(191 191 190); width: 15%;">Source</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Score</th>
-                    <th style="color: rgb(191 191 190); width: 15%;">Action</th>
+                    <th style="color: rgb(191 191 190); width: 15%; text-align: center;">Cache</th>
+                    <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Action</th>
                 </tr>
             `;
             table.appendChild(thead);
@@ -508,17 +518,26 @@ function displayTorrentResults(data, title, year, version) {
             // Create table body
             const tbody = document.createElement('tbody');
             data.forEach(torrent => {
+                const cacheStatus = torrent.cached || 'Unknown';
+                const cacheStatusClass = cacheStatus === 'Yes' ? 'cached' : 
+                                      cacheStatus === 'No' ? 'not-cached' : 
+                                      cacheStatus === 'Not Checked' ? 'not-checked' :
+                                      cacheStatus === 'N/A' ? 'check-unavailable' : 'unknown';
+
                 const row = document.createElement('tr');
                 row.innerHTML = `
-                    <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); max-width: 100%; overflow: hidden;">
-                        <div style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis;">
+                    <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); max-width: 80%; word-wrap: break-word; white-space: normal; padding: 10px;">
+                        <div style="display: block; line-height: 1.4; min-height: fit-content;">
                             ${torrent.title}
                         </div>
                     </td>
                     <td style="color: rgb(191 191 190);">${(torrent.size).toFixed(1)} GB</td>
                     <td style="color: rgb(191 191 190);">${torrent.source}</td>
                     <td style="color: rgb(191 191 190);">${torrent.score_breakdown.total_score}</td>
-                    <td style="color: rgb(191 191 190);">
+                    <td style="color: rgb(191 191 190); text-align: center;">
+                        <span class="cache-status ${cacheStatusClass}">${cacheStatus}</span>
+                    </td>
+                    <td style="color: rgb(191 191 190); text-align: center;">
                         <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Debrid</button>
                     </td>
                 `;

@@ -62,14 +62,26 @@ class MediaMatcher:
         return matches
 
     def match_movie(self, guess: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
-        """Check if a movie file matches a movie item"""
+        """
+        Check if a movie file matches a movie item.
+        For movies, we primarily match on year since filenames can be unreliable.
+        Title matching is optional since guessit can sometimes parse titles incorrectly.
+        """
         if guess.get('type') != 'movie':
+            logging.debug(f"Not a movie type: {guess.get('type')}")
             return False
             
-        title_match = self._normalize_title(guess.get('title', '')) == self._normalize_title(item.get('title', ''))
+        guess_title = self._normalize_title(guess.get('title', ''))
+        item_title = self._normalize_title(item.get('title', ''))
+        title_match = guess_title == item_title
         year_match = guess.get('year') == item.get('year')
         
-        return title_match and (year_match or self._is_acceptable_year_mismatch(item, guess))
+        logging.debug(f"Title match: {title_match} ({guess_title} == {item_title})")
+        logging.debug(f"Year match: {year_match} ({guess.get('year')} == {item.get('year')})")
+        
+        # For movies, we primarily match on year since filenames can be unreliable
+        # Title matching is optional since guessit can sometimes parse titles incorrectly
+        return year_match or self._is_acceptable_year_mismatch(item, guess)
 
     def match_episode(self, guess: Dict[str, Any], item: Dict[str, Any]) -> bool:
         """Check if an episode file matches an episode item"""
@@ -114,7 +126,13 @@ class MediaMatcher:
         """Normalize a title for comparison"""
         if not title:
             return ''
-        return ''.join(c.lower() for c in title if c.isalnum())
+        # Convert to lowercase and remove all non-alphanumeric characters
+        normalized = ''.join(c.lower() for c in title if c.isalnum())
+        # Special case: if title contains "between", make sure both titles have it
+        if "between" in normalized:
+            return normalized
+        # Otherwise return without "between" to handle cases where one title has it and the other doesn't
+        return normalized.replace("between", "")
 
     @staticmethod
     def _is_acceptable_year_mismatch(item: Dict[str, Any], guess: Dict[str, Any]) -> bool:
