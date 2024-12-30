@@ -5,7 +5,8 @@ Separates the media matching concerns from queue management.
 
 import logging
 from typing import Dict, Any, List, Tuple, Optional
-from guessit import guessit
+from scraper.functions.ptt_parser import parse_with_ptt
+from fuzzywuzzy import fuzz
 
 class MediaMatcher:
     """Handles media content matching and validation"""
@@ -38,9 +39,9 @@ class MediaMatcher:
             if not self.is_video_file(file['path']):
                 continue
                 
-            guess = guessit(file['path'])
-            logging.debug(f"Movie guess for {file['path']}: {guess}")
-            if self.match_movie(guess, item, file['path']):
+            parsed = parse_with_ptt(file['path'])
+            logging.debug(f"Movie parse for {file['path']}: {parsed}")
+            if self.match_movie(parsed, item, file['path']):
                 matches.append((file['path'], item))
         return matches
 
@@ -51,74 +52,94 @@ class MediaMatcher:
             if not self.is_video_file(file['path']):
                 continue
                 
-            guess = guessit(file['path'])
-            logging.debug(f"TV guess for {file['path']}: {guess}")
-            if self.match_episode(guess, item):
+            parsed = parse_with_ptt(file['path'])
+            logging.debug(f"TV parse for {file['path']}: {parsed}")
+            if self.match_episode(parsed, item):
                 matches.append((file['path'], item))
             else:
-                logging.debug(f"No match: title={guess.get('title')}=={item.get('series_title')}, "
-                            f"season={guess.get('season')}=={item.get('season')}, "
-                            f"episode={guess.get('episode')}=={item.get('episode')}")
+                logging.debug(f"No match: title={parsed.get('title')}=={item.get('series_title')}, "
+                            f"seasons={parsed.get('seasons')}=={item.get('season')}, "
+                            f"episodes={parsed.get('episodes')}=={item.get('episode')}")
         return matches
 
-    def match_movie(self, guess: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
+    def match_movie(self, parsed: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
         """
         Check if a movie file matches a movie item.
-        For movies, we primarily match on year since filenames can be unreliable.
-        Title matching is optional since guessit can sometimes parse titles incorrectly.
+        Uses fuzzy matching for titles and is lenient about year matching
+        since filenames can be inconsistent.
         """
-        if guess.get('type') != 'movie':
-            logging.debug(f"Not a movie type: {guess.get('type')}")
-            return False
+        # Skip type check if we have no season/episode info
+        if parsed.get('seasons') or parsed.get('episodes'):
+            if parsed.get('type') != 'movie':
+                logging.debug(f"Not a movie type: {parsed.get('type')}")
+                return False
             
-        guess_title = self._normalize_title(guess.get('title', ''))
+        parsed_title = self._normalize_title(parsed.get('title', ''))
         item_title = self._normalize_title(item.get('title', ''))
-        title_match = guess_title == item_title
-        year_match = guess.get('year') == item.get('year')
         
-        logging.debug(f"Title match: {title_match} ({guess_title} == {item_title})")
-        logging.debug(f"Year match: {year_match} ({guess.get('year')} == {item.get('year')})")
+        # Use fuzzy matching for titles with a low threshold
+        ratio = fuzz.ratio(parsed_title, item_title)
+        title_match = ratio > 60  # Lower threshold for more lenient matching
         
-        # For movies, we primarily match on year since filenames can be unreliable
-        # Title matching is optional since guessit can sometimes parse titles incorrectly
-        return year_match or self._is_acceptable_year_mismatch(item, guess)
+        # Be lenient about year matching - only check if both years are present
+        year_match = True
+        if parsed.get('year') and item.get('year'):
+            year_match = self._is_acceptable_year_mismatch(item, parsed)
+        
+        logging.debug(f"Title match: {title_match} ({parsed_title} == {item_title}, ratio: {ratio})")
+        logging.debug(f"Year match: {year_match} ({parsed.get('year')} vs {item.get('year')})")
+        
+        # Match if either title or year matches
+        return title_match or year_match
 
-    def match_episode(self, guess: Dict[str, Any], item: Dict[str, Any]) -> bool:
-        """Check if an episode file matches an episode item"""
-        if guess.get('type') != 'episode':
-            logging.debug(f"Not an episode type: {guess.get('type')}")
+    def match_episode(self, parsed: Dict[str, Any], item: Dict[str, Any]) -> bool:
+        """
+        Check if an episode file matches an episode item.
+        Primarily matches on season and episode numbers, being lenient about title matching
+        since filenames can be inconsistent.
+        """
+        # Skip files that are likely extras/specials
+        original_title = parsed.get('original_title', '').lower()
+        if any(extra in original_title for extra in [
+            'deleted scene', 'deleted scenes',
+            'extra', 'extras',
+            'special', 'specials',
+            'behind the scene', 'behind the scenes',
+            'bonus', 'interview',
+            'featurette', 'making of',
+            'alternate'
+        ]):
+            logging.debug(f"Skipping extras/special content: {original_title}")
             return False
             
-        # Get series title from either series_title or title field
-        series_title = item.get('series_title') or item.get('title')
-        if not series_title:
-            logging.debug("No series title found in item")
+        # Only check type if we have season/episode info
+        if parsed.get('seasons') or parsed.get('episodes'):
+            if parsed.get('type') != 'episode':
+                logging.debug(f"Not an episode type: {parsed.get('type')}")
+                return False
+            
+        # Get season/episode from various possible fields in the item
+        item_season = item.get('season') or item.get('season_number')
+        item_episode = item.get('episode') or item.get('episode_number')
+        
+        if item_season is None or item_episode is None:
+            logging.debug(f"Missing season/episode in item: season={item_season}, episode={item_episode}")
             return False
             
-        title_match = self._normalize_title(guess.get('title', '')) == self._normalize_title(series_title)
-        season_match = guess.get('season') == item.get('season_number')
-        episode_match = guess.get('episode') == item.get('episode_number')
+        # Check if the requested season and episode are in the parsed seasons/episodes lists
+        season_match = item_season in parsed.get('seasons', [])
+        episode_match = item_episode in parsed.get('episodes', [])
         
-        logging.debug(f"Title match: {title_match} ({guess.get('title')} == {series_title})")
-        logging.debug(f"Season match: {season_match} ({guess.get('season')} == {item.get('season_number')})")
-        logging.debug(f"Episode match: {episode_match} ({guess.get('episode')} == {item.get('episode_number')})")
+        logging.debug(f"Season match: {season_match} ({item_season} in {parsed.get('seasons')})")
+        logging.debug(f"Episode match: {episode_match} ({item_episode} in {parsed.get('episodes')})")
         
-        return title_match and season_match and episode_match
-
-    def handle_multi_episode_file(self, file_path: str, season: int, episodes: List[int], 
-                                items: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
-        """Handle files containing multiple episodes"""
-        matches = []
-        for item in items:
-            if (item.get('season') == season and 
-                item.get('episode') in episodes):
-                matches.append((file_path, item))
-        return matches
+        # For TV shows, we primarily care about matching season and episode numbers
+        return season_match and episode_match
 
     @staticmethod
     def is_video_file(filename: str) -> bool:
         """Check if a file is a video file based on extension"""
-        video_extensions = {'.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.mov', '.flv'}
+        video_extensions = {'.mkv', '.mp4', '.avi', '.m4v', '.ts', '.mov'}
         return any(filename.lower().endswith(ext) for ext in video_extensions)
 
     @staticmethod
@@ -126,17 +147,13 @@ class MediaMatcher:
         """Normalize a title for comparison"""
         if not title:
             return ''
-        # Convert to lowercase and remove all non-alphanumeric characters
-        normalized = ''.join(c.lower() for c in title if c.isalnum())
-        # Special case: if title contains "between", make sure both titles have it
-        if "between" in normalized:
-            return normalized
-        # Otherwise return without "between" to handle cases where one title has it and the other doesn't
-        return normalized.replace("between", "")
+        return title.lower().replace('.', ' ').replace('_', ' ').strip()
 
     @staticmethod
-    def _is_acceptable_year_mismatch(item: Dict[str, Any], guess: Dict[str, Any]) -> bool:
+    def _is_acceptable_year_mismatch(item: Dict[str, Any], parsed: Dict[str, Any]) -> bool:
         """Check if year mismatch is acceptable (within 1 year)"""
-        if not (item.get('year') and guess.get('year')):
-            return True
-        return abs(item['year'] - guess['year']) <= 1
+        item_year = item.get('year')
+        parsed_year = parsed.get('year')
+        if not item_year or not parsed_year:
+            return False
+        return abs(int(item_year) - int(parsed_year)) <= 1
