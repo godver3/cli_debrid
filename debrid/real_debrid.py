@@ -35,7 +35,13 @@ VIDEO_EXTENSIONS = [
 _cache = {}
 
 def get_api_key():
-    return get_setting('Debrid Provider', 'api_key')
+    api_key = get_setting('Debrid Provider', 'api_key')
+    if not api_key:
+        raise ValueError("Debrid Provider API key not found in settings")
+    if api_key == 'demo_key':
+        logging.warning("Running in demo mode with demo API key")
+        return api_key
+    return api_key
 
 def timed_lru_cache(seconds: int, maxsize: int = 128):
     def wrapper_cache(func):
@@ -530,11 +536,13 @@ class RealDebridProvider(DebridProvider):
         self.rate_limiter = RateLimiter(calls_per_second=0.5)
         self.api_key = self.get_api_key()
 
-    def get_api_key(self) -> str:
-        """Get API key from settings"""
-        api_key = get_setting("Debrid Provider", "api_key")
+    def get_api_key(self):
+        api_key = get_setting('Debrid Provider', 'api_key')
         if not api_key:
             raise ValueError("Debrid Provider API key not found in settings")
+        if api_key == 'demo_key':
+            logging.warning("Running in demo mode with demo API key")
+            return api_key
         return api_key
 
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict:
