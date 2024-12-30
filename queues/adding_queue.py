@@ -235,6 +235,39 @@ class AddingQueue:
                                     add_to_not_wanted_urls(url, str(item.get('id')), item)
                                     logging.info(f"Added successful URL {url} to not wanted list")
                                 
+                                # For TV shows, check if this is a multi-pack that could fill other episodes
+                                if item.get('type') == 'episode':
+                                    # Get our series title
+                                    series_title = item.get('series_title', '') or item.get('title', '')
+                                    
+                                    # Get all scraping queue items for the same show
+                                    scraping_items = self._get_scraping_queue_items(None)
+                                    if scraping_items:
+                                        # Filter to only items from the same show and version
+                                        matching_items = [
+                                            i for i in scraping_items 
+                                            if (i.get('series_title', '') or i.get('title', '')) == series_title
+                                            and i.get('version') == item.get('version')
+                                            and i['id'] != item['id']  # Exclude current item
+                                        ]
+                                        
+                                        if matching_items:
+                                            logging.info(f"Found {len(matching_items)} other episodes of '{series_title}' to check")
+                                            
+                                            # Try to match each file against each item
+                                            for scraping_item in matching_items:
+                                                matches = self.content_processor.media_matcher.match_content(files, scraping_item)
+                                                if matches:
+                                                    # Take the first matching file
+                                                    matched_file = matches[0][0]
+                                                    file_name = os.path.basename(matched_file)
+                                                    
+                                                    # Update the item state
+                                                    update_media_item_state(scraping_item['id'], 'Checking',
+                                                                         filled_by_file=file_name)
+                                                    logging.info(f"Updated '{series_title}' S{scraping_item.get('season')}E{scraping_item.get('episode')} with file: {file_name}")
+                                else:
+                                    logging.debug("Not a TV show, skipping multi-pack check")
                                 # Remove item from queue
                                 self.items.pop(0)
                                 return
@@ -292,40 +325,38 @@ class AddingQueue:
                                     add_to_not_wanted_urls(url, str(item.get('id')), item)
                                     logging.info(f"Added successful URL {url} to not wanted list")
                                 
-                                # Now check if any other files match items in the Scraping queue
-                                # Only match items with the same version
-                                version = item.get('version')
-                                if version:
-                                    logging.debug(f"Looking for other items with version: {version}")
+                                # For TV shows, check if this is a multi-pack that could fill other episodes
+                                if item.get('type') == 'episode':
+                                    # Get our series title
+                                    series_title = item.get('series_title', '') or item.get('title', '')
+                                    
+                                    # Get all scraping queue items for the same show
                                     scraping_items = self._get_scraping_queue_items(None)
                                     if scraping_items:
-                                        logging.debug(f"Checking {len(scraping_items)} items in Scraping queue")
-                                        for scraping_item in scraping_items:
-                                            # Skip if it's the same item we just processed
-                                            if scraping_item['id'] == item['id']:
-                                                continue
-                                                
-                                            # Skip if version doesn't match
-                                            scraping_version = scraping_item.get('version')
-                                            if scraping_version != version:
-                                                logging.debug(f"Skipping item {scraping_item['id']} - version mismatch: {scraping_version} != {version}")
-                                                continue
-                                                
-                                            logging.debug(f"Checking Scraping item: {scraping_item}")
-                                            other_matches = self.content_processor.media_matcher.match_content(files, scraping_item)
-                                            if other_matches:
-                                                # Take the first match for this item
-                                                matched_file = other_matches[0][0]
-                                                file_info = next(f for f in files if f['path'] == matched_file)
-                                                file_name = os.path.basename(file_info['path'])
-                                                logging.debug(f"Found match for Scraping item: {file_name}")
-                                                
-                                                # Update the item state
-                                                update_media_item_state(scraping_item['id'], 'Checking',
-                                                                     filled_by_file=file_name)
-                                                logging.info(f"Updated Scraping item {scraping_item['id']} with filled_by_file: {file_name}")
+                                        # Filter to only items from the same show and version
+                                        matching_items = [
+                                            i for i in scraping_items 
+                                            if ((i.get('series_title', '') or i.get('title', '')) == series_title and
+                                                i.get('version') == item.get('version'))
+                                        ]
+                                        
+                                        if matching_items:
+                                            logging.info(f"Found {len(matching_items)} other episodes of '{series_title}' to check")
+                                            
+                                            # Try to match each file against each item
+                                            for scraping_item in matching_items:
+                                                matches = self.content_processor.media_matcher.match_content(files, scraping_item)
+                                                if matches:
+                                                    # Take the first matching file
+                                                    matched_file = matches[0][0]
+                                                    file_name = os.path.basename(matched_file)
+                                                    
+                                                    # Update the item state
+                                                    update_media_item_state(scraping_item['id'], 'Checking',
+                                                                         filled_by_file=file_name)
+                                                    logging.info(f"Updated '{series_title}' S{scraping_item.get('season')}E{scraping_item.get('episode')} with file: {file_name}")
                                 else:
-                                    logging.debug("No version specified for current item, skipping other item checks")
+                                    logging.debug("Not a TV show, skipping multi-pack check")
                             else:
                                 logging.warning("No suitable file found for current item")
                                 update_media_item_state(item['id'], 'Checking')
@@ -433,6 +464,52 @@ class AddingQueue:
 
     def _handle_failed_item(self, queue_manager: Any, item: Dict[str, Any]):
         """Handle a failed item by moving it to the appropriate queue"""
-        # Move to error state instead of failed
-        update_media_item_state(item['id'], 'Sleeping')
+        from datetime import datetime, timedelta
+        
+        # Check if item is old (>7 days from release date)
+        release_date_str = item.get('release_date')
+        if release_date_str:
+            try:
+                release_date = datetime.strptime(release_date_str, '%Y-%m-%d')
+                days_old = (datetime.now() - release_date).days
+                
+                if days_old > 7:
+                    logging.info(f"Item is {days_old} days old, blacklisting: {item.get('title')}")
+                    blacklist_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    update_media_item_state(item['id'], 'Blacklisted', blacklisted_date=blacklist_date)
+                    
+                    # If this is a TV show, blacklist other episodes from same season in scraping queue
+                    if item.get('type') == 'episode':
+                        series_title = item.get('series_title', '') or item.get('title', '')
+                        season = item.get('season') or item.get('season_number')
+                        version = item.get('version')
+                        
+                        if series_title and season is not None and version:
+                            scraping_items = self._get_scraping_queue_items(None)
+                            if scraping_items:
+                                # Find matching episodes from same show, season and version
+                                matching_items = [
+                                    i for i in scraping_items
+                                    if ((i.get('series_title', '') or i.get('title', '')) == series_title and
+                                        (i.get('season') or i.get('season_number')) == season and
+                                        i.get('version') == version)
+                                ]
+                                
+                                if matching_items:
+                                    logging.info(f"Blacklisting {len(matching_items)} other episodes from '{series_title}' S{season} [{version}]")
+                                    for match in matching_items:
+                                        episode = match.get('episode') or match.get('episode_number')
+                                        update_media_item_state(match['id'], 'Blacklisted', 
+                                                             blacklisted_date=blacklist_date)
+                                        logging.info(f"Blacklisted S{season}E{episode} of '{series_title}' [{version}]")
+                else:
+                    logging.info(f"Item is only {days_old} days old, sleeping: {item.get('title')}")
+                    update_media_item_state(item['id'], 'Sleeping')
+            except ValueError:
+                logging.error(f"Invalid release date format: {release_date_str}")
+                update_media_item_state(item['id'], 'Sleeping')
+        else:
+            logging.warning(f"No release date for item, sleeping: {item.get('title')}")
+            update_media_item_state(item['id'], 'Sleeping')
+            
         self.items.pop(0)
