@@ -71,6 +71,11 @@ def get_magnet_files(magnet_link):
         return get_cached_files(hash_)
     return None
 
+def reset_provider():
+    """Reset the debrid provider instance, forcing it to be reinitialized on next use."""
+    global _provider_instance
+    _provider_instance = None
+
 # Export error classes
 __all__ = [
     'get_debrid_provider',
@@ -82,6 +87,7 @@ __all__ = [
     'check_daily_usage',
     'extract_hash_from_magnet',
     'get_magnet_files',
+    'reset_provider',
     'TooManyDownloadsError',
     'ProviderUnavailableError'
 ]

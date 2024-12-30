@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Tuple, Optional
 from settings import get_setting
 from api_tracker import api
 from scraper.scraper import scrape
-from debrid import extract_hash_from_magnet, add_to_real_debrid, is_cached_on_rd
+from debrid import extract_hash_from_magnet
 from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
@@ -14,6 +14,8 @@ import aiohttp
 from database.poster_management import get_poster_url
 from flask import request, url_for
 from urllib.parse import urlparse
+from debrid.base import DebridProvider
+from debrid import get_debrid_provider
 
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     trakt_client_id = get_setting('Trakt', 'client_id')
@@ -614,18 +616,24 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                         hashes.append(magnet_hash)
                 processed_results.append(result)
 
-    # Check cache status for all hashes at once
-    cache_status = is_cached_on_rd(hashes) if hashes else {}
-    logging.info(f"Cache status returned: {cache_status}")
+    # Get the debrid provider and check if it supports direct cache checking
+    debrid_provider = get_debrid_provider()
+    supports_cache_check = debrid_provider.supports_direct_cache_check
+
+    # Check cache status for all hashes at once if supported
+    cache_status = {}
+    if supports_cache_check and hashes:
+        cache_status = debrid_provider.is_cached(hashes)
+        logging.info(f"Cache status returned: {cache_status}")
 
     # Update processed_results with cache status
     for result in processed_results:
         result_hash = result.get('hash')
         if result_hash:
-            if result.get('source') in ['jackett', 'prowlarr']:
-                result['cached'] = 'Not Checked'
-            else:
-                is_cached = cache_status.get(result_hash, False)
+            if result.get('source') in ['jackett', 'prowlarr'] or not supports_cache_check:
+                result['cached'] = 'N/A'
+            elif result_hash in cache_status:
+                is_cached = cache_status[result_hash]
                 result['cached'] = 'Yes' if is_cached else 'No'
             logging.info(f"Cache status for {result['title']} (hash: {result_hash}): {result['cached']}")
 
@@ -645,7 +653,7 @@ def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
         imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id)})
 
     if not imdb_id:
-        logging.error(f"Could not find IMDb ID for TMDB ID: {media_id}")
+        logging.error(f"Could not find IMDB ID for TMDB ID: {media_id}")
         return {}
 
     # Fetch metadata using the IMDb ID
@@ -684,7 +692,7 @@ def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str
         if magnet_link:
             logging.info(f"Selected torrent: {selected_torrent}")
             logging.info(f"Magnet link: {magnet_link}")
-            result = add_to_real_debrid(magnet_link)
+            result = debrid_provider.add_to_debrid(magnet_link)
             if result:
                 logging.info(f"Torrent result: {result}")
                 if result == 'downloading' or result == 'queued':
