@@ -359,6 +359,15 @@ input:checked + .toggle-slider:before {
     word-break: break-word;
 }
 
+.tmdb-info {
+    margin-top: 10px;
+    padding: 10px;
+    color: red;
+    font-style: italic;
+    border-radius: 8px;
+    text-align: center;
+}
+
 /* Mobile adjustments */
 @media (max-width: 768px) {
     #compact_toggle {
