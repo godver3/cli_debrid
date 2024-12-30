@@ -16,6 +16,11 @@ class ProviderUnavailableError(DebridProviderError):
 class DebridProvider(ABC):
     """Abstract base class that defines the interface for debrid providers"""
     
+    @property
+    def supports_direct_cache_check(self) -> bool:
+        """Whether this provider supports checking cache status without adding the torrent"""
+        return True  # Default to True for backward compatibility
+    
     @abstractmethod
     def add_torrent(self, magnet_link: str, temp_file_path: Optional[str] = None) -> Dict:
         """Add a torrent/magnet link to the debrid service"""
