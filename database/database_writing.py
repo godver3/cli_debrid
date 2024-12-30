@@ -112,9 +112,9 @@ def update_media_item_state(item_id, state, **kwargs):
         conn.commit()
 
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
-        for field in optional_fields:
-            if field in kwargs:
-                logging.debug(f"  {field}: {kwargs[field]}")
+        #for field in optional_fields:
+            #if field in kwargs:
+                #logging.debug(f"  {field}: {kwargs[field]}")
 
     except Exception as e:
         logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
