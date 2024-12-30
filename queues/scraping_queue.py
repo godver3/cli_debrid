@@ -183,6 +183,18 @@ class ScrapingQueue:
         filtered_results = [r for r in results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
         logging.info(f"After filtering unwanted magnets/URLs: {len(filtered_results)} results remain for {item_identifier}")
 
+        # For episodes, ensure we have the correct season and episode
+        if item['type'] == 'episode' and not is_multi_pack:
+            season = item.get('season_number')
+            episode = item.get('episode_number')
+            if season is not None and episode is not None:
+                filtered_results = [
+                    r for r in filtered_results 
+                    if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
+                    and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
+                ]
+                logging.info(f"After filtering for specific episode S{season}E{episode}: {len(filtered_results)} results remain for {item_identifier}")
+
         if filtered_results or item['type'] != 'episode':
             return filtered_results, filtered_out
 
@@ -207,6 +219,18 @@ class ScrapingQueue:
 
         # Filter out unwanted magnets and URLs for individual results
         individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
+
+        # For episodes, ensure we have the correct season and episode
+        if item['type'] == 'episode':
+            season = item.get('season_number')
+            episode = item.get('episode_number')
+            if season is not None and episode is not None:
+                individual_results = [
+                    r for r in individual_results 
+                    if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
+                    and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
+                ]
+                logging.info(f"After filtering individual results for specific episode S{season}E{episode}: {len(individual_results)} results remain for {item_identifier}")
 
         if individual_results:
             logging.info(f"Found results for individual episode scraping of {item_identifier}.")
