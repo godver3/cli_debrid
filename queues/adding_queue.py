@@ -169,6 +169,14 @@ class AddingQueue:
                             
                             if not files:
                                 logging.warning("No files found in add_result")
+                                # Remove the torrent if it exists
+                                torrent_id = add_result.get('torrent_id')
+                                if torrent_id:
+                                    try:
+                                        self.debrid_provider.remove_torrent(torrent_id)
+                                        logging.info(f"Removed torrent {torrent_id} from Real-Debrid - no files found")
+                                    except Exception as e:
+                                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
                                 continue
 
                             # Process the files based on media type
@@ -268,14 +276,23 @@ class AddingQueue:
                                                     logging.info(f"Updated '{series_title}' S{scraping_item.get('season')}E{scraping_item.get('episode')} with file: {file_name}")
                                 else:
                                     logging.debug("Not a TV show, skipping multi-pack check")
-                                # Remove item from queue
-                                self.items.pop(0)
-                                return
                             else:
                                 logging.warning("No suitable file found for media item")
                                 continue
                     else:
                         logging.info("Result is not cached, checking next result")
+                        # Add to not wanted list to prevent reuse
+                        if 'magnet' in result:
+                            from not_wanted_magnets import add_to_not_wanted
+                            if hash_value:
+                                add_to_not_wanted(hash_value, str(item.get('id')), item)
+                                logging.info(f"Added uncached magnet hash {hash_value} to not wanted list")
+                        elif 'url' in result:
+                            from not_wanted_magnets import add_to_not_wanted_urls
+                            url = result['url']
+                            add_to_not_wanted_urls(url, str(item.get('id')), item)
+                            logging.info(f"Added uncached URL {url} to not wanted list")
+                        continue
                 else:
                     # For providers like RealDebrid that need to add torrent to check cache
                     cache_status = self.debrid_provider.is_cached(hash_value)
@@ -359,14 +376,41 @@ class AddingQueue:
                                     logging.debug("Not a TV show, skipping multi-pack check")
                             else:
                                 logging.warning("No suitable file found for current item")
-                                update_media_item_state(item['id'], 'Checking')
+                                # Remove the torrent if it exists
+                                torrent_id = cache_info.get('torrent_id')
+                                if torrent_id:
+                                    try:
+                                        self.debrid_provider.remove_torrent(torrent_id)
+                                        logging.info(f"Removed torrent {torrent_id} from Real-Debrid - no suitable file found")
+                                    except Exception as e:
+                                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+                                continue
                         else:
                             logging.warning("No files found in cache response")
-                            update_media_item_state(item['id'], 'Checking')
+                            # Remove the torrent if it exists
+                            torrent_id = cache_info.get('torrent_id')
+                            if torrent_id:
+                                try:
+                                    self.debrid_provider.remove_torrent(torrent_id)
+                                    logging.info(f"Removed torrent {torrent_id} from Real-Debrid - no files found")
+                                except Exception as e:
+                                    logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+                            continue
                         self.items.pop(0)
                         return
                     else:
                         logging.info("Result is not cached, checking next result")
+                        # Add to not wanted list to prevent reuse
+                        if 'magnet' in result:
+                            from not_wanted_magnets import add_to_not_wanted
+                            if hash_value:
+                                add_to_not_wanted(hash_value, str(item.get('id')), item)
+                                logging.info(f"Added uncached magnet hash {hash_value} to not wanted list")
+                        elif 'url' in result:
+                            from not_wanted_magnets import add_to_not_wanted_urls
+                            url = result['url']
+                            add_to_not_wanted_urls(url, str(item.get('id')), item)
+                            logging.info(f"Added uncached URL {url} to not wanted list")
                         # Remove the uncached torrent from Real-Debrid
                         torrent_id = cache_info.get('torrent_id')
                         if torrent_id:
@@ -447,13 +491,13 @@ class AddingQueue:
                                     info_encoded = bencodepy.encode(info)
                                     return hashlib.sha1(info_encoded).hexdigest().lower(), tmp_file.name
                         except Exception as e:
-                            logging.error(f"Error parsing torrent file: {str(e)}")
+                            logging.error(f"Error parsing torrent file: {e}")
                             try:
                                 os.unlink(tmp_file.name)
                             except Exception as e:
-                                logging.warning(f"Error deleting temporary file: {str(e)}")
+                                logging.warning(f"Error deleting temporary file: {e}")
                 except requests.exceptions.RequestException as e:
-                    logging.error(f"Error downloading torrent file: {str(e)}")
+                    logging.error(f"Error downloading torrent file: {e}")
             
             logging.warning(f"Could not extract hash from: {magnet}")
             return None, None
