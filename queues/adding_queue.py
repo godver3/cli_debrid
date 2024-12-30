@@ -6,12 +6,18 @@ Separates queue management from content processing logic.
 import logging
 import json
 import re
+import os
 from typing import Dict, Any, List, Optional, Tuple
 from database import get_all_media_items, get_media_item_by_id, update_media_item_state
 from debrid import get_debrid_provider
 from debrid.status import TorrentStatus
 from .media_matcher import MediaMatcher
 from settings import get_setting
+import hashlib
+import tempfile
+import requests
+import bencodepy
+from guessit import guessit
 
 class ContentProcessor:
     """Handles the processing of media content after it's been added to the debrid service"""
@@ -69,62 +75,302 @@ class AddingQueue:
         """Add an item to the queue"""
         self.items.append(item)
 
+    def _match_file_to_episode(self, file_path: str, item: Dict[str, Any]) -> bool:
+        """Check if a file matches an episode's season/episode numbers and version"""
+        if item.get('type') != 'episode':
+            logging.info(f"Item type is not episode: {item.get('type')}")
+            return False
+            
+        # Check version first
+        version = item.get('version')
+        if version and version.lower() not in file_path.lower():
+            logging.info(f"Version mismatch: looking for {version} in {file_path}")
+            return False
+            
+        season = item.get('season_number')
+        episode = item.get('episode_number')
+        if season is None or episode is None:
+            logging.info(f"Missing season or episode: season={season}, episode={episode}")
+            return False
+            
+        # Use guessit to parse episode info
+        try:
+            # Clean up file path - remove leading slash and normalize spaces
+            clean_path = file_path.lstrip('/').strip()
+            guess = guessit(clean_path)
+            logging.info(f"Guessit parsed: {guess}")
+            
+            if 'season' not in guess or 'episode' not in guess:
+                logging.info(f"Guessit couldn't find season/episode in {clean_path}")
+                return False
+                
+            match = guess['season'] == season and guess['episode'] == episode
+            logging.info(f"Checking file {clean_path} for S{season:02d}E{episode:02d}: {'match' if match else 'no match'}")
+            return match
+            
+        except Exception as e:
+            logging.error(f"Error parsing file with guessit: {e}")
+            return False
+
+    def _get_scraping_queue_items(self, queue_manager: Any) -> List[Dict[str, Any]]:
+        """Get all items currently in the Scraping queue"""
+        return [dict(row) for row in get_all_media_items(state="Scraping")]
+
     def process(self, queue_manager: Any):
         """Process the next item in the queue"""
         if not self.items:
             return
 
         item = self.items[0]
-        results = self._get_scrape_results(item)
-        if not results:
-            logging.error("No valid results found in item")
+        process_uncached = item.get('process_uncached', False)
+
+        # Get and validate scrape results
+        scrape_results = self._get_scrape_results(item)
+        if not scrape_results:
             self._handle_failed_item(queue_manager, item)
             return
 
-        try:
-            # Try each result in order until one succeeds
-            for idx, result in enumerate(results):
-                logging.debug(f"Processing result {idx + 1}/{len(results)}: {result}")
-                
-                # Try to get hash directly or extract from magnet
-                hash_value = result.get('hash')
-                if not hash_value and 'magnet' in result:
-                    hash_value = self._extract_hash_from_magnet(result['magnet'])
-                    if hash_value:
-                        logging.debug(f"Extracted hash from magnet: {hash_value}")
-                
+        # Get items in scraping queue for potential multi-pack matching
+        scraping_items = self._get_scraping_queue_items(queue_manager)
+
+        # Process each result until we find a working one
+        for result in scrape_results:
+            if not isinstance(result, dict):
+                logging.warning(f"Invalid result format: {result}")
+                continue
+
+            hash_value = result.get('hash')
+            temp_file = None
+            if not hash_value and 'magnet' in result:
+                hash_value, temp_file = self._extract_hash_from_magnet(result['magnet'])
                 if not hash_value:
-                    logging.warning(f"No hash found in result {idx + 1} and couldn't extract from magnet")
+                    logging.warning(f"Could not extract hash from result magnet: {result.get('magnet', '')}")
                     continue
 
-                cache_status = self.debrid_provider.is_cached([hash_value])
-                is_cached = cache_status.get(hash_value, False)
+            result['hash'] = hash_value  # Store the hash in the result
+            logging.info(f"\nChecking result with hash {hash_value}")
 
-                try:
+            try:
+                # Check if provider supports direct cache checking
+                if self.debrid_provider.supports_direct_cache_check:
+                    # For providers like Torbox that support direct cache checking
+                    cache_status = self.debrid_provider.is_cached(hash_value)
+                    is_cached = cache_status.get(hash_value, False)
+
                     if is_cached:
-                        success = self._process_cached_result(queue_manager, item, result)
-                    else:
-                        success = self._process_uncached_result(queue_manager, item, result)
+                        logging.info("Result is cached, adding to debrid service")
+                        add_result = self.debrid_provider.add_torrent(result['magnet'], temp_file)
+                        if add_result and isinstance(add_result, dict):
+                            # Get files from add_result if available
+                            files = add_result.get('files', [])
+                            if not files:
+                                logging.warning("No files found in add_result")
+                                continue
 
-                    if success:
+                            # Check if this is a multi-episode pack by looking for multiple episodes
+                            episode_files = [f for f in files if any(ep in f['path'].lower() for ep in ['e01', 'e02', 'e03', 'e04', 'e05', 'e06', 'e07', 'e08', 'e09', 'e10'])]
+                            is_multi_pack = len(episode_files) > 1
+                            
+                            if is_multi_pack:
+                                logging.info(f"Found multi-episode pack with {len(episode_files)} episodes")
+                                logging.info(f"Current item: {item}")
+                                
+                                # First handle the current item
+                                matching_file = next((f for f in files if self._match_file_to_episode(f['path'], item)), None)
+                                if matching_file:
+                                    file_path = matching_file['path']
+                                    file_name = os.path.basename(file_path)
+                                    update_media_item_state(item['id'], 'Checking', filled_by_file=file_name)
+                                    logging.info(f"Updated current item with filled_by_file: {file_name}")
+                                else:
+                                    logging.info("No matching file found for current item")
+                                    logging.info(f"Files available: {[f['path'] for f in files]}")
+                                    update_media_item_state(item['id'], 'Checking')
+                                    
+                                # Then check if any files match items in the scraping queue
+                                logging.info(f"Checking {len(scraping_items)} items in scraping queue")
+                                for scraping_item in scraping_items:
+                                    logging.info(f"Checking scraping item: {scraping_item}")
+                                    matching_file = next((f for f in files if self._match_file_to_episode(f['path'], scraping_item)), None)
+                                    if matching_file:
+                                        # Move the matching item to the Checking queue and update its state
+                                        file_path = matching_file['path']
+                                        file_name = os.path.basename(file_path)
+                                        folder_name = os.path.basename(os.path.dirname(file_path))
+                                        
+                                        logging.info(f"Found matching file for scraping item {scraping_item['id']}: {file_name}")
+                                        update_media_item_state(scraping_item['id'], 'Checking', filled_by_file=file_name)
+                                        queue_manager.move_to_checking(
+                                            scraping_item,
+                                            "Scraping",
+                                            folder_name,  # title
+                                            result.get('magnet', ''),  # link
+                                            file_name,  # filled_by_file
+                                            result.get('torrent_id')  # torrent_id
+                                        )
+                                    else:
+                                        logging.info(f"No matching file found for scraping item {scraping_item['id']}")
+                            else:
+                                # Handle single file case as before
+                                media_type = item.get('type')
+                                selected_file = None
+                                
+                                logging.debug(f"Processing files for media type: {media_type}")
+                                logging.debug(f"Available files: {result.get('files', [])}")
+                                
+                                if media_type == 'movie':
+                                    # For movies, get the largest video file
+                                    video_files = [f for f in result.get('files', []) if f.get('path', '').lower().endswith(('.mkv', '.mp4', '.avi'))]
+                                    if video_files:
+                                        selected_file = max(video_files, key=lambda x: x.get('bytes', 0))
+                                        logging.debug(f"Selected movie file: {selected_file}")
+                                elif media_type == 'episode':
+                                    # For episodes, try to match season/episode pattern
+                                    season = item.get('season')
+                                    episode = item.get('episode')
+                                    if season is not None and episode is not None:
+                                        season_str = f"s{season:02d}"
+                                        episode_str = f"e{episode:02d}"
+                                        
+                                        logging.debug(f"Looking for episode match: {season_str}{episode_str}")
+                                        
+                                        # First try exact season/episode match
+                                        for file in result.get('files', []):
+                                            filename = file.get('path', '').lower()
+                                            logging.debug(f"Checking file: {filename}")
+                                            if season_str in filename and episode_str in filename:
+                                                selected_file = file
+                                                logging.debug(f"Found exact episode match: {filename}")
+                                                break
+                                        
+                                        # If no exact match, fall back to largest video file
+                                        if not selected_file:
+                                            video_files = [f for f in result.get('files', []) if f.get('path', '').lower().endswith(('.mkv', '.mp4', '.avi'))]
+                                            if video_files:
+                                                selected_file = max(video_files, key=lambda x: x.get('bytes', 0))
+                                                logging.debug(f"No exact match, using largest file: {selected_file}")
+                                
+                                if selected_file:
+                                    file_path = selected_file.get('path', '')
+                                    file_name = os.path.basename(file_path)
+                                    logging.debug(f"Selected file path: {file_path}")
+                                    logging.debug(f"Selected file name: {file_name}")
+                                    update_media_item_state(item['id'], 'Checking', 
+                                                         filled_by_file=file_name)
+                                    logging.info(f"Updated media item with filled_by_file: {file_name}")
+                                else:
+                                    logging.warning("No suitable file found for media item")
+                                    update_media_item_state(item['id'], 'Checking')
+                        else:
+                            update_media_item_state(item['id'], 'Checking')
                         self.items.pop(0)
                         return
-                except Exception as e:
-                    logging.error(f"Error processing result: {str(e)}")
-                    continue
+                    elif process_uncached:
+                        logging.info("Result is cached, but accepting uncached content")
+                        update_media_item_state(item['id'], 'Downloading')
+                        self.items.pop(0)
+                        return
+                    else:
+                        logging.info("Result is cached, checking next result")
+                else:
+                    # For providers like RealDebrid that need to add torrent to check cache
+                    cache_status = self.debrid_provider.is_cached(hash_value)
+                    cache_info = cache_status.get(hash_value, {})
+                    is_cached = cache_info.get('cached', False)
 
-            # If we get here, all results failed
-            logging.error("All results failed to process")
-            self._handle_failed_item(queue_manager, item)
+                    if is_cached:
+                        logging.info("Result is cached, torrent already added")
+                        files = cache_info.get('files', [])
+                        if files:
+                            logging.debug(f"Processing current item: {item}")
+                            matches = self.content_processor.media_matcher.match_content(files, item)
+                            logging.debug(f"Found {len(matches)} matching files for current item")
+                            
+                            if matches:
+                                # Get the first match (for episodes) or largest file (for movies)
+                                if item.get('type') == 'movie':
+                                    # For movies, get the largest matching file
+                                    selected_file = max(
+                                        (f for f, _ in matches), 
+                                        key=lambda x: next((f['bytes'] for f in files if f['path'] == x), 0)
+                                    )
+                                else:
+                                    # For episodes, take the first match
+                                    selected_file = matches[0][0]
+                                
+                                # Find the file info from the original list
+                                file_info = next(f for f in files if f['path'] == selected_file)
+                                file_name = os.path.basename(file_info['path'])
+                                logging.debug(f"Selected file for current item: {file_name}")
+                                
+                                update_media_item_state(item['id'], 'Checking', 
+                                                      filled_by_file=file_name)
+                                logging.info(f"Updated current item with filled_by_file: {file_name}")
+                                
+                                # Now check if any other files match items in the Scraping queue
+                                # Only match items with the same version
+                                version = item.get('version')
+                                if version:
+                                    logging.debug(f"Looking for other items with version: {version}")
+                                    scraping_items = self._get_scraping_queue_items(None)
+                                    if scraping_items:
+                                        logging.debug(f"Checking {len(scraping_items)} items in Scraping queue")
+                                        for scraping_item in scraping_items:
+                                            # Skip if it's the same item we just processed
+                                            if scraping_item['id'] == item['id']:
+                                                continue
+                                                
+                                            # Skip if version doesn't match
+                                            scraping_version = scraping_item.get('version')
+                                            if scraping_version != version:
+                                                logging.debug(f"Skipping item {scraping_item['id']} - version mismatch: {scraping_version} != {version}")
+                                                continue
+                                                
+                                            logging.debug(f"Checking Scraping item: {scraping_item}")
+                                            other_matches = self.content_processor.media_matcher.match_content(files, scraping_item)
+                                            if other_matches:
+                                                # Take the first match for this item
+                                                matched_file = other_matches[0][0]
+                                                file_info = next(f for f in files if f['path'] == matched_file)
+                                                file_name = os.path.basename(file_info['path'])
+                                                logging.debug(f"Found match for Scraping item: {file_name}")
+                                                
+                                                # Update the item state
+                                                update_media_item_state(scraping_item['id'], 'Checking',
+                                                                     filled_by_file=file_name)
+                                                logging.info(f"Updated Scraping item {scraping_item['id']} with filled_by_file: {file_name}")
+                                else:
+                                    logging.debug("No version specified for current item, skipping other item checks")
+                            else:
+                                logging.warning("No suitable file found for current item")
+                                update_media_item_state(item['id'], 'Checking')
+                        else:
+                            logging.warning("No files found in cache response")
+                            update_media_item_state(item['id'], 'Checking')
+                        self.items.pop(0)
+                        return
+                    else:
+                        logging.info("Result is not cached, checking next result")
+                        # Remove the uncached torrent from Real-Debrid
+                        torrent_id = cache_info.get('torrent_id')
+                        if torrent_id:
+                            try:
+                                self.debrid_provider.remove_torrent(torrent_id)
+                                logging.info(f"Removed uncached torrent {torrent_id} from Real-Debrid")
+                            except Exception as e:
+                                logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+            except Exception as e:
+                logging.error(f"Error checking result: {str(e)}")
+                continue
 
-        except Exception as e:
-            logging.error(f"Error processing item: {str(e)}")
-            self._handle_failed_item(queue_manager, item)
+        # If we get here, no valid results were found
+        logging.error("No valid results found")
+        self._handle_failed_item(queue_manager, item)
 
     def _get_scrape_results(self, item: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Get and validate scrape results for an item"""
         scrape_results = item.get('scrape_results', [])
-        logging.debug(f"Raw scrape results: {scrape_results}")
+        #logging.debug(f"Raw scrape results: {scrape_results}")
         
         if not scrape_results:
             logging.error("No scrape results found")
@@ -134,7 +380,7 @@ class AddingQueue:
         if isinstance(scrape_results, str):
             try:
                 scrape_results = json.loads(scrape_results)
-                logging.debug(f"Parsed JSON scrape results: {scrape_results}")
+                #logging.debug(f"Parsed JSON scrape results: {scrape_results}")
             except json.JSONDecodeError:
                 logging.error("Failed to decode scrape results JSON")
                 return []
@@ -145,108 +391,63 @@ class AddingQueue:
             return []
 
         # Log the first result for debugging
-        if scrape_results:
-            logging.debug(f"First result structure: {scrape_results[0]}")
+        #if scrape_results:
+            #logging.debug(f"First result structure: {scrape_results[0]}")
 
         return scrape_results
 
-    def _extract_hash_from_magnet(self, magnet: str) -> Optional[str]:
-        """Extract hash from magnet link"""
+    def _extract_hash_from_magnet(self, magnet: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract hash from magnet link or download and parse torrent file
+        
+        Returns:
+            Tuple of (hash, temp_file_path). temp_file_path will be None for magnet links
+        """
         try:
-            # Look for btih hash in magnet link
-            btih_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet)
-            if btih_match:
-                return btih_match.group(1).lower()
-            return None
+            # Check if this is a magnet link
+            if magnet.startswith('magnet:'):
+                btih_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet)
+                if btih_match:
+                    return btih_match.group(1).lower(), None
+            # Check if this is a Jackett URL
+            elif 'jackett' in magnet.lower():
+                logging.debug(f"Downloading torrent from Jackett URL: {magnet}")
+                try:
+                    # Download the torrent file to a temporary location
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp_file:
+                        response = requests.get(magnet, timeout=10)
+                        if response.status_code != 200:
+                            logging.error(f"Failed to download torrent file: {response.status_code}")
+                            return None, None
+                        tmp_file.write(response.content)
+                        tmp_file.flush()
+                        
+                        # Parse the torrent file and calculate info hash
+                        try:
+                            with open(tmp_file.name, 'rb') as f:
+                                torrent_data = bencodepy.decode(f.read())
+                                info = torrent_data.get(b'info', {})
+                                if info:
+                                    # Calculate info hash
+                                    info_encoded = bencodepy.encode(info)
+                                    return hashlib.sha1(info_encoded).hexdigest().lower(), tmp_file.name
+                        except Exception as e:
+                            logging.error(f"Error parsing torrent file: {str(e)}")
+                            try:
+                                os.unlink(tmp_file.name)
+                            except Exception as e:
+                                logging.warning(f"Error deleting temporary file: {str(e)}")
+                except requests.exceptions.RequestException as e:
+                    logging.error(f"Error downloading torrent file: {str(e)}")
+            
+            logging.warning(f"Could not extract hash from: {magnet}")
+            return None, None
+            
         except Exception as e:
-            logging.error(f"Error extracting hash from magnet: {str(e)}")
-            return None
-
-    def _process_cached_result(self, queue_manager: Any, item: Dict[str, Any], 
-                             result: Dict[str, Any]) -> bool:
-        """Process a cached result"""
-        try:
-            add_result = self.debrid_provider.add_torrent(result['magnet'])
-            if not add_result or not isinstance(add_result, dict):
-                logging.error("Invalid response from debrid provider")
-                return False
-
-            torrent_id = add_result.get('id')
-            if not torrent_id:
-                logging.error("No torrent ID in response")
-                return False
-
-            torrent_info = self.debrid_provider.get_torrent_info(torrent_id)
-            if not torrent_info:
-                logging.error(f"Could not get torrent info for ID: {torrent_id}")
-                return False
-
-            if torrent_info['is_error']:
-                logging.error(f"Torrent in error state: {torrent_info['status']}")
-                self.debrid_provider.remove_torrent(torrent_id)
-                return False
-
-            success, message = self.content_processor.process_content(item, torrent_info)
-            if success:
-                update_media_item_state(item['id'], 'Checking')
-                return True
-
-            logging.error(f"Content processing failed: {message}")
-            self.debrid_provider.remove_torrent(torrent_id)
-            return False
-
-        except Exception as e:
-            logging.error(f"Error processing cached result: {str(e)}")
-            return False
-
-    def _process_uncached_result(self, queue_manager: Any, item: Dict[str, Any], 
-                               result: Dict[str, Any]) -> bool:
-        """Process an uncached result"""
-        if not self._should_process_uncached():
-            logging.info("Skipping uncached content based on settings")
-            return False
-
-        try:
-            add_result = self.debrid_provider.add_torrent(result['magnet'])
-            if not add_result or not isinstance(add_result, dict):
-                logging.error("Invalid response from debrid provider")
-                return False
-
-            torrent_id = add_result.get('id')
-            if not torrent_id:
-                logging.error("No torrent ID in response")
-                return False
-
-            torrent_info = self.debrid_provider.get_torrent_info(torrent_id)
-            if not torrent_info:
-                logging.error(f"Could not get torrent info for ID: {torrent_id}")
-                return False
-
-            if torrent_info['is_error']:
-                logging.error(f"Torrent in error state: {torrent_info['status']}")
-                self.debrid_provider.remove_torrent(torrent_id)
-                return False
-
-            success, message = self.content_processor.process_content(item, torrent_info)
-            if success:
-                update_media_item_state(item['id'], 'Downloading')
-                return True
-
-            logging.error(f"Content processing failed: {message}")
-            self.debrid_provider.remove_torrent(torrent_id)
-            return False
-
-        except Exception as e:
-            logging.error(f"Error processing uncached result: {str(e)}")
-            return False
-
-    def _should_process_uncached(self) -> bool:
-        """Determine if we should process uncached content based on settings"""
-        mode = get_setting("Scraping", "uncached_content_handling", "none").lower()
-        return mode in ["none", "full"]
+            logging.error(f"Error extracting hash: {str(e)}")
+            return None, None
 
     def _handle_failed_item(self, queue_manager: Any, item: Dict[str, Any]):
         """Handle a failed item by moving it to the appropriate queue"""
         # Move to error state instead of failed
-        update_media_item_state(item['id'], 'Error')
+        update_media_item_state(item['id'], 'Sleeping')
         self.items.pop(0)

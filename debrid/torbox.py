@@ -53,7 +53,7 @@ def retry_on_error(func):
         while retry_count < max_retries:
             try:
                 return func(*args, **kwargs)
-            except (requests.exceptions.RequestException, TorboxUnavailableError) as e:
+            except (api.exceptions.RequestException, TorboxUnavailableError) as e:
                 retry_count += 1
                 if retry_count == max_retries:
                     raise
@@ -104,36 +104,118 @@ class TorboxProvider(DebridProvider):
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict:
         """Make a request to the Torbox API"""
         url = f"{self.API_BASE_URL}/{endpoint}"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
+        headers = {
+            'Authorization': f'Bearer {self.api_key}',
+            'Accept': 'application/json',
+        }
         
-        if 'headers' in kwargs:
-            kwargs['headers'].update(headers)
-        else:
-            kwargs['headers'] = headers
-
         try:
-            if method.lower() == 'get':
-                response = api.get(url, **kwargs)
-            elif method.lower() == 'post':
-                response = api.post(url, **kwargs)
-            elif method.lower() == 'put':
-                response = api.put(url, **kwargs)
-            elif method.lower() == 'delete':
-                response = api.delete(url, **kwargs)
+            if method.upper() == 'GET':
+                response = api.get(url, headers=headers, **kwargs)
+            elif method.upper() == 'POST':
+                response = api.post(url, headers=headers, **kwargs)
+            elif method.upper() == 'DELETE':
+                response = api.delete(url, headers=headers, **kwargs)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
-            
-            if response.status_code == 429:
-                raise TorboxTooManyDownloadsError("Too many active downloads")
-            elif response.status_code == 503:
-                raise TorboxUnavailableError("Service temporarily unavailable")
-            elif response.status_code >= 400:
+
+            if response.status_code >= 400:
                 raise TorboxUnavailableError(f"API error: {response.status_code} - {response.text}")
 
             response.raise_for_status()
             return response.json()
-        except requests.exceptions.RequestException as e:
+        except api.exceptions.RequestException as e:
             raise TorboxUnavailableError(f"Request failed: {str(e)}")
+
+    def is_cached(self, hashes: Union[str, List[str]]) -> Dict[str, bool]:
+        """Check if hash(es) are cached on Torbox"""
+        if isinstance(hashes, str):
+            hashes = [hashes]
+            
+        params = {
+            'hash': ','.join(hashes)  # Changed from 'hashes' to 'hash'
+        }
+        
+        try:
+            response = self._make_request('GET', 'api/torrents/checkcached', params=params)
+            logging.info(f"Raw cache check response: {response}")
+            
+            result = {}
+            if response.get('success') and 'data' in response:
+                data = response['data']
+                for hash_ in hashes:
+                    # Store the full cache data for later use
+                    self._cache_data = getattr(self, '_cache_data', {})
+                    if hash_ in data:
+                        self._cache_data[hash_] = data[hash_]
+                        result[hash_] = True
+                        logging.info(f"Cache status for hash {hash_}: True (data: {data[hash_]})")
+                    else:
+                        result[hash_] = False
+                        logging.info(f"Cache status for hash {hash_}: False (data: {data})")
+            
+            logging.info(f"Final cache status result: {result}")
+            return result  # Always return dict, even for single hash
+            
+        except Exception as e:
+            logging.error(f"Error checking cache status: {str(e)}")
+            return {h: False for h in hashes}  # Always return dict
+
+    def get_torrent_files(self, hash_value: str, torrent_id: Optional[str] = None) -> List[Dict]:
+        """Get list of files in a torrent using the torrentinfo endpoint"""
+        params = {
+            'hash': hash_value,
+            'timeout': 5  # Reduced timeout to 5 seconds
+        }
+        if torrent_id:
+            params['torrent_id'] = torrent_id
+            
+        try:
+            logging.info(f"Requesting torrentinfo with params: {params}")
+            response = self._make_request('GET', 'api/torrents/torrentinfo', params=params)
+            logging.info(f"Raw torrentinfo response: {response}")
+            
+            if response.get('success') and 'data' in response:
+                torrent_data = response['data']
+                logging.info(f"Torrent data from response: {torrent_data}")
+                files_data = torrent_data.get('files', [])
+                logging.info(f"Files data from torrent: {files_data}")
+                
+                # Convert to expected format
+                files = []
+                for file_data in files_data:
+                    # Handle different possible file data formats
+                    if isinstance(file_data, dict):
+                        name = file_data.get('name', file_data.get('path', ''))
+                        size = file_data.get('size', file_data.get('bytes', 0))
+                    else:
+                        # If it's a string, it's probably just the path
+                        name = str(file_data)
+                        size = 0
+                        
+                    file_info = {
+                        'path': name,
+                        'bytes': size,
+                        'selected': True
+                    }
+                    files.append(file_info)
+                    
+                if files:
+                    logging.info(f"Successfully got files from torrentinfo: {files}")
+                    return files
+                    
+            raise Exception("No valid files found in response")
+                
+        except Exception as e:
+            logging.error(f"Error getting files from torrentinfo: {str(e)}")
+            # Remove the torrent since we couldn't get its files
+            if torrent_id:
+                try:
+                    self.remove_torrent(torrent_id)
+                    logging.info(f"Removed torrent {torrent_id} after failing to get files")
+                except Exception as remove_error:
+                    logging.error(f"Error removing torrent after file fetch failure: {str(remove_error)}")
+            raise
 
     def add_torrent(self, magnet_link: str, temp_file_path: Optional[str] = None) -> Dict:
         """Add a torrent/magnet link to Torbox"""
@@ -148,14 +230,21 @@ class TorboxProvider(DebridProvider):
             
             if temp_file_path:
                 with open(temp_file_path, 'rb') as f:
-                    files = {'file': f}
-                    data.update(files)
+                    files = {'file': ('torrent.torrent', f, 'application/x-bittorrent')}
                     response = self._make_request('POST', 'api/torrents/createtorrent', files=files, data=data)
+                # Clean up temp file if we created it
+                if 'jackett' in magnet_link.lower():
+                    try:
+                        os.unlink(temp_file_path)
+                    except Exception as e:
+                        logging.warning(f"Error deleting temporary file: {str(e)}")
             else:
                 data['magnet'] = magnet_link
                 response = self._make_request('POST', 'api/torrents/createtorrent', data=data)
             
             logging.info(f"Add torrent response: {response}")
+            if response.get('success') and 'data' in response:
+                logging.info(f"Full torrent data: {response['data']}")
             
             # Extract torrent info from response
             if response.get('success') and 'data' in response:
@@ -167,72 +256,26 @@ class TorboxProvider(DebridProvider):
                 # Get files if it's a cached torrent
                 files = []
                 if is_cached and hash_value and torrent_id:
-                    files = self.get_torrent_files(hash_value, torrent_id)
-                    logging.info(f"Retrieved files for cached torrent: {files}")
+                    try:
+                        # Try torrentinfo once with short timeout
+                        logging.info("Attempting to get files from torrentinfo endpoint")
+                        files = self.get_torrent_files(hash_value, torrent_id)
+                        if files:
+                            logging.info("Successfully got files from torrentinfo")
+                            torrent_data['files'] = files
+                            return torrent_data
+                    except Exception as e:
+                        logging.warning(f"Failed to get files from torrentinfo: {str(e)}")
+                        # Don't fall back to cache data, just return None to try next result
+                        return None
                 
-                return {
-                    'id': torrent_id,
-                    'hash': hash_value,
-                    'status': 'downloaded' if is_cached else 'queued',  # Set status based on cache
-                    'files': files  # Include files in response
-                }
-            else:
-                logging.error(f"Failed to add torrent. Response: {response}")
-                return {}
-                
+                return torrent_data
+            
+            return None
+            
         except Exception as e:
-            logging.error(f"Error adding torrent to Torbox: {str(e)}")
-            raise
-
-    def is_cached(self, hashes: Union[str, List[str]]) -> Dict:
-        """Check if hash(es) are cached on Torbox"""
-        if isinstance(hashes, str):
-            hashes = [hashes]
-        
-        try:
-            # Build params with hash and format
-            params = {
-                'hash': ','.join(hashes),  # API accepts comma-separated hashes
-                'format': 'object',  # Get response in object format
-                'list_files': False  # Don't need file listings for cache check
-            }
-            
-            logging.info(f"Checking cache status for hashes: {hashes}")
-            response = self._make_request('GET', 'api/torrents/checkcached', params=params)
-            logging.info(f"Raw cache check response: {response}")
-            
-            # Convert response to expected format
-            result = {}
-            if response.get('success') and 'data' in response:
-                response_data = response['data']
-                for hash_ in hashes:
-                    # A hash is considered cached if it exists in the response data
-                    hash_data = response_data.get(hash_, {})
-                    is_cached = bool(hash_data)  # True if hash data exists
-                    logging.info(f"Cache status for hash {hash_}: {is_cached} (data: {hash_data})")
-                    result[hash_] = is_cached
-            else:
-                logging.warning(f"Unexpected response format: {response}")
-                for hash_ in hashes:
-                    result[hash_] = False
-            
-            logging.info(f"Final cache status result: {result}")
-            return result
-        except Exception as e:
-            logging.error(f"Error checking cache status on Torbox: {str(e)}")
-            return {hash_: False for hash_ in hashes}
-
-    @timed_lru_cache(seconds=300)  # Cache for 5 minutes
-    def get_cached_files(self, hash_: str) -> List[Dict]:
-        """Get available cached files for a hash with caching"""
-        response = self._make_request('GET', f'torrents/cached/{hash_}')
-        return response.get('files', [])
-
-    @timed_lru_cache(seconds=60)  # Cache for 1 minute
-    def get_user_traffic(self) -> Dict:
-        """Get user traffic/usage information with caching"""
-        response = self._make_request('GET', 'user/traffic')
-        return response
+            logging.error(f"Error adding torrent: {str(e)}")
+            return None
 
     def get_active_downloads(self, check: bool = False) -> Tuple[int, List[Dict]]:
         """Get list of active downloads"""
@@ -290,81 +333,6 @@ class TorboxProvider(DebridProvider):
         except Exception as e:
             logging.error(f"Error getting torrent info from Torbox: {str(e)}")
             return None
-
-    def get_torrent_files(self, hash_value: str, torrent_id: Optional[str] = None) -> List[Dict]:
-        """Get list of files in a torrent"""
-        max_retries = 3
-        retry_delay = 2  # seconds
-        
-        def try_torrentinfo():
-            params = {
-                'hash': hash_value,
-                'torrent_id': torrent_id
-            }
-            response = self._make_request('GET', 'api/torrents/torrentinfo', params=params)
-            logging.info(f"Get torrent files response (torrentinfo): {response}")
-            
-            if response.get('success') and 'data' in response:
-                torrent_data = response['data']
-                files_data = torrent_data.get('files', [])
-                # Convert to expected format
-                files = []
-                for file_data in files_data:
-                    files.append({
-                        'path': file_data.get('name', ''),
-                        'bytes': file_data.get('size', 0),
-                        'selected': True  # All files are selected by default
-                    })
-                return files
-            return []
-            
-        def try_requestdl():
-            params = {
-                'hash': hash_value,
-                'torrent_id': torrent_id,
-                'token': self.api_key
-            }
-            response = self._make_request('GET', 'api/torrents/requestdl', params=params)
-            logging.info(f"Get torrent files response (requestdl): {response}")
-            
-            if response.get('success') and 'data' in response:
-                # If we get a download URL, try to get the file info from the torrent info again
-                # The metadata might be available now that we've requested the download
-                time.sleep(1)  # Give the server a moment to process
-                return try_torrentinfo()
-            return []
-        
-        try:
-            for attempt in range(max_retries):
-                try:
-                    # Try torrentinfo first
-                    files = try_torrentinfo()
-                    if files:
-                        return files
-                        
-                    # If torrentinfo fails or returns no files, try requestdl
-                    logging.info("Torrentinfo returned no files, trying requestdl...")
-                    files = try_requestdl()
-                    if files:
-                        return files
-                        
-                    if attempt < max_retries - 1:
-                        logging.info(f"Retry {attempt + 1}/{max_retries} failed, waiting {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                    
-                except Exception as e:
-                    if "DOWNLOAD_SERVER_ERROR" in str(e) and attempt < max_retries - 1:
-                        logging.warning(f"Server error on attempt {attempt + 1}/{max_retries}, retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                    else:
-                        raise
-                        
-            logging.warning("All attempts to get torrent files failed")
-            return []
-            
-        except Exception as e:
-            logging.error(f"Error getting torrent files from Torbox: {str(e)}")
-            return []
 
     def control_torrent(self, torrent_id: str, action: str) -> bool:
         """Control a torrent (reannounce, pause, resume, delete)"""
@@ -441,3 +409,15 @@ class TorboxProvider(DebridProvider):
         except Exception as e:
             logging.error(f"Error downloading torrent file: {str(e)}")
             return None, None
+
+    @timed_lru_cache(seconds=300)  # Cache for 5 minutes
+    def get_cached_files(self, hash_: str) -> List[Dict]:
+        """Get available cached files for a hash with caching"""
+        response = self._make_request('GET', f'torrents/cached/{hash_}')
+        return response.get('files', [])
+
+    @timed_lru_cache(seconds=60)  # Cache for 1 minute
+    def get_user_traffic(self) -> Dict:
+        """Get user traffic/usage information with caching"""
+        response = self._make_request('GET', 'user/traffic')
+        return response
