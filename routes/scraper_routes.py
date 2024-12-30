@@ -201,8 +201,8 @@ def select_media():
         for result in torrent_results:
             # Check if the source is Jackett or Prowlarr
             if any(src in result.get('source', '').lower() for src in ['jackett', 'prowlarr']):
-                result['cached'] = 'Not Checked'
-            else:
+                result['cached'] = 'N/A'
+            elif 'cached' not in result:  # Only set if not already set by process_media_selection
                 result_hash = result.get('hash')
                 if result_hash:
                     is_cached = cache_status.get(result_hash, False)
