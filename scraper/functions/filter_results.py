@@ -108,6 +108,17 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 if multi:
                     logging.debug(f"Multi-episode mode: season={season}, season_pack={season_episode_info.get('season_pack')}, seasons={season_episode_info.get('seasons')}")
                     
+                    # Check if this is a single episode result using parsed info
+                    episodes = season_episode_info.get('episodes', [])
+                    if len(episodes) == 1:  # If there's exactly one episode, it's a single episode result
+                        result['filter_reason'] = "Single episode result when searching for multi"
+                        continue
+
+                    # For multi-episode packs, verify the requested episode is included
+                    if episodes and episode not in episodes:
+                        result['filter_reason'] = f"Multi-episode pack does not contain requested episode {episode}"
+                        continue
+
                     # Handle different types of season packs
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     if season_pack == 'Complete':
@@ -119,7 +130,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                         continue
                     elif season_pack == 'Unknown':
                         # Unknown pack type - check if it has multiple episodes
-                        if not season_episode_info.get('multi_episode', False):
+                        if len(episodes) < 2:
                             result['filter_reason'] = "Non-multi result when searching for multi"
                             continue
                     else:
@@ -138,11 +149,23 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     if not result_seasons or season not in result_seasons:
                         result['filter_reason'] = f"Season mismatch: expected S{season}, got {result_seasons}"
                         continue
-                        
-                    # Check if we have a matching episode
-                    if not result_episodes or episode not in result_episodes:
-                        result['filter_reason'] = f"Episode mismatch: expected E{episode}, got {result_episodes}"
-                        continue
+
+                    # For multi-episode packs, check if our episode is in the range
+                    if season_episode_info.get('multi_episode', False):
+                        # Get the episode range
+                        episode_range = result_episodes
+                        if episode_range:
+                            min_episode = min(episode_range)
+                            max_episode = max(episode_range)
+                            # If our episode is not in the range, filter out
+                            if not (min_episode <= episode <= max_episode):
+                                result['filter_reason'] = f"Episode {episode} not in pack range {min_episode}-{max_episode}"
+                                continue
+                    else:
+                        # For single episode results, must match exactly
+                        if not result_episodes or episode not in result_episodes:
+                            result['filter_reason'] = f"Episode mismatch: expected E{episode}, got {result_episodes}"
+                            continue
             
             # Size calculation
             size_gb = parse_size(result.get('size', 0))
