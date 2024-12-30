@@ -10,13 +10,44 @@
     width: 80%;
 }
 
+/* Toggle container */
+.toggle-container {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 10px 5%;
+    margin-bottom: 15px;
+    font-size: 0.9em;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 15px;
+    background-color: #2c2c2c;
+    border-radius: 8px;
+}
+
+.toggle-item {
+    display: flex;
+    align-items: center;
+    margin-right: 0;
+    padding: 5px 10px;
+    border-radius: 6px;
+    background-color: #383838;
+}
+
+.toggle-label {
+    margin-right: 8px;
+    color: #fff;
+    font-size: 0.95em;
+    white-space: nowrap;
+}
+
 /* Toggle switch styles */
 .toggle-switch {
     position: relative;
     display: inline-block;
-    width: 48px;
-    height: 24px;
-    margin-left: 8px;
+    width: 44px;
+    height: 22px;
+    margin-left: 0;
 }
 
 .toggle-switch input {
@@ -33,20 +64,22 @@
     right: 0;
     bottom: 0;
     background-color: #555;
-    transition: .4s;
-    border-radius: 24px;
+    transition: .3s;
+    border-radius: 22px;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
 }
 
 .toggle-slider:before {
     position: absolute;
     content: "";
-    height: 18px;
-    width: 18px;
+    height: 16px;
+    width: 16px;
     left: 3px;
     bottom: 3px;
     background-color: #fff;
-    transition: .4s;
+    transition: .3s;
     border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 
 input:checked + .toggle-slider {
@@ -54,29 +87,7 @@ input:checked + .toggle-slider {
 }
 
 input:checked + .toggle-slider:before {
-    transform: translateX(24px);
-}
-
-.toggle-item {
-    display: flex;
-    align-items: center;
-    margin-right: 20px;
-}
-
-.toggle-label {
-    margin-right: 8px;
-    color: #fff;
-}
-
-/* Toggle container */
-.toggle-container {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    padding: 0px 5%;
-    margin-bottom: 10px;
-    font-size: 0.9em;
-    justify-content: flex-start;
+    transform: translateX(22px);
 }
 
 /* Collection stats */
@@ -304,7 +315,7 @@ input:checked + .toggle-slider:before {
     justify-content: space-between;
     align-items: center;
     width: 100%;
-    padding: 8px 0;
+    padding: 8px 15px;
     margin: 0;
     border-bottom: 1px solid #3a3a3a;
 }
@@ -331,6 +342,23 @@ input:checked + .toggle-slider:before {
     margin-left: 10px;
 }
 
+.compact-view .file-details {
+    width: 100%;
+    padding-right: 10px;
+}
+
+.compact-view .file-details .title {
+    font-size: 1em;
+    margin-bottom: 4px;
+    word-break: break-word;
+}
+
+.compact-view .file-details .metadata,
+.compact-view .file-details .filename {
+    font-size: 0.85em;
+    word-break: break-word;
+}
+
 /* Mobile adjustments */
 @media (max-width: 768px) {
     #compact_toggle {
@@ -347,5 +375,75 @@ input:checked + .toggle-slider:before {
 
     .stats-container {
         width: 95%;
+    }
+
+    /* Force compact view styles on mobile */
+    .cards-container {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 0 !important;
+    }
+
+    .card {
+        flex-direction: row !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        width: 100% !important;
+        padding: 8px 15px !important;
+        margin: 0 !important;
+        border-bottom: 1px solid #3a3a3a !important;
+    }
+
+    .poster-container {
+        display: none !important;
+    }
+
+    .file-details {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        padding-right: 10px !important;
+    }
+
+    .file-details .title {
+        font-size: 1em !important;
+        margin-bottom: 4px !important;
+        word-break: break-word !important;
+    }
+
+    .file-details .metadata,
+    .file-details .filename {
+        font-size: 0.85em !important;
+        word-break: break-word !important;
+        display: block !important;
+    }
+
+    .toggle-container {
+        padding: 8px 4%;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .toggle-item {
+        padding: 4px 8px;
+        flex: 0 1 auto;
+    }
+
+    .toggle-label {
+        font-size: 0.9em;
+    }
+
+    .toggle-switch {
+        width: 40px;
+        height: 20px;
+    }
+
+    .toggle-slider:before {
+        height: 14px;
+        width: 14px;
+    }
+
+    input:checked + .toggle-slider:before {
+        transform: translateX(20px);
     }
 }

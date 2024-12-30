@@ -3,7 +3,7 @@
       "logout_button": "Logout of the current user session.",
       "programControlButton": "Start or stop the program."
     },
-    "statistics": {
+    "home": {
       "toggle_container": "Control panel for adjusting time format, view mode, and displaying active downloads.",
       "collection_stats": "Overview of your media collection, including total movies, TV shows, episodes, and system uptime.",
       "recently_aired": "Shows episodes that have aired recently.",
