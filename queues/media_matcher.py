@@ -24,6 +24,7 @@ class MediaMatcher:
         Returns:
             List of matched files with their corresponding items
         """
+        logging.debug(f"Matching content for item: {item}")
         if item.get('type') == 'movie':
             return self._match_movie_content(files, item)
         elif item.get('type') == 'episode':
@@ -38,6 +39,7 @@ class MediaMatcher:
                 continue
                 
             guess = guessit(file['path'])
+            logging.debug(f"Movie guess for {file['path']}: {guess}")
             if self.match_movie(guess, item, file['path']):
                 matches.append((file['path'], item))
         return matches
@@ -50,8 +52,13 @@ class MediaMatcher:
                 continue
                 
             guess = guessit(file['path'])
+            logging.debug(f"TV guess for {file['path']}: {guess}")
             if self.match_episode(guess, item):
                 matches.append((file['path'], item))
+            else:
+                logging.debug(f"No match: title={guess.get('title')}=={item.get('series_title')}, "
+                            f"season={guess.get('season')}=={item.get('season')}, "
+                            f"episode={guess.get('episode')}=={item.get('episode')}")
         return matches
 
     def match_movie(self, guess: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
@@ -67,11 +74,22 @@ class MediaMatcher:
     def match_episode(self, guess: Dict[str, Any], item: Dict[str, Any]) -> bool:
         """Check if an episode file matches an episode item"""
         if guess.get('type') != 'episode':
+            logging.debug(f"Not an episode type: {guess.get('type')}")
             return False
             
-        title_match = self._normalize_title(guess.get('title', '')) == self._normalize_title(item.get('series_title', ''))
-        season_match = guess.get('season') == item.get('season')
-        episode_match = guess.get('episode') == item.get('episode')
+        # Get series title from either series_title or title field
+        series_title = item.get('series_title') or item.get('title')
+        if not series_title:
+            logging.debug("No series title found in item")
+            return False
+            
+        title_match = self._normalize_title(guess.get('title', '')) == self._normalize_title(series_title)
+        season_match = guess.get('season') == item.get('season_number')
+        episode_match = guess.get('episode') == item.get('episode_number')
+        
+        logging.debug(f"Title match: {title_match} ({guess.get('title')} == {series_title})")
+        logging.debug(f"Season match: {season_match} ({guess.get('season')} == {item.get('season_number')})")
+        logging.debug(f"Episode match: {episode_match} ({guess.get('episode')} == {item.get('episode_number')})")
         
         return title_match and season_match and episode_match
 

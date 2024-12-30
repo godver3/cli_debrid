@@ -94,133 +94,107 @@ def rate_limited_request(func):
 )
 @rate_limited_request
 def add_to_real_debrid(magnet_link, temp_file_path=None):
-    api_key = get_api_key()
-    if not api_key:
-        logging.error("Real-Debrid API token not found in settings")
-        return
-
+    """Add a magnet link to Real-Debrid"""
     headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Authorization': f'Bearer {get_api_key()}'
     }
-    try:
-        # Step 1: Add magnet or torrent file
-        if magnet_link.startswith('magnet:'):
-            magnet_data = {'magnet': magnet_link}
-            torrent_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
+    
+    # Step 1: Add magnet
+    add_data = {'magnet': magnet_link}
+    if temp_file_path:
+        with open(temp_file_path, 'rb') as f:
+            add_data = {'files[]': f}
             
-            # Check for infringing file error
-            if torrent_response.status_code == 503:
-                response_data = torrent_response.json()
-                if response_data.get('error') == 'infringing_file':
-                    logging.warning(f"File flagged as infringing by Real-Debrid. Skipping without retry.")
-                    return None
-                
-                # Only retry for other 503 errors
-                logging.warning("Received 503 error, waiting before retry...")
-                time.sleep(10)
-                torrent_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", headers=headers, data=magnet_data)
+    max_retries = 3
+    retry_count = 0
+    while True:
+        try:
+            add_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", data=add_data, headers=headers, timeout=60)
+            if add_response.status_code != 201:
+                logging.error(f"Failed to add magnet. Status code: {add_response.status_code}")
+                return None
+            break
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                raise
+            time.sleep(5 * retry_count)
+    
+    torrent_id = add_response.json().get('id')
+    if not torrent_id:
+        logging.error("No torrent ID in response")
+        return None
+        
+    # Step 2: Get torrent info
+    retry_count = 0
+    while True:
+        try:
+            info_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
+            if info_response.status_code != 200:
+                logging.error(f"Failed to get torrent info. Status code: {info_response.status_code}")
+                return None
+            break
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                raise
+            time.sleep(5 * retry_count)
+
+    torrent_info = info_response.json()
+
+    # Add debug logging for all files in the torrent
+    logging.debug(f"All files in torrent: {[f['path'] for f in torrent_info['files']]}")
+
+    # Step 3: Select files based on video extensions and exclude samples
+    files_to_select = [
+        str(f['id']) for f in torrent_info['files']
+        if is_video_file(f['path']) and not is_unwanted_file(f['path'])
+    ]
+
+    # Add debug logging for selected files
+    logging.debug(f"Files selected as video files: {files_to_select}")
+    video_files = [f for f in torrent_info['files'] if str(f['id']) in files_to_select]
+    logging.debug(f"Video files paths: {[f['path'] for f in video_files]}")
+
+    if not files_to_select:
+        logging.warning("No suitable video files found in the torrent.")
+        delete_response = requests.delete(f"{API_BASE_URL}/torrents/delete/{torrent_id}",headers=headers, timeout=60)
+        if delete_response.status_code == 204:
+            logging.debug(f"Removed torrent: {torrent_id}")
+        return None
+
+    select_data = {'files': ','.join(files_to_select)}
+    
+    # Step 4: Select files
+    retry_count = 0
+    while True:
+        try:
+            select_response = requests.post(f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}", data=select_data, headers=headers, timeout=60)
+            if select_response.status_code != 204:
+                logging.error(f"Failed to select files. Status code: {select_response.status_code}")
+                return None
+            break
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                raise
+            time.sleep(5 * retry_count)
             
-            torrent_response.raise_for_status()
-        else:
-            if temp_file_path:
-                with open(temp_file_path, 'rb') as torrent_file:
-                    torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent_file, timeout=60)
-            else:
-                torrent = requests.get(magnet_link, allow_redirects=False, timeout=60)
-                if torrent.status_code != 200:
-                    sleep(1)
-                    torrent = requests.get(magnet_link, allow_redirects=False, timeout=60)
-                    if torrent.status_code != 200:
-                        torrent.raise_for_status()
-                        return False
-                torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
-            if not torrent_response:
-                sleep(1)
-                torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent, timeout=60)
-            sleep(0.1)
-
-        # Add status code logging
-        logging.debug(f"Torrent response status code: {torrent_response.status_code}")
-        logging.debug(f"Torrent response content: {torrent_response.text[:200]}...")  # Log first 200 chars
-
-        torrent_id = torrent_response.json()['id']
-
-        # Step 2: Get torrent info with additional error handling
-        max_retries = 3
-        retry_count = 0
-        while retry_count < max_retries:
-            try:
-                info_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
-                if info_response.status_code == 503:
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        time.sleep(5 * retry_count)  # Exponential backoff
-                        continue
-                info_response.raise_for_status()
-                break
-            except Exception as e:
-                retry_count += 1
-                if retry_count >= max_retries:
-                    raise
-                time.sleep(5 * retry_count)
-
-        torrent_info = info_response.json()
-
-        # Add debug logging for all files in the torrent
-        logging.debug(f"All files in torrent: {[f['path'] for f in torrent_info['files']]}")
-
-        # Step 3: Select files based on video extensions and exclude samples
-        files_to_select = [
-            str(f['id']) for f in torrent_info['files']
-            if is_video_file(f['path']) and not is_unwanted_file(f['path'])
-        ]
-
-        # Add debug logging for selected files
-        logging.debug(f"Files selected as video files: {files_to_select}")
-        logging.debug(f"Video files paths: {[f['path'] for f in torrent_info['files'] if str(f['id']) in files_to_select]}")
-
-        if not files_to_select:
-            logging.warning("No suitable video files found in the torrent.")
-            delete_response = requests.delete(f"{API_BASE_URL}/torrents/delete/{torrent_id}",headers=headers, timeout=60)
-            if delete_response.status_code == 204:
-                logging.debug(f"Removed torrent: {torrent_id}")
-            return None
-
-        select_data = {'files': ','.join(files_to_select)}
-        select_response = requests.post(f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}", headers=headers, data=select_data, timeout=60)
-        select_response.raise_for_status()
-
-        # Step 4: Wait for the torrent to be processed
-        links_response = requests.get(f"{API_BASE_URL}/torrents/info/{torrent_id}", headers=headers, timeout=60)
-        links_response.raise_for_status()
-        links_info = links_response.json()
-
-        return {
-            'id': torrent_id,
-            'status': links_info['status'],
-            'links': links_info.get('links'),
-            'files': links_info.get('files', [])
-        }
-
-    except requests.exceptions.RequestException as e:
-        if isinstance(e, requests.exceptions.HTTPError):
-            if e.response.status_code == 503:
-                logging.error(f"Real-Debrid service is unavailable (503 error). Response: {e.response.text}")
-                raise RealDebridUnavailableError("Real-Debrid service is unavailable (503 error)") from e
-            elif e.response.status_code == 509:
-                error_data = e.response.json()
-                if error_data.get('error') == 'too_many_active_downloads':
-                    logging.error("Real-Debrid has too many active downloads")
-                    raise RealDebridTooManyDownloadsError("Real-Debrid has too many active downloads") from e
-            logging.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-        else:
-            logging.error(f"Request error occurred: {str(e)}")
-        raise
-
-    except Exception as e:
-        logging.error(f"Unexpected error in add_to_real_debrid: {str(e)}")
-        raise
+    # Transform files to match expected format
+    transformed_files = []
+    for file in video_files:
+        transformed_files.append({
+            'path': file['path'],
+            'bytes': file.get('bytes', 0),  # Real-Debrid may not provide size
+            'name': os.path.basename(file['path'])
+        })
+    
+    return {
+        'id': torrent_id,
+        'files': transformed_files,
+        'hash': torrent_info.get('hash', ''),
+        'status': torrent_info.get('status', '')
+    }
 
 @lru_cache(maxsize=1000)
 def extract_hash_from_magnet(magnet_link):
@@ -584,15 +558,24 @@ class RealDebridProvider(DebridProvider):
             elif response.status_code >= 400:
                 raise RealDebridUnavailableError(f"API error: {response.status_code} - {response.text}")
 
+            # For DELETE requests or empty responses, return empty dict
+            if method.lower() == 'delete' or not response.text:
+                return {}
+                
             return response.json()
             
         except requests.exceptions.RequestException as e:
             raise RealDebridUnavailableError(f"Request failed: {str(e)}")
 
+    @property
+    def supports_direct_cache_check(self) -> bool:
+        """RealDebrid doesn't support direct cache checking"""
+        return False
+
     def add_torrent(self, magnet_link, temp_file_path=None):
         return add_to_real_debrid(magnet_link, temp_file_path)
         
-    def is_cached(self, hashes: Union[str, List[str]]) -> Dict[str, bool]:
+    def is_cached(self, hashes: Union[str, List[str]]) -> Dict:
         """Check if hash(es) are cached on Real-Debrid
         
         Note: Real-Debrid doesn't support direct cache checking.
@@ -600,25 +583,47 @@ class RealDebridProvider(DebridProvider):
         """
         if isinstance(hashes, str):
             hashes = [hashes]
-            
+        
         result = {}
         for hash_ in hashes:
-            logging.debug(f"Checking cache status for hash: {hash_}")
             try:
-                # Try to find an existing torrent with this hash
-                torrents = self.list_torrents()
-                for torrent in torrents:
-                    if torrent.get('hash') == hash_:
-                        status = torrent.get('status', 'unknown')
-                        result[hash_] = status == 'downloaded'
-                        break
-                else:
-                    # If not found, we'll need to add it to check
-                    result[hash_] = False
+                # Create a magnet link from the hash
+                magnet = f"magnet:?xt=urn:btih:{hash_}"
+                
+                # Add the torrent to check its status
+                add_response = self.add_torrent(magnet)
+                if not add_response or not isinstance(add_response, dict):
+                    result[hash_] = {'cached': False}
+                    continue
+                
+                torrent_id = add_response.get('id')
+                if not torrent_id:
+                    result[hash_] = {'cached': False}
+                    continue
+                
+                # Get torrent info to check status
+                torrent_info = self.get_torrent_info(torrent_id)
+                if not torrent_info:
+                    result[hash_] = {'cached': False}
+                    continue
+                
+                # If status is 'downloaded', it's cached
+                status = torrent_info.get('status', '').lower()
+                is_cached = status == 'downloaded'
+                
+                # Include file information in the response
+                result[hash_] = {
+                    'cached': is_cached,
+                    'files': add_response.get('files', []),
+                    'torrent_id': torrent_id
+                }
+                
+                logging.info(f"Hash {hash_} status: {status} (cached: {is_cached})")
+                
             except Exception as e:
                 logging.error(f"Error checking cache status for hash {hash_}: {str(e)}")
-                result[hash_] = False
-                
+                result[hash_] = {'cached': False}
+        
         return result
 
     def list_torrents(self) -> List[Dict]:
@@ -694,13 +699,13 @@ class RealDebridProvider(DebridProvider):
         return []
 
     def remove_torrent(self, torrent_id: str) -> bool:
-        url = f"{self.API_BASE_URL}/torrents/delete/{torrent_id}"
+        """Remove a torrent from Real-Debrid"""
         try:
-            response = self._make_request('delete', url)
-            return response.status_code == 204
+            self._make_request('delete', f'torrents/delete/{torrent_id}')
+            return True
         except Exception as e:
-            logging.error(f"Error removing torrent {torrent_id}: {e}")
-            raise ProviderUnavailableError(f"Error removing torrent {torrent_id}: {e}") from e
+            logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+            raise ProviderUnavailableError(f"Error removing torrent {torrent_id}: {str(e)}") from e
 
     def download_and_extract_hash(self, url: str) -> Tuple[Optional[str], Optional[str]]:
         try:
