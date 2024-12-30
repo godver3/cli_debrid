@@ -9,6 +9,7 @@ from metadata.metadata import get_metadata, get_release_date
 import plexapi.server
 import plexapi.exceptions
 import os
+from cli_battery.app.direct_api import DirectAPI
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -55,22 +56,38 @@ async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: D
     detailed_show = await get_detailed_show_metadata(session, plex_url, show_key, headers, semaphore)
     
     show_title = detailed_show['title']
-    show_genres = []
-    if 'Genre' in detailed_show and isinstance(detailed_show['Genre'], list):
-        show_genres = [genre['tag'] for genre in detailed_show['Genre'] if 'tag' in genre]
-    
-    # Filter genres
-    filtered_show_genres = filter_genres(show_genres)
-    
-    # Extract show IMDB ID and TMDB ID
     show_imdb_id = None
     show_tmdb_id = None
+    show_year = None
+
     if 'Guid' in detailed_show:
         for guid in detailed_show['Guid']:
             if guid['id'].startswith('imdb://'):
                 show_imdb_id = guid['id'].split('://')[1]
             elif guid['id'].startswith('tmdb://'):
                 show_tmdb_id = guid['id'].split('://')[1]
+
+    # Get show metadata to find the original year
+    if show_imdb_id:
+        try:
+            metadata_result = DirectAPI.get_show_metadata(show_imdb_id)
+            if metadata_result and isinstance(metadata_result, tuple):
+                show_metadata, _ = metadata_result
+                if show_metadata and isinstance(show_metadata, dict):
+                    show_year = show_metadata.get('year')
+        except Exception as e:
+            logger.error(f"Error retrieving show metadata for {show_title}: {str(e)}")
+
+    # If we couldn't get the year from metadata, use the show's year as fallback
+    if show_year is None:
+        show_year = detailed_show.get('year')
+
+    show_genres = []
+    if 'Genre' in detailed_show:
+        show_genres = [genre['tag'] for genre in detailed_show['Genre'] if 'tag' in genre]
+    
+    # Filter genres
+    filtered_show_genres = filter_genres(show_genres)
     
     seasons = await get_show_seasons(session, plex_url, show_key, headers, semaphore)
     
@@ -82,18 +99,19 @@ async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: D
         episodes = await get_season_episodes(session, plex_url, season_key, headers, semaphore)
         
         for episode in episodes:
-            episode_entries = await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id, filtered_show_genres)
+            episode_entries = await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id, filtered_show_genres, show_year)
             all_episodes.extend(episode_entries)
     
     return all_episodes
 
-async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str, show_genres: List[str]) -> List[Dict[str, Any]]:
+async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str, show_genres: List[str], show_year: int = None) -> List[Dict[str, Any]]:
     base_episode_data = {
         'title': show_title,
         'episode_title': episode['title'],
         'season_number': season_number,
         'episode_number': episode.get('index'),
-        'year': episode.get('year'),
+        'year': show_year,  # Use show_year instead of episode's year
+        'show_year': show_year,  # Add show_year as a separate field
         'addedAt': episode['addedAt'],
         'guid': episode.get('guid'),
         'ratingKey': episode['ratingKey'],
@@ -114,6 +132,45 @@ async def process_episode(episode: Dict[str, Any], show_title: str, season_numbe
                 base_episode_data['episode_imdb_id'] = guid['id'].split('://')[1]
             elif guid['id'].startswith('tmdb://'):
                 base_episode_data['episode_tmdb_id'] = guid['id'].split('://')[1]
+    
+    # If release_date is missing, try to get it from our metadata service
+    if not base_episode_data['release_date']:
+        try:
+            # First try to get episode-specific metadata if we have an episode IMDb ID
+            if base_episode_data['episode_imdb_id']:
+                metadata_result = DirectAPI.get_episode_metadata(base_episode_data['episode_imdb_id'])
+                if metadata_result and isinstance(metadata_result, tuple):
+                    metadata, _ = metadata_result
+                    if metadata and isinstance(metadata, dict):
+                        episode_data = metadata.get('episode', {})
+                        if episode_data:
+                            # Get first_aired from episode data
+                            first_aired = episode_data.get('first_aired')
+                            if first_aired:
+                                if not base_episode_data['release_date']:
+                                    base_episode_data['release_date'] = first_aired[:10]
+            
+            # If we still don't have the data and have a show IMDb ID, try getting show metadata
+            if not base_episode_data['release_date'] and show_imdb_id:
+                metadata_result = DirectAPI.get_show_metadata(show_imdb_id)
+                if metadata_result and isinstance(metadata_result, tuple):
+                    show_metadata, _ = metadata_result
+                    if show_metadata and isinstance(show_metadata, dict):
+                        # Check if we have season/episode data in show metadata
+                        seasons = show_metadata.get('seasons', {})
+                        season_data = seasons.get(str(season_number), {})
+                        if season_data and 'episodes' in season_data:
+                            episodes = season_data['episodes']
+                            # Find the matching episode by number
+                            for ep_num, ep_data in episodes.items():
+                                if str(base_episode_data['episode_number']) == ep_num:
+                                    first_aired = ep_data.get('first_aired')
+                                    if first_aired and not base_episode_data['release_date']:
+                                        base_episode_data['release_date'] = first_aired[:10]
+                                    break
+                
+        except Exception as e:
+            logger.error(f"Error retrieving metadata for {show_title} S{season_number}E{base_episode_data['episode_number']}: {str(e)}")
     
     episode_entries = []
     if 'Media' in episode and episode['Media']:
@@ -174,8 +231,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     if not movie_data['imdb_id'] and not movie_data['tmdb_id']:
         logging.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Skipping metadata retrieval.")
-        return []
-
+        movie_data['release_date'] = None
     '''try:
         metadata = get_metadata(imdb_id=movie_data['imdb_id'], tmdb_id=movie_data['tmdb_id'], item_media_type='movie')
         if metadata:
@@ -183,7 +239,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         else:
             movie_data['release_date'] = None
     except ValueError as e:
-        logging.error(f"Error retrieving metadata for {movie_data['title']}: {str(e)}")
+        logger.error(f"Error retrieving metadata for {movie_data['title']}: {str(e)}")
         return []'''
 
     movie_entries = []
@@ -433,17 +489,15 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not movie_data['imdb_id'] and not movie_data['tmdb_id']:
         logger.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Skipping metadata retrieval.")
         movie_data['release_date'] = None
-    '''else:
-        try:
-            # Get metadata and release date from metadata.py
-            metadata = get_metadata(imdb_id=movie_data['imdb_id'], tmdb_id=movie_data['tmdb_id'], item_media_type='movie')
-            if metadata:
-                movie_data['release_date'] = get_release_date(metadata, movie_data['imdb_id'])
-            else:
-                movie_data['release_date'] = None
-        except ValueError as e:
-            logger.error(f"Error retrieving metadata for {movie_data['title']}: {str(e)}")
-            movie_data['release_date'] = None'''
+    '''try:
+        metadata = get_metadata(imdb_id=movie_data['imdb_id'], tmdb_id=movie_data['tmdb_id'], item_media_type='movie')
+        if metadata:
+            movie_data['release_date'] = get_release_date(metadata, movie_data['imdb_id'])
+        else:
+            movie_data['release_date'] = None
+    except ValueError as e:
+        logger.error(f"Error retrieving metadata for {movie_data['title']}: {str(e)}")
+        movie_data['release_date'] = None'''
 
     movie_entries = []
     if 'Media' in movie:

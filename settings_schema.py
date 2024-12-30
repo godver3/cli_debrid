@@ -62,14 +62,14 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "provider": {
             "type": "string",
-            "description": "Select your debrid service provider",
-            "default": "RealDebrid",
-            "choices": ["RealDebrid", "Torbox"]
+            "description": "Debrid service provider",
+            "default": "Torbox",
+            "choices": ["Torbox", "RealDebrid"]
         },
         "api_key": {
             "type": "string",
-            "description": "API key for your selected debrid service",
-            "default": "",
+            "description": "API key for the debrid service",
+            "default": "demo_key",
             "sensitive": True
         }
     },

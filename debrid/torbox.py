@@ -262,14 +262,14 @@ class TorboxProvider(DebridProvider):
                         files = self.get_torrent_files(hash_value, torrent_id)
                         if files:
                             logging.info("Successfully got files from torrentinfo")
-                            torrent_data['files'] = files
-                            return torrent_data
+                            torrent_data['files'] = files  # Add files to torrent_data
+                            response['files'] = files  # Also add files at top level for compatibility
                     except Exception as e:
                         logging.warning(f"Failed to get files from torrentinfo: {str(e)}")
-                        # Don't fall back to cache data, just return None to try next result
-                        return None
+                        torrent_data['files'] = []  # Add empty files list to both levels
+                        response['files'] = []
                 
-                return torrent_data
+                return response  # Return full response with files at both levels
             
             return None
             

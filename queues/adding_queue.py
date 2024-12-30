@@ -8,7 +8,7 @@ import json
 import re
 import os
 from typing import Dict, Any, List, Optional, Tuple
-from database import get_all_media_items, get_media_item_by_id, update_media_item_state
+from database import get_all_media_items, get_media_item_by_id, update_media_item_state, update_media_item
 from debrid import get_debrid_provider
 from debrid.status import TorrentStatus
 from .media_matcher import MediaMatcher
@@ -160,118 +160,89 @@ class AddingQueue:
                     if is_cached:
                         logging.info("Result is cached, adding to debrid service")
                         add_result = self.debrid_provider.add_torrent(result['magnet'], temp_file)
+                        logging.debug(f"Add result from debrid provider: {add_result}")
                         if add_result and isinstance(add_result, dict):
                             # Get files from add_result if available
                             files = add_result.get('files', [])
                             if not files:
+                                files = add_result.get('data', {}).get('files', [])
+                            
+                            if not files:
                                 logging.warning("No files found in add_result")
                                 continue
 
-                            # Check if this is a multi-episode pack by looking for multiple episodes
-                            episode_files = [f for f in files if any(ep in f['path'].lower() for ep in ['e01', 'e02', 'e03', 'e04', 'e05', 'e06', 'e07', 'e08', 'e09', 'e10'])]
-                            is_multi_pack = len(episode_files) > 1
+                            # Process the files based on media type
+                            media_type = item.get('type')
+                            selected_file = None
                             
-                            if is_multi_pack:
-                                logging.info(f"Found multi-episode pack with {len(episode_files)} episodes")
-                                logging.info(f"Current item: {item}")
-                                
-                                # First handle the current item
-                                matching_file = next((f for f in files if self._match_file_to_episode(f['path'], item)), None)
-                                if matching_file:
-                                    file_path = matching_file['path']
-                                    file_name = os.path.basename(file_path)
-                                    update_media_item_state(item['id'], 'Checking', filled_by_file=file_name)
-                                    logging.info(f"Updated current item with filled_by_file: {file_name}")
-                                else:
-                                    logging.info("No matching file found for current item")
-                                    logging.info(f"Files available: {[f['path'] for f in files]}")
-                                    update_media_item_state(item['id'], 'Checking')
+                            logging.debug(f"Processing files for media type: {media_type}")
+                            logging.debug(f"Available files: {files}")
+                            
+                            if media_type == 'movie':
+                                # For movies, get the largest video file
+                                video_files = [f for f in files if f.get('path', '').lower().endswith(('.mkv', '.mp4', '.avi'))]
+                                if video_files:
+                                    selected_file = max(video_files, key=lambda x: x.get('bytes', 0))
+                                    logging.debug(f"Selected movie file: {selected_file}")
+                            elif media_type == 'episode':
+                                # For episodes, try to match season/episode pattern
+                                season = item.get('season_number')
+                                episode = item.get('episode_number')
+                                logging.debug(f"Looking for season {season} episode {episode}")
+                                if season is not None and episode is not None:
+                                    season_str = f"s{season:02d}"
+                                    episode_str = f"e{episode:02d}"
                                     
-                                # Then check if any files match items in the scraping queue
-                                logging.info(f"Checking {len(scraping_items)} items in scraping queue")
-                                for scraping_item in scraping_items:
-                                    logging.info(f"Checking scraping item: {scraping_item}")
-                                    matching_file = next((f for f in files if self._match_file_to_episode(f['path'], scraping_item)), None)
-                                    if matching_file:
-                                        # Move the matching item to the Checking queue and update its state
-                                        file_path = matching_file['path']
-                                        file_name = os.path.basename(file_path)
-                                        folder_name = os.path.basename(os.path.dirname(file_path))
-                                        
-                                        logging.info(f"Found matching file for scraping item {scraping_item['id']}: {file_name}")
-                                        update_media_item_state(scraping_item['id'], 'Checking', filled_by_file=file_name)
-                                        queue_manager.move_to_checking(
-                                            scraping_item,
-                                            "Scraping",
-                                            folder_name,  # title
-                                            result.get('magnet', ''),  # link
-                                            file_name,  # filled_by_file
-                                            result.get('torrent_id')  # torrent_id
-                                        )
-                                    else:
-                                        logging.info(f"No matching file found for scraping item {scraping_item['id']}")
+                                    logging.debug(f"Looking for episode match: {season_str}{episode_str}")
+                                    
+                                    # First try exact season/episode match
+                                    for file in files:
+                                        filename = file.get('path', '').lower()
+                                        logging.debug(f"Checking file: {filename}")
+                                        if season_str in filename and episode_str in filename:
+                                            selected_file = file
+                                            logging.debug(f"Found exact episode match: {filename}")
+                                            break
+                                        else:
+                                            logging.debug(f"No match: looking for {season_str}{episode_str} in {filename}")
+                                    
+                                    # If no exact match, fall back to largest video file
+                                    if not selected_file:
+                                        video_files = [f for f in files if f.get('path', '').lower().endswith(('.mkv', '.mp4', '.avi'))]
+                                        if video_files:
+                                            selected_file = max(video_files, key=lambda x: x.get('bytes', 0))
+                                            logging.debug(f"No exact match, using largest file: {selected_file}")
+                            
+                            if selected_file:
+                                file_path = selected_file.get('path', '')
+                                file_name = os.path.basename(file_path)
+                                
+                                # Update media item with file info and state
+                                update_media_item_state(item['id'], 'Checking', filled_by_file=file_name)
+                                logging.info(f"Updated current item with filled_by_file: {file_name}")
+                                
+                                # Mark the successful magnet/URL as not wanted to prevent reuse
+                                if 'magnet' in result:
+                                    from not_wanted_magnets import add_to_not_wanted
+                                    magnet = result['magnet']
+                                    hash_value = self._extract_hash_from_magnet(magnet)[0]
+                                    if hash_value:
+                                        add_to_not_wanted(hash_value, str(item.get('id')), item)
+                                        logging.info(f"Added successful magnet hash {hash_value} to not wanted list")
+                                elif 'url' in result:
+                                    from not_wanted_magnets import add_to_not_wanted_urls
+                                    url = result['url']
+                                    add_to_not_wanted_urls(url, str(item.get('id')), item)
+                                    logging.info(f"Added successful URL {url} to not wanted list")
+                                
+                                # Remove item from queue
+                                self.items.pop(0)
+                                return
                             else:
-                                # Handle single file case as before
-                                media_type = item.get('type')
-                                selected_file = None
-                                
-                                logging.debug(f"Processing files for media type: {media_type}")
-                                logging.debug(f"Available files: {result.get('files', [])}")
-                                
-                                if media_type == 'movie':
-                                    # For movies, get the largest video file
-                                    video_files = [f for f in result.get('files', []) if f.get('path', '').lower().endswith(('.mkv', '.mp4', '.avi'))]
-                                    if video_files:
-                                        selected_file = max(video_files, key=lambda x: x.get('bytes', 0))
-                                        logging.debug(f"Selected movie file: {selected_file}")
-                                elif media_type == 'episode':
-                                    # For episodes, try to match season/episode pattern
-                                    season = item.get('season')
-                                    episode = item.get('episode')
-                                    if season is not None and episode is not None:
-                                        season_str = f"s{season:02d}"
-                                        episode_str = f"e{episode:02d}"
-                                        
-                                        logging.debug(f"Looking for episode match: {season_str}{episode_str}")
-                                        
-                                        # First try exact season/episode match
-                                        for file in result.get('files', []):
-                                            filename = file.get('path', '').lower()
-                                            logging.debug(f"Checking file: {filename}")
-                                            if season_str in filename and episode_str in filename:
-                                                selected_file = file
-                                                logging.debug(f"Found exact episode match: {filename}")
-                                                break
-                                        
-                                        # If no exact match, fall back to largest video file
-                                        if not selected_file:
-                                            video_files = [f for f in result.get('files', []) if f.get('path', '').lower().endswith(('.mkv', '.mp4', '.avi'))]
-                                            if video_files:
-                                                selected_file = max(video_files, key=lambda x: x.get('bytes', 0))
-                                                logging.debug(f"No exact match, using largest file: {selected_file}")
-                                
-                                if selected_file:
-                                    file_path = selected_file.get('path', '')
-                                    file_name = os.path.basename(file_path)
-                                    logging.debug(f"Selected file path: {file_path}")
-                                    logging.debug(f"Selected file name: {file_name}")
-                                    update_media_item_state(item['id'], 'Checking', 
-                                                         filled_by_file=file_name)
-                                    logging.info(f"Updated media item with filled_by_file: {file_name}")
-                                else:
-                                    logging.warning("No suitable file found for media item")
-                                    update_media_item_state(item['id'], 'Checking')
-                        else:
-                            update_media_item_state(item['id'], 'Checking')
-                        self.items.pop(0)
-                        return
-                    elif process_uncached:
-                        logging.info("Result is cached, but accepting uncached content")
-                        update_media_item_state(item['id'], 'Downloading')
-                        self.items.pop(0)
-                        return
+                                logging.warning("No suitable file found for media item")
+                                continue
                     else:
-                        logging.info("Result is cached, checking next result")
+                        logging.info("Result is not cached, checking next result")
                 else:
                     # For providers like RealDebrid that need to add torrent to check cache
                     cache_status = self.debrid_provider.is_cached(hash_value)
@@ -306,6 +277,20 @@ class AddingQueue:
                                 update_media_item_state(item['id'], 'Checking', 
                                                       filled_by_file=file_name)
                                 logging.info(f"Updated current item with filled_by_file: {file_name}")
+                                
+                                # Mark the successful magnet/URL as not wanted to prevent reuse
+                                if 'magnet' in result:
+                                    from not_wanted_magnets import add_to_not_wanted
+                                    magnet = result['magnet']
+                                    hash_value = self._extract_hash_from_magnet(magnet)[0]
+                                    if hash_value:
+                                        add_to_not_wanted(hash_value, str(item.get('id')), item)
+                                        logging.info(f"Added successful magnet hash {hash_value} to not wanted list")
+                                elif 'url' in result:
+                                    from not_wanted_magnets import add_to_not_wanted_urls
+                                    url = result['url']
+                                    add_to_not_wanted_urls(url, str(item.get('id')), item)
+                                    logging.info(f"Added successful URL {url} to not wanted list")
                                 
                                 # Now check if any other files match items in the Scraping queue
                                 # Only match items with the same version
