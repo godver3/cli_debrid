@@ -10,6 +10,7 @@ services:
       - /host/location/db_content:/user/db_content
       - /host/location/config:/user/config
       - /host/location/logs:/user/logs
+      - /media/mount:/media/mount # optional - used by video player
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped
