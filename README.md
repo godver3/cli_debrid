@@ -141,6 +141,7 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
 - **Overseerr**: Used to manage and track content requests, and to provide full metadata for content.
 - **Trakt Account**: Used by our Metadata Battery to retrieve all needed Metadata.
 - **Debrid Provider**: Either a Real-Debrid or Torbox API key.
+- **Method to Mount Media from Debrid Provider**: While we don't require Zurg, we highly recommend this as a very effective way to locally mount your Debrid Provider's content locally for Plex to see.
 
 ## Optional Content Sources/Other Settings
 
