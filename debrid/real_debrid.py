@@ -600,23 +600,34 @@ class RealDebridProvider(DebridProvider):
         result = {}
         for hash_ in hashes:
             try:
+                logging.info(f"Checking cache status for hash: {hash_}")
                 # Create a magnet link from the hash
                 magnet = f"magnet:?xt=urn:btih:{hash_}"
                 
                 # Add the torrent to check its status
+                logging.debug(f"Adding torrent with magnet: {magnet}")
                 add_response = self.add_torrent(magnet)
+                logging.debug(f"Add torrent response: {json.dumps(add_response, indent=2) if add_response else None}")
+                
                 if not add_response or not isinstance(add_response, dict):
+                    logging.warning(f"Invalid add_response: {add_response}")
                     result[hash_] = {'cached': False}
                     continue
                 
-                torrent_id = add_response.get('id')
+                # Check for either 'id' or 'torrent_id' in response
+                torrent_id = add_response.get('id') or add_response.get('torrent_id')
                 if not torrent_id:
+                    logging.warning("No torrent_id or id found in add_response")
                     result[hash_] = {'cached': False}
                     continue
                 
                 # Get torrent info to check status
+                logging.debug(f"Getting torrent info for ID: {torrent_id}")
                 torrent_info = self.get_torrent_info(torrent_id)
+                logging.debug(f"Torrent info response: {json.dumps(torrent_info, indent=2) if torrent_info else None}")
+                
                 if not torrent_info:
+                    logging.warning(f"No torrent info returned for ID: {torrent_id}")
                     result[hash_] = {'cached': False}
                     continue
                 
@@ -632,6 +643,8 @@ class RealDebridProvider(DebridProvider):
                 }
                 
                 logging.info(f"Hash {hash_} status: {status} (cached: {is_cached})")
+                if not is_cached:
+                    logging.info(f"Torrent not cached. Full status info: {torrent_info.get('status_detail', 'No status detail available')}")
                 
             except Exception as e:
                 logging.error(f"Error checking cache status for hash {hash_}: {str(e)}")
