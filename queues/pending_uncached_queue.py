@@ -2,11 +2,12 @@ import logging
 import json
 from typing import Dict, Any
 from database import get_all_media_items
-from debrid.real_debrid import get_active_downloads, add_to_real_debrid
+from debrid import get_debrid_provider
 
 class PendingUncachedQueue:
     def __init__(self):
         self.items = []
+        self.debrid_provider = get_debrid_provider()
 
     def update(self):
         self.items = [dict(row) for row in get_all_media_items(state="Pending Uncached")]
@@ -37,7 +38,7 @@ class PendingUncachedQueue:
     def process(self, queue_manager):
         logging.debug(f"Processing pending uncached queue. Items: {len(self.items)}")
         
-        active_downloads, download_limit = get_active_downloads()
+        active_downloads, download_limit = self.debrid_provider.get_active_downloads()
         
         if active_downloads >= download_limit:
             logging.info("Download limit reached. Stopping pending uncached queue processing.")
@@ -52,14 +53,14 @@ class PendingUncachedQueue:
                 logging.error(f"No magnet link found for {item_identifier}")
                 continue
 
-            add_result = add_to_real_debrid(link)
+            add_result = self.debrid_provider.add_torrent(link)
             if add_result:
                 self._handle_successful_add(item, queue_manager)
                 break  # Process one item at a time
             else:
                 self._handle_failed_add(item, queue_manager)
 
-            active_downloads, download_limit = get_active_downloads()
+            active_downloads, download_limit = self.debrid_provider.get_active_downloads()
             if active_downloads >= download_limit:
                 logging.info("Download limit reached during processing. Stopping.")
                 break

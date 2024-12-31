@@ -232,4 +232,19 @@ def ensure_settings_file():
             }
         }
 
+    # Ensure Debrid Provider is set to Torbox if not already set
+    if 'Debrid Provider' not in config:
+        config['Debrid Provider'] = {}
+    if 'provider' not in config['Debrid Provider'] or not config['Debrid Provider']['provider']:
+        config['Debrid Provider']['provider'] = 'Torbox'
+    if 'api_key' not in config['Debrid Provider']:
+        config['Debrid Provider']['api_key'] = 'demo_key'  # Initialize with a demo key for testing
+    
+    # Migrate RealDebrid API key if it exists
+    if 'RealDebrid' in config and 'api_key' in config['RealDebrid']:
+        if 'api_key' not in config['Debrid Provider'] or not config['Debrid Provider']['api_key']:
+            config['Debrid Provider']['api_key'] = config['RealDebrid']['api_key']
+            # Optionally set provider to RealDebrid since we found a key
+            config['Debrid Provider']['provider'] = 'RealDebrid'
+
     save_config(config)
