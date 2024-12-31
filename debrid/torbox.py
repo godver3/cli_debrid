@@ -186,7 +186,7 @@ class TorboxProvider(DebridProvider):
         try:
             params = {
                 'hash': hash_value,
-                'timeout': 5
+                'timeout': 10
             }
             if torrent_id:
                 params['torrent_id'] = torrent_id
@@ -198,12 +198,17 @@ class TorboxProvider(DebridProvider):
                 raise Exception("Invalid response format")
                 
             files = []
-            if 'files' in response:
-                for file_data in response['files']:
+
+            if isinstance(response, dict) and 'data' in response and 'files' in response['data']:
+                for file_data in response['data']['files']:
+                    name = file_data.get('name', '')
+                    # Use os.path.basename to get filename correctly
+                    filename = os.path.basename(name) if name else ''
+                    
                     file_info = {
-                        'path': file_data.get('path', ''),
-                        'bytes': file_data.get('bytes', 0),
-                        'selected': file_data.get('selected', 1)
+                        'path': filename,  # Only use the filename
+                        'bytes': file_data.get('size', 0),
+                        'selected': 1  # Default to selected
                     }
                     files.append(file_info)
                     
@@ -211,108 +216,15 @@ class TorboxProvider(DebridProvider):
                     logging.info(f"Successfully got files from torrentinfo: {files}")
                     return files
                     
-            raise Exception("No valid files found in response")
+            raise Exception(f"No valid files found in response structure: {response}")
                 
         except Exception as e:
             logging.error(f"Error getting files from torrentinfo: {str(e)}")
             raise
 
-    def _extract_files_from_torrent_data(self, torrent_data: bytes) -> List[Dict]:
-        """Extract file information from torrent data"""
-        try:
-            decoded = bencodepy.decode(torrent_data)
-            if not isinstance(decoded, dict):
-                raise ValueError("Invalid torrent data format")
-
-            info = decoded.get(b'info', {})
-            if not info:
-                raise ValueError("No info dict in torrent data")
-
-            files = []
-            # Single file torrent
-            if b'length' in info:
-                name = info.get(b'name', b'').decode('utf-8', errors='ignore')
-                files.append({
-                    'path': name,
-                    'bytes': info[b'length'],
-                    'selected': 1
-                })
-            # Multi file torrent
-            elif b'files' in info:
-                for file_info in info[b'files']:
-                    if not isinstance(file_info, dict):
-                        continue
-                    path_parts = [p.decode('utf-8', errors='ignore') for p in file_info.get(b'path', [])]
-                    files.append({
-                        'path': os.path.join(*path_parts),
-                        'bytes': file_info.get(b'length', 0),
-                        'selected': 1
-                    })
-
-            return files
-        except Exception as e:
-            logging.error(f"Error extracting files from torrent data: {str(e)}")
-            return []
-
-    def _fetch_files_from_magnet(self, magnet_link: str, timeout: int = 30) -> List[Dict]:
-        """
-        Fetch files from a magnet link using libtorrent
-        Returns list of files in the same format as torrentinfo endpoint
-        """
-        try:
-            import libtorrent
-            
-            # Create session
-            sess = libtorrent.session()
-            sess.listen_on(6881, 6891)
-            
-            # Add magnet
-            params = libtorrent.parse_magnet_uri(magnet_link)
-            params.save_path = '/tmp'  # Temporary save path
-            handle = sess.add_torrent(params)
-            
-            logging.info(f"Fetching metadata for magnet {magnet_link}")
-            
-            # Try to fetch metadata with timeout
-            timeout_counter = 0
-            while not handle.has_metadata() and timeout_counter < timeout:
-                time.sleep(1)
-                timeout_counter += 1
-            
-            if not handle.has_metadata():
-                logging.warning("Timeout while fetching magnet metadata")
-                sess.remove_torrent(handle)
-                return []
-            
-            # Get torrent info
-            torrent_info = handle.get_torrent_info()
-            
-            # Extract files
-            files = []
-            for f in torrent_info.files():
-                files.append({
-                    'path': f.path,
-                    'bytes': f.size,
-                    'selected': 1
-                })
-            
-            # Cleanup
-            sess.remove_torrent(handle)
-            
-            logging.info(f"Successfully extracted {len(files)} files from magnet")
-            return files
-            
-        except ImportError as e:
-            logging.warning(f"libtorrent not available: {str(e)}, cannot fetch magnet metadata")
-            return []
-        except Exception as e:
-            logging.error(f"Error fetching magnet metadata: {str(e)}")
-            return []
-
     def add_torrent(self, magnet_link: str, temp_file_path: Optional[str] = None) -> Dict:
         """Add a torrent/magnet link to Torbox"""
         logging.info("Adding torrent to Torbox")
-        torrent_files = []
         
         try:
             # Default parameters
@@ -342,45 +254,35 @@ class TorboxProvider(DebridProvider):
                         except Exception as e:
                             logging.warning(f"Error deleting temporary file: {str(e)}")
             else:
-                # For magnet links, try to fetch files first
-                if magnet_link:
-                    torrent_files = self._fetch_files_from_magnet(magnet_link)
-                
                 data['magnet'] = magnet_link
                 response = self._make_request('POST', 'api/torrents/createtorrent', data=data)
             
-            logging.info(f"Add torrent response: {response}")
+            if not response.get('success'):
+                error = response.get('error', 'Unknown error')
+                raise Exception(f"Failed to add torrent: {error}")
+                
+            torrent_data = response.get('data', {})
+            if not torrent_data:
+                raise Exception("No torrent data in response")
+                
+            logging.info(f"Full torrent data: {torrent_data}")
             
-            # Extract torrent info from response
-            if response.get('success') and 'data' in response:
-                torrent_data = response['data']
-                logging.info(f"Full torrent data: {torrent_data}")
-                
-                hash_value = torrent_data.get('hash')
-                queued_id = str(torrent_data.get('queued_id'))
-                
-                # First try using the files we extracted
-                if torrent_files:
-                    logging.info("Using files extracted from torrent/magnet")
-                    torrent_data['files'] = torrent_files
-                    response['files'] = torrent_files
-                # If no files extracted, try getting them from API
-                elif hash_value and queued_id:
-                    try:
-                        logging.info("Attempting to get files from torrentinfo endpoint")
-                        files = self.get_torrent_files(hash_value, queued_id)
-                        if files:
-                            logging.info("Successfully got files from torrentinfo")
-                            torrent_data['files'] = files
-                            response['files'] = files
-                    except Exception as e:
-                        logging.warning(f"Failed to get files from torrentinfo: {str(e)}")
-                        torrent_data['files'] = []
-                        response['files'] = []
-                
-                return response
+            # Extract important fields
+            torrent_id = str(torrent_data.get('torrent_id'))
+            auth_id = str(torrent_data.get('auth_id'))
+            hash_value = str(torrent_data.get('hash'))
+            queued_id = str(torrent_data.get('queued_id'))
             
-            return None
+            # Get files using the torrent_id we just received
+            logging.info("Getting files for added torrent")
+            try:
+                files = self.get_torrent_files(hash_value, torrent_id)
+                torrent_data['files'] = files
+                response['files'] = files
+            except Exception as e:
+                logging.warning(f"Could not get files for torrent: {str(e)}")
+            
+            return response
             
         except Exception as e:
             logging.error(f"Error adding torrent: {str(e)}")
@@ -530,3 +432,40 @@ class TorboxProvider(DebridProvider):
         """Get user traffic/usage information with caching"""
         response = self._make_request('GET', 'user/traffic')
         return response
+
+    def _extract_files_from_torrent_data(self, torrent_data: bytes) -> List[Dict]:
+        """Extract file information from torrent data"""
+        try:
+            decoded = bencodepy.decode(torrent_data)
+            if not isinstance(decoded, dict):
+                raise ValueError("Invalid torrent data format")
+
+            info = decoded.get(b'info', {})
+            if not info:
+                raise ValueError("No info dict in torrent data")
+
+            files = []
+            # Single file torrent
+            if b'length' in info:
+                name = info.get(b'name', b'').decode('utf-8', errors='ignore')
+                files.append({
+                    'path': name,
+                    'bytes': info[b'length'],
+                    'selected': 1
+                })
+            # Multi file torrent
+            elif b'files' in info:
+                for file_info in info[b'files']:
+                    if not isinstance(file_info, dict):
+                        continue
+                    path_parts = [p.decode('utf-8', errors='ignore') for p in file_info.get(b'path', [])]
+                    files.append({
+                        'path': os.path.join(*path_parts),
+                        'bytes': file_info.get(b'length', 0),
+                        'selected': 1
+                    })
+
+            return files
+        except Exception as e:
+            logging.error(f"Error extracting files from torrent data: {str(e)}")
+            return []
