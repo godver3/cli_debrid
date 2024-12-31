@@ -7,9 +7,10 @@ cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is desi
 - **Automated Media Management**: Continuously scans for new content and upgrades existing media.
 - **Multiple Content Sources**: Integrates with Plex (required) for collection management, Overseerr (required) for content requests, and MDBList (optional) for additional content discovery.
 - **Intelligent Scraping**: Uses multiple scrapers to find the best quality content available.
-- **Real-Debrid Integration**: Uses Real-Debrid for cached content.
+- **Real-Debrid/Torbox Integration**: Uses Real-Debrid or Torbox for cached content. Uncached content handling for Real-Debrid.
 - **Upgrading Functionality**: Automatically seeks and applies upgrades for newly added content.
 - **Web Interface**: Provides a user-friendly web interface for monitoring.
+- **Metadata Battery**: Metadata is stored locally in a battery to avoid over-usage of APIs.
 
 ## Main Functions
 
@@ -18,29 +19,31 @@ cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is desi
 The core functionality of the software. When started, it:
 
 1. Scans your Plex library for existing content.
-2. Checks Overseerr for requested content.
+2. Checks content sources for any wanted content that isn't already collected.
 3. Scrapes various sources for the best quality versions of wanted content.
-4. Manages downloads through Real-Debrid.
-5. Seeks upgrades for your media.
+4. Manages downloads through your Debrid provider.
+5. Seeks upgrades for your media if available.
 
 ### Settings
 
-*The webUI settings menu is not currently functional. Settings must be configured through either editing the config.ini file, or through the terminal menu*
-
 A settings menu allows you to configure:
 
-- Required settings (Plex, Overseerr, Real-Debrid)
-- Additional settings (Optional scrapers, MDBList, etc.)
+- Required settings (Plex, Debrid Provider, Trakt)
+- Scrapers (Zilean, Jackett, Torrentio, Nyaa)
 - Scraping settings (Quality preferences, filters)
-- Debug settings
+- Content sources (MDBList, Collected content, Trakt watchlists/lists, Overseerr)
+- Additional settings (UI settings, TMDB key, Metadata age threshold, deletions syncing, queue management)
+- Advanced settings
+- Notifications (Discord, Email, Telegram, NTFY)
+- Reverse Parser (used to assign versions to existing content through regex terms)
 
 ### Manual/Testing Scraper
 
-Allows you to manually initiate scraping for specific content, useful for testing and troubleshooting. The Testing Scraper allows you to fine tune your scraping settings and weights to ensure your preferred releases are grabbed.
+Allows you to manually initiate scraping for specific content. The Testing Scraper allows you to fine tune your scraping settings and weights to ensure your preferred releases are grabbed.
 
 ### Debug Functions
 
-Provides various debugging tools and logs to help diagnose issues and monitor the software's performance.
+Provides various debugging tools for advanced users.
 
 ## Detailed Queue Operations
 <details>
@@ -99,7 +102,7 @@ Items are blacklisted (moved to the Blacklisted state) when:
 - They exceed the wake limit in the Sleeping Queue
 - Their release date is more than one week old and weren't found on first scrape
 
-Blacklisted items are no longer processed by the queue system.
+Blacklisted items are no longer processed by the queue system. Blacklisted items are woken per your Blacklist Duration.
 </details>
 <details>
 <summary>Multi-pack Processing</summary>
@@ -112,20 +115,13 @@ When a multi-pack result (e.g., a full season) is found:
 
 </details>
 <details>
-<summary>Real-Debrid Integration</summary>
-<br>
-Items in the Adding Queue are checked for cache status on Real-Debrid
-If an item is cached, it's added to Real-Debrid and moved to the Checking Queue
-If Real-Debrid is unavailable, the item is moved to the Sleeping Queue to retry later
-
-</details>
-<details>
 <summary>Webhook Support</summary>
 <br>
 cli_debrid supports webhooks from Overseerr:
 
 - Receives notifications for new content requests
 - Processes the webhook data and adds new items to the Wanted Queue
+- To use, enable the Webhook agent in Overseerr, set the URL to https://localhost:5000/webhook (or wherever Overseerr can see your cli_debrid instance at) and enable Notifications for "Request Pending Approval" and "Request Automatically Approved"
 
 </details>
 
@@ -137,17 +133,19 @@ cli_debrid maintains a local database of your media collection, keeping track of
 
 ### Upgrading Functionality
 
-cli_debrid will automatically search for and apply upgrades to newly added content, ensuring you always have the best quality available. Upgrading is applied to content with a release date of less than a week ago (or in other words, cli_debrid does not try to upgrade old content.
+cli_debrid will automatically search for and apply upgrades to newly added content, ensuring you always have the best quality available. 
 
 ## Required Components
 
 - **Plex**: Used as the primary source of information about your current media collection.
 - **Overseerr**: Used to manage and track content requests, and to provide full metadata for content.
+- **Trakt Account**: Used by our Metadata Battery to retrieve all needed Metadata.
+- **Debrid Provider**: Either a Real-Debrid or Torbox API key.
+- **Method to Mount Media from Debrid Provider**: While we don't require Zurg, we highly recommend this as a very effective way to locally mount your Debrid Provider's content locally for Plex to see.
 
 ## Optional Content Sources/Other Settings
 
-- **MDBList**: Can be used as an additional source for content discovery. Add URLs separated by commas.
-- **TMDB API**: Can be used for detailed episode content like runtimes for enhanced bitrate estimation.
+- **TMDB API Key**: Can be used for detailed episode content like runtimes for enhanced bitrate estimation, as well as to retrieve Home screen posters
 - **Collected**: Can be used as an additional source. Essentially this is a way to take your current library and flag all items for metadata processing. If you have a season of a show, this will then mark any other seasons/episodes as wanted.
 
 ## Getting Started
@@ -157,7 +155,7 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
 - Docker and Docker Compose installed on your system
 - A Plex server
 - An Overseerr instance
-- A Real-Debrid account
+- A Real-Debrid or Torbox account
 
 ### Setup Instructions
 
@@ -172,32 +170,36 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
    curl -O https://raw.githubusercontent.com/godver3/cli_debrid/main/docker-compose.yml
    ```
 
-3. Start the container:
+3. Edit the `docker-compose.yml` file to match your local folder structure.
+  
+4. Start the container:
    ```
    cd ${HOME}/cli_debrid
    docker-compose up -d
    ```
 
-4. Connect to the container to run the program, adjust settings, test scraping:
+5. Connect to the container to view logs (or view through Portainer/your log viewer of choice):
 
    ```
    docker attach cli_debrid
    ```
 
-Ctrl-P then Ctrl-Q to detach from the container rather than exiting the script.
-
-
-5. Access the web interface (note - only accessible when the program has been started):
+5. Access the web interface:
    Open a web browser and navigate to `http://your-server-ip:5000`
 
-6. Configure additional settings:
-   Edit the `config.ini` file or edit settings in termainl to configure additional settings such as scrapers, MDBList integration, and scraping preferences.
+### Other Notes
+
+cli_debrid is built for both AMD64 and ARM64 using tags:
+
+godver3/dev-arm64:latest (arm64)
+godver3/dev:latest (amd64)
+
+Alternatively cli_debrid is built for Windows.
 
 ### Post-Setup
 
-- Monitor the logs at `${HOME}/cli_debrid/user/logs` - shout out to "lnav" as a great log viewer
+- Monitor the logs at `${HOME}/cli_debrid/user/logs`
 - Check the content of your queues in the webUI
-- Use the web interface to monitor queue status and statistics. The statistics screen is essentially nonsense right now, but it's fun to look at
 - Adjust settings as needed to scrape for exactly the results you want
 
 ### Updating
@@ -212,13 +214,17 @@ docker-compose up -d
 
 This will pull the latest image and restart the container with the updated version.
 
+## Issues
+
+Submit issues through GitHub issues. Try to include relevant logging, or at minimum error Tracebacks where possible.
+
 ## Contributing
 
 Please contribute through either Issues or by submitting code.
 
 ## License
 
-cli_debrid will always be free for anyone to use.
+cli_debrid will always be free for anyone to use. 
 
 ## Acknowledgements
 
@@ -231,10 +237,3 @@ Thanks to:
 ## Caveat
 
 I'll include a caveat that this project was built almost entirely using AI (though I have a bit of experience working with code in the past). I would say I learned a fair bit through the process and overall enjoyed getting to this point. That said, I'll do what I can to fix things, but cli_debrid is built almost entirely on spaghetti and probably has lots of brow-raising content. Apologies in advance real devs who decide to look under the hood.
-
-## To Do
-
-- Allow settings to be edited through the webUI
-- Allow program control through the webUI
-- Review for async program options (currently only running scraping itself as async, RD operations could likely run async as well)
-- More...?
