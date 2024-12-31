@@ -63,6 +63,11 @@ class AddingQueue:
         self.debrid_provider = get_debrid_provider()
         self.content_processor = ContentProcessor(self.debrid_provider)
 
+    def reinitialize_provider(self):
+        """Reinitialize the debrid provider and content processor"""
+        self.debrid_provider = get_debrid_provider()
+        self.content_processor = ContentProcessor(self.debrid_provider)
+
     def update(self):
         """Update the queue with current items in 'Adding' state"""
         self.items = [dict(row) for row in get_all_media_items(state="Adding")]
@@ -74,6 +79,10 @@ class AddingQueue:
     def add_item(self, item: Dict[str, Any]):
         """Add an item to the queue"""
         self.items.append(item)
+
+    def remove_item(self, item: Dict[str, Any]):
+        """Remove an item from the queue"""
+        self.items = [i for i in self.items if i['id'] != item['id']]
 
     def _match_file_to_episode(self, file_path: str, item: Dict[str, Any]) -> bool:
         """Check if a file matches an episode's season/episode numbers and version"""
@@ -226,7 +235,7 @@ class AddingQueue:
                                 file_name = os.path.basename(file_path)
                                 
                                 # Update media item with file info and state
-                                update_media_item_state(item['id'], 'Checking', filled_by_file=file_name)
+                                queue_manager.move_to_checking(item, "Adding", result.get('title'), result['magnet'], file_name, add_result.get('torrent_id'))
                                 logging.info(f"Updated current item with filled_by_file: {file_name}")
                                 
                                 # Mark the successful magnet/URL as not wanted to prevent reuse
@@ -271,14 +280,17 @@ class AddingQueue:
                                                     file_name = os.path.basename(matched_file)
                                                     
                                                     # Update the item state
-                                                    update_media_item_state(scraping_item['id'], 'Checking',
-                                                                         filled_by_file=file_name)
-                                                    logging.info(f"Updated '{series_title}' S{scraping_item.get('season')}E{scraping_item.get('episode')} with file: {file_name}")
+                                                    queue_manager.move_to_checking(scraping_item, "Adding", result.get('title'), result['magnet'], file_name, cache_info.get('torrent_id'))
+                                                    logging.info(f"Updated matching item with filled_by_file: {file_name}")
                                 else:
                                     logging.debug("Not a TV show, skipping multi-pack check")
+
+                                # Stop processing more results since we found a valid cached one
+                                self.item_remove(item)
+                                return True
                             else:
                                 logging.warning("No suitable file found for media item")
-                                continue
+                            continue
                     else:
                         logging.info("Result is not cached, checking next result")
                         # Add to not wanted list to prevent reuse
@@ -324,8 +336,7 @@ class AddingQueue:
                                 file_name = os.path.basename(file_info['path'])
                                 logging.debug(f"Selected file for current item: {file_name}")
                                 
-                                update_media_item_state(item['id'], 'Checking', 
-                                                      filled_by_file=file_name)
+                                queue_manager.move_to_checking(item, "Adding", result.get('title'), result['magnet'], file_name, cache_info.get('torrent_id'))
                                 logging.info(f"Updated current item with filled_by_file: {file_name}")
                                 
                                 # Mark the successful magnet/URL as not wanted to prevent reuse
@@ -369,11 +380,16 @@ class AddingQueue:
                                                     file_name = os.path.basename(matched_file)
                                                     
                                                     # Update the item state
-                                                    update_media_item_state(scraping_item['id'], 'Checking',
-                                                                         filled_by_file=file_name)
-                                                    logging.info(f"Updated '{series_title}' S{scraping_item.get('season')}E{scraping_item.get('episode')} with file: {file_name}")
+                                                    queue_manager.move_to_checking(scraping_item, "Adding", result.get('title'), result['magnet'], file_name, cache_info.get('torrent_id'))
+                                                    logging.info(f"Updated matching item with filled_by_file: {file_name}")
+
                                 else:
                                     logging.debug("Not a TV show, skipping multi-pack check")
+
+                                # Stop processing more results since we found a valid cached one
+                                self.remove_item(item)
+                                return True
+
                             else:
                                 logging.warning("No suitable file found for current item")
                                 # Remove the torrent if it exists
@@ -396,7 +412,7 @@ class AddingQueue:
                                 except Exception as e:
                                     logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
                             continue
-                        self.items.pop(0)
+                        self.item_remove(item)
                         return
                     else:
                         logging.info("Result is not cached, checking next result")
@@ -556,4 +572,22 @@ class AddingQueue:
             logging.warning(f"No release date for item, sleeping: {item.get('title')}")
             update_media_item_state(item['id'], 'Sleeping')
             
-        self.items.pop(0)
+        self.item_remove(item)
+
+    def get_new_item_values(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        # Fetch the updated item from the database
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            # Extract the new values that need to be updated
+            new_values = {
+                'filled_by_title': updated_item.get('filled_by_title'),
+                'filled_by_magnet': updated_item.get('filled_by_magnet'),
+                'filled_by_file': updated_item.get('filled_by_file'),
+                'filled_by_torrent_id': updated_item.get('filled_by_torrent_id'),
+                'version': updated_item.get('version'),
+                # Include any other fields that were updated
+            }
+            return new_values
+        else:
+            logging.warning(f"Could not retrieve updated item for ID {item['id']}")
+            return {}

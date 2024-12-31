@@ -38,6 +38,10 @@ class QueueManager:
         }
         self.paused = False
 
+    def reinitialize_queues(self):
+        """Force reinitialization of all queues to pick up new settings"""
+        self.initialize()
+
     def update_all_queues(self):
         for queue_name, queue in self.queues.items():
             before_count = len(queue.get_contents())
