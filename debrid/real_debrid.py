@@ -105,19 +105,22 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
         'Authorization': f'Bearer {get_api_key()}'
     }
     
-    # Step 1: Add magnet
-    add_data = {'magnet': magnet_link}
-    if temp_file_path:
-        with open(temp_file_path, 'rb') as f:
-            add_data = {'files[]': f}
-            
+    # Step 1: Add magnet/torrent
     max_retries = 3
     retry_count = 0
     while True:
         try:
-            add_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", data=add_data, headers=headers, timeout=60)
-            if add_response.status_code != 201:
-                logging.error(f"Failed to add magnet. Status code: {add_response.status_code}")
+            if temp_file_path:
+                # For torrent files, use the /torrents/addTorrent endpoint
+                with open(temp_file_path, 'rb') as torrent_file:
+                    torrent_response = requests.put(f"{API_BASE_URL}/torrents/addTorrent", headers=headers, data=torrent_file, timeout=60)
+            else:
+                # For magnet links, use the /torrents/addMagnet endpoint
+                add_data = {'magnet': magnet_link}
+                torrent_response = requests.post(f"{API_BASE_URL}/torrents/addMagnet", data=add_data, headers=headers, timeout=60)
+                
+            if torrent_response.status_code not in [200, 201]:
+                logging.error(f"Failed to add torrent/magnet. Status code: {torrent_response.status_code}, Response: {torrent_response.text}")
                 return None
             break
         except Exception as e:
@@ -126,7 +129,7 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
                 raise
             time.sleep(5 * retry_count)
     
-    torrent_id = add_response.json().get('id')
+    torrent_id = torrent_response.json().get('id')
     if not torrent_id:
         logging.error("No torrent ID in response")
         return None
@@ -149,33 +152,39 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
     torrent_info = info_response.json()
 
     # Add debug logging for all files in the torrent
-    logging.debug(f"All files in torrent: {[f['path'] for f in torrent_info['files']]}")
+    if 'files' in torrent_info:
+        logging.debug(f"Files in torrent: {torrent_info['files']}")
+    else:
+        logging.warning("No files found in torrent info")
 
-    # Step 3: Select files based on video extensions and exclude samples
-    files_to_select = [
-        str(f['id']) for f in torrent_info['files']
-        if is_video_file(f['path']) and not is_unwanted_file(f['path'])
-    ]
-
-    # Add debug logging for selected files
-    logging.debug(f"Files selected as video files: {files_to_select}")
-    video_files = [f for f in torrent_info['files'] if str(f['id']) in files_to_select]
-    logging.debug(f"Video files paths: {[f['path'] for f in video_files]}")
-
-    if not files_to_select:
-        logging.warning("No suitable video files found in the torrent.")
-        delete_response = requests.delete(f"{API_BASE_URL}/torrents/delete/{torrent_id}",headers=headers, timeout=60)
-        if delete_response.status_code == 204:
-            logging.debug(f"Removed torrent: {torrent_id}")
+    # Step 3: Select files
+    if 'files' not in torrent_info or not torrent_info['files']:
+        logging.error("No files available in torrent")
         return None
 
-    select_data = {'files': ','.join(files_to_select)}
+    # Get list of video files
+    video_files = []
+    for file_info in torrent_info['files']:
+        if is_video_file(file_info['path']) and not is_unwanted_file(file_info['path']):
+            video_files.append(file_info)
+
+    if not video_files:
+        logging.error("No valid video files found in torrent")
+        return None
+
+    # Select all video files
+    file_ids = [str(f['id']) for f in video_files]
+    select_data = {'files': ','.join(file_ids)}
     
-    # Step 4: Select files
     retry_count = 0
     while True:
         try:
-            select_response = requests.post(f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}", data=select_data, headers=headers, timeout=60)
+            select_response = requests.post(
+                f"{API_BASE_URL}/torrents/selectFiles/{torrent_id}",
+                data=select_data,
+                headers=headers,
+                timeout=60
+            )
             if select_response.status_code != 204:
                 logging.error(f"Failed to select files. Status code: {select_response.status_code}")
                 return None
@@ -185,21 +194,11 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
             if retry_count >= max_retries:
                 raise
             time.sleep(5 * retry_count)
-            
-    # Transform files to match expected format
-    transformed_files = []
-    for file in video_files:
-        transformed_files.append({
-            'path': file['path'],
-            'bytes': file.get('bytes', 0),  # Real-Debrid may not provide size
-            'name': os.path.basename(file['path'])
-        })
-    
+
+    # Return torrent info with ID
     return {
-        'id': torrent_id,
-        'files': transformed_files,
-        'hash': torrent_info.get('hash', ''),
-        'status': torrent_info.get('status', '')
+        'torrent_id': torrent_id,
+        'files': video_files
     }
 
 @lru_cache(maxsize=1000)
@@ -718,8 +717,8 @@ class RealDebridProvider(DebridProvider):
             self._make_request('delete', f'torrents/delete/{torrent_id}')
             return True
         except Exception as e:
-            logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
-            raise ProviderUnavailableError(f"Error removing torrent {torrent_id}: {str(e)}") from e
+            logging.error(f"Error removing torrent {torrent_id}: {e}")
+            raise ProviderUnavailableError(f"Error removing torrent {torrent_id}: {e}") from e
 
     def download_and_extract_hash(self, url: str) -> Tuple[Optional[str], Optional[str]]:
         try:

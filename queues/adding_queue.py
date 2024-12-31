@@ -10,6 +10,7 @@ import os
 from typing import Dict, Any, List, Optional, Tuple
 from database import get_all_media_items, get_media_item_by_id, update_media_item_state, update_media_item
 from debrid import get_debrid_provider
+from debrid.real_debrid import RealDebridProvider
 from debrid.status import TorrentStatus
 from .media_matcher import MediaMatcher
 from settings import get_setting
@@ -130,8 +131,18 @@ class AddingQueue:
         if not self.items:
             return
 
+        mode = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
+
         item = self.items[0]
         process_uncached = item.get('process_uncached', False)
+
+        # Handle full mode separately for RealDebrid provider only
+        if mode == "full" and isinstance(self.debrid_provider, RealDebridProvider):
+            from .adding_queue_full import FullModeProcessor
+            full_processor = FullModeProcessor(self.content_processor)
+            full_processor.process_full_mode(item, queue_manager)
+            self.remove_item(item)
+            return
 
         # Get and validate scrape results
         scrape_results = self._get_scrape_results(item)
@@ -286,24 +297,13 @@ class AddingQueue:
                                     logging.debug("Not a TV show, skipping multi-pack check")
 
                                 # Stop processing more results since we found a valid cached one
-                                self.item_remove(item)
+                                self.remove_item(item)
                                 return True
                             else:
                                 logging.warning("No suitable file found for media item")
                             continue
                     else:
                         logging.info("Result is not cached, checking next result")
-                        # Add to not wanted list to prevent reuse
-                        if 'magnet' in result:
-                            from not_wanted_magnets import add_to_not_wanted
-                            if hash_value:
-                                add_to_not_wanted(hash_value, str(item.get('id')), item)
-                                logging.info(f"Added uncached magnet hash {hash_value} to not wanted list")
-                        elif 'url' in result:
-                            from not_wanted_magnets import add_to_not_wanted_urls
-                            url = result['url']
-                            add_to_not_wanted_urls(url, str(item.get('id')), item)
-                            logging.info(f"Added uncached URL {url} to not wanted list")
                         continue
                 else:
                     # For providers like RealDebrid that need to add torrent to check cache
@@ -412,21 +412,10 @@ class AddingQueue:
                                 except Exception as e:
                                     logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
                             continue
-                        self.item_remove(item)
+                        self.remove_item(item)
                         return
                     else:
                         logging.info("Result is not cached, checking next result")
-                        # Add to not wanted list to prevent reuse
-                        if 'magnet' in result:
-                            from not_wanted_magnets import add_to_not_wanted
-                            if hash_value:
-                                add_to_not_wanted(hash_value, str(item.get('id')), item)
-                                logging.info(f"Added uncached magnet hash {hash_value} to not wanted list")
-                        elif 'url' in result:
-                            from not_wanted_magnets import add_to_not_wanted_urls
-                            url = result['url']
-                            add_to_not_wanted_urls(url, str(item.get('id')), item)
-                            logging.info(f"Added uncached URL {url} to not wanted list")
                         # Remove the uncached torrent from Real-Debrid
                         torrent_id = cache_info.get('torrent_id')
                         if torrent_id:
@@ -494,30 +483,53 @@ class AddingQueue:
                         if response.status_code != 200:
                             logging.error(f"Failed to download torrent file: {response.status_code}")
                             return None, None
-                        tmp_file.write(response.content)
-                        tmp_file.flush()
+                            
+                        # Check content type and headers
+                        logging.debug(f"Response headers: {dict(response.headers)}")
+                        content_type = response.headers.get('content-type', '')
+                        logging.debug(f"Content type: {content_type}")
                         
-                        # Parse the torrent file and calculate info hash
+                        # Get content and validate
+                        content = response.content
+                        logging.debug(f"Content first 100 bytes: {content[:100]}")
+                        
+                        if not content:
+                            logging.error("Empty torrent file content")
+                            return None, None
+                            
+                        # Try to decode as bencode to validate
                         try:
-                            with open(tmp_file.name, 'rb') as f:
-                                torrent_data = bencodepy.decode(f.read())
-                                info = torrent_data.get(b'info', {})
-                                if info:
-                                    # Calculate info hash
-                                    info_encoded = bencodepy.encode(info)
-                                    return hashlib.sha1(info_encoded).hexdigest().lower(), tmp_file.name
+                            torrent_data = bencodepy.decode(content)
+                            logging.debug(f"Decoded torrent data keys: {[k.decode() if isinstance(k, bytes) else k for k in torrent_data.keys()]}")
+                            
+                            if not isinstance(torrent_data, dict) or b'info' not in torrent_data:
+                                logging.error("Invalid torrent file structure")
+                                return None, None
+
+                            # Extract hash from info dictionary
+                            info = torrent_data[b'info']
+                            info_hash = hashlib.sha1(bencodepy.encode(info)).hexdigest()
+                            logging.debug(f"Extracted info hash: {info_hash}")
+
+                            # Write validated content to temp file
+                            tmp_file.write(content)
+                            tmp_file.flush()
+                            return info_hash.lower(), tmp_file.name
+
                         except Exception as e:
-                            logging.error(f"Error parsing torrent file: {e}")
-                            try:
-                                os.unlink(tmp_file.name)
-                            except Exception as e:
-                                logging.warning(f"Error deleting temporary file: {e}")
+                            logging.error(f"Failed to decode torrent data: {str(e)}")
+                            return None, None
+
                 except requests.exceptions.RequestException as e:
-                    logging.error(f"Error downloading torrent file: {e}")
-            
-            logging.warning(f"Could not extract hash from: {magnet}")
+                    logging.error(f"Error downloading torrent file: {str(e)}")
+                    return None, None
+                except Exception as e:
+                    logging.error(f"Unexpected error handling torrent file: {str(e)}")
+                    return None, None
+
+            logging.warning(f"Unrecognized magnet/URL format: {magnet}")
             return None, None
-            
+
         except Exception as e:
             logging.error(f"Error extracting hash: {str(e)}")
             return None, None
@@ -572,7 +584,7 @@ class AddingQueue:
             logging.warning(f"No release date for item, sleeping: {item.get('title')}")
             update_media_item_state(item['id'], 'Sleeping')
             
-        self.item_remove(item)
+        self.remove_item(item)
 
     def get_new_item_values(self, item: Dict[str, Any]) -> Dict[str, Any]:
         # Fetch the updated item from the database
