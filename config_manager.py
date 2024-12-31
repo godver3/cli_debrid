@@ -89,9 +89,6 @@ def save_config(config):
     try:
         config = clean_notifications(config)
         
-        #logging.debug(f"[{process_id}] Saving config")
-        #log_config_state(f"[{process_id}] Config before saving", config)
-        
         # Ensure only valid top-level keys are present
         valid_keys = set(SETTINGS_SCHEMA.keys())
         cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
@@ -111,12 +108,11 @@ def save_config(config):
         temp_file = CONFIG_FILE + '.tmp'
         with open(temp_file, 'w') as config_file:
             json.dump(cleaned_config, config_file, indent=2)
-        
+            
         # If the write was successful, rename the temp file to the actual config file
         os.replace(temp_file, CONFIG_FILE)
         
         logging.info(f"[{process_id}] Config saved successfully")
-        #logging.debug(f"[{process_id}] Saved config: {json.dumps(cleaned_config, indent=2)}")
         
         # Verify that the changes were saved
         with open(CONFIG_FILE, 'r') as verify_file:
@@ -126,11 +122,13 @@ def save_config(config):
         # Double-check if the verified config matches the cleaned config
         if verified_config != cleaned_config:
             logging.error(f"[{process_id}] Verified config does not match cleaned config")
-            #logging.debug(f"[{process_id}] Cleaned config: {json.dumps(cleaned_config, indent=2)}")
-            #logging.debug(f"[{process_id}] Verified config: {json.dumps(verified_config, indent=2)}")
         else:
-            # Reset the debrid provider to pick up new settings
+            # Reset the debrid provider and reinitialize queues to pick up new settings
+            logging.debug("Resetting debrid provider and queues to pick up new settings")
             reset_provider()
+            from queue_manager import QueueManager
+            QueueManager().reinitialize_queues()
+            
     except Exception as e:
         logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
         if os.path.exists(temp_file):

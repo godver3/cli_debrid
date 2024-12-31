@@ -380,6 +380,7 @@ input:checked + .toggle-slider:before {
 
     .recently-added {
         flex-direction: column;
+        width: 100%;
     }
 
     .stats-container {
@@ -391,16 +392,19 @@ input:checked + .toggle-slider:before {
         display: flex !important;
         flex-direction: column !important;
         gap: 0 !important;
+        width: 100% !important;
     }
 
     .card {
         flex-direction: row !important;
-        justify-content: space-between !important;
-        align-items: center !important;
+        justify-content: flex-start !important;
+        align-items: flex-start !important;
         width: 100% !important;
         padding: 8px 15px !important;
         margin: 0 !important;
         border-bottom: 1px solid #3a3a3a !important;
+        min-height: 50px !important;
+        overflow: visible !important;
     }
 
     .poster-container {
@@ -412,12 +416,14 @@ input:checked + .toggle-slider:before {
         flex-direction: column !important;
         width: 100% !important;
         padding-right: 10px !important;
+        overflow: visible !important;
     }
 
     .file-details .title {
         font-size: 1em !important;
         margin-bottom: 4px !important;
         word-break: break-word !important;
+        display: block !important;
     }
 
     .file-details .metadata,
@@ -425,6 +431,7 @@ input:checked + .toggle-slider:before {
         font-size: 0.85em !important;
         word-break: break-word !important;
         display: block !important;
+        margin-bottom: 2px !important;
     }
 
     .toggle-container {
