@@ -187,6 +187,15 @@ cli_debrid will automatically search for and apply upgrades to newly added conte
 5. Access the web interface:
    Open a web browser and navigate to `http://your-server-ip:5000`
 
+### Other Notes
+
+cli_debrid is built for both AMD64 and ARM64 using tags:
+
+godver3/dev-arm64:latest (arm64)
+godver3/dev:latest (amd64)
+
+Alternatively cli_debrid is built for Windows.
+
 ### Post-Setup
 
 - Monitor the logs at `${HOME}/cli_debrid/user/logs`
