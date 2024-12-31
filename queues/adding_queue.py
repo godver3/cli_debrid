@@ -291,7 +291,7 @@ class AddingQueue:
                                                     file_name = os.path.basename(matched_file)
                                                     
                                                     # Update the item state
-                                                    queue_manager.move_to_checking(scraping_item, "Adding", result.get('title'), result['magnet'], file_name, cache_info.get('torrent_id'))
+                                                    queue_manager.move_to_checking(scraping_item, "Adding", result.get('title'), result['magnet'], file_name, add_result.get('torrent_id'))
                                                     logging.info(f"Updated matching item with filled_by_file: {file_name}")
                                 else:
                                     logging.debug("Not a TV show, skipping multi-pack check")
@@ -404,7 +404,7 @@ class AddingQueue:
                         else:
                             logging.warning("No files found in cache response")
                             # Remove the torrent if it exists
-                            torrent_id = cache_info.get('torrent_id')
+                            torrent_id = add_result.get('data', {}).get('torrent_id')
                             if torrent_id:
                                 try:
                                     self.debrid_provider.remove_torrent(torrent_id)
