@@ -23,7 +23,7 @@ import pickle
 from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
 import ntplib
 from content_checkers.trakt import check_trakt_early_releases
-from debrid.real_debrid import RealDebridTooManyDownloadsError
+from debrid.base import TooManyDownloadsError
 import tempfile
 
 queue_logger = logging.getLogger('queue_logger')
@@ -313,7 +313,7 @@ class ProgramRunner:
             
             try:
                 result = process_method()
-            except RealDebridTooManyDownloadsError:
+            except TooManyDownloadsError:
                 logging.warning("Pausing queue due to too many active downloads on Real-Debrid")
                 self.queue_manager.pause_queue()
                 return None

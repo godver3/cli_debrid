@@ -269,11 +269,7 @@ class TraktMetadata:
             return None
 
     def get_movie_metadata(self, imdb_id, max_retries=3, retry_delay=5):
-        url = f"{self.base_url}/movies/{imdb_id}?extended=full"
-        response = self._make_request(url)
-        if response and response.status_code == 200:
-            return response.json()
-        return None
+        return self._get_movie_data(imdb_id)
 
     def get_poster(self, imdb_id: str) -> str:
         return "Posters not available through Trakt API"

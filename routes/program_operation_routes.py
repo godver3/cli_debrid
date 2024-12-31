@@ -45,11 +45,11 @@ def start_server():
 def check_service_connectivity():
     plex_url = get_setting('Plex', 'url')
     plex_token = get_setting('Plex', 'token')
-    rd_api_key = get_setting('RealDebrid', 'api_key')
     metadata_battery_url = get_setting('Metadata Battery', 'url')
     
-    # Update this line in your settings to use:
-    # metadata_battery_url = "http://cli_battery_app:5001"
+    # Get debrid provider settings
+    debrid_provider = get_setting('Debrid Provider', 'provider')
+    debrid_api_key = get_setting('Debrid Provider', 'api_key')
 
     services_reachable = True
 
@@ -61,12 +61,23 @@ def check_service_connectivity():
         logging.error(f"Failed to connect to Plex server: {str(e)}")
         services_reachable = False
 
-    # Check Real Debrid connectivity
-    try:
-        response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {rd_api_key}"}, timeout=5)
-        response.raise_for_status()
-    except RequestException as e:
-        logging.error(f"Failed to connect to Real Debrid API: {str(e)}")
+    # Check Debrid Provider connectivity
+    if debrid_provider.lower() == 'realdebrid':
+        try:
+            response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {debrid_api_key}"}, timeout=5)
+            response.raise_for_status()
+        except RequestException as e:
+            logging.error(f"Failed to connect to Real-Debrid API: {str(e)}")
+            services_reachable = False
+    elif debrid_provider.lower() == 'torbox':
+        try:
+            response = api.get("https://torbox.app/api/v1/user", headers={"Authorization": f"Bearer {debrid_api_key}"}, timeout=5)
+            response.raise_for_status()
+        except RequestException as e:
+            logging.error(f"Failed to connect to Torbox API: {str(e)}")
+            services_reachable = False
+    else:
+        logging.error(f"Unknown debrid provider: {debrid_provider}")
         services_reachable = False
 
     # Check Metadata Battery connectivity and Trakt authorization
@@ -103,7 +114,7 @@ def start_program():
 
         # Check service connectivity before starting the program
         if not check_service_connectivity():
-            return jsonify({"status": "error", "message": "Failed to connect to Plex, Real Debrid, or Metadata Battery. Check logs for details."})
+            return jsonify({"status": "error", "message": "Failed to connect to Plex, Debrid Provider, or Metadata Battery. Check logs for details."})
 
         program_runner = ProgramRunner()
         # Start the program runner in a separate thread to avoid blocking the Flask server
@@ -163,7 +174,8 @@ def check_program_conditions():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('RealDebrid', 'api_key'),
+        ('Debrid Provider', 'provider'),
+        ('Debrid Provider', 'api_key'),
         ('Metadata Battery', 'url')
     ]
     

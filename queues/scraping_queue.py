@@ -154,9 +154,9 @@ class ScrapingQueue:
         # Return True if there are more items to process or if we processed something
         return len(self.items) > 0 or processed_count > 0
 
-    def scrape_with_fallback(self, item, is_multi_pack, queue_manager):
+    def scrape_with_fallback(self, item, is_multi_pack, queue_manager, skip_filter=False):
         item_identifier = queue_manager.generate_identifier(item)
-        logging.debug(f"Scraping for {item_identifier} with is_multi_pack={is_multi_pack}")
+        logging.debug(f"Scraping for {item_identifier} with is_multi_pack={is_multi_pack}, skip_filter={skip_filter}")
 
         results, filtered_out = scrape(
             item['imdb_id'],
@@ -179,12 +179,28 @@ class ScrapingQueue:
         for result in results:
             logging.debug(f"Scrape result: {result}")
 
-        # Filter out unwanted magnets and URLs
-        filtered_results = [r for r in results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
-        logging.info(f"After filtering unwanted magnets/URLs: {len(filtered_results)} results remain for {item_identifier}")
+        if not skip_filter:
+            # Filter out unwanted magnets and URLs
+            filtered_results = [r for r in results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
+            if len(filtered_results) < len(results):
+                logging.info(f"Filtered out {len(results) - len(filtered_results)} results due to not wanted magnets/URLs")
+            results = filtered_results
 
-        if filtered_results or item['type'] != 'episode':
-            return filtered_results, filtered_out
+        # For episodes, filter by exact season/episode match
+        if item['type'] == 'episode' and not is_multi_pack:
+            season = item.get('season_number')
+            episode = item.get('episode_number')
+            filtered_results = [
+                r for r in results 
+                if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
+                and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
+            ]
+            if len(filtered_results) < len(results):
+                logging.info(f"Filtered out {len(results) - len(filtered_results)} results due to season/episode mismatch")
+            results = filtered_results
+
+        if results or item['type'] != 'episode':
+            return results, filtered_out
 
         logging.info(f"No results for multi-pack {item_identifier}. Falling back to individual episode scraping.")
 
@@ -206,7 +222,20 @@ class ScrapingQueue:
         individual_filtered_out = individual_filtered_out if individual_filtered_out is not None else []
 
         # Filter out unwanted magnets and URLs for individual results
-        individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
+        if not skip_filter:
+            individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
+
+        # For episodes, ensure we have the correct season and episode
+        if item['type'] == 'episode':
+            season = item.get('season_number')
+            episode = item.get('episode_number')
+            if season is not None and episode is not None:
+                individual_results = [
+                    r for r in individual_results 
+                    if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
+                    and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
+                ]
+                logging.info(f"After filtering individual results for specific episode S{season}E{episode}: {len(individual_results)} results remain for {item_identifier}")
 
         if individual_results:
             logging.info(f"Found results for individual episode scraping of {item_identifier}.")

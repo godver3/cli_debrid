@@ -11,11 +11,12 @@ from .models import user_required, onboarding_required
 from extensions import app_start_time
 import time 
 from database import get_recently_added_items, get_poster_url, get_collected_counts, get_recently_upgraded_items
-from debrid.real_debrid import get_active_downloads, check_daily_usage
+from debrid import get_active_downloads, check_daily_usage
 import logging
 from metadata.metadata import get_show_airtime_by_imdb_id
 
 statistics_bp = Blueprint('statistics', __name__)
+root_bp = Blueprint('root', __name__)
 
 def get_airing_soon():
     conn = get_db_connection()
@@ -200,7 +201,7 @@ def get_recently_aired_and_airing_soon():
     
     return recently_aired, airing_soon
 
-@statistics_bp.route('/set_compact_preference', methods=['POST'])
+@root_bp.route('/set_compact_preference', methods=['POST'])
 def set_compact_preference():
     data = request.json
     compact_view = data.get('compactView', False)
@@ -220,11 +221,10 @@ def set_compact_preference():
     
     return response
 
-@statistics_bp.route('/')
-@statistics_bp.route('/statistics')
+@root_bp.route('/')
 @user_required
 @onboarding_required
-def index():
+def root():
     # Initialize session if not already set
     if 'use_24hour_format' not in session:
         session['use_24hour_format'] = True  # Default to 24-hour format
@@ -235,15 +235,23 @@ def index():
     use_24hour_format = session.get('use_24hour_format', True)
     compact_view = session.get('compact_view', False)
     
-    # Handle compact toggle
-    toggle_compact = request.args.get('toggle_compact')
-    if toggle_compact is not None:
-        # Convert string value to boolean
-        new_compact_view = toggle_compact.lower() == 'true'
-        session['compact_view'] = new_compact_view
-        compact_view = new_compact_view
-        if request.headers.get('Accept') == 'application/json':
-            return jsonify({'success': True, 'compact_view': compact_view})
+    # Check if user is on mobile using User-Agent
+    user_agent = request.headers.get('User-Agent', '').lower()
+    is_mobile = any(device in user_agent for device in ['mobile', 'android', 'iphone', 'ipad', 'ipod'])
+    
+    # Force compact view on mobile devices
+    if is_mobile:
+        compact_view = True
+    else:
+        # Handle compact toggle only for desktop
+        toggle_compact = request.args.get('toggle_compact')
+        if toggle_compact is not None:
+            # Convert string value to boolean
+            new_compact_view = toggle_compact.lower() == 'true'
+            session['compact_view'] = new_compact_view
+            compact_view = new_compact_view
+            if request.headers.get('Accept') == 'application/json':
+                return jsonify({'success': True, 'compact_view': compact_view})
     
     # Get all statistics data
     stats = {}
@@ -257,8 +265,8 @@ def index():
     stats['total_episodes'] = counts['total_episodes']
     
     # Get active downloads
-    active_downloads = get_active_downloads()
-    stats['active_downloads'] = len(active_downloads) if active_downloads else 0
+    active_downloads, _ = get_active_downloads()
+    stats['active_downloads'] = active_downloads
     
     # Get recently aired and upcoming shows
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
@@ -338,7 +346,7 @@ def index():
                          use_24hour_format=use_24hour_format,
                          compact_view=compact_view)
 
-@statistics_bp.route('/set_time_preference', methods=['POST'])
+@root_bp.route('/set_time_preference', methods=['POST'])
 @user_required
 @onboarding_required
 def set_time_preference():
@@ -374,16 +382,15 @@ def set_time_preference():
     if upgrade_enabled_set:
         upgrading_enabled = True
         recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
-        for item in recently_upgraded['upgraded']:
+        for item in recently_upgraded:
             if 'collected_at' in item and item['collected_at'] is not None:
                 collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
                 item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
             else:
                 item['formatted_collected_at'] = 'Unknown'
-        recently_upgraded = recently_upgraded['upgraded']        
     else:
         upgrading_enabled = False
-        recently_upgraded=''
+        recently_upgraded = []
         
     response = make_response(jsonify({
         'status': 'OK', 

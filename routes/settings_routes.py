@@ -203,6 +203,13 @@ def add_notification():
             config['Notifications'][notification_id].update({
                 'webhook_url': ''
             })
+        elif notification_type == 'NTFY':
+            config['Notifications'][notification_id].update({
+                'host': '',
+                'topic': '',
+                'api_key': '',
+                'priority': ''
+            })
         elif notification_type == 'Email':
             config['Notifications'][notification_id].update({
                 'smtp_server': '',
@@ -314,6 +321,7 @@ def index():
             config['Notifications'] = {
                 'Telegram': {'enabled': False, 'bot_token': '', 'chat_id': ''},
                 'Discord': {'enabled': False, 'webhook_url': ''},
+                'NTFY': {'enabled': False, 'host': '', 'topic': '', 'api_key': '', 'priority': ''},
                 'Email': {
                     'enabled': False,
                     'smtp_server': '',
@@ -355,8 +363,9 @@ def api_program_settings():
             'Metadata Battery': {
                 'url': config.get('Metadata Battery', {}).get('url', '')
             },
-            'RealDebrid': {
-                'api_key': config.get('RealDebrid', {}).get('api_key', '')
+            'Debrid Provider': {
+                'provider': config.get('Debrid Provider', {}).get('provider', ''),
+                'api_key': config.get('Debrid Provider', {}).get('api_key', '')
             }
         }
         return jsonify(program_settings)
@@ -382,8 +391,6 @@ def update_settings():
                         current[key] = {}
                     update_nested_dict(current[key], value)
                 else:
-                    if key.lower().endswith('url'):
-                        value = validate_url(value)
                     current[key] = value
 
         update_nested_dict(config, new_settings)
@@ -677,6 +684,14 @@ def get_enabled_notifications():
                     if all([
                         notification_config.get('bot_token'),
                         notification_config.get('chat_id')
+                    ]):
+                        enabled_notifications[notification_id] = notification_config
+                elif notification_config['type'] == 'NTFY':
+                    if all([
+                        notification_config.get('host'),
+                        notification_config.get('topic'),
+                        notification_config.get('api_key'),
+                        notification_config.get('priority')
                     ]):
                         enabled_notifications[notification_id] = notification_config
         

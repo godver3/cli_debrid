@@ -1,6 +1,6 @@
 from flask import jsonify, request, render_template, session, Blueprint
 import logging
-from debrid.real_debrid import add_to_real_debrid
+from debrid import add_to_real_debrid
 from .models import user_required, onboarding_required, admin_required
 from settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts
@@ -12,6 +12,13 @@ from web_scraper import search_trakt
 from database.database_reading import get_all_season_episode_counts
 from metadata.metadata import get_imdb_id_if_missing
 import re
+from queues.media_matcher import MediaMatcher
+from guessit import guessit
+from typing import Dict, Any, Tuple
+import requests
+import tempfile
+import os
+import bencodepy
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -33,42 +40,142 @@ def obfuscate_magnet_link(magnet_link: str) -> str:
         magnet_link = re.sub(r'jackett_apikey=[^&]+', 'jackett_apikey=***', magnet_link)
     return magnet_link
 
+class ContentProcessor:
+    """Handles the processing of media content after it's been added to the debrid service"""
+    
+    def __init__(self):
+        self.media_matcher = MediaMatcher()
+
+    def process_content(self, torrent_info: Dict[str, Any], item: Dict[str, Any] = None) -> Tuple[bool, str]:
+        """
+        Process content after it's been added to the debrid service
+        
+        Args:
+            torrent_info: Information about the added torrent
+            item: Optional media item to match against
+            
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            files = torrent_info.get('files', [])
+            if not files:
+                return False, "No files found in torrent"
+
+            # If we have a specific item to match against
+            if item:
+                matches = self.media_matcher.match_content(files, item)
+                if not matches:
+                    return False, "No matching files found"
+                if len(matches) > 1 and item.get('type') == 'movie':
+                    return False, "Multiple matches found for movie"
+            # Otherwise just check for any valid video files
+            else:
+                video_files = [f for f in files if self._is_video_file(f.get('path', ''))]
+                if not video_files:
+                    return False, "No suitable video files found"
+
+            return True, "Content processed successfully"
+            
+        except Exception as e:
+            logging.error(f"Error processing content: {str(e)}")
+            return False, f"Error processing content: {str(e)}"
+
+    def _is_video_file(self, file_path: str) -> bool:
+        """Check if a file is a video file based on extension"""
+        video_extensions = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv'}
+        return any(file_path.lower().endswith(ext) for ext in video_extensions)
+
+def _download_and_get_hash(url: str) -> str:
+    """
+    Download a torrent file from URL and extract its hash
+    
+    Args:
+        url: URL to download torrent from
+        
+    Returns:
+        Torrent hash string
+    
+    Raises:
+        Exception if download fails or hash cannot be extracted
+    """
+    try:
+        # Download the file
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        
+        try:
+            # Parse the torrent data directly from response content
+            torrent = bencodepy.decode(response.content)
+            info = torrent[b'info']
+            encoded_info = bencodepy.encode(info)
+            import hashlib
+            torrent_hash = hashlib.sha1(encoded_info).hexdigest()
+            return torrent_hash
+            
+        except Exception as e:
+            raise Exception(f"Failed to decode torrent data: {str(e)}")
+                
+    except Exception as e:
+        raise Exception(f"Failed to process torrent URL: {str(e)}")
+
 @scraper_bp.route('/add_to_real_debrid', methods=['POST'])
 def add_torrent_to_real_debrid():
     try:
         magnet_link = request.form.get('magnet_link')
         if not magnet_link:
-            return jsonify({'error': 'No magnet link provided'}), 400
+            return jsonify({'error': 'No magnet link or URL provided'}), 400
 
-        # Obfuscate the magnet link for logging
-        obfuscated_magnet_link = obfuscate_magnet_link(magnet_link)
-        logging.info(f"Magnet link: {obfuscated_magnet_link}")
+        # Obfuscate the link for logging
+        obfuscated_link = obfuscate_magnet_link(magnet_link)
+        logging.info(f"Link: {obfuscated_link}")
 
+        # If it's a URL rather than a magnet link, download and get hash
+        if magnet_link.startswith('http'):
+            try:
+                torrent_hash = _download_and_get_hash(magnet_link)
+                magnet_link = f"magnet:?xt=urn:btih:{torrent_hash}"
+                logging.info("Converted URL to magnet link")
+                logging.info(f"Generated magnet link: {magnet_link}")
+            except Exception as e:
+                error_message = str(e)
+                logging.error(f"Failed to process torrent URL: {error_message}")
+                return jsonify({'error': error_message}), 400
+
+        # First add to Real-Debrid to get torrent info
         result = add_to_real_debrid(magnet_link)
         logging.info(f"Torrent result: {result}")
-        logging.info(f"Magnet link: {obfuscated_magnet_link}")
         
-        if result:
-            if isinstance(result, dict):
-                status = result.get('status', '').lower()
-                if status in ['downloading', 'queued']:
-                    return jsonify({'message': f'Uncached torrent added to Real-Debrid successfully. Status: {status.capitalize()}'})
-                elif status == 'magnet_error':
-                    return jsonify({'error': 'Error processing magnet link'}), 400
-                else:
-                    return jsonify({'message': f'Torrent added to Real-Debrid successfully. Status: {status.capitalize()}'})
-            else:
-                return jsonify({'message': 'Cached torrent added to Real-Debrid successfully'})
-        else:
-            error_message = "No suitable video files found in the torrent."
-            logging.error(f"Failed to add torrent to Real-Debrid: {error_message}")
+        if not result:
+            error_message = "Failed to add torrent to Real-Debrid"
+            logging.error(error_message)
             return jsonify({'error': error_message}), 500
+
+        # Process the content
+        processor = ContentProcessor()
+        success, message = processor.process_content(result)
+        
+        if not success:
+            logging.error(f"Failed to process torrent content: {message}")
+            return jsonify({'error': message}), 400
+
+        # Handle different Real-Debrid statuses
+        if isinstance(result, dict):
+            status = result.get('status', '').lower()
+            if status in ['downloading', 'queued']:
+                return jsonify({'message': f'Uncached torrent added to Real-Debrid successfully. Status: {status.capitalize()}'})
+            elif status == 'magnet_error':
+                return jsonify({'error': 'Error processing magnet link'}), 400
+            else:
+                return jsonify({'message': f'Torrent added to Real-Debrid successfully. Status: {status.capitalize()}'})
+        else:
+            return jsonify({'message': 'Cached torrent added to Real-Debrid successfully'})
 
     except Exception as e:
         error_message = str(e)
         logging.error(f"Error adding torrent to Real-Debrid: {error_message}")
         return jsonify({'error': f'An error occurred while adding to Real-Debrid: {error_message}'}), 500
-    
+
 @scraper_bp.route('/movies_trending', methods=['GET', 'POST'])
 def movies_trending():
     from web_scraper import get_available_versions
@@ -201,8 +308,8 @@ def select_media():
         for result in torrent_results:
             # Check if the source is Jackett or Prowlarr
             if any(src in result.get('source', '').lower() for src in ['jackett', 'prowlarr']):
-                result['cached'] = 'Not Checked'
-            else:
+                result['cached'] = 'N/A'
+            elif 'cached' not in result:  # Only set if not already set by process_media_selection
                 result_hash = result.get('hash')
                 if result_hash:
                     is_cached = cache_status.get(result_hash, False)

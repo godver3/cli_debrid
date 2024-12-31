@@ -37,7 +37,7 @@ export function initializeProgramControls() {
                     errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
                 }
                 if (!conditions.requiredSettingsComplete) {
-                    errorMessage += "<li>Some required settings are missing. Please fill in all fields in the Required Settings tab (Plex, RealDebrid, and Metadata Battery settings).</li>";
+                    errorMessage += "<li>Some required settings are missing. Please fill in all fields in the Required Settings tab (Plex, Debrid Provider, and Metadata Battery settings).</li>";
                 }
                 errorMessage += "</ul>";
                 showErrorPopup(errorMessage);
@@ -119,7 +119,8 @@ export function initializeProgramControls() {
         const requiredFields = [
             'Plex.url',
             'Plex.token',
-            'RealDebrid.api_key',
+            'Debrid Provider.provider',
+            'Debrid Provider.api_key',
             'Metadata Battery.url'
         ];
 

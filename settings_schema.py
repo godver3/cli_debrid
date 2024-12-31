@@ -38,32 +38,38 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "file_collection_management": {
             "type": "string",
-            "description": "Manage files collected in Plex or use Zurg rename functionality",
+            "description": "Manage files collected in Plex.",
             "default": "Plex",
-            "choices": ["Plex", "Zurg"]
+            "choices": ["Plex"]#, "Zurg"]
         },
-        "zurg_all_folder": {
-            "type": "string",
-            "description": "Zurg __all__ Folder",
-            "default": "",
-        },
-        "zurg_movies_folder": {
-            "type": "string",
-            "description": "Zurg Movies Folder",
-            "default": "",
-        },
-        "zurg_shows_folder": {
-            "type": "string",
-            "description": "Zurg Shows Folder",
-            "default": "",
-        },
+        #"zurg_all_folder": {
+        #    "type": "string",
+        #    "description": "Zurg __all__ Folder",
+        #    "default": "",
+        #},
+        #"zurg_movies_folder": {
+        #    "type": "string",
+        #    "description": "Zurg Movies Folder",
+        #    "default": "",
+        #},
+        #"zurg_shows_folder": {
+        #    "type": "string",
+        #    "description": "Zurg Shows Folder",
+        #    "default": "",
+        #},
     },
-    "RealDebrid": {
+    "Debrid Provider": {
         "tab": "Required Settings",
+        "provider": {
+            "type": "string",
+            "description": "Debrid service provider",
+            "default": "Torbox",
+            "choices": ["Torbox", "RealDebrid"]
+        },
         "api_key": {
             "type": "string",
-            "description": "Real-Debrid API key",
-            "default": "",
+            "description": "API key for the debrid service",
+            "default": "demo_key",
             "sensitive": True
         }
     },
@@ -159,7 +165,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_upgrading_cleanup": {
             "type": "boolean",
-            "description": "Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid)",
+            "description": "Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid/Torbox)",
             "default": False
         },
         "disable_adult": {
@@ -357,6 +363,13 @@ SETTINGS_SCHEMA = {
             "Discord": {
                 "enabled": {"type": "boolean", "default": False},
                 "webhook_url": {"type": "string", "default": "", "sensitive": True}
+            },
+            "NTFY": {
+                "enabled": {"type": "boolean", "default": False},
+                "host": {"type": "string", "default": "", "sensitive": True},
+                "topic": {"type": "string", "default": "", "sensitive": True},
+                "api_key": {"type": "string", "default": ""},
+                "priority": {"type": "string", "default": ""}
             },
             "Email": {
                 "enabled": {"type": "boolean", "default": False},
