@@ -235,15 +235,23 @@ def root():
     use_24hour_format = session.get('use_24hour_format', True)
     compact_view = session.get('compact_view', False)
     
-    # Handle compact toggle
-    toggle_compact = request.args.get('toggle_compact')
-    if toggle_compact is not None:
-        # Convert string value to boolean
-        new_compact_view = toggle_compact.lower() == 'true'
-        session['compact_view'] = new_compact_view
-        compact_view = new_compact_view
-        if request.headers.get('Accept') == 'application/json':
-            return jsonify({'success': True, 'compact_view': compact_view})
+    # Check if user is on mobile using User-Agent
+    user_agent = request.headers.get('User-Agent', '').lower()
+    is_mobile = any(device in user_agent for device in ['mobile', 'android', 'iphone', 'ipad', 'ipod'])
+    
+    # Force compact view on mobile devices
+    if is_mobile:
+        compact_view = True
+    else:
+        # Handle compact toggle only for desktop
+        toggle_compact = request.args.get('toggle_compact')
+        if toggle_compact is not None:
+            # Convert string value to boolean
+            new_compact_view = toggle_compact.lower() == 'true'
+            session['compact_view'] = new_compact_view
+            compact_view = new_compact_view
+            if request.headers.get('Accept') == 'application/json':
+                return jsonify({'success': True, 'compact_view': compact_view})
     
     # Get all statistics data
     stats = {}

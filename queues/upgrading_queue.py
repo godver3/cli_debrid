@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Any
 from datetime import datetime, timedelta
-from database import get_all_media_items, update_media_item, get_media_item_by_id, add_to_collected_notifications
+from database import get_all_media_items, update_media_item_state, get_media_item_by_id, add_to_collected_notifications
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
 from settings import get_setting
@@ -125,7 +125,7 @@ class UpgradingQueue:
                         # Remove the item from the queue
                         self.remove_item(item)
                         
-                        update_media_item(item_id, state="Collected")
+                        update_media_item_state(item_id, state="Collected")
 
                         logging.info(f"Moved item {item_id} to Collected state after 24 hours in Upgrading queue.")
                     
@@ -141,6 +141,7 @@ class UpgradingQueue:
         self.clean_up_upgrade_times()
 
     def should_perform_hourly_scrape(self, item_id: str, current_time: datetime) -> bool:
+        #return True
         last_scrape_time = self.last_scrape_times.get(item_id)
         if last_scrape_time is None:
             return True
@@ -185,7 +186,7 @@ class UpgradingQueue:
         is_multi_pack = False
 
         # Perform scraping
-        results, filtered_out = self.scraping_queue.scrape_with_fallback(item, is_multi_pack, queue_manager or self)
+        results, filtered_out = self.scraping_queue.scrape_with_fallback(item, is_multi_pack, queue_manager or self, skip_filter=True)
 
         if results:
             # Find the position of the current item's 'filled_by_magnet' in the results
@@ -207,11 +208,21 @@ class UpgradingQueue:
             
             if better_results:
                 logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier}")
+                logging.info("Better results to try:")
+                for i, result in enumerate(better_results):
+                    logging.info(f"  {i}: {result.get('title')}")
 
-                # Use AddingQueue to attempt the upgrade
+                # Update item with scrape results in database first
+                best_result = better_results[0]
+                update_media_item_state(item['id'], 'Adding', filled_by_title=best_result['title'], scrape_results=better_results)
+                updated_item = get_media_item_by_id(item['id'])
+
+                # Use AddingQueue to attempt the upgrade with updated item
                 adding_queue = AddingQueue()
                 uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
-                success = adding_queue.process_item(queue_manager, item, better_results, uncached_handling, upgrade=True)
+                adding_queue.add_item(updated_item)
+                adding_queue.process(queue_manager)
+                success = len(adding_queue.items) == 0  # If item was processed successfully, it will be removed
 
                 if success:
                     logging.info(f"Successfully initiated upgrade for item {item_identifier}")
