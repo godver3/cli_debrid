@@ -1,8 +1,9 @@
-from api_tracker import requests
+from api_tracker import api, requests
 import json
 import re
 import logging
 from settings import get_setting
+from datetime import datetime
 from types import SimpleNamespace
 from time import sleep
 from functools import lru_cache
@@ -18,6 +19,8 @@ import bencodepy
 import hashlib
 import os
 from typing import Optional, Dict, List, Tuple, Union
+import logging
+from datetime import datetime
 
 class RealDebridUnavailableError(ProviderUnavailableError):
     pass
@@ -63,13 +66,13 @@ def timed_lru_cache(seconds: int, maxsize: int = 128):
 
 def is_video_file(filename):
     result = any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)
-    logging.debug(f"is_video_file check for {filename}: {result}")
-    logging.debug(f"Checking extensions: {[f'.{ext}' for ext in VIDEO_EXTENSIONS]}")
+    logging.info(f"is_video_file check for {filename}: {result}")
+    logging.info(f"Checking extensions: {[f'.{ext}' for ext in VIDEO_EXTENSIONS]}")
     return result
 
 def is_unwanted_file(filename):
     result = 'sample' in filename.lower()
-    logging.debug(f"is_unwanted_file check for {filename}: {result}")
+    logging.info(f"is_unwanted_file check for {filename}: {result}")
     return result
 
 class RateLimiter:
@@ -153,7 +156,7 @@ def add_to_real_debrid(magnet_link, temp_file_path=None):
 
     # Add debug logging for all files in the torrent
     if 'files' in torrent_info:
-        logging.debug(f"Files in torrent: {torrent_info['files']}")
+        logging.info(f"Files in torrent: {torrent_info['files']}")
     else:
         logging.warning("No files found in torrent info")
 
@@ -250,7 +253,7 @@ def is_cached_on_rd(hashes):
 
     # Return all hashes as cached since instant availability endpoint is no longer available
     cache_status = {hash_: True for hash_ in hashes}
-    logging.debug(f"Cache status for hashes {hashes}: {cache_status}")
+    logging.info(f"Cache status for hashes {hashes}: {cache_status}")
     return cache_status
 
 def get_cached_files(hash_):
@@ -344,40 +347,132 @@ def process_hashes(hashes, batch_size=100):
                 results[hash_] = None
     return results
 
-@timed_lru_cache(seconds=10)  # Reduce cache time from 30 to 10 seconds
+@timed_lru_cache(seconds=600)  # Cache for 10 minutes
 def get_active_downloads(check=False):
+    """Get number of active downloads and the concurrent download limit.
+    Real-Debrid's default concurrent download limit is 25 for premium users."""
+    DEFAULT_MAX_DOWNLOADS = 25  # Real-Debrid's default limit for premium users
+    
+    api_key = get_api_key()
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+
+    try:
+        # Get user limits first
+        user_info = get_user_limits()
+        if not user_info:
+            logging.warning("Could not get user limits, using default limit")
+            return (0, DEFAULT_MAX_DOWNLOADS) if not check else True
+
+        # Get concurrent downloads limit - use default if not provided
+        max_downloads = user_info.get('max_simultaneous_downloads', DEFAULT_MAX_DOWNLOADS)
+        logging.info(f"Using concurrent downloads limit: {max_downloads} (from {'API' if 'max_simultaneous_downloads' in user_info else 'default'})")
+
+        # Get downloads
+        downloads_response = api.get(f"{API_BASE_URL}/downloads", headers=headers, timeout=60)
+        downloads_response.raise_for_status()
+        downloads = downloads_response.json()
+        
+        # Get torrents
+        torrents_response = api.get(f"{API_BASE_URL}/torrents", headers=headers, timeout=60)
+        torrents_response.raise_for_status()
+        torrents = torrents_response.json()
+        
+        # Count active downloads
+        active_downloads = len([d for d in downloads if d.get('status') == 'downloading'])
+        
+        # Count active torrents (downloading, queued, or magnet conversion)
+        active_statuses = ['downloading', 'queued', 'magnet_conversion']
+        active_torrents = len([t for t in torrents if t.get('status') in active_statuses])
+        
+        # Total active count
+        active_count = active_downloads + active_torrents
+        
+        logging.info(f"Active downloads: {active_downloads}")
+        logging.info(f"Active torrents: {active_torrents}")
+        logging.info(f"Total active count: {active_count}")
+        logging.info(f"Max concurrent downloads: {max_downloads}")
+
+        if check:
+            return active_count < max_downloads
+        return active_count, max_downloads
+
+    except Exception as e:
+        logging.error(f"Error checking active downloads: {e}")
+        if check:
+            return True  # Allow downloads when we can't check the count
+        return 0, DEFAULT_MAX_DOWNLOADS  # Return default limit when API fails
+
+@timed_lru_cache(seconds=600)  # Cache for 10 minutes
+def get_user_limits():
+    """Get user account limits from Real-Debrid API"""
     api_key = get_api_key()
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/x-www-form-urlencoded'
     }
     try:
-        # Get list of all torrents
-        response = requests.get(f"{API_BASE_URL}/torrents", headers=headers, timeout=60)
+        response = api.get(f"{API_BASE_URL}/user", headers=headers, timeout=60)
         response.raise_for_status()
-        torrents = response.json()
-        
-        # Count torrents that are actually active (downloading, queued, or in magnet conversion)
-        active_statuses = ['downloading', 'queued', 'magnet_conversion']
-        active_count = len([t for t in torrents if t.get('status') in active_statuses])
-        
-        # Real-Debrid's default limit is 25, we use 75% of that to be safe
-        limit = round(25 * 0.75)
-        
-        logging.debug(f"Real-Debrid active downloads (from torrent list): {active_count}")
-        
-        if check:
-            return active_count < limit
-        else:
-            return active_count, limit
+        user_info = response.json()
+        logging.info(f"Real-Debrid user info response: {json.dumps(user_info, indent=2)}")
+        return user_info
     except Exception as e:
-        logging.error(f"An error occurred while fetching active downloads: {e}")
-        if check:
-            return True  # Allow downloads when we can't check the count
-        else:
-            return 0, 25  # Return 0 active downloads and default limit
+        logging.error(f"An error occurred while fetching user limits: {e}")
+        return None
 
-@timed_lru_cache(seconds=300)  # Cache for 5 minutes
+def check_daily_usage():
+    traffic_info = get_user_traffic()
+    logging.info(f"Raw traffic info received: {json.dumps(traffic_info, indent=2)}")
+    
+    if not traffic_info:
+        logging.error("Failed to get traffic information")
+        return {'downloaded': 0, 'limit': None}  # Set limit to None to indicate we don't know it
+
+    try:
+        # Get today in UTC since Real-Debrid uses UTC dates
+        today_utc = datetime.utcnow().strftime("%Y-%m-%d")
+        logging.info(f"Looking for traffic data for UTC date: {today_utc}")
+        logging.info(f"Available dates in traffic info: {list(traffic_info.keys())}")
+        
+        # Get today's traffic
+        daily_traffic = traffic_info.get(today_utc, {})
+        logging.info(f"Daily traffic data for {today_utc}: {daily_traffic}")
+        
+        if not daily_traffic:
+            logging.error(f"No traffic data found for {today_utc}")
+            return {'downloaded': 0, 'limit': None}
+            
+        daily_bytes = daily_traffic.get('bytes', 0)
+        # Convert bytes to GB (1 GB = 1024^3 bytes)
+        daily_gb = daily_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
+        
+        # Get daily limit from traffic info
+        daily_limit = None
+        if 'links' in traffic_info:
+            daily_limit = traffic_info['links'].get('daily_bytes', 0) / (1024 * 1024 * 1024)  # Convert to GB
+            logging.info(f"Retrieved daily limit from API: {daily_limit} GB")
+        else:
+            logging.warning("No 'links' field found in traffic info for daily limit")
+
+        result = {
+            'downloaded': round(daily_gb, 2),
+            'limit': round(daily_limit, 2) if daily_limit is not None else None
+        }
+        logging.info(f"Daily usage calculation for {today_utc}:")
+        logging.info(f"  - Raw bytes: {daily_bytes:,}")
+        logging.info(f"  - Converted GB: {daily_gb:.2f}")
+        logging.info(f"  - Daily limit from API: {daily_limit}")
+        logging.info(f"  - Final result: {result}")
+        return result
+
+    except Exception as e:
+        logging.error(f"Error calculating daily usage: {e}")
+        logging.exception("Full traceback:")
+        return {'downloaded': 0, 'limit': None}
+
 def get_user_traffic():
     api_key = get_api_key()
     headers = {
@@ -385,54 +480,15 @@ def get_user_traffic():
         'Content-Type': 'application/x-www-form-urlencoded'
     }
     try:
-        response = requests.get(f"{API_BASE_URL}/traffic/details", headers=headers, timeout=60)
+        response = api.get(f"{API_BASE_URL}/traffic/details", headers=headers, timeout=60)
         response.raise_for_status()
         traffic_info = response.json()
         
-        logging.debug(f"Real-Debrid traffic response: {traffic_info}")
+        logging.info(f"Real-Debrid traffic response: {traffic_info}")
         return traffic_info
     except Exception as e:
         logging.error(f"An error occurred while fetching traffic info: {e}")
-        raise ProviderUnavailableError(f"An error occurred while fetching traffic info: {e}") from e
-
-def check_daily_usage():
-    server_time, _ = get_server_time()
-    if not server_time:
-        logging.error("Failed to get server time")
-        return {'used': 0, 'limit': 2000}  # Default values
-
-    current_date_str = server_time.strftime("%Y-%m-%d")
-    
-    traffic_info = get_user_traffic()
-    if not traffic_info:
-        logging.error("Failed to get traffic information")
-        return {'used': 0, 'limit': 2000}  # Default values
-
-    daily_usage = traffic_info.get(current_date_str, {}).get('bytes', 0)
-    daily_usage_gb = daily_usage / (1024 * 1024 * 1024)
-    is_over_limit = daily_usage_gb > 2000
-
-    return {
-        'used': round(daily_usage_gb, 2),
-        'limit': 2000,
-        'is_over_limit': is_over_limit
-    }
-
-@timed_lru_cache(seconds=300)
-def get_server_time():
-    api_key = get_api_key()
-    headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    try:
-        response = requests.get(f"{API_BASE_URL}/time", headers=headers, timeout=60)
-        response.raise_for_status()
-        server_time = datetime.strptime(response.text.strip(), "%Y-%m-%d %H:%M:%S")
-        return server_time, datetime.now()
-    except Exception as e:
-        logging.error(f"Error getting server time: {str(e)}")
-        raise ProviderUnavailableError(f"Error getting server time: {str(e)}") from e
+        return None
 
 def file_matches_item(filename, item):
     filename = filename.lower()
@@ -483,7 +539,7 @@ def get_torrent_info(torrent_id):
         torrent_info = info_response.json()
 
         status = torrent_info.get('status', 'unknown')
-        logging.debug(f"Torrent {torrent_id} status: {status}")
+        logging.info(f"Torrent {torrent_id} status: {status}")
         
         # Map Real-Debrid statuses to common statuses
         rd_status_map = {
@@ -605,9 +661,9 @@ class RealDebridProvider(DebridProvider):
                 magnet = f"magnet:?xt=urn:btih:{hash_}"
                 
                 # Add the torrent to check its status
-                logging.debug(f"Adding torrent with magnet: {magnet}")
+                logging.info(f"Adding torrent with magnet: {magnet}")
                 add_response = self.add_torrent(magnet)
-                logging.debug(f"Add torrent response: {json.dumps(add_response, indent=2) if add_response else None}")
+                logging.info(f"Add torrent response: {json.dumps(add_response, indent=2) if add_response else None}")
                 
                 if not add_response or not isinstance(add_response, dict):
                     logging.warning(f"Invalid add_response: {add_response}")
@@ -622,9 +678,9 @@ class RealDebridProvider(DebridProvider):
                     continue
                 
                 # Get torrent info to check status
-                logging.debug(f"Getting torrent info for ID: {torrent_id}")
+                logging.info(f"Getting torrent info for ID: {torrent_id}")
                 torrent_info = self.get_torrent_info(torrent_id)
-                logging.debug(f"Torrent info response: {json.dumps(torrent_info, indent=2) if torrent_info else None}")
+                logging.info(f"Torrent info response: {json.dumps(torrent_info, indent=2) if torrent_info else None}")
                 
                 if not torrent_info:
                     logging.warning(f"No torrent info returned for ID: {torrent_id}")

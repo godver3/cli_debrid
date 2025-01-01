@@ -11,9 +11,10 @@ from .models import user_required, onboarding_required
 from extensions import app_start_time
 import time 
 from database import get_recently_added_items, get_poster_url, get_collected_counts, get_recently_upgraded_items
-from debrid import get_active_downloads, check_daily_usage
+from debrid import get_active_downloads, check_daily_usage, get_user_traffic
 import logging
 from metadata.metadata import get_show_airtime_by_imdb_id
+import json
 
 statistics_bp = Blueprint('statistics', __name__)
 root_bp = Blueprint('root', __name__)
@@ -408,6 +409,91 @@ def set_time_preference():
                         path='/',  # Ensure cookie is available for entire site
                         httponly=False)  # Allow JavaScript access
     return response
+
+@statistics_bp.route('/active_downloads', methods=['GET'])
+@user_required
+def active_downloads():
+    """Get active downloads and limits for the debrid provider"""
+    try:
+        active_count, limit = get_active_downloads()
+        return jsonify({
+            'active_count': active_count,
+            'limit': limit,
+            'percentage': round((active_count / limit) * 100) if limit > 0 else 0
+        })
+    except Exception as e:
+        logging.error(f"Error getting active downloads: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get active downloads information'
+        }), 500
+
+@statistics_bp.route('/usage_stats', methods=['GET'])
+@user_required
+def usage_stats():
+    """Get daily usage statistics from the debrid provider"""
+    try:
+        usage = check_daily_usage()
+        logging.info(f"Raw usage data from check_daily_usage: {usage}")
+        
+        if not usage:
+            logging.info("No usage data available, returning defaults")
+            return jsonify({
+                'daily': {
+                    'used': 0,
+                    'limit': 2000 * 1024 * 1024 * 1024,  # 2000GB in bytes
+                    'percentage': 0,
+                    'is_over_limit': False
+                }
+            })
+
+        # Convert GB to bytes for consistent formatting in frontend
+        try:
+            logging.info("Converting usage values from GB to bytes:")
+            daily_used = float(usage['downloaded']) * 1024 * 1024 * 1024  # GB to bytes
+            logging.info(f"  - Downloaded: {usage['downloaded']}GB -> {daily_used:,} bytes")
+            
+            daily_limit = float(usage['limit']) * 1024 * 1024 * 1024  # GB to bytes
+            logging.info(f"  - Limit: {usage['limit']}GB -> {daily_limit:,} bytes")
+            
+            percentage = round((float(usage['downloaded']) / float(usage['limit'])) * 100) if float(usage['limit']) > 0 else 0
+            logging.info(f"  - Usage percentage: {percentage}%")
+            
+            is_over_limit = float(usage['downloaded']) > float(usage['limit'])
+            logging.info(f"  - Over limit: {is_over_limit}")
+            
+            response = {
+                'daily': {
+                    'used': daily_used,
+                    'limit': daily_limit,
+                    'percentage': percentage,
+                    'is_over_limit': is_over_limit
+                }
+            }
+            logging.info(f"Final response being sent to frontend: {json.dumps(response, indent=2)}")
+            return jsonify(response)
+        except (TypeError, ValueError) as e:
+            logging.error(f"Error converting usage values: {e}")
+            logging.error(f"Raw usage data that caused error: {usage}")
+            return jsonify({
+                'daily': {
+                    'used': 0,
+                    'limit': 2000 * 1024 * 1024 * 1024,  # 2000GB in bytes
+                    'percentage': 0,
+                    'is_over_limit': False
+                }
+            })
+            
+    except Exception as e:
+        logging.error(f"Error getting usage stats: {str(e)}, usage data: {usage if 'usage' in locals() else 'not available'}")
+        logging.exception("Full traceback:")
+        return jsonify({
+            'daily': {
+                'used': 0,
+                'limit': 2000 * 1024 * 1024 * 1024,  # 2000GB in bytes
+                'percentage': 0,
+                'is_over_limit': False
+            }
+        })
 
 @statistics_bp.route('/recently_added')
 @user_required
