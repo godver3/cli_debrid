@@ -89,7 +89,7 @@ class TorboxProvider(DebridProvider):
     """Torbox implementation of the DebridProvider interface"""
     
     API_BASE_URL = "https://api.torbox.app/v1"  # Base URL without specific endpoints
-    MAX_DOWNLOADS = 5
+    MAX_DOWNLOADS = 5  # Torbox has a lower limit than Real-Debrid
     
     def __init__(self):
         self.api_key = self.get_api_key()
@@ -288,18 +288,32 @@ class TorboxProvider(DebridProvider):
             logging.error(f"Error adding torrent: {str(e)}")
             return None
 
-    def get_active_downloads(self, check: bool = False) -> Tuple[int, List[Dict]]:
+    def get_active_downloads(self, check: bool = False) -> Union[bool, Tuple[int, int]]:
         """Get list of active downloads"""
         try:
             response = self._make_request('GET', 'api/torrents/mylist')
-            active_torrents = [
+            active_statuses = ['downloading', 'queued', 'magnet_conversion']
+            active_count = len([
                 torrent for torrent in response.get('torrents', [])
-                if torrent.get('status') in ['downloading', 'queued']
-            ]
-            return len(active_torrents), active_torrents
+                if torrent.get('status') in active_statuses
+            ])
+            
+            # Use 75% of max downloads to be safe, matching Real-Debrid's approach
+            limit = round(self.MAX_DOWNLOADS * 0.75)
+            
+            logging.debug(f"Torbox active downloads: {active_count}")
+            
+            if check:
+                return active_count < limit
+            else:
+                return active_count, limit
+                
         except Exception as e:
             logging.error(f"Error getting active downloads from Torbox: {str(e)}")
-            return 0, []
+            if check:
+                return False
+            else:
+                return 0, self.MAX_DOWNLOADS
 
     def get_torrent_info(self, hash_value: str) -> Optional[Dict]:
         """Get information about a specific torrent by its hash"""

@@ -142,6 +142,11 @@ SETTINGS_SCHEMA = {
             "default": "None",
             "choices": ["None", "Full"]
         },
+        "hybrid_mode": {
+            "type": "boolean",
+            "description": "Enable hybrid mode to add best uncached result if no cached results found in 'None' mode",
+            "default": False
+        },
         "jackett_seeders_only": {
             "type": "boolean",
             "description": "Return only results with seeders in Jackett",

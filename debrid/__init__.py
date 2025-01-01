@@ -48,12 +48,29 @@ def get_user_traffic():
 
 def check_daily_usage():
     """Check the daily usage for the configured debrid provider"""
+    from datetime import datetime
+    
     traffic = get_debrid_provider().get_user_traffic()
     if not traffic:
         return None
+        
+    # Get today in UTC since Real-Debrid uses UTC dates
+    today_utc = datetime.utcnow().strftime("%Y-%m-%d")
+    daily_traffic = traffic.get(today_utc, {})
+    
+    if not daily_traffic:
+        return None
+        
+    # Convert bytes to GB
+    daily_bytes = daily_traffic.get('bytes', 0)
+    daily_gb = daily_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
+    
+    # Real-Debrid has a 2000GB daily limit
+    DAILY_LIMIT_GB = 2000
+    
     return {
-        'downloaded': traffic.get('downloaded', 0),
-        'limit': traffic.get('limit', 0)
+        'downloaded': round(daily_gb, 2),
+        'limit': DAILY_LIMIT_GB
     }
 
 def extract_hash_from_magnet(magnet_link):
