@@ -23,18 +23,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     disable_adult = get_setting('Scraping', 'disable_adult', False)
     
     # Pre-compile patterns
-    filter_in_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in filter_in] if filter_in else []
-    # Clean up filter patterns and compile them
-    filter_out_patterns = []
-    if filter_out:
-        for pattern in filter_out:
-            # Remove any quotes from the pattern
-            pattern = pattern.replace('"', '')
-            # If pattern contains dots, use it as is, otherwise add word boundaries
-            if '.' in pattern:
-                filter_out_patterns.append(re.compile(pattern, re.IGNORECASE))
-            else:
-                filter_out_patterns.append(re.compile(rf"\b{pattern}\b", re.IGNORECASE))
+    filter_in_patterns = filter_in if filter_in else []
+    filter_out_patterns = filter_out if filter_out else []
     adult_pattern = re.compile('|'.join(adult_terms), re.IGNORECASE) if disable_adult else None
     
     # Determine content type specific settings
@@ -209,19 +199,15 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             normalized_filter_title = normalize_title(original_title)
             logging.debug(f"Original title: {original_title}")
             logging.debug(f"Normalized title: {normalized_filter_title}")
+            
             if filter_out_patterns:
-                logging.debug(f"Filter out patterns: {[p.pattern for p in filter_out_patterns]}")
-                for pattern in filter_out_patterns:
-                    if pattern.search(normalized_filter_title):
-                        logging.debug(f"Pattern '{pattern.pattern}' matched")
-                    else:
-                        logging.debug(f"Pattern '{pattern.pattern}' did not match")
-                matched_patterns = [pattern.pattern for pattern in filter_out_patterns if pattern.search(normalized_filter_title)]
+                logging.debug(f"Filter out patterns: {filter_out_patterns}")
+                matched_patterns = [pattern for pattern in filter_out_patterns if smart_search(pattern, normalized_filter_title)]
                 if matched_patterns:
                     result['filter_reason'] = f"Matching filter_out pattern(s): {', '.join(matched_patterns)}"
                     continue
             
-            if filter_in_patterns and not any(pattern.search(normalized_filter_title) for pattern in filter_in_patterns):
+            if filter_in_patterns and not any(smart_search(pattern, normalized_filter_title) for pattern in filter_in_patterns):
                 result['filter_reason'] = "Not matching any filter_in patterns"
                 continue
             

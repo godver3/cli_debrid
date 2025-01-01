@@ -173,6 +173,14 @@
             <h3>Version Propagator</h3>
             <form action="{{ url_for('debug.propagate_version') }}" method="POST" id="version-propagator-form">
                 <div class="form-group">
+                    <label for="media_type">Media Type:</label>
+                    <select id="media_type" name="media_type" required>
+                        <option value="all">All</option>
+                        <option value="movie">Movies Only</option>
+                        <option value="show">Episodes Only</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="original_version">Original Version:</label>
                     <select id="original_version" name="original_version" required>
                         <option value="">Select Version</option>

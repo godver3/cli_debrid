@@ -130,26 +130,45 @@ def add_torrent_to_real_debrid():
         obfuscated_link = obfuscate_magnet_link(magnet_link)
         logging.info(f"Link: {obfuscated_link}")
 
-        # If it's a URL rather than a magnet link, download and get hash
+        temp_file = None
+        # If it's a URL rather than a magnet link
         if magnet_link.startswith('http'):
             try:
-                torrent_hash = _download_and_get_hash(magnet_link)
-                magnet_link = f"magnet:?xt=urn:btih:{torrent_hash}"
-                logging.info("Converted URL to magnet link")
-                logging.info(f"Generated magnet link: {magnet_link}")
+                # For Jackett URLs, download to temp file and pass directly
+                if 'jackett' in magnet_link.lower():
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
+                        response = requests.get(magnet_link, timeout=30)
+                        response.raise_for_status()
+                        tmp.write(response.content)
+                        temp_file = tmp.name
+                        logging.info("Downloaded torrent file from Jackett")
+                else:
+                    # For other URLs, convert to magnet
+                    torrent_hash = _download_and_get_hash(magnet_link)
+                    magnet_link = f"magnet:?xt=urn:btih:{torrent_hash}"
+                    logging.info("Converted URL to magnet link")
+                    logging.info(f"Generated magnet link: {magnet_link}")
             except Exception as e:
                 error_message = str(e)
                 logging.error(f"Failed to process torrent URL: {error_message}")
                 return jsonify({'error': error_message}), 400
 
         # First add to Real-Debrid to get torrent info
-        result = add_to_real_debrid(magnet_link)
+        # If we have a temp file, pass None as magnet_link
+        result = add_to_real_debrid(None if temp_file else magnet_link, temp_file)
         logging.info(f"Torrent result: {result}")
         
         if not result:
             error_message = "Failed to add torrent to Real-Debrid"
             logging.error(error_message)
             return jsonify({'error': error_message}), 500
+
+        # Clean up temp file if it exists
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.unlink(temp_file)
+            except Exception as e:
+                logging.warning(f"Failed to delete temp file {temp_file}: {e}")
 
         # Process the content
         processor = ContentProcessor()
