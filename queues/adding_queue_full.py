@@ -11,7 +11,7 @@ import requests
 import hashlib
 import bencodepy
 from typing import Dict, Any, List, Optional, Tuple
-from database import update_media_item_state, update_media_item
+from database import update_media_item_state, update_media_item, get_all_media_items
 from debrid.status import TorrentStatus
 from .media_matcher import MediaMatcher
 from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
@@ -62,7 +62,8 @@ class FullModeProcessor:
                 
                 try:
                     # Try to add the torrent regardless of cache status
-                    add_result = self.debrid_provider.add_torrent(result.get('magnet') or result.get('url'), temp_file)
+                    magnet_or_url = None if temp_file else (result.get('magnet') or result.get('url'))
+                    add_result = self.debrid_provider.add_torrent(magnet_or_url, temp_file)
                     logging.debug(f"Add result from debrid provider: {add_result}")
                     
                     if not add_result or not isinstance(add_result, dict):
@@ -84,6 +85,43 @@ class FullModeProcessor:
                     logging.debug(f"Content processing result - success: {success}, message: {message}")
                     
                     if success:
+                        # For TV shows, check if this is a multi-pack that could fill other episodes
+                        if item.get('type') == 'episode':
+                            # Get our series title
+                            series_title = item.get('series_title', '') or item.get('title', '')
+                            
+                            # Get all scraping queue items for the same show
+                            scraping_items = self._get_scraping_queue_items(queue_manager)
+                            if scraping_items:
+                                # Filter to only items from the same show and version
+                                matching_items = [
+                                    i for i in scraping_items 
+                                    if ((i.get('series_title', '') or i.get('title', '')) == series_title and
+                                        i.get('version') == item.get('version'))
+                                ]
+                                
+                                if matching_items:
+                                    logging.info(f"Found {len(matching_items)} other episodes of '{series_title}' to check")
+                                    
+                                    # Try to match each file against each item
+                                    for scraping_item in matching_items:
+                                        matches = self.content_processor.media_matcher.match_content(files, scraping_item)
+                                        if matches:
+                                            # Take the first matching file - matches are tuples of (path_str, score)
+                                            matched_file = matches[0][0]  # Get the file path from the first match tuple
+                                            file_name = os.path.basename(matched_file)
+                                            
+                                            # Update the item state
+                                            queue_manager.move_to_checking(
+                                                scraping_item, 
+                                                "Adding", 
+                                                result.get('title'), 
+                                                result.get('magnet') or result.get('url'), 
+                                                file_name, 
+                                                add_result.get('torrent_id')
+                                            )
+                                            logging.info(f"Updated matching item with filled_by_file: {file_name}")
+
                         # Mark magnet/URL as not wanted
                         if 'magnet' in result:
                             hash_value = self._extract_hash_from_magnet(result['magnet'])[0]
@@ -294,3 +332,11 @@ class FullModeProcessor:
             logging.info(f"Marked item {item.get('id')} as failed: {message}")
         except Exception as e:
             logging.error(f"Error handling failed item: {str(e)}")
+
+    def _get_scraping_queue_items(self, queue_manager: Any) -> List[Dict[str, Any]]:
+        """Get all items currently in the Scraping queue"""
+        try:
+            return [dict(row) for row in get_all_media_items(state="Scraping")]
+        except Exception as e:
+            logging.error(f"Error getting scraping queue items: {str(e)}")
+            return []

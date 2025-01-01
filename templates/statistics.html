@@ -5,6 +5,14 @@
 {% block content %}
 <style>
     @import url('{{ url_for('static', filename='css/statistics.css') }}');
+    .stat-item p[data-label="Active Downloads"].warning,
+    .stat-item p[data-label="Daily Usage"].warning {
+        color: #ffa500;
+    }
+    .stat-item p[data-label="Active Downloads"].critical,
+    .stat-item p[data-label="Daily Usage"].critical {
+        color: #ff4444;
+    }
 </style>
 
 <script>
@@ -103,7 +111,10 @@
                     <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
                 </div>
                 <div class="stat-item">
-                    <p data-label="Active Downloads">{{ stats.active_downloads }}</p>
+                    <p data-label="Active Downloads"><span id="active_downloads">-</span>/<span id="download_limit">-</span></p>
+                </div>
+                <div class="stat-item">
+                    <p data-label="Daily Usage"><span id="daily_usage">-</span> GB / <span id="daily_limit">-</span> GB</p>
                 </div>
                 <div class="stat-item">
                     <p data-label="Uptime">{{ '%d days %d hours %d minutes' | format(
@@ -242,4 +253,74 @@
         </div>
     </div>
 </div>
+
+<script>
+    function formatBytes(bytes, decimals = 2) {
+        if (bytes === 0) return '0';
+        // Convert bytes directly to GB (1 GB = 1024^3 bytes)
+        const gb = bytes / Math.pow(1024, 3);
+        return gb.toFixed(decimals);
+    }
+
+    function updateActiveDownloads() {
+        fetch('/statistics/active_downloads')
+            .then(response => response.json())
+            .then(data => {
+                if (!data.error) {
+                    document.getElementById('active_downloads').textContent = data.active_count;
+                    document.getElementById('download_limit').textContent = data.limit;
+                    
+                    // Update color based on usage percentage
+                    const downloadElement = document.querySelector('[data-label="Active Downloads"]');
+                    if (data.percentage >= 90) {
+                        downloadElement.classList.add('critical');
+                        downloadElement.classList.remove('warning');
+                    } else if (data.percentage >= 75) {
+                        downloadElement.classList.add('warning');
+                        downloadElement.classList.remove('critical');
+                    } else {
+                        downloadElement.classList.remove('critical', 'warning');
+                    }
+                }
+            })
+            .catch(error => console.error('Error fetching active downloads:', error));
+    }
+
+    function updateUsageStats() {
+        fetch('/statistics/usage_stats')
+            .then(response => response.json())
+            .then(data => {
+                if (!data.error) {
+                    // Update daily usage
+                    const dailyElement = document.querySelector('[data-label="Daily Usage"]');
+                    document.getElementById('daily_usage').textContent = formatBytes(data.daily.used, 1);
+                    document.getElementById('daily_limit').textContent = formatBytes(data.daily.limit, 1);
+                    
+                    if (data.daily.is_over_limit) {
+                        dailyElement.classList.add('critical');
+                        dailyElement.classList.remove('warning');
+                    } else if (data.daily.percentage >= 90) {
+                        dailyElement.classList.add('critical');
+                        dailyElement.classList.remove('warning');
+                    } else if (data.daily.percentage >= 75) {
+                        dailyElement.classList.add('warning');
+                        dailyElement.classList.remove('critical');
+                    } else {
+                        dailyElement.classList.remove('critical', 'warning');
+                    }
+                }
+            })
+            .catch(error => console.error('Error fetching usage stats:', error));
+    }
+
+    // Update both active downloads and usage stats immediately and every 30 seconds
+    document.addEventListener('DOMContentLoaded', function() {
+        updateActiveDownloads();
+        updateUsageStats();
+        setInterval(() => {
+            updateActiveDownloads();
+            updateUsageStats();
+        }, 30000);
+    });
+</script>
 {% endblock %}

@@ -67,7 +67,8 @@ select#action_select,
 select#target_queue, .debug-container a,
 select#task_select,
 select#original_version,
-select#propagated_version {
+select#propagated_version,
+select#media_type {
     width: 100%;
     padding: 10px;
     background-color: #3a3a3a;
