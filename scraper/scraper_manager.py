@@ -20,14 +20,48 @@ class ScraperManager:
             'Nyaa': scrape_nyaa_instance
         }
 
-    def get_scraper_settings(self, instance):
-        # Fetch the latest settings for each scraper instance
-        return get_setting('Scrapers', instance, {})
+    def get_scraper_settings(self, scraper_type):
+        # Fetch all scraper settings
+        all_scrapers = get_setting('Scrapers')
+        
+        # First try direct lookup
+        if scraper_type in all_scrapers:
+            return all_scrapers[scraper_type]
+            
+        # If not found directly, look for instances of the given type
+        for instance, settings in all_scrapers.items():
+            if isinstance(settings, dict) and settings.get('type') == scraper_type:
+                logging.info(f"Found {scraper_type} settings in instance {instance}")
+                return settings
+                
+        logging.warning(f"No settings found for scraper type: {scraper_type}")
+        return {}
 
     def scrape_all(self, imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> List[Dict[str, Any]]:
         all_results = []
         is_anime = genres and 'anime' in [genre.lower() for genre in genres]
 
+        logging.info(f"Scraper manager genre: {genres}")
+        logging.info(f"Detected as anime: {is_anime}")
+
+        # For anime content, try Nyaa first if enabled
+        if is_anime:
+            nyaa_settings = self.get_scraper_settings('Nyaa')
+            nyaa_enabled = nyaa_settings.get('enabled', False) if nyaa_settings else False
+            
+            logging.info(f"Nyaa enabled: {nyaa_enabled} - Nyaa settings: {nyaa_settings}")
+
+            if nyaa_enabled:
+                logging.info(f"Using Nyaa for anime content: {title}")
+                try:
+                    results = self.scrapers['Nyaa']('Nyaa', nyaa_settings, imdb_id, title, year, content_type, season, episode, multi)
+                    if results:
+                        logging.info(f"Found {len(results)} results from Nyaa")
+                        all_results.extend(results)
+                except Exception as e:
+                    logging.error(f"Error scraping with Nyaa: {str(e)}", exc_info=True)
+
+        # Proceed with all enabled scrapers
         for instance, settings in self.config.get('Scrapers', {}).items():
             # Get the latest settings for this instance
             current_settings = self.get_scraper_settings(instance)
@@ -40,8 +74,8 @@ class ScraperManager:
             if scraper_type not in self.scrapers:
                 logging.warning(f"Unknown scraper type '{scraper_type}' for instance '{instance}'. Skipping.")
                 continue
-            
-            # Skip Nyaa if the content is not anime
+
+            # Skip Nyaa for non-anime content
             if scraper_type == 'Nyaa' and not is_anime:
                 logging.info(f"Skipping Nyaa scraper for non-anime content: {title}")
                 continue
