@@ -527,6 +527,17 @@ function updateSettings() {
         console.warn("Sync Deletions checkbox element not found!");
     }
 
+    const hybridMode = document.getElementById('scraping-hybrid_mode');
+    console.log("Hybrid Mode element:", hybridMode);
+    
+    if (hybridMode) {
+        settingsData['Scraping']['hybrid_mode'] = hybridMode.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Hybrid Mode checkbox element not found!");
+    }
+
     const traktEarlyReleases = document.getElementById('scraping-trakt_early_releases');
     console.log("Trakt Early Releases element:", traktEarlyReleases);
     

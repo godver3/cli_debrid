@@ -458,7 +458,16 @@ def send_test_notification():
                 'year': 2023,
                 'tmdb_id': '123456',
                 'original_collected_at': now.isoformat(),
-                'version': 'Default',
+                'version': '1080p',
+                'is_upgrade': False
+            },
+            {
+                'type': 'movie',
+                'title': 'Test Movie 1',
+                'year': 2023,
+                'tmdb_id': '123456',
+                'original_collected_at': now.isoformat(),
+                'version': '2160p',
                 'is_upgrade': False
             },
             {
@@ -467,8 +476,19 @@ def send_test_notification():
                 'year': 2023,
                 'tmdb_id': '234567',
                 'original_collected_at': (now + timedelta(hours=1)).isoformat(),
-                'version': 'Extended',
-                'is_upgrade': True
+                'version': '1080p',
+                'is_upgrade': True,
+                'original_collected_at': (now - timedelta(days=7)).isoformat()
+            },
+            {
+                'type': 'movie',
+                'title': 'Test Movie 2',
+                'year': 2023,
+                'tmdb_id': '234567',
+                'original_collected_at': (now + timedelta(hours=1)).isoformat(),
+                'version': '2160p',
+                'is_upgrade': True,
+                'original_collected_at': (now - timedelta(days=7)).isoformat()
             },
             {
                 'type': 'episode',
@@ -629,8 +649,9 @@ def propagate_version():
     try:
         original_version = request.form.get('original_version', '').strip('*')
         propagated_version = request.form.get('propagated_version', '').strip('*')
+        media_type = request.form.get('media_type', 'all')
         
-        logging.info(f"Starting version propagation from {original_version} to {propagated_version}")
+        logging.info(f"Starting version propagation from {original_version} to {propagated_version} for media type: {media_type}")
         
         if not original_version or not propagated_version:
             return jsonify({'success': False, 'error': 'Both versions are required'})
@@ -638,14 +659,22 @@ def propagate_version():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Find all items with original version (including asterisk variations)
-        cursor.execute("""
+        # Build the base query with media type filter
+        base_query = """
             SELECT title, year, type, imdb_id, tmdb_id,
                    episode_title, season_number, episode_number,
                    airtime, release_date
             FROM media_items 
             WHERE REPLACE(version, '*', '') = ?
-        """, (original_version,))
+        """
+        
+        query_params = [original_version]
+        
+        if media_type != 'all':
+            base_query += " AND type = ?"
+            query_params.append(media_type)
+            
+        cursor.execute(base_query, query_params)
         items = cursor.fetchall()
         
         logging.info(f"Found {len(items)} items with version {original_version}")
@@ -672,7 +701,7 @@ def propagate_version():
             if not exists:
                 now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 logging.debug(f"Adding {propagated_version} version for {item['title']} ({item['year']}) - " + 
-                           (f"S{item['season_number']}E{item['episode_number']}" if item['type'] == 'show' else 'movie'))
+                           (f"S{item['season_number']}E{item['episode_number']}" if item['type'] == 'episode' else 'movie'))
                 
                 # Add as wanted with propagated version
                 cursor.execute("""

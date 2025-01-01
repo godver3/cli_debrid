@@ -193,17 +193,19 @@ def add_collected_items(media_items_batch, recent=False):
                             
                             logging.info(f"Updated existing item from Checking to {new_state}: {item_identifier} (ID: {item_id})")
 
-                            # Fetch the updated item
-                            cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
-                            updated_item = cursor.fetchone()
-                            cursor.close()
-                            
-                            # Add notification for collected/upgraded item
-                            updated_item_dict = dict(updated_item)
-                            updated_item_dict['is_upgrade'] = is_upgrade
-                            # Ensure original_collected_at is always set
-                            updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at', existing_item.get('collected_at', collected_at))
-                            add_to_collected_notifications(updated_item_dict)
+                            # Only create notification if this is not an upgrade of an existing item
+                            if not existing_item.get('collected_at'):
+                                # Fetch the updated item
+                                cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
+                                updated_item = cursor.fetchone()
+                                cursor.close()
+                                
+                                # Add notification for collected item
+                                updated_item_dict = dict(updated_item)
+                                updated_item_dict['is_upgrade'] = is_upgrade
+                                # Ensure original_collected_at is always set
+                                updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at', existing_item.get('collected_at', collected_at))
+                                add_to_collected_notifications(updated_item_dict)
                         else:
                             # If it's not in "Checking" state, no update needed
                             logging.debug(f"No update needed on collected item: {item_identifier} (ID: {item_id}) location: {location}")
