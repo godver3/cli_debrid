@@ -161,10 +161,11 @@ class AddingQueue:
 
             hash_value = result.get('hash')
             temp_file = None
-            if not hash_value and 'magnet' in result:
-                hash_value, temp_file = self._extract_hash_from_magnet(result['magnet'])
+            if not hash_value and ('magnet' in result or 'url' in result):
+                magnet = result.get('magnet') or result.get('url')
+                hash_value, temp_file = self._extract_hash_from_magnet(magnet)
                 if not hash_value:
-                    logging.warning(f"Could not extract hash from result magnet: {result.get('magnet', '')}")
+                    logging.warning(f"Could not extract hash from result magnet/url: {magnet}")
                     continue
 
             result['hash'] = hash_value  # Store the hash in the result
@@ -179,7 +180,7 @@ class AddingQueue:
 
                     if is_cached:
                         logging.info("Result is cached, adding to debrid service")
-                        add_result = self.debrid_provider.add_torrent(result['magnet'], temp_file)
+                        add_result = self.debrid_provider.add_torrent(result.get('magnet') or result.get('url'), temp_file)
                         logging.debug(f"Add result from debrid provider: {add_result}")
                         if add_result and isinstance(add_result, dict):
                             # Get files from add_result if available
@@ -246,7 +247,7 @@ class AddingQueue:
                                 file_name = os.path.basename(file_path)
                                 
                                 # Update media item with file info and state
-                                queue_manager.move_to_checking(item, "Adding", result.get('title'), result['magnet'], file_name, add_result.get('torrent_id'))
+                                queue_manager.move_to_checking(item, "Adding", result.get('title'), result.get('magnet') or result.get('url'), file_name, add_result.get('torrent_id'))
                                 logging.info(f"Updated current item with filled_by_file: {file_name}")
                                 
                                 # Mark the successful magnet/URL as not wanted to prevent reuse
@@ -291,7 +292,7 @@ class AddingQueue:
                                                     file_name = os.path.basename(matched_file)
                                                     
                                                     # Update the item state
-                                                    queue_manager.move_to_checking(scraping_item, "Adding", result.get('title'), result['magnet'], file_name, add_result.get('torrent_id'))
+                                                    queue_manager.move_to_checking(scraping_item, "Adding", result.get('title'), result.get('magnet') or result.get('url'), file_name, add_result.get('torrent_id'))
                                                     logging.info(f"Updated matching item with filled_by_file: {file_name}")
                                 else:
                                     logging.debug("Not a TV show, skipping multi-pack check")
@@ -336,7 +337,7 @@ class AddingQueue:
                                 file_name = os.path.basename(file_info['path'])
                                 logging.debug(f"Selected file for current item: {file_name}")
                                 
-                                queue_manager.move_to_checking(item, "Adding", result.get('title'), result['magnet'], file_name, cache_info.get('torrent_id'))
+                                queue_manager.move_to_checking(item, "Adding", result.get('title'), result.get('magnet') or result.get('url'), file_name, cache_info.get('torrent_id'))
                                 logging.info(f"Updated current item with filled_by_file: {file_name}")
                                 
                                 # Mark the successful magnet/URL as not wanted to prevent reuse
@@ -380,7 +381,7 @@ class AddingQueue:
                                                     file_name = os.path.basename(matched_file)
                                                     
                                                     # Update the item state
-                                                    queue_manager.move_to_checking(scraping_item, "Adding", result.get('title'), result['magnet'], file_name, cache_info.get('torrent_id'))
+                                                    queue_manager.move_to_checking(scraping_item, "Adding", result.get('title'), result.get('magnet') or result.get('url'), file_name, cache_info.get('torrent_id'))
                                                     logging.info(f"Updated matching item with filled_by_file: {file_name}")
 
                                 else:
@@ -430,7 +431,20 @@ class AddingQueue:
 
         # If we get here, no valid results were found
         logging.error("No valid results found")
-        self._handle_failed_item(queue_manager, item)
+        
+        # Check if hybrid mode is enabled
+        if get_setting('Scraping', 'hybrid_mode', 'False'):
+            logging.info("Hybrid mode enabled - attempting full mode processing")
+            try:
+                from .adding_queue_full import FullModeProcessor
+                full_processor = FullModeProcessor(self.content_processor)
+                full_processor.process_full_mode(item, queue_manager)
+                return
+            except Exception as e:
+                logging.error(f"Error in hybrid mode processing: {str(e)}")
+                self._handle_failed_item(queue_manager, item)
+        else:
+            self._handle_failed_item(queue_manager, item)
 
     def _get_scrape_results(self, item: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Get and validate scrape results for an item"""

@@ -42,8 +42,23 @@ def consolidate_items(notifications):
             item_info['season'] = f"Season {season_number}"
             consolidated['show'][key]['seasons'].append(item_info)
         else:
-            # For movies, we need to access one level deeper to get to the list
-            consolidated['movie'][key]['items'].append(item_info)
+            # For movies, we'll combine versions for the same item
+            existing_items = consolidated['movie'][key]['items']
+            # Check if we already have an item with the same upgrade status and collection date
+            matching_item = next((
+                item for item in existing_items 
+                if item['is_upgrade'] == is_upgrade and 
+                item['original_collected_at'] == original_collected_at
+            ), None)
+            
+            if matching_item:
+                # If we find a matching item, just add the version if it's new
+                if version not in matching_item['versions']:
+                    matching_item['versions'].append(version)
+            else:
+                # If no matching item, create a new one with versions as a list
+                item_info['versions'] = [version]
+                consolidated['movie'][key]['items'].append(item_info)
             
     return consolidated
 
@@ -63,8 +78,8 @@ def format_notification_content(notifications, notification_type):
         if consolidated['movie']:
             content.append(f"\n{movie_emoji} **Movies collected/upgraded:**\n")
             for movie, items in consolidated['movie'].items():
-                versions = ', '.join(set(item['version'] for item in items['items']))
                 for item in items['items']:
+                    versions = ', '.join(sorted(item['versions']))
                     status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
                     collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
                     if item['is_upgrade']:
@@ -129,8 +144,8 @@ def format_notification_content(notifications, notification_type):
         if consolidated['movie']:
             content.append(f"\n{movie_emoji} <b>Movies collected/upgraded:</b><br><br>")
             for movie, items in consolidated['movie'].items():
-                versions = ', '.join(set(item['version'] for item in items['items']))
                 for item in items['items']:
+                    versions = ', '.join(sorted(item['versions']))
                     status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
                     collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
                     if item['is_upgrade']:
@@ -195,8 +210,8 @@ def format_notification_content(notifications, notification_type):
         if consolidated['movie']:
             content.append(f"\n{movie_emoji} <b>Movies collected/upgraded:</b>\n")
             for movie, items in consolidated['movie'].items():
-                versions = ', '.join(set(item['version'] for item in items['items']))
                 for item in items['items']:
+                    versions = ', '.join(sorted(item['versions']))
                     status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
                     collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
                     if item['is_upgrade']:
@@ -261,8 +276,8 @@ def format_notification_content(notifications, notification_type):
         if consolidated['movie']:
             content.append(f"\n{movie_emoji} Movies collected/upgraded:\n")
             for movie, items in consolidated['movie'].items():
-                versions = ', '.join(set(item['version'] for item in items['items']))
                 for item in items['items']:
+                    versions = ', '.join(sorted(item['versions']))
                     status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
                     collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
                     if item['is_upgrade']:
@@ -320,8 +335,8 @@ def format_notification_content(notifications, notification_type):
         if consolidated['movie']:
             content.append("Movies collected/upgraded:\n")
             for movie, items in consolidated['movie'].items():
-                versions = ', '.join(set(item['version'] for item in items['items']))
                 for item in items['items']:
+                    versions = ', '.join(sorted(item['versions']))
                     status = "Upgraded" if item['is_upgrade'] else "New collection"
                     collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
                     if item['is_upgrade']:
