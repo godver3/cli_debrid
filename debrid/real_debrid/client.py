@@ -37,6 +37,16 @@ class RealDebridProvider(DebridProvider):
         """Check if provider supports direct cache checking"""
         return False
 
+    @property
+    def supports_bulk_cache_checking(self) -> bool:
+        """Check if provider supports checking multiple hashes in a single API call"""
+        return False
+
+    @property
+    def supports_uncached(self) -> bool:
+        """Check if provider supports downloading uncached torrents"""
+        return True
+
     def is_cached(self, magnet_links: Union[str, List[str]]) -> Union[bool, Dict[str, bool]]:
         """
         Check if one or more magnet links are cached on Real-Debrid.
@@ -93,6 +103,14 @@ class RealDebridProvider(DebridProvider):
                     
                 # Check if it's already cached
                 status = info.get('status', '')
+                
+                # If there are no video files, return None to indicate error
+                if not any(is_video_file(f.get('path', '') or f.get('name', '')) for f in info.get('files', [])):
+                    logging.error("No video files found in torrent")
+                    self.update_status(torrent_id, TorrentStatus.ERROR)
+                    results[hash_value] = None
+                    continue
+                
                 is_cached = status == 'downloaded'
                 
                 # Update status tracking
@@ -233,25 +251,24 @@ class RealDebridProvider(DebridProvider):
             logging.error(f"Error getting available hosts: {str(e)}")
             return None
 
-    @timed_lru_cache(seconds=60)
+    @timed_lru_cache(seconds=1)
     def get_active_downloads(self) -> Tuple[int, int]:
         """Get number of active downloads and download limit"""
         try:
-            # Check premium status
-            user_data = make_request('GET', '/user', self.api_key)
-            if not user_data.get('premium', 0):
-                raise TooManyDownloadsError("Account is not premium")
-                
-            # Get active downloads
-            downloads = make_request('GET', '/downloads', self.api_key)
-            active_count = len([d for d in downloads if d.get('download')])
+            # Get active torrents count and limit
+            active_data = make_request('GET', '/torrents/activeCount', self.api_key)
+            logging.info(f"Active torrents data: {active_data}")
+            active_count = active_data.get('nb', 0)
+            max_downloads = active_data.get('limit', self.MAX_DOWNLOADS)
+
+            max_downloads = round(max_downloads * 0.75)
             
-            if active_count >= self.MAX_DOWNLOADS:
+            if active_count >= max_downloads:
                 raise TooManyDownloadsError(
-                    f"Too many active downloads ({active_count}/{self.MAX_DOWNLOADS})"
+                    f"Too many active downloads ({active_count}/{max_downloads})"
                 )
                 
-            return active_count, self.MAX_DOWNLOADS
+            return active_count, max_downloads
             
         except TooManyDownloadsError:
             raise
@@ -263,6 +280,8 @@ class RealDebridProvider(DebridProvider):
         """Get user traffic information"""
         try:
             traffic_info = make_request('GET', '/traffic/details', self.api_key)
+            overall_traffic = make_request('GET', '/traffic', self.api_key)
+            logging.info(f"Overall traffic: {overall_traffic}")
             logging.info(f"Raw traffic info received: {traffic_info}")
             
             if not traffic_info:

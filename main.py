@@ -774,6 +774,10 @@ def main():
         logging.info("Resetting 'Hybrid' uncached content handling setting to None")
         set_setting('Scraping', 'uncached_content_handling', 'None')
 
+    if get_setting('Debrid Provider', 'provider') == 'Torbox':
+        logging.info("Resetting Torbox debrid provider to Real-Debrid")
+        set_setting('Debrid Provider', 'provider', 'RealDebrid')
+
     set_setting('Metadata Battery', 'url', 'http://localhost:50051')
 
     ensure_settings_file()

@@ -2,7 +2,7 @@ from typing import Optional
 from settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from .real_debrid import RealDebridProvider
-from .torbox import TorboxProvider
+from .torbox import TorBoxProvider
 from .common import (
     extract_hash_from_magnet,
     download_and_extract_hash,
@@ -31,8 +31,8 @@ def get_debrid_provider() -> DebridProvider:
     
     if provider_name == 'realdebrid':
         _provider_instance = RealDebridProvider()
-    elif provider_name == 'torbox' or not provider_name:
-        _provider_instance = TorboxProvider()
+    elif provider_name == 'torbox':
+        _provider_instance = TorBoxProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name}")
         
@@ -51,7 +51,7 @@ __all__ = [
     'TooManyDownloadsError',
     'ProviderUnavailableError',
     'RealDebridProvider',
-    'TorboxProvider',
+    'TorBoxProvider',
     'extract_hash_from_magnet',
     'download_and_extract_hash',
     'timed_lru_cache',

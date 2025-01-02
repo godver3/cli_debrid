@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 
 from debrid import get_debrid_provider
-from database import update_media_item, get_all_media_items
+from database import update_media_item, get_all_media_items, get_media_item_by_id
 from settings import get_setting
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
@@ -45,6 +45,19 @@ class AddingQueue:
         """Remove an item from the queue"""
         self.items = [i for i in self.items if i['id'] != item['id']]
         
+    def remove_unwanted_torrent(self, torrent_id: str):
+        """Remove an unwanted torrent from the debrid service
+        
+        Args:
+            torrent_id: ID of the torrent to remove
+        """
+        if torrent_id:
+            try:
+                self.debrid_provider.delete_torrent(torrent_id)
+                logging.debug(f"Successfully removed unwanted torrent {torrent_id} from debrid service")
+            except Exception as e:
+                logging.error(f"Failed to remove unwanted torrent {torrent_id}: {e}")
+                
     def process(self, queue_manager: Any) -> bool:
         """
         Process items in the queue
@@ -84,16 +97,34 @@ class AddingQueue:
                 # Log number of results found
                 logging.debug(f"Found {len(results)} scrape results for {item_identifier}")
                 
+                logging.debug(f"Uncached content management: {get_setting('Scraping', 'uncached_content_handling')}")
+
+                if get_setting('Scraping', 'uncached_content_handling', 'None') == 'None':
+                    logging.debug(f"First pass: Looking for cached results only, accept_uncached=False")
+                    accept_uncached = False
+                elif get_setting('Scraping', 'uncached_content_handling') == 'Full':
+                    logging.debug(f"First pass: Looking for cached results only, accept_uncached=True")
+                    accept_uncached = True
+
                 # First try with cached results only
-                logging.debug(f"First pass: Looking for cached results only")
-                torrent_info, magnet = self._process_results_with_mode(results, item_identifier, accept_uncached=False, item=item)
+                torrent_info, magnet = self._process_results_with_mode(results, item_identifier, accept_uncached, item=item)
+
+                logging.debug(f"torrent_info: {torrent_info}")
+                logging.debug(f"magnet: {magnet}")
                 
                 # If no cached results and hybrid mode is enabled, try again with uncached
                 if not torrent_info and not magnet and get_setting('Scraping', 'hybrid_mode'):
                     logging.debug(f"No cached results found and hybrid mode enabled, trying uncached results")
                     torrent_info, magnet = self._process_results_with_mode(results, item_identifier, accept_uncached=True, item=item)
                 
-                if not torrent_info or not magnet:
+                # Refresh item state from database since it may have been updated
+                updated_item = get_media_item_by_id(item['id'])
+                if updated_item and updated_item.get('state') == 'Pending Uncached':
+                    logging.debug(f"Item moved to pending uncached queue for {item_identifier}")
+                    continue
+                
+                # Only handle as failure if we didn't move to pending uncached
+                if (not torrent_info or not magnet) and (not updated_item or updated_item.get('state') != 'Pending Uncached'):
                     logging.debug(f"No valid torrent info or magnet found for {item_identifier}")
                     self._handle_failed_item(item, "No valid results found")
                     continue

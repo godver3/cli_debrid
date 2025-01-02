@@ -63,8 +63,9 @@ SETTINGS_SCHEMA = {
         "provider": {
             "type": "string",
             "description": "Debrid service provider",
-            "default": "Torbox",
-            "choices": ["Torbox", "RealDebrid"]
+            "default": "RealDebrid",
+            #"choices": ["Torbox", "RealDebrid"]
+            "choices": ["RealDebrid"]
         },
         "api_key": {
             "type": "string",
@@ -170,7 +171,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_upgrading_cleanup": {
             "type": "boolean",
-            "description": "Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid/Torbox)",
+            "description": "Enable cleanup of original items after successful upgrade (removes original item from Debrid Provider)",
             "default": False
         },
         "disable_adult": {

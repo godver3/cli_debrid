@@ -8,7 +8,7 @@ import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
 
-from debrid.base import DebridProvider
+from debrid.base import DebridProvider, TooManyDownloadsError
 from debrid.common import (
     download_and_convert_to_magnet,
     extract_hash_from_magnet,
@@ -21,6 +21,14 @@ from debrid.status import TorrentStatus
 
 class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
+    pass
+
+class NoVideoFilesError(TorrentProcessingError):
+    """Raised when a torrent has no valid video files"""
+    pass
+
+class TorrentAdditionError(TorrentProcessingError):
+    """Raised when a torrent fails to be added to the debrid service"""
     pass
 
 class TorrentProcessor:
@@ -81,13 +89,23 @@ class TorrentProcessor:
             magnet: Magnet link to check
             
         Returns:
-            True if cached, False otherwise
+            True if cached, False if not cached
+            
+        Raises:
+            NoVideoFilesError: If the torrent has no valid video files
+            TorrentAdditionError: If the torrent fails to be added to the debrid service
         """
         try:
             logging.debug("Checking cache status")
             is_cached = self.debrid_provider.is_cached(magnet)
+            if is_cached is None:  # Special case for no video files
+                raise NoVideoFilesError("Torrent has no valid video files")
+            if is_cached is False and not self.add_to_account(magnet):
+                raise TorrentAdditionError("Failed to add torrent to debrid service")
             logging.debug(f"Cache check result: {'Cached' if is_cached else 'Not cached'}")
             return is_cached
+        except (NoVideoFilesError, TorrentAdditionError):
+            raise
         except Exception as e:
             logging.error(f"Error checking cache for magnet: {str(e)}", exc_info=True)
             return False
@@ -182,14 +200,14 @@ class TorrentProcessor:
         for idx, result in enumerate(results, 1):
             try:
                 # Get magnet link - try both 'link' and 'magnet' keys
-                magnet = result.get('magnet') or result.get('link')
+                original_link = result.get('magnet') or result.get('link')
                 logging.debug(f"Result {idx}: Raw result data: {result}")
-                if not magnet:
+                if not original_link:
                     logging.debug(f"Result {idx}: No magnet link found in result")
                     continue
                     
-                logging.debug(f"Result {idx}: Found magnet link: {magnet}")
-                magnet = self.process_magnet(magnet)
+                logging.debug(f"Result {idx}: Found magnet link: {original_link}")
+                magnet = self.process_magnet(original_link)
                 if not magnet:
                     logging.debug(f"Result {idx}: Failed to process magnet link")
                     continue
@@ -198,13 +216,48 @@ class TorrentProcessor:
                 
                 # Check cache status
                 logging.debug(f"Result {idx}: Checking cache status")
-                is_cached = self.check_cache(magnet)
-                logging.debug(f"Result {idx}: Cache status - {'Cached' if is_cached else 'Not cached'}")
+                try:
+                    is_cached = self.check_cache(magnet)
+                    logging.debug(f"Result {idx}: Cache status - {'Cached' if is_cached else 'Not cached'}")
+                except NoVideoFilesError:
+                    logging.debug(f"Result {idx}: No valid video files found in torrent")
+                    continue
                 
                 # Skip if we need cached and this isn't
                 if not accept_uncached and not is_cached:
                     logging.debug(f"Result {idx}: Skipping uncached result (accept_uncached={accept_uncached})")
                     continue
+
+                # If uncached, check download limits before proceeding
+                if not is_cached:
+                    try:
+                        active_downloads, download_limit = self.debrid_provider.get_active_downloads()
+                        if active_downloads >= download_limit:
+                            logging.info(f"Download limit reached ({active_downloads}/{download_limit}). Moving to pending uncached queue.")
+                            logging.debug(f"Original link: {original_link}")
+                            if item:
+                                from database import update_media_item_state
+                                update_media_item_state(item['id'], "Pending Uncached", 
+                                    filled_by_magnet=original_link,
+                                    filled_by_title=result.get('title', ''))
+                                item['filled_by_magnet'] = original_link  # Store original URL/magnet
+                                item['filled_by_title'] = result.get('title', '')
+                            return None, original_link  # Return original URL/magnet
+                    except TooManyDownloadsError:
+                        logging.info("Download limit reached. Moving to pending uncached queue.")
+                        logging.debug(f"Original link: {original_link}")
+
+                        if item:
+                            from database import update_media_item_state
+                            update_media_item_state(item['id'], "Pending Uncached",
+                                filled_by_magnet=original_link,
+                                filled_by_title=result.get('title', ''))
+                            item['filled_by_magnet'] = original_link  # Store original URL/magnet
+                            item['filled_by_title'] = result.get('title', '')
+                        return None, original_link  # Return original URL/magnet
+                    except Exception as e:
+                        logging.error(f"Error checking download limits: {str(e)}")
+                        continue
                     
                 # Try to add it
                 logging.debug(f"Result {idx}: Attempting to add torrent to debrid service")
