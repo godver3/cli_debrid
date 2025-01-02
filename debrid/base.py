@@ -47,6 +47,11 @@ class DebridProvider(ABC):
         """Whether this provider supports checking cache status without adding the torrent"""
         return True
     
+    @property
+    def supports_bulk_cache_checking(self) -> bool:
+        """Whether this provider supports checking multiple hashes in a single API call"""
+        return False
+    
     @abstractmethod
     def add_torrent(self, magnet_link: str, temp_file_path: Optional[str] = None) -> str:
         """Add a torrent/magnet link to the debrid service"""
