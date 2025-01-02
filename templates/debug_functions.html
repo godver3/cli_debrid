@@ -526,11 +526,14 @@
                     const rateLimitInfo = document.getElementById('rate-limit-info');
                     let html = '<h4>Rate Limits by Domain:</h4>';
                     for (const [domain, limits] of Object.entries(data)) {
+                        const fiveMinClass = limits.five_minute.count > limits.five_minute.limit ? 'rate-limit-warning' : 'rate-limit-normal';
+                        const hourlyClass = limits.hourly.count > limits.hourly.limit ? 'rate-limit-warning' : 'rate-limit-normal';
+                        
                         html += `
                             <div class="domain-rate-limit">
                                 <h5>${domain}</h5>
-                                <p>5-minute limit: ${limits.five_minute.count} / ${limits.five_minute.limit}</p>
-                                <p>Hourly limit: ${limits.hourly.count} / ${limits.hourly.limit}</p>
+                                <p class="${fiveMinClass}">5-minute: ${limits.five_minute.count} / ${limits.five_minute.limit} requests</p>
+                                <p class="${hourlyClass}">Hourly: ${limits.hourly.count} / ${limits.hourly.limit} requests</p>
                             </div>
                         `;
                     }

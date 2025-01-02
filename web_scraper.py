@@ -631,21 +631,34 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                     logging.error(f"Error processing magnet link {magnet_link}: {str(e)}")
                     continue
 
-    # Get the debrid provider and check if it supports direct cache checking
+    # Get the debrid provider and check its capabilities
     debrid_provider = get_debrid_provider()
     supports_cache_check = debrid_provider.supports_direct_cache_check
+    supports_bulk_check = debrid_provider.supports_bulk_cache_checking
 
     # Check cache status for all hashes
     cache_status = {}
     if hashes:
         if supports_cache_check:
             try:
-                # If provider supports direct checking, use it
-                cache_status = debrid_provider.is_cached(hashes)
-                if isinstance(cache_status, bool):
-                    # If we got a single boolean back, convert to dict
-                    cache_status = {hash_value: cache_status for hash_value in hashes}
-                logging.info(f"Cache status from provider: {cache_status}")
+                if supports_bulk_check:
+                    # If provider supports bulk checking, check all hashes at once
+                    cache_status = debrid_provider.is_cached(hashes)
+                    if isinstance(cache_status, bool):
+                        # If we got a single boolean back, convert to dict
+                        cache_status = {hash_value: cache_status for hash_value in hashes}
+                    logging.info(f"Bulk cache status from provider: {cache_status}")
+                else:
+                    # Check hashes individually for providers that don't support bulk checking
+                    cache_status = {}
+                    for hash_value in hashes:
+                        try:
+                            is_cached = debrid_provider.is_cached(hash_value)
+                            cache_status[hash_value] = is_cached
+                            logging.info(f"Individual cache status for {hash_value}: {is_cached}")
+                        except Exception as e:
+                            logging.error(f"Error checking individual cache status for {hash_value}: {e}")
+                            cache_status[hash_value] = 'N/A'
             except Exception as e:
                 logging.error(f"Error checking cache status: {e}")
                 # Fall back to N/A on error

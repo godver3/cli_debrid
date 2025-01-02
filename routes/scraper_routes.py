@@ -1,6 +1,7 @@
 from flask import jsonify, request, render_template, session, Blueprint
 import logging
 from debrid import get_debrid_provider
+from debrid.real_debrid.client import RealDebridProvider
 from .models import user_required, onboarding_required, admin_required
 from settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts
@@ -182,7 +183,18 @@ def add_torrent_to_debrid():
                 logging.warning(f"Failed to delete temp file {temp_file}: {e}")
 
         # Get torrent info for processing
-        torrent_info = debrid_provider.get_torrent_info(torrent_id)
+        if isinstance(debrid_provider, RealDebridProvider):
+            # For Real Debrid, use the torrent ID directly
+            torrent_info = debrid_provider.get_torrent_info(torrent_id)
+        else:
+            # For TorBox, extract and use the hash
+            hash_value = extract_hash_from_magnet(magnet_link)
+            if not hash_value:
+                error_message = "Failed to extract hash from magnet link"
+                logging.error(error_message)
+                return jsonify({'error': error_message}), 500
+            torrent_info = debrid_provider.get_torrent_info(hash_value)
+
         if not torrent_info:
             error_message = "Failed to get torrent info"
             logging.error(error_message)

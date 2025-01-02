@@ -4,7 +4,7 @@ from functools import wraps
 from urllib.parse import urlparse, parse_qs
 import time
 from collections import defaultdict
-from flask import current_app
+from flask import current_app, g
 from requests.exceptions import RequestException
 import os
 
@@ -67,19 +67,29 @@ class APIRateLimiter:
 
     def check_limits(self, domain):
         current_time = time.time()
-        hour_ago = current_time - 3600
-        five_minutes_ago = current_time - 300
-
-        self.hourly_calls[domain] = [t for t in self.hourly_calls[domain] if t > hour_ago]
-        self.five_minute_calls[domain] = [t for t in self.five_minute_calls[domain] if t > five_minutes_ago]
-
-        if len(self.hourly_calls[domain]) >= self.hourly_limit or len(self.five_minute_calls[domain]) >= self.five_minute_limit:
-            self.blocked_domains.add(domain)
-            self.stop_program()
-            return False
-
+        
+        # Clean up old calls
+        self.hourly_calls[domain] = [t for t in self.hourly_calls[domain] if current_time - t < 3600]
+        self.five_minute_calls[domain] = [t for t in self.five_minute_calls[domain] if current_time - t < 300]
+        
+        # Add current call
         self.hourly_calls[domain].append(current_time)
         self.five_minute_calls[domain].append(current_time)
+        
+        # Track if limits are exceeded but don't enforce
+        hourly_exceeded = len(self.hourly_calls[domain]) > self.hourly_limit
+        five_min_exceeded = len(self.five_minute_calls[domain]) > self.five_minute_limit
+        
+        # Only try to set g.rate_limit_warning if we're in a request context
+        try:
+            if hourly_exceeded or five_min_exceeded:
+                g.rate_limit_warning = True
+            else:
+                g.rate_limit_warning = False
+        except RuntimeError:
+            # We're outside of request context, just continue
+            pass
+            
         return True
 
     def stop_program(self):
@@ -107,7 +117,7 @@ class APITracker:
         self.current_url = None
         self._args = None
         self.rate_limiter = APIRateLimiter()
-        self.monitored_domains = {'api.real-debrid.com', 'api.trakt.tv', 'torrentio.strem.fun', 'api.torbox.app'}
+        self.monitored_domains = {'api.real-debrid.com', 'api.trakt.tv', 'torrentio.strem.fun'}#, 'api.torbox.app'}
 
     @property
     def args(self):
@@ -119,9 +129,7 @@ class APITracker:
     def get(self, url, **kwargs):
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
-            if not self.rate_limiter.check_limits(domain):
-                api_logger.error(f"Rate limit exceeded for {domain}. Blocking further requests.")
-                raise RequestException(f"Rate limit exceeded for {domain}")
+            self.rate_limiter.check_limits(domain)
         
         try:
             api_logger.debug(f"Attempting GET request to: {url}")
@@ -136,16 +144,58 @@ class APITracker:
             raise  # Re-raise the exception after logging
 
     @log_api_call
-    def post(self, *args, **kwargs):
-        return requests.post(*args, **kwargs)
+    def post(self, url, **kwargs):
+        domain = urlparse(url).netloc
+        if domain in self.monitored_domains:
+            self.rate_limiter.check_limits(domain)
+        
+        try:
+            api_logger.debug(f"Attempting POST request to: {url}")
+            self.current_url = url  # Store the current URL
+            self._args = None  # Reset args
+            response = self.session.post(url, **kwargs)
+            response.raise_for_status()
+            api_logger.debug(f"Successful POST request to: {url}. Status code: {response.status_code}")
+            return response
+        except RequestException as e:
+            api_logger.error(f"Error in POST request to {url}: {str(e)}")
+            raise  # Re-raise the exception after logging
 
     @log_api_call
-    def put(self, *args, **kwargs):
-        return requests.put(*args, **kwargs)
+    def put(self, url, **kwargs):
+        domain = urlparse(url).netloc
+        if domain in self.monitored_domains:
+            self.rate_limiter.check_limits(domain)
+        
+        try:
+            api_logger.debug(f"Attempting PUT request to: {url}")
+            self.current_url = url  # Store the current URL
+            self._args = None  # Reset args
+            response = self.session.put(url, **kwargs)
+            response.raise_for_status()
+            api_logger.debug(f"Successful PUT request to: {url}. Status code: {response.status_code}")
+            return response
+        except RequestException as e:
+            api_logger.error(f"Error in PUT request to {url}: {str(e)}")
+            raise  # Re-raise the exception after logging
 
     @log_api_call
-    def delete(self, *args, **kwargs):
-        return requests.delete(*args, **kwargs)
+    def delete(self, url, **kwargs):
+        domain = urlparse(url).netloc
+        if domain in self.monitored_domains:
+            self.rate_limiter.check_limits(domain)
+        
+        try:
+            api_logger.debug(f"Attempting DELETE request to: {url}")
+            self.current_url = url  # Store the current URL
+            self._args = None  # Reset args
+            response = self.session.delete(url, **kwargs)
+            response.raise_for_status()
+            api_logger.debug(f"Successful DELETE request to: {url}. Status code: {response.status_code}")
+            return response
+        except RequestException as e:
+            api_logger.error(f"Error in DELETE request to {url}: {str(e)}")
+            raise  # Re-raise the exception after logging
 
     # Add other HTTP methods as needed
 
@@ -158,7 +208,11 @@ class APITracker:
 api = APITracker()
 
 def is_rate_limited():
-    return bool(api.rate_limiter.blocked_domains)
+    try:
+        return getattr(g, 'rate_limit_warning', False)
+    except RuntimeError:
+        # We're outside of request context
+        return False
 
 def get_blocked_domains():
-    return list(api.rate_limiter.blocked_domains)
+    return []  # No domains are blocked anymore since we're not enforcing limits

@@ -44,7 +44,8 @@ def index():
         elif queue_name == 'Pending Uncached':
             for item in items:
                 item['time_added'] = item.get('time_added', datetime.now())
-                item['magnet_link'] = item.get('magnet_link', 'Unknown')
+                item['filled_by_magnet'] = item.get('filled_by_magnet', 'Unknown')
+                item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
 
     for queue_name, items in queue_contents.items():
         if queue_name == 'Unreleased':
