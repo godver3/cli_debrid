@@ -266,12 +266,15 @@
         fetch('/statistics/active_downloads')
             .then(response => response.json())
             .then(data => {
-                if (!data.error) {
-                    document.getElementById('active_downloads').textContent = data.active_count;
-                    document.getElementById('download_limit').textContent = data.limit;
-                    
+                const downloadElement = document.querySelector('[data-label="Active Downloads"]');
+                document.getElementById('active_downloads').textContent = data.active_count;
+                document.getElementById('download_limit').textContent = data.limit;
+                
+                if (data.error === 'too_many') {
+                    downloadElement.classList.add('critical');
+                    downloadElement.classList.remove('warning');
+                } else if (!data.error) {
                     // Update color based on usage percentage
-                    const downloadElement = document.querySelector('[data-label="Active Downloads"]');
                     if (data.percentage >= 90) {
                         downloadElement.classList.add('critical');
                         downloadElement.classList.remove('warning');
@@ -281,28 +284,41 @@
                     } else {
                         downloadElement.classList.remove('critical', 'warning');
                     }
+                } else {
+                    // Handle other errors
+                    console.error('Error in active downloads:', data.message);
+                    downloadElement.classList.remove('critical', 'warning');
                 }
             })
-            .catch(error => console.error('Error fetching active downloads:', error));
+            .catch(error => {
+                console.error('Error fetching active downloads:', error);
+                const downloadElement = document.querySelector('[data-label="Active Downloads"]');
+                downloadElement.classList.remove('critical', 'warning');
+            });
     }
 
     function updateUsageStats() {
         fetch('/statistics/usage_stats')
             .then(response => response.json())
             .then(data => {
-                if (!data.error) {
-                    // Update daily usage
-                    const dailyElement = document.querySelector('[data-label="Daily Usage"]');
-                    document.getElementById('daily_usage').textContent = formatBytes(data.daily.used, 1);
-                    document.getElementById('daily_limit').textContent = formatBytes(data.daily.limit, 1);
-                    
-                    if (data.daily.is_over_limit) {
+                const dailyElement = document.querySelector('[data-label="Daily Usage"]');
+                const dailyData = data.daily;
+                
+                // Always update the display values
+                document.getElementById('daily_usage').textContent = formatBytes(dailyData.used, 1);
+                document.getElementById('daily_limit').textContent = formatBytes(dailyData.limit, 1);
+                
+                if (dailyData.error) {
+                    console.error('Error in usage stats:', dailyData.error);
+                    dailyElement.classList.remove('critical', 'warning');
+                } else {
+                    if (dailyData.is_over_limit) {
                         dailyElement.classList.add('critical');
                         dailyElement.classList.remove('warning');
-                    } else if (data.daily.percentage >= 90) {
+                    } else if (dailyData.percentage >= 90) {
                         dailyElement.classList.add('critical');
                         dailyElement.classList.remove('warning');
-                    } else if (data.daily.percentage >= 75) {
+                    } else if (dailyData.percentage >= 75) {
                         dailyElement.classList.add('warning');
                         dailyElement.classList.remove('critical');
                     } else {
@@ -310,7 +326,11 @@
                     }
                 }
             })
-            .catch(error => console.error('Error fetching usage stats:', error));
+            .catch(error => {
+                console.error('Error fetching usage stats:', error);
+                const dailyElement = document.querySelector('[data-label="Daily Usage"]');
+                dailyElement.classList.remove('critical', 'warning');
+            });
     }
 
     // Update both active downloads and usage stats immediately and every 30 seconds
