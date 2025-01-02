@@ -93,15 +93,12 @@ class TorrentProcessor:
             
         Raises:
             NoVideoFilesError: If the torrent has no valid video files
-            TorrentAdditionError: If the torrent fails to be added to the debrid service
         """
         try:
             logging.debug("Checking cache status")
             is_cached = self.debrid_provider.is_cached(magnet)
             if is_cached is None:  # Special case for no video files
                 raise NoVideoFilesError("Torrent has no valid video files")
-            if is_cached is False and not self.add_to_account(magnet):
-                raise TorrentAdditionError("Failed to add torrent to debrid service")
             logging.debug(f"Cache check result: {'Cached' if is_cached else 'Not cached'}")
             return is_cached
         except (NoVideoFilesError, TorrentAdditionError):
@@ -226,6 +223,7 @@ class TorrentProcessor:
                 # Skip if we need cached and this isn't
                 if not accept_uncached and not is_cached:
                     logging.debug(f"Result {idx}: Skipping uncached result (accept_uncached={accept_uncached})")
+                    
                     continue
 
                 # If uncached, check download limits before proceeding
