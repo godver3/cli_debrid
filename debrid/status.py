@@ -9,6 +9,11 @@ class TorrentStatus(Enum):
     DOWNLOADED = 'downloaded'  # Cached
     ERROR = 'error'
     UNKNOWN = 'unknown'
+    SELECTING = 'selecting'
+    REMOVED = 'removed'
+    ADDED = 'added'
+    CACHED = 'cached'
+    NOT_CACHED = 'not_cached'
 
 def get_status_flags(status: str) -> Dict[str, bool]:
     """Convert a status string to standardized status flags"""
