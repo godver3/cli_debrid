@@ -268,7 +268,7 @@ function addToRealDebrid(magnetLink) {
         onConfirm: () => {
             showLoadingState();
 
-            fetch('/scraper/add_to_real_debrid', {
+            fetch('/scraper/add_to_debrid', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
