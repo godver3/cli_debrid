@@ -183,26 +183,30 @@ button:hover {
 }
 
 .domain-rate-limit {
-    background-color: #3a3a3a;
-    border: 1px solid #555;
-    border-radius: 6px;
-    padding: 15px;
     margin-bottom: 15px;
+    padding: 10px;
+    border-radius: 4px;
+    background-color: #3a3a3a;
 }
 
 .domain-rate-limit h5 {
+    margin: 0 0 10px 0;
     color: #f4f4f4;
-    font-size: 18px;
-    margin-top: 0;
-    margin-bottom: 10px;
-    border-bottom: 1px solid #555;
-    padding-bottom: 5px;
 }
 
 .domain-rate-limit p {
-    color: #f4f4f4;
     margin: 5px 0;
-    font-size: 14px;
+    padding: 5px;
+    border-radius: 3px;
+}
+
+.rate-limit-normal {
+    color: #90ee90;
+}
+
+.rate-limit-warning {
+    color: #ff4444;
+    font-weight: bold;
 }
 
 .rate-limit-info {
@@ -211,10 +215,6 @@ button:hover {
 
 .rate-limit-count {
     font-weight: bold;
-}
-
-.rate-limit-warning {
-    color: #ffc107;
 }
 
 .rate-limit-danger {
