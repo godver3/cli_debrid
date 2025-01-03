@@ -17,6 +17,7 @@ from ..common import (
 )
 from ..status import TorrentStatus
 from .api import make_request
+from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 
 class RealDebridProvider(DebridProvider):
     """Real-Debrid implementation of the DebridProvider interface"""
@@ -108,6 +109,15 @@ class RealDebridProvider(DebridProvider):
                 if not any(is_video_file(f.get('path', '') or f.get('name', '')) for f in info.get('files', [])):
                     logging.error("No video files found in torrent")
                     self.update_status(torrent_id, TorrentStatus.ERROR)
+                    
+                    # Add to not wanted list - we only get magnet links or hashes here
+                    try:
+                        hash_value = extract_hash_from_magnet(magnet_link)
+                        add_to_not_wanted(hash_value)
+                        logging.info(f"Added magnet hash {hash_value} to not wanted list")
+                    except Exception as e:
+                        logging.error(f"Failed to add to not wanted list: {str(e)}")
+                    
                     results[hash_value] = None
                     continue
                 
@@ -197,6 +207,12 @@ class RealDebridProvider(DebridProvider):
                 logging.debug(f"Torrent info (attempt {attempt + 1}): {info}")
                 status = info.get('status', '')
                 
+                # Early exit for invalid magnets
+                if status == 'magnet_error' and info.get('filename') == 'Invalid Magnet':
+                    logging.error("Invalid magnet link detected")
+                    self.remove_torrent(torrent_id)
+                    return None
+                
                 if status == 'magnet_conversion':
                     logging.debug("Waiting for magnet conversion...")
                     time.sleep(1)
@@ -257,7 +273,7 @@ class RealDebridProvider(DebridProvider):
         try:
             # Get active torrents count and limit
             active_data = make_request('GET', '/torrents/activeCount', self.api_key)
-            logging.info(f"Active torrents data: {active_data}")
+            #logging.info(f"Active torrents data: {active_data}")
             active_count = active_data.get('nb', 0)
             max_downloads = active_data.get('limit', self.MAX_DOWNLOADS)
 
@@ -281,8 +297,8 @@ class RealDebridProvider(DebridProvider):
         try:
             traffic_info = make_request('GET', '/traffic/details', self.api_key)
             overall_traffic = make_request('GET', '/traffic', self.api_key)
-            logging.info(f"Overall traffic: {overall_traffic}")
-            logging.info(f"Raw traffic info received: {traffic_info}")
+            #logging.info(f"Overall traffic: {overall_traffic}")
+            #logging.info(f"Raw traffic info received: {traffic_info}")
             
             if not traffic_info:
                 logging.error("Failed to get traffic information")
@@ -291,11 +307,11 @@ class RealDebridProvider(DebridProvider):
             try:
                 # Get today in UTC since Real-Debrid uses UTC dates
                 today_utc = datetime.utcnow().strftime("%Y-%m-%d")
-                logging.info(f"Looking for traffic data for UTC date: {today_utc}")
+                #logging.info(f"Looking for traffic data for UTC date: {today_utc}")
                 
                 # Get today's traffic
                 daily_traffic = traffic_info.get(today_utc, {})
-                logging.info(f"Daily traffic data for {today_utc}: {daily_traffic}")
+                #logging.info(f"Daily traffic data for {today_utc}: {daily_traffic}")
                 
                 if not daily_traffic:
                     logging.error(f"No traffic data found for {today_utc}")
@@ -306,13 +322,7 @@ class RealDebridProvider(DebridProvider):
                 daily_gb = daily_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
                 
                 # Get daily limit from traffic info
-                daily_limit = None
-                if 'links' in traffic_info:
-                    daily_limit = traffic_info['links'].get('daily_bytes', 0) / (1024 * 1024 * 1024)  # Convert to GB
-                    logging.info(f"Retrieved daily limit from API: {daily_limit} GB")
-                else:
-                    logging.warning("No 'links' field found in traffic info for daily limit")
-                    daily_limit = 2000  # Default to 2TB if not found
+                daily_limit = 2000
 
                 return {
                     'downloaded': round(daily_gb, 2),

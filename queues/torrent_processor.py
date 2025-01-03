@@ -269,8 +269,7 @@ class TorrentProcessor:
                         # Mark the successful magnet/URL as not wanted to prevent reuse
                         if item:
                             if 'magnet' in result:
-                                from not_wanted_magnets import add_to_not_wanted
-                                from debrid.common import extract_hash_from_magnet, download_and_extract_hash
+                                from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
                                 result_magnet = result['magnet']
                                 logging.debug(f"Result {idx}: Attempting to add magnet to not wanted: {result_magnet}")
                                 try:
@@ -278,23 +277,18 @@ class TorrentProcessor:
                                     if result_magnet.startswith('http'):
                                         logging.debug(f"Result {idx}: Magnet is HTTP link, downloading torrent first")
                                         hash_value = download_and_extract_hash(result_magnet)
+                                        add_to_not_wanted(hash_value)
+                                        add_to_not_wanted_urls(result_magnet)
+                                        logging.info(f"Added successful magnet hash {hash_value} and URL to not wanted lists")
                                     else:
                                         hash_value = extract_hash_from_magnet(result_magnet)
-                                    
-                                    if hash_value:
-                                        add_to_not_wanted(hash_value, str(item.get('id')), item)
+                                        add_to_not_wanted(hash_value)
                                         logging.info(f"Added successful magnet hash {hash_value} to not wanted list")
-                                    else:
-                                        raise Exception("Could not extract hash from magnet/torrent")
                                 except Exception as e:
                                     logging.error(f"Result {idx}: Failed to process magnet for not wanted: {str(e)}")
-                            elif 'url' in result:
-                                from not_wanted_magnets import add_to_not_wanted_urls
-                                url = result['url']
-                                logging.debug(f"Result {idx}: Adding URL to not wanted: {url}")
-                                add_to_not_wanted_urls(url, str(item.get('id')), item)
-                                logging.info(f"Added successful URL {url} to not wanted list")
-                        
+                            # elif 'url' in result:
+                            #     # Dead code - all scrapers use 'magnet' key
+                            #     pass
                         return info, magnet
                     else:
                         logging.debug(f"Result {idx}: Torrent has no files, continuing to next result")
