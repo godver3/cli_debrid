@@ -38,6 +38,8 @@ def index():
             for item in items:
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
+                item['progress'] = item.get('progress', 0)
+                item['state'] = item.get('state', 'unknown')
         elif queue_name == 'Sleeping':
             for item in items:
                 item['wake_count'] = queue_manager.get_wake_count(item['id'])
@@ -88,6 +90,12 @@ def api_queue_contents():
                         item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
                     else:
                         item['formatted_scrape_time'] = item['scrape_time']
+        elif queue_name == 'Checking':
+            for item in items:
+                item['time_added'] = item.get('time_added', datetime.now())
+                item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
+                item['progress'] = item.get('progress', 0)
+                item['state'] = item.get('state', 'unknown')
         elif queue_name == 'Sleeping':
             for item in items:
                 if 'wake_count' not in item or item['wake_count'] is None:
