@@ -352,6 +352,11 @@ SETTINGS_SCHEMA = {
                 "api_key": {"type": "string", "default": "", "sensitive": True},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "display_name": {"type": "string", "default": "Overseerr"}
+            },
+            "Plex Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "Plex Watchlist"}
             }
         }
     },
