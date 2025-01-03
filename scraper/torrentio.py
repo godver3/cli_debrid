@@ -54,7 +54,7 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
     for stream in streams:
         try:
             title = stream.get('title', '')
-            logging.debug(f"Raw title: {title}")
+            #logging.debug(f"Raw title: {title}")
             title_parts = title.split('\n')
             name = title_parts[0].strip()
             size = 0.0
@@ -80,7 +80,7 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 'magnet': magnet_link,
                 'seeders': seeders
             })
-            logging.debug(f"Parsed result: title={name}, size={size}, seeders={seeders}")
+            #logging.debug(f"Parsed result: title={name}, size={size}, seeders={seeders}")
         except Exception as e:
             continue
     return results
@@ -103,7 +103,7 @@ def parse_size(size_info: str) -> float:
         else:
             return size
     
-    logging.debug("Returning 0.0 as fallback")
+    #logging.debug("Returning 0.0 as fallback")
     return 0.0
 
 def parse_seeder(seeder_info: str) -> int:

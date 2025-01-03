@@ -82,7 +82,10 @@ def verify_database():
         
     conn.close()
     
-    logging.info("Database verification complete.")
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    db_path = os.path.join(db_content_dir, 'media_items.db')
+    logging.info(f"Successfully connected to cli_debrid database: sqlite:///{db_path}")
+
 
 def create_tables():
     conn = get_db_connection()

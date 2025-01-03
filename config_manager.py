@@ -123,11 +123,14 @@ def save_config(config):
         if verified_config != cleaned_config:
             logging.error(f"[{process_id}] Verified config does not match cleaned config")
         else:
-            # Reset the debrid provider and reinitialize queues to pick up new settings
-            logging.debug("Resetting debrid provider and queues to pick up new settings")
+            # Reset the debrid provider and reinitialize components to pick up new settings
+            logging.debug("Resetting debrid provider and reinitializing components to pick up new settings")
             reset_provider()
             from queue_manager import QueueManager
             QueueManager().reinitialize_queues()
+            # Also reinitialize the program runner
+            from run_program import ProgramRunner
+            ProgramRunner().reinitialize()
             
     except Exception as e:
         logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
@@ -252,10 +255,16 @@ def update_content_source(source_id, source_config):
                 config['Content Sources'][source_id][key] = value
         log_config_state(f"[{process_id}] Config after updating content source", config)
         save_config(config)
+        # Explicitly reset provider and reinitialize components after content source update
+        reset_provider()
+        from queue_manager import QueueManager
+        QueueManager().reinitialize_queues()
+        from run_program import ProgramRunner
+        ProgramRunner().reinitialize()
         logging.debug(f"[{process_id}] Successfully updated content source: {source_id}")
         return True
     else:
-        logging.warning(f"[{process_id}] Content source not found for update: {source_id}")
+        logging.error(f"[{process_id}] Content source not found: {source_id}")
         return False
 
 def update_all_content_sources(content_sources):
@@ -264,10 +273,16 @@ def update_all_content_sources(content_sources):
     
     config = load_config()
     config['Content Sources'] = content_sources
-    
     log_config_state(f"[{process_id}] Config after updating all content sources", config)
     save_config(config)
-    logging.debug(f"[{process_id}] Finished update_all_content_sources process")
+    
+    # Explicitly reset provider and reinitialize components after updating all content sources
+    reset_provider()
+    from queue_manager import QueueManager
+    QueueManager().reinitialize_queues()
+    from run_program import ProgramRunner
+    ProgramRunner().reinitialize()
+    logging.debug(f"[{process_id}] Successfully updated all content sources")
     return True
 
 def add_scraper(scraper_type, scraper_config):

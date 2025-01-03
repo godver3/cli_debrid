@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from settings import get_setting
 from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app.database import DatabaseManager
 
 def parse_json_string(s):
     try:
@@ -30,7 +31,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
 
     # Convert TMDB ID to IMDb ID if necessary
     if tmdb_id and not imdb_id:
-        logging.info(f"Converting TMDB ID {tmdb_id} to IMDb ID with media type: {item_media_type}")
+        #logging.info(f"Converting TMDB ID {tmdb_id} to IMDb ID with media type: {item_media_type}")
         if item_media_type == "tv":
             converted_item_media_type = "show"
         else:
@@ -42,7 +43,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         logging.info(f"Converted TMDB ID {tmdb_id} to IMDb ID {imdb_id}")
 
     media_type = item_media_type.lower() if item_media_type else 'movie'
-    logging.info(f"Processing item as {media_type}")
+    #logging.info(f"Processing item as {media_type}")
     
     try:
         if media_type == 'movie':
@@ -110,10 +111,10 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         elif isinstance(runtime, str) and runtime.isdigit():
             processed_metadata['runtime'] = int(runtime)
 
-        logging.info(f"Processed metadata: {processed_metadata}")
+        #logging.info(f"Processed metadata: {processed_metadata}")
 
-        logging.info(f"Genres: {processed_metadata['genres']}")
-        logging.info("Checking for anime genre")
+        #logging.info(f"Genres: {processed_metadata['genres']}")
+        #logging.info("Checking for anime genre")
         is_anime = 'anime' in [genre.lower() for genre in processed_metadata['genres']]
         processed_metadata['genres'] = ['anime'] if is_anime else processed_metadata['genres']
 
@@ -229,7 +230,19 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             elif item['media_type'].lower() in ['tv', 'show']:
                 is_anime = 'anime' in [genre.lower() for genre in metadata.get('genres', [])]
                 
-                seasons = metadata.get('seasons', {})
+                seasons = metadata.get('seasons')
+                if seasons == 'None':  # Handle the case where seasons is the string 'None'
+                    seasons = {}
+                elif not isinstance(seasons, dict):
+                    seasons = {}
+                    
+                if not seasons:
+                    logging.error(f"No seasons data found for show {item['imdb_id']}")
+                    if DatabaseManager.remove_metadata(item['imdb_id']):
+                        logging.info(f"Retrying metadata fetch for show {item['imdb_id']}")
+                        metadata, _ = DirectAPI.get_show_metadata(item['imdb_id'])
+                    continue
+
                 for season_number, season_data in seasons.items():
                     episodes = season_data.get('episodes', {})
                     for episode_number, episode_data in episodes.items():
@@ -260,7 +273,7 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
         logging.warning(f"No release dates found for IMDb ID: {imdb_id}")
         return media_details.get('released', 'Unknown')
 
-    logging.debug(f"Release dates: {release_dates}")
+    #logging.debug(f"Release dates: {release_dates}")
     
     current_date = datetime.now()
     digital_physical_releases = []
@@ -363,74 +376,163 @@ def refresh_release_dates():
             else:
                 metadata, _ = DirectAPI.get_show_metadata(imdb_id)
             
-            if metadata:
-                logging.info("Getting release date")
-                if media_type == 'movie':
-                    new_release_date = get_release_date(metadata, imdb_id)
+            if not metadata:
+                logging.warning(f"Could not fetch metadata for {title}")
+                # If we got empty metadata, remove what we have and try again next time
+                DatabaseManager.remove_metadata(imdb_id)
+                logging.info(f"Retrying metadata fetch for show {imdb_id}")
+                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                continue
+            
+            logging.info("Getting release date")
+            if media_type == 'movie':
+                new_release_date = get_release_date(metadata, imdb_id)
 
-                    # Check Trakt for early releases if setting is enabled
-                    trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
-                    if trakt_early_releases:
-                        logging.info("Checking Trakt for early releases")
-                        trakt_id = trakt.fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
-                        if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
-                            trakt_id = str(trakt_id[0]['movie']['ids']['trakt'])
-                            trakt_lists = trakt.fetch_items_from_trakt(f"/movies/{trakt_id}/lists/personal/popular")
-                            for trakt_list in trakt_lists:
-                                if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
-                                    logging.info(f"Movie found in early release list: {trakt_list['name']}")
-                                    item_dict['early_release'] = True
-                                    break
-                else:  # TV show episode
-                    if season_number is not None and episode_number is not None:
-                        episode_data = metadata.get('seasons', {}).get(str(season_number), {}).get('episodes', {}).get(str(episode_number), {})
-                        first_aired_str = episode_data.get('first_aired')
+                # Check Trakt for early releases if setting is enabled
+                trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
+                if trakt_early_releases:
+                    logging.info("Checking Trakt for early releases")
+                    trakt_id = trakt.fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+                    if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
+                        trakt_id = str(trakt_id[0]['movie']['ids']['trakt'])
+                        trakt_lists = trakt.fetch_items_from_trakt(f"/movies/{trakt_id}/lists/personal/popular")
+                        for trakt_list in trakt_lists:
+                            if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
+                                logging.info(f"Movie found in early release list: {trakt_list['name']}")
+                                item_dict['early_release'] = True
+                                # Set release date to today for early releases
+                                new_release_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                                logging.info(f"Setting early release date to today: {new_release_date}")
+                                break
+            else:  # TV show episode
+                retry_count = 0
+                while retry_count < 2:  # Try up to 2 times (original + 1 retry)
+                    logging.info(f"Processing metadata (attempt {retry_count + 1}): {metadata}")
+                    
+                    if metadata is None:
+                        logging.error(f"Metadata is None for show {imdb_id}")
+                        if retry_count == 0:
+                            if DatabaseManager.remove_metadata(imdb_id):
+                                logging.info(f"Retrying metadata fetch for show {imdb_id}")
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                                retry_count += 1
+                                continue
+                        break
+                        
+                    if isinstance(metadata, str):
+                        logging.error(f"Metadata is string for show {imdb_id}: {metadata}")
+                        if retry_count == 0:
+                            if DatabaseManager.remove_metadata(imdb_id):
+                                logging.info(f"Retrying metadata fetch for show {imdb_id}")
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                                retry_count += 1
+                                continue
+                        break
+                        
+                    if not isinstance(metadata, dict):
+                        logging.error(f"Invalid metadata format for show {imdb_id}: expected dict, got {type(metadata)}")
+                        if retry_count == 0:
+                            if DatabaseManager.remove_metadata(imdb_id):
+                                logging.info(f"Retrying metadata fetch for show {imdb_id}")
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                                retry_count += 1
+                                continue
+                        break
+                        
+                    seasons = metadata.get('seasons')
+                    if seasons == 'None':  # Handle the case where seasons is the string 'None'
+                        seasons = {}
+                    elif not isinstance(seasons, dict):
+                        seasons = {}
+                        
+                    if not seasons:
+                        logging.error(f"No seasons data found for show {imdb_id}")
+                        if retry_count == 0:
+                            if DatabaseManager.remove_metadata(imdb_id):
+                                logging.info(f"Retrying metadata fetch for show {imdb_id}")
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                                retry_count += 1
+                                continue
+                        break
+                        
+                    season_data = seasons.get(str(season_number), {})
+                    if not season_data:
+                        logging.error(f"No data found for show {imdb_id} season {season_number}")
+                        if retry_count == 0:
+                            if DatabaseManager.remove_metadata(imdb_id):
+                                logging.info(f"Retrying metadata fetch for show {imdb_id}")
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                                retry_count += 1
+                                continue
+                        break
+                        
+                    episodes = season_data.get('episodes', {})
+                    if not episodes:
+                        logging.error(f"No episodes data found for show {imdb_id} season {season_number}")
+                        if retry_count == 0:
+                            if DatabaseManager.remove_metadata(imdb_id):
+                                logging.info(f"Retrying metadata fetch for show {imdb_id}")
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                                retry_count += 1
+                                continue
+                        break
+                        
+                    episode_data = episodes.get(str(episode_number), {})
+                    if not episode_data:
+                        logging.error(f"No data found for show {imdb_id} S{season_number}E{episode_number}")
+                        if retry_count == 0:
+                            if DatabaseManager.remove_metadata(imdb_id):
+                                logging.info(f"Retrying metadata fetch for show {imdb_id}")
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                                retry_count += 1
+                                continue
+                        break
+                        
+                    first_aired_str = episode_data.get('first_aired')
+                    if first_aired_str:
+                        try:
+                            # Parse the UTC datetime string
+                            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+                            first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
 
-                        if first_aired_str:
-                            try:
-                                # Parse the UTC datetime string
-                                first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-                                first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-
-                                # Convert UTC to local timezone using cross-platform function
-                                local_tz = _get_local_timezone()
-                                local_dt = first_aired_utc.astimezone(local_tz)
-                                
-                                # Format the local date (stripping time) as a string
-                                new_release_date = local_dt.strftime("%Y-%m-%d")
-                            except ValueError:
-                                logging.warning(f"Invalid datetime format: {first_aired_str}")
-                                new_release_date = 'Unknown'
-                        else:
+                            # Convert UTC to local timezone using cross-platform function
+                            local_tz = _get_local_timezone()
+                            local_dt = first_aired_utc.astimezone(local_tz)
+                            
+                            # Format the local date (stripping time) as a string
+                            new_release_date = local_dt.strftime("%Y-%m-%d")
+                        except ValueError:
+                            logging.warning(f"Invalid datetime format: {first_aired_str}")
                             new_release_date = 'Unknown'
                     else:
-                        new_release_date = parse_date(metadata.get('first_aired'))
-
-                logging.info(f"New release date: {new_release_date}")
-
-                if new_release_date == "Unknown" or new_release_date is None:
-                    new_state = "Wanted"
+                        new_release_date = 'Unknown'
+                    break  # Successfully processed the data, exit the retry loop
                 else:
-                    release_date = datetime.strptime(new_release_date, "%Y-%m-%d").date()
-                    today = datetime.now().date()
-                    
-                    # If it's an early release and the original release date is in the future,
-                    # keep it marked as Unreleased until the actual release date
-                    if item_dict.get('early_release', False):
-                        new_state = "Wanted" if release_date <= today else "Unreleased"
-                    else:
-                        new_state = "Wanted" if release_date <= today else "Unreleased"
+                    new_release_date = parse_date(metadata.get('first_aired'))
 
-                logging.info(f"New state: {new_state}")
+            logging.info(f"New release date: {new_release_date}")
 
-                if new_state != item_dict['state'] or new_release_date != item_dict['release_date']:
-                    logging.info("Updating release date and state in database")
-                    update_release_date_and_state(item_dict['id'], new_release_date, new_state, early_release=item_dict.get('early_release', False))
-                    logging.info(f"Updated: {title} has a release date of: {new_release_date}")
-                else:
-                    logging.info("No changes needed for this item")
+            if new_release_date == "Unknown" or new_release_date is None:
+                new_state = "Wanted"
             else:
-                logging.warning(f"Could not fetch metadata for {title}")
+                release_date = datetime.strptime(new_release_date, "%Y-%m-%d").date()
+                today = datetime.now().date()
+                
+                # If it's an early release and the original release date is in the future,
+                # keep it marked as Unreleased until the actual release date
+                if item_dict.get('early_release', False):
+                    new_state = "Wanted" if release_date <= today else "Unreleased"
+                else:
+                    new_state = "Wanted" if release_date <= today else "Unreleased"
+
+            logging.info(f"New state: {new_state}")
+
+            if new_state != item_dict['state'] or new_release_date != item_dict['release_date']:
+                logging.info("Updating release date and state in database")
+                update_release_date_and_state(item_dict['id'], new_release_date, new_state, early_release=item_dict.get('early_release', False))
+                logging.info(f"Updated: {title} has a release date of: {new_release_date}")
+            else:
+                logging.info("No changes needed for this item")
 
         except Exception as e:
             logging.error(f"Error processing item {index}: {str(e)}", exc_info=True)
