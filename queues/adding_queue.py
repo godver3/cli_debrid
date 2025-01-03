@@ -53,7 +53,7 @@ class AddingQueue:
         """
         if torrent_id:
             try:
-                self.debrid_provider.delete_torrent(torrent_id)
+                self.debrid_provider.remove_torrent(torrent_id)
                 logging.debug(f"Successfully removed unwanted torrent {torrent_id} from debrid service")
             except Exception as e:
                 logging.error(f"Failed to remove unwanted torrent {torrent_id}: {e}")

@@ -5,6 +5,8 @@ from typing import Dict, Any
 from database import get_all_media_items, update_media_item_state, update_media_item
 from debrid import get_debrid_provider
 from queues.adding_queue import AddingQueue
+from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from debrid.common import extract_hash_from_magnet, download_and_extract_hash
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
 
@@ -66,6 +68,21 @@ class PendingUncachedQueue:
                 logging.error(f"Failed to process magnet link for {item_identifier}")
                 self._handle_failed_add(item, queue_manager)
                 continue
+
+            # Add to not wanted regardless of success
+            try:
+                if link.startswith('http'):
+                    logging.debug(f"Adding HTTP link to not wanted: {link}")
+                    hash_value = download_and_extract_hash(link)
+                    add_to_not_wanted(hash_value)
+                    add_to_not_wanted_urls(link)
+                    logging.info(f"Added magnet hash {hash_value} and URL to not wanted lists")
+                else:
+                    hash_value = extract_hash_from_magnet(link)
+                    add_to_not_wanted(hash_value)
+                    logging.info(f"Added magnet hash {hash_value} to not wanted list")
+            except Exception as e:
+                logging.error(f"Failed to add to not wanted lists: {str(e)}")
 
             # Try to add the processed magnet
             add_result = self.debrid_provider.add_torrent(processed_magnet)
