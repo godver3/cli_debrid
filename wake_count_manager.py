@@ -15,7 +15,7 @@ class WakeCountManager:
         if os.path.exists(self.file_path):
             with open(self.file_path, 'rb') as f:
                 self.wake_counts = pickle.load(f)
-            logging.debug(f"Loaded wake counts from {self.file_path}")
+            #logging.debug(f"Loaded wake counts from {self.file_path}")
         else:
             logging.debug("No existing wake counts file found. Starting with empty wake counts.")
 
@@ -23,7 +23,7 @@ class WakeCountManager:
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         with open(self.file_path, 'wb') as f:
             pickle.dump(self.wake_counts, f)
-        logging.debug(f"Saved wake counts to {self.file_path}")
+        #logging.debug(f"Saved wake counts to {self.file_path}")
 
     def get_wake_count(self, item_id):
         count = self.wake_counts.get(item_id, 0)

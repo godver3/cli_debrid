@@ -83,5 +83,5 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
             if not result['seasons']:
                 result['seasons'] = [1]
     
-    logging.debug(f"Season/episode detection for title '{title}': {result}")
+    #logging.debug(f"Season/episode detection for title '{title}': {result}")
     return result

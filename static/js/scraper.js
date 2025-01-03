@@ -56,7 +56,9 @@ function displaySearchResults(results, version) {
         searchResDiv.className = 'sresult';
         searchResDiv.innerHTML = `
             <button>${item.media_type === 'show' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-            <img src="${item.poster_path ? 'https://image.tmdb.org/t/p/w600_and_h900_bestv2' + item.poster_path : '/static/image/placeholder-horizontal.png'}" alt="${item.title}" style="width: 100%; height: auto;">
+            <img src="${item.poster_path ? 'https://image.tmdb.org/t/p/w600_and_h900_bestv2' + item.poster_path : '/static/image/placeholder-horizontal.png'}" 
+                alt="${item.title}" 
+                class="${item.poster_path ? '' : 'placeholder-poster'}">
             <div class="searchresult-info">
                 <h2 class="searchresult-item">${item.title} (${item.year || 'N/A'})</h2>
             </div></button>                
@@ -402,7 +404,9 @@ function displayEpisodeResults(episodeResults, title, year, version) {
         var date  = new Date(item.air_date);
         episodeDiv.innerHTML = `        
             <button><span class="episode-rating">${(item.vote_average).toFixed(1)}</span>
-            <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : `/static/image/placeholder-horizontal.png`}" alt="${item.episode_title}" style="width: 100%; height: auto;">
+            <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}" 
+                alt="${item.episode_title}" 
+                class="${item.still_path ? '' : 'placeholder-episode'}">
             <div class="episode-info">
                 <h2 class="episode-title">${item.episode_num}. ${item.episode_title}</h2>
                 <p class="episode-sub">${date.toLocaleDateString("en-US", options)}</p>

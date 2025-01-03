@@ -17,7 +17,7 @@ _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
 def _parse_with_ptt(title: str) -> Dict[str, Any]:
     """Cached PTT parsing"""
     result = parse_title(title)
-    logging.debug(f"PTT parsed '{title}' into: {result}")
+    #logging.debug(f"PTT parsed '{title}' into: {result}")
     return result
 
 def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
@@ -44,7 +44,7 @@ def match_any_title(release_title: str, official_titles: List[str], threshold: f
         fuzzy_score = fuzzy_title_match(release_title, title) / 100
         similarity = max(partial_score, fuzzy_score)
         max_similarity = max(max_similarity, similarity)
-        logging.debug(f"Matching '{release_title}' with '{title}': Partial: {partial_score:.2f}, Fuzzy: {fuzzy_score:.2f}, Max: {similarity:.2f}")
+        #logging.debug(f"Matching '{release_title}' with '{title}': Partial: {partial_score:.2f}, Fuzzy: {fuzzy_score:.2f}, Max: {similarity:.2f}")
     return max_similarity
 
 def partial_title_match(title1: str, title2: str) -> float:
@@ -151,11 +151,11 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
                     item['episode_count'] = 1
                     item['runtime'] = db_runtime
                 else:
-                    logging.info(f"Fetching metadata for movie: {item['title']}")
+                    #logging.info(f"Fetching metadata for movie: {item['title']}")
                     metadata = get_metadata(tmdb_id=item['tmdb_id'], item_media_type='movie')
                     item['runtime'] = metadata.get('runtime', 100)  # Default to 100 if not found
                     item['episode_count'] = 1
-                    logging.info(f"Runtime for movie: {item['runtime']}")
+                    #logging.info(f"Runtime for movie: {item['runtime']}")
         
             elif item['media_type'] == 'episode':
                 db_runtime = get_episode_runtime(item['tmdb_id'])
@@ -163,7 +163,7 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
                     item['runtime'] = db_runtime
                     item['episode_count'] = get_episode_count(item['tmdb_id'])
                 else:
-                    logging.info(f"Fetching metadata for TV show: {item['title']}")
+                    #logging.info(f"Fetching metadata for TV show: {item['title']}")
                     if 'imdb_id' in item:
                         tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
                     elif 'tmdb_id' in item:
@@ -182,10 +182,10 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
                         item['episode_count'] = 1
                         item['runtime'] = 30  # Default value
                     
-                    logging.info(f"Runtime for TV show: {item['runtime']}")
-                    logging.info(f"Episode count for TV show: {item['episode_count']}")
+                    #logging.info(f"Runtime for TV show: {item['runtime']}")
+                    #logging.info(f"Episode count for TV show: {item['episode_count']}")
             
-            logging.debug(f"Processed {item['title']}: {item['episode_count']} episodes, {item['runtime']} minutes per episode/movie")
+            #logging.debug(f"Processed {item['title']}: {item['episode_count']} episodes, {item['runtime']} minutes per episode/movie")
             processed_items.append(item)
 
         except Exception as e:
