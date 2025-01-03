@@ -8,6 +8,56 @@ from settings import get_setting
 from flask import request, url_for
 from urllib.parse import urlparse
 from datetime import datetime
+import time
+from functools import wraps
+
+def cache_for_seconds(seconds):
+    """Cache the result of a function for the specified number of seconds."""
+    def decorator(func):
+        cache = {}
+        
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            now = time.time()
+            
+            # Create a cache key from the function name and arguments
+            key = (func.__name__, args, frozenset(kwargs.items()))
+            
+            # Check if we have a cached value and it's still valid
+            if key in cache:
+                result, timestamp = cache[key]
+                if now - timestamp < seconds:
+                    logging.debug(f"Cache hit for {func.__name__}")
+                    return result
+            
+            # If no valid cached value, call the function
+            result = await func(*args, **kwargs)
+            cache[key] = (result, now)
+            return result
+            
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            now = time.time()
+            
+            # Create a cache key from the function name and arguments
+            key = (func.__name__, args, frozenset(kwargs.items()))
+            
+            # Check if we have a cached value and it's still valid
+            if key in cache:
+                result, timestamp = cache[key]
+                if now - timestamp < seconds:
+                    logging.debug(f"Cache hit for {func.__name__}")
+                    return result
+            
+            # If no valid cached value, call the function
+            result = func(*args, **kwargs)
+            cache[key] = (result, now)
+            return result
+            
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        return sync_wrapper
+    return decorator
 
 def get_collected_counts():
     conn = get_db_connection()
@@ -49,24 +99,40 @@ def get_collected_counts():
     finally:
         conn.close()
 
+@cache_for_seconds(30)
 async def get_recently_added_items(movie_limit=5, show_limit=5):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
-        # Query for movies
+        # Query for movies - limit directly in SQL
         movie_query = """
-        SELECT title, year, type, collected_at, imdb_id, tmdb_id, version, filled_by_title, filled_by_file, state
-        FROM media_items
-        WHERE type = 'movie' AND collected_at IS NOT NULL AND state = 'Collected'
-        GROUP BY title, year
-        ORDER BY MAX(collected_at) DESC
+        WITH RankedMovies AS (
+            SELECT 
+                title,
+                year,
+                type,
+                collected_at,
+                imdb_id,
+                tmdb_id,
+                version,
+                filled_by_title,
+                filled_by_file,
+                state,
+                ROW_NUMBER() OVER (PARTITION BY title, year ORDER BY collected_at DESC) as rn
+            FROM media_items
+            WHERE type = 'movie' AND collected_at IS NOT NULL AND state = 'Collected'
+        )
+        SELECT *
+        FROM RankedMovies
+        WHERE rn = 1
+        ORDER BY collected_at DESC
         LIMIT ?
         """
         
-        # Query for episodes
+        # Query for episodes - limit directly in SQL
         episode_query = """
-        WITH LatestEpisodes AS (
+        WITH RankedEpisodes AS (
             SELECT 
                 title,
                 year,
@@ -83,19 +149,8 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
             FROM media_items
             WHERE type = 'episode' AND collected_at IS NOT NULL AND state = 'Collected'
         )
-        SELECT 
-            title,
-            year,
-            type,
-            season_number,
-            episode_number,
-            collected_at,
-            imdb_id,
-            tmdb_id,
-            version,
-            filled_by_title,
-            filled_by_file
-        FROM LatestEpisodes
+        SELECT *
+        FROM RankedEpisodes
         WHERE rn = 1
         ORDER BY collected_at DESC
         LIMIT ?
@@ -104,28 +159,16 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         cursor.execute(movie_query, (movie_limit,))
         movie_results = cursor.fetchall()
         
-        #logging.debug(f"Initial movie results: {len(movie_results)}")
-        #for movie in movie_results:
-        #    logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Version: {movie['version']} - State: {movie['state']}")
-        
-        # Fetch more items initially to ensure we get enough unique ones
-        cursor.execute(episode_query, (show_limit * 2,))
+        cursor.execute(episode_query, (show_limit,))
         episode_results = cursor.fetchall()
         
-        #logging.debug(f"Initial episode results: {len(episode_results)}")
-        #for episode in episode_results:
-        #    logging.debug(f"Episode: {episode['title']} - Season: {episode['season_number']} - Episode: {episode['episode_number']} - Version: {episode['version']}")
-        
-        consolidated_movies = {}
-        shows = {}
+        movies_list = []
+        shows_list = []
         
         async with aiohttp.ClientSession() as session:
-            poster_tasks = []
-            
             # Process movies
             for row in movie_results:
                 item = dict(row)
-                key = f"{item['title']}-{item['year']}"
                 movie_item = {
                     'title': item['title'],
                     'year': item['year'],
@@ -138,121 +181,84 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     'filled_by_title': item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']
                 }
                 
-                media_type = 'movie'
-                cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
+                # Get cached poster URL or add to list for batch fetch
+                cached_url = get_cached_poster_url(item['tmdb_id'], 'movie')
                 if cached_url:
                     movie_item['poster_url'] = cached_url
-                else:
-                    poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
-                    poster_tasks.append((movie_item, poster_task, media_type))
-                consolidated_movies[key] = movie_item
+                movies_list.append((movie_item, item['tmdb_id']))
             
             # Process episodes
             for row in episode_results:
                 item = dict(row)
-                key = item['title']
+                show_item = {
+                    'title': item['title'],
+                    'year': item['year'],
+                    'type': 'show',
+                    'collected_at': item['collected_at'],
+                    'imdb_id': item['imdb_id'],
+                    'tmdb_id': item['tmdb_id'],
+                    'season_number': item['season_number'],
+                    'episode_number': item['episode_number'],
+                    'version': item['version'],
+                    'filled_by_file': item['filled_by_file'],
+                    'filled_by_title': item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']
+                }
                 
-                if key not in shows:
-                    show_item = {
-                        'title': item['title'],
-                        'year': item['year'],
-                        'type': 'show',
-                        'collected_at': item['collected_at'],
-                        'imdb_id': item['imdb_id'],
-                        'tmdb_id': item['tmdb_id'],
-                        'season_number': item['season_number'],
-                        'episode_number': item['episode_number'],
-                        'version': item['version'],
-                        'filled_by_file': item['filled_by_file'],
-                        'filled_by_title': item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']
-                    }
-                    
-                    media_type = 'tv'
-                    cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
-                    if cached_url:
-                        show_item['poster_url'] = cached_url
+                # Get cached poster URL or add to list for batch fetch
+                cached_url = get_cached_poster_url(item['tmdb_id'], 'tv')
+                if cached_url:
+                    show_item['poster_url'] = cached_url
+                shows_list.append((show_item, item['tmdb_id']))
+            
+            # Batch fetch missing poster URLs
+            movie_tasks = []
+            show_tasks = []
+            
+            for item, tmdb_id in movies_list:
+                if 'poster_url' not in item and tmdb_id:
+                    task = asyncio.create_task(get_poster_url(session, tmdb_id, 'movie'))
+                    movie_tasks.append((item, task))
+            
+            for item, tmdb_id in shows_list:
+                if 'poster_url' not in item and tmdb_id:
+                    task = asyncio.create_task(get_poster_url(session, tmdb_id, 'tv'))
+                    show_tasks.append((item, task))
+            
+            # Wait for all poster tasks to complete
+            if movie_tasks:
+                movie_results = await asyncio.gather(*[task for _, task in movie_tasks], return_exceptions=True)
+                for (item, _), result in zip(movie_tasks, movie_results):
+                    if isinstance(result, Exception):
+                        logging.error(f"Error fetching poster for movie with TMDB ID {item['tmdb_id']}: {result}")
+                    elif result:
+                        item['poster_url'] = result
+                        cache_poster_url(item['tmdb_id'], 'movie', result)
                     else:
-                        poster_task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
-                        poster_tasks.append((show_item, poster_task, media_type))
-                    shows[key] = show_item
-                    
-                    # Break if we have enough unique shows
-                    if len(shows) >= show_limit:
-                        break
+                        if not get_setting('TMDB', 'api_key'):
+                            logging.warning("TMDB API key not set, using placeholder images")
+                            placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                            item['poster_url'] = placeholder_url
             
-            # Wait for all poster URL tasks to complete
-            poster_results = await asyncio.gather(*[task for _, task, _ in poster_tasks], return_exceptions=True)
-            
-            # Assign poster URLs to items and cache them
-            for (item, _, media_type), result in zip(poster_tasks, poster_results):
-                if isinstance(result, Exception):
-                    logging.error(f"Error fetching poster for {media_type} with TMDB ID {item['tmdb_id']}: {result}")
-                elif result:
-                    item['poster_url'] = result
-                    cache_poster_url(item['tmdb_id'], media_type, result)
-                else:
-                    #logging.info(f"get_setting('TMDB', 'api_key'): {get_setting('TMDB', 'api_key')}")
-                    if get_setting('TMDB', 'api_key') == "":
-                        logging.warning("TMDB API key not set, using placeholder images")
-                        
-                        # Generate the placeholder URL
-                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
-                        
-                        # Check if the request is secure (HTTPS)
-                        if request.is_secure:
-                            # If it's secure, ensure the URL uses HTTPS
-                            parsed_url = urlparse(placeholder_url)
-                            placeholder_url = parsed_url._replace(scheme='https').geturl()
-                        else:
-                            # If it's not secure, use HTTP
-                            parsed_url = urlparse(placeholder_url)
-                            placeholder_url = parsed_url._replace(scheme='http').geturl()
-                        
-                        item['poster_url'] = placeholder_url
-                    
-                    logging.warning(f"No poster URL found for {media_type} with TMDB ID {item['tmdb_id']}")
+            if show_tasks:
+                show_results = await asyncio.gather(*[task for _, task in show_tasks], return_exceptions=True)
+                for (item, _), result in zip(show_tasks, show_results):
+                    if isinstance(result, Exception):
+                        logging.error(f"Error fetching poster for show with TMDB ID {item['tmdb_id']}: {result}")
+                    elif result:
+                        item['poster_url'] = result
+                        cache_poster_url(item['tmdb_id'], 'tv', result)
+                    else:
+                        if not get_setting('TMDB', 'api_key'):
+                            logging.warning("TMDB API key not set, using placeholder images")
+                            placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                            item['poster_url'] = placeholder_url
         
-        # Convert consolidated_movies dict to list and sort
-        movies_list = list(consolidated_movies.values())
-        movies_list.sort(key=lambda x: x['collected_at'], reverse=True)
-        
-        # Convert shows dict to list and sort
-        shows_list = list(shows.values())
-        shows_list.sort(key=lambda x: x['collected_at'], reverse=True)
-        
-        #logging.debug("Before limit_and_process:")
-        #for movie in movies_list:
-        #    logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
-        #for show in shows_list:
-        #    logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
-        
-        # Final processing and limiting to 5 unique items based on title
-        def limit_and_process(items, limit=5):
-            unique_items = {}
-            for item in items:
-                if len(unique_items) >= limit:
-                    break
-                # Use both title and year as the key for movies
-                key = f"{item['title']}-{item['year']}" if 'year' in item else item['title']
-                if key not in unique_items:
-                    unique_items[key] = item
-            return list(unique_items.values())
-
-        movies_list = limit_and_process(movies_list)
-        shows_list = limit_and_process(shows_list)
-
-        #logging.debug("After limit_and_process:")
-        #for movie in movies_list:
-        #    logging.debug(f"Movie: {movie['title']} ({movie['year']}) - Versions: {movie['versions']}")
-        #for show in shows_list:
-        #    logging.debug(f"Show: {show['title']} - Versions: {show['versions']}")
-
         # Clean expired cache entries
         clean_expired_cache()
 
         return {
-            'movies': movies_list,
-            'shows': shows_list
+            'movies': [item for item, _ in movies_list],
+            'shows': [item for item, _ in shows_list]
         }
     except Exception as e:
         logging.error(f"Error in get_recently_added_items: {str(e)}")
@@ -378,8 +384,8 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         
         # Debug logging for final sorted list
         #logging.info("Final sorted items:")
-        for item in items_list:
-            logging.info(f"  {item['title']} - Last Updated: {item['last_updated']}")
+        #for item in items_list:
+            #logging.info(f"  {item['title']} - Last Updated: {item['last_updated']}")
         
         return items_list
     except Exception as e:

@@ -277,6 +277,10 @@ class QueueManager:
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
+    def get_scraping_items(self) -> List[Dict]:
+        """Get all items currently in the Scraping state"""
+        return self.queues["Scraping"].get_contents()
+        
     def get_wake_count(self, item_id):
         return wake_count_manager.get_wake_count(item_id)
 

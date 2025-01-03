@@ -63,8 +63,9 @@ SETTINGS_SCHEMA = {
         "provider": {
             "type": "string",
             "description": "Debrid service provider",
-            "default": "Torbox",
-            "choices": ["Torbox", "RealDebrid"]
+            "default": "RealDebrid",
+            #"choices": ["Torbox", "RealDebrid"]
+            "choices": ["RealDebrid"]
         },
         "api_key": {
             "type": "string",
@@ -170,7 +171,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_upgrading_cleanup": {
             "type": "boolean",
-            "description": "Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid/Torbox)",
+            "description": "Enable cleanup of original items after successful upgrade (removes original item from Debrid Provider)",
             "default": False
         },
         "disable_adult": {
@@ -351,6 +352,11 @@ SETTINGS_SCHEMA = {
                 "api_key": {"type": "string", "default": "", "sensitive": True},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "display_name": {"type": "string", "default": "Overseerr"}
+            },
+            "Plex Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "Plex Watchlist"}
             }
         }
     },

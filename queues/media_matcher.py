@@ -4,6 +4,7 @@ Separates the media matching concerns from queue management.
 """
 
 import logging
+import os
 from typing import Dict, Any, List, Tuple, Optional
 from scraper.functions.ptt_parser import parse_with_ptt
 from fuzzywuzzy import fuzz
@@ -56,7 +57,10 @@ class MediaMatcher:
         largest_file = max(video_files, key=lambda x: x.get('bytes', 0))
         logging.info(f"Selected largest video file: {largest_file['path']} ({largest_file.get('bytes', 0)} bytes)")
         
-        return [(largest_file['path'], item)]
+        # Get just the filename using os.path.basename
+        file_path = os.path.basename(largest_file['path'])
+        
+        return [(file_path, item)]
 
     def _match_tv_content(self, files: List[Dict[str, Any]], item: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
         """
@@ -91,7 +95,9 @@ class MediaMatcher:
             if (item_season in parsed.get('seasons', []) and 
                 item_episode in parsed.get('episodes', [])):
                 logging.info(f"✓ Matched TV episode: S{item_season}E{item_episode} in {file['path']}")
-                matches.append((file['path'], item))
+                # Get just the filename using os.path.basename
+                file_path = os.path.basename(file['path'])
+                matches.append((file_path, item))
             else:
                 logging.info(f"✗ No match: S{item_season}E{item_episode} not in file")
                 
@@ -199,3 +205,31 @@ class MediaMatcher:
         if not item_year or not parsed_year:
             return False
         return abs(int(item_year) - int(parsed_year)) <= 1
+
+    def find_related_items(self, files: List[Dict[str, Any]], scraping_items: List[Dict[str, Any]], original_item: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Find items in the scraping queue that match files in the torrent.
+        
+        Args:
+            files: List of files from the torrent
+            scraping_items: List of items currently in scraping state
+            original_item: The original item being processed, used to match version
+            
+        Returns:
+            List of items from scraping_items that match files in the torrent
+        """
+        related_items = []
+        original_version = original_item.get('version')
+        
+        for item in scraping_items:
+            # Skip if not an episode or different version
+            if item.get('type') != 'episode' or item.get('version') != original_version:
+                continue
+                
+            # Try to match this item against the files
+            matches = self._match_tv_content(files, item)
+            if matches:
+                logging.info(f"Found related episode: {item.get('title')} S{item.get('season_number')}E{item.get('episode_number')} (version: {item.get('version')})")
+                related_items.append(item)
+                
+        return related_items

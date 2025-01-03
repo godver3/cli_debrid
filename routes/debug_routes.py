@@ -9,6 +9,7 @@ import logging
 from routes import admin_required
 from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.collected import get_wanted_from_collected
+from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from metadata.metadata import process_metadata
@@ -343,6 +344,8 @@ def get_and_add_wanted_content(source_id):
     wanted_content = []
     if source_type == 'Overseerr':
         wanted_content = get_wanted_from_overseerr()
+    elif source_type == 'Plex Watchlist':
+        wanted_content = get_wanted_from_plex_watchlist(versions)
     elif source_type == 'MDBList':
         mdblist_urls = source_data.get('urls', '').split(',')
         for mdblist_url in mdblist_urls:
