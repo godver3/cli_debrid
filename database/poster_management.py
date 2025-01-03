@@ -7,16 +7,16 @@ async def get_poster_url(session, tmdb_id, media_type):
     from poster_cache import get_cached_poster_url, cache_poster_url, cache_unavailable_poster, UNAVAILABLE_POSTER
 
     # Log incoming parameters
-    logging.info(f"get_poster_url called with tmdb_id: {tmdb_id}, original media_type: {media_type}")
+    #logging.info(f"get_poster_url called with tmdb_id: {tmdb_id}, original media_type: {media_type}")
 
     # Normalize media type early
     normalized_type = 'tv' if media_type.lower() in ['tv', 'show', 'series'] else 'movie'
-    logging.info(f"Normalized media_type from '{media_type}' to '{normalized_type}'")
+    #logging.info(f"Normalized media_type from '{media_type}' to '{normalized_type}'")
 
     # First check the cache using normalized type
     cached_url = get_cached_poster_url(tmdb_id, normalized_type)
     if cached_url:
-        logging.info(f"Cache hit for {tmdb_id}_{normalized_type}: {cached_url}")
+        #logging.info(f"Cache hit for {tmdb_id}_{normalized_type}: {cached_url}")
         return cached_url
 
     if not tmdb_id:

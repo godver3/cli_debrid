@@ -1,6 +1,7 @@
 from flask import jsonify, request, render_template, session, Blueprint
 import logging
-from debrid import add_to_real_debrid
+from debrid import get_debrid_provider
+from debrid.real_debrid.client import RealDebridProvider
 from .models import user_required, onboarding_required, admin_required
 from settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts
@@ -19,6 +20,7 @@ import requests
 import tempfile
 import os
 import bencodepy
+from debrid.common.torrent import torrent_to_magnet
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -119,8 +121,8 @@ def _download_and_get_hash(url: str) -> str:
     except Exception as e:
         raise Exception(f"Failed to process torrent URL: {str(e)}")
 
-@scraper_bp.route('/add_to_real_debrid', methods=['POST'])
-def add_torrent_to_real_debrid():
+@scraper_bp.route('/add_to_debrid', methods=['POST'])
+def add_torrent_to_debrid():
     try:
         magnet_link = request.form.get('magnet_link')
         if not magnet_link:
@@ -134,7 +136,7 @@ def add_torrent_to_real_debrid():
         # If it's a URL rather than a magnet link
         if magnet_link.startswith('http'):
             try:
-                # For Jackett URLs, download to temp file and pass directly
+                # For Jackett URLs, download to temp file and convert to magnet
                 if 'jackett' in magnet_link.lower():
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
                         response = requests.get(magnet_link, timeout=30)
@@ -142,6 +144,11 @@ def add_torrent_to_real_debrid():
                         tmp.write(response.content)
                         temp_file = tmp.name
                         logging.info("Downloaded torrent file from Jackett")
+                        # Convert torrent file to magnet
+                        magnet_link = torrent_to_magnet(temp_file)
+                        if not magnet_link:
+                            raise Exception("Failed to convert torrent file to magnet")
+                        logging.info("Converted torrent file to magnet")
                 else:
                     # For other URLs, convert to magnet
                     torrent_hash = _download_and_get_hash(magnet_link)
@@ -151,15 +158,20 @@ def add_torrent_to_real_debrid():
             except Exception as e:
                 error_message = str(e)
                 logging.error(f"Failed to process torrent URL: {error_message}")
+                if temp_file and os.path.exists(temp_file):
+                    try:
+                        os.unlink(temp_file)
+                    except Exception as e:
+                        logging.warning(f"Failed to delete temp file {temp_file}: {e}")
                 return jsonify({'error': error_message}), 400
 
-        # First add to Real-Debrid to get torrent info
-        # If we have a temp file, pass None as magnet_link
-        result = add_to_real_debrid(None if temp_file else magnet_link, temp_file)
-        logging.info(f"Torrent result: {result}")
+        # Add magnet to debrid provider
+        debrid_provider = get_debrid_provider()
+        torrent_id = debrid_provider.add_torrent(magnet_link)
+        logging.info(f"Torrent result: {torrent_id}")
         
-        if not result:
-            error_message = "Failed to add torrent to Real-Debrid"
+        if not torrent_id:
+            error_message = "Failed to add torrent to debrid provider"
             logging.error(error_message)
             return jsonify({'error': error_message}), 500
 
@@ -170,30 +182,45 @@ def add_torrent_to_real_debrid():
             except Exception as e:
                 logging.warning(f"Failed to delete temp file {temp_file}: {e}")
 
+        # Get torrent info for processing
+        if isinstance(debrid_provider, RealDebridProvider):
+            # For Real Debrid, use the torrent ID directly
+            torrent_info = debrid_provider.get_torrent_info(torrent_id)
+        else:
+            # For TorBox, extract and use the hash
+            hash_value = extract_hash_from_magnet(magnet_link)
+            if not hash_value:
+                error_message = "Failed to extract hash from magnet link"
+                logging.error(error_message)
+                return jsonify({'error': error_message}), 500
+            torrent_info = debrid_provider.get_torrent_info(hash_value)
+
+        if not torrent_info:
+            error_message = "Failed to get torrent info"
+            logging.error(error_message)
+            return jsonify({'error': error_message}), 500
+
         # Process the content
         processor = ContentProcessor()
-        success, message = processor.process_content(result)
+        success, message = processor.process_content(torrent_info)
         
         if not success:
             logging.error(f"Failed to process torrent content: {message}")
             return jsonify({'error': message}), 400
 
-        # Handle different Real-Debrid statuses
-        if isinstance(result, dict):
-            status = result.get('status', '').lower()
-            if status in ['downloading', 'queued']:
-                return jsonify({'message': f'Uncached torrent added to Real-Debrid successfully. Status: {status.capitalize()}'})
-            elif status == 'magnet_error':
-                return jsonify({'error': 'Error processing magnet link'}), 400
-            else:
-                return jsonify({'message': f'Torrent added to Real-Debrid successfully. Status: {status.capitalize()}'})
+        # Handle different debrid statuses
+        status = torrent_info.get('status', '').lower()
+        if status in ['downloading', 'queued']:
+            return jsonify({'message': f'Uncached torrent added successfully. Status: {status.capitalize()}'})
+        elif status == 'magnet_error':
+            return jsonify({'error': 'Error processing magnet link'}), 400
         else:
-            return jsonify({'message': 'Cached torrent added to Real-Debrid successfully'})
+            return jsonify({'message': f'Torrent added successfully. Status: {status.capitalize()}'})
 
     except Exception as e:
         error_message = str(e)
-        logging.error(f"Error adding torrent to Real-Debrid: {error_message}")
-        return jsonify({'error': f'An error occurred while adding to Real-Debrid: {error_message}'}), 500
+        logging.error(f"Error adding torrent: {error_message}")
+        return jsonify({'error': f'An error occurred while adding torrent: {error_message}'}), 500
 
 @scraper_bp.route('/movies_trending', methods=['GET', 'POST'])
 def movies_trending():
@@ -205,7 +232,7 @@ def movies_trending():
         if trendingMovies:
             return jsonify(trendingMovies)
         else:
-            return jsonify({'error': 'Error restrieving Trakt Trending Movies'})
+            return jsonify({'error': 'Error retrieving trending movies'})
     return render_template('scraper.html', versions=versions)
 
 @scraper_bp.route('/shows_trending', methods=['GET', 'POST'])
@@ -218,7 +245,7 @@ def shows_trending():
         if trendingShows:
             return jsonify(trendingShows)
         else:
-            return jsonify({'error': 'Error restrieving Trakt Trending Shows'})
+            return jsonify({'error': 'Error retrieving trending shows'})
     return render_template('scraper.html', versions=versions)
 
 @scraper_bp.route('/', methods=['GET', 'POST'])
@@ -325,16 +352,9 @@ def select_media():
 
         cached_results = []
         for result in torrent_results:
-            # Check if the source is Jackett or Prowlarr
-            if any(src in result.get('source', '').lower() for src in ['jackett', 'prowlarr']):
-                result['cached'] = 'N/A'
-            elif 'cached' not in result:  # Only set if not already set by process_media_selection
-                result_hash = result.get('hash')
-                if result_hash:
-                    is_cached = cache_status.get(result_hash, False)
-                    result['cached'] = 'Yes' if is_cached else 'No'
-                else:
-                    result['cached'] = 'No'
+            # Cache status should already be set by process_media_selection
+            if 'cached' not in result:
+                result['cached'] = 'N/A'  # Fallback if somehow not set
             cached_results.append(result)
 
         logging.info(f"Processed {len(cached_results)} results")

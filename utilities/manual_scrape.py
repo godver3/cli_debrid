@@ -5,7 +5,7 @@ from typing import Tuple
 from typing import Dict, Any, Optional, Tuple, List
 from scraper.scraper import scrape
 #from utilities.result_viewer import display_results
-from debrid import add_to_real_debrid, extract_hash_from_magnet
+from debrid import get_debrid_provider, extract_hash_from_magnet
 from settings import get_setting
 import os
 from collections import Counter
@@ -263,7 +263,8 @@ def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode
                      #f"size='{selected_item.get('size')}', magnet='{selected_item.get('magnet')[:50]}...'")
         magnet_link = selected_item.get('magnet')
         if magnet_link:
-            add_to_real_debrid(magnet_link)
+            debrid_provider = get_debrid_provider()
+            debrid_provider.add_torrent(magnet_link)
             os.system('clear')
         else:
             logger.error("No magnet link found for the selected item.")

@@ -3,18 +3,59 @@ from datetime import datetime, timedelta
 from database import get_db_connection
 from operator import itemgetter
 from itertools import groupby
+import time
+import logging
 import asyncio
 import aiohttp
 import os
 from settings import get_setting
 from .models import user_required, onboarding_required 
 from extensions import app_start_time
-import time 
 from database import get_recently_added_items, get_poster_url, get_collected_counts, get_recently_upgraded_items
-from debrid import get_active_downloads, check_daily_usage, get_user_traffic
-import logging
+from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
 from metadata.metadata import get_show_airtime_by_imdb_id
 import json
+import math
+from functools import wraps
+
+def cache_for_seconds(seconds):
+    """Cache the result of a function for the specified number of seconds."""
+    def decorator(func):
+        cache = {}
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            
+            # Create a cache key from the function name and arguments
+            key = (func.__name__, args, frozenset(kwargs.items()))
+            
+            # Check if we have a cached value and it's still valid
+            if key in cache:
+                result, timestamp = cache[key]
+                if now - timestamp < seconds:
+                    logging.debug(f"Cache hit for {func.__name__}")
+                    return result
+            
+            # If no valid cached value, call the function
+            result = func(*args, **kwargs)
+            cache[key] = (result, now)
+            return result
+            
+        return wrapper
+    return decorator
+
+@cache_for_seconds(30)
+def get_cached_active_downloads():
+    """Get active downloads with caching"""
+    provider = get_debrid_provider()
+    return provider.get_active_downloads()
+
+@cache_for_seconds(30)
+def get_cached_user_traffic():
+    """Get user traffic with caching"""
+    provider = get_debrid_provider()
+    return provider.get_user_traffic()
 
 statistics_bp = Blueprint('statistics', __name__)
 root_bp = Blueprint('root', __name__)
@@ -55,26 +96,37 @@ def get_upcoming_releases():
     cursor = conn.cursor()
     
     today = datetime.now().date()
-    next_week = today + timedelta(days=7)
+    next_week = today + timedelta(days=28)
     
+    # First get all upcoming releases
     query = """
-    SELECT DISTINCT title, release_date
-    FROM media_items
-    WHERE type = 'movie' AND release_date BETWEEN ? AND ?
-    ORDER BY release_date, title
+    SELECT DISTINCT m.title, m.release_date, m.tmdb_id
+    FROM media_items m
+    WHERE m.type = 'movie' AND m.release_date BETWEEN ? AND ?
+    ORDER BY m.release_date ASC
     """
     
     cursor.execute(query, (today.isoformat(), next_week.isoformat()))
     results = cursor.fetchall()
     
+    # Get existing movies in our collection
+    existing_query = """
+    SELECT DISTINCT tmdb_id 
+    FROM media_items 
+    WHERE type = 'movie' AND state IN ('Collected', 'Upgrading', 'Checking')
+    """
+    cursor.execute(existing_query)
+    existing_tmdb_ids = {row[0] for row in cursor.fetchall()}
+    
     conn.close()
     
-    # Group by release date
+    # Group by release date, excluding existing movies
     grouped_results = {}
-    for title, release_date in results:
-        if release_date not in grouped_results:
-            grouped_results[release_date] = set()
-        grouped_results[release_date].add(title)
+    for title, release_date, tmdb_id in results:
+        if tmdb_id not in existing_tmdb_ids:  # Only include if not in our collection
+            if release_date not in grouped_results:
+                grouped_results[release_date] = set()
+            grouped_results[release_date].add(title)
     
     # Format the results
     formatted_results = [
@@ -226,6 +278,8 @@ def set_compact_preference():
 @user_required
 @onboarding_required
 def root():
+    start_time = time.perf_counter()
+    
     # Initialize session if not already set
     if 'use_24hour_format' not in session:
         session['use_24hour_format'] = True  # Default to 24-hour format
@@ -260,19 +314,36 @@ def root():
     stats['uptime'] = int(time.time() - app_start_time)
     
     # Get collection counts
+    collection_start = time.perf_counter()
     counts = get_collected_counts()
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
+    logging.info(f"Collection counts took {(time.perf_counter() - collection_start)*1000:.2f}ms")
     
     # Get active downloads
-    active_downloads, _ = get_active_downloads()
-    stats['active_downloads'] = active_downloads
+    downloads_start = time.perf_counter()
+    try:
+        active_count, limit = get_cached_active_downloads()
+        stats['active_downloads'] = active_count
+        stats['active_downloads_error'] = None
+    except TooManyDownloadsError as e:
+        logging.warning(f"Too many active downloads: {str(e)}")
+        stats['active_downloads'] = str(e)
+        stats['active_downloads_error'] = 'too_many'
+    except Exception as e:
+        logging.error(f"Error getting active downloads: {str(e)}")
+        stats['active_downloads'] = 0
+        stats['active_downloads_error'] = 'error'
+    logging.info(f"Active downloads check took {(time.perf_counter() - downloads_start)*1000:.2f}ms")
     
     # Get recently aired and upcoming shows
+    shows_start = time.perf_counter()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+    logging.info(f"Recently aired and upcoming shows took {(time.perf_counter() - shows_start)*1000:.2f}ms")
     
     # Format dates and times according to preferences
+    formatting_start = time.perf_counter()
     for item in recently_aired:
         item['formatted_datetime'] = format_datetime_preference(
             item['air_datetime'], 
@@ -284,13 +355,17 @@ def root():
             item['air_datetime'], 
             use_24hour_format
         )
+    logging.info(f"Date/time formatting took {(time.perf_counter() - formatting_start)*1000:.2f}ms")
     
     # Get upcoming releases
+    releases_start = time.perf_counter()
     upcoming_releases = get_upcoming_releases()
     for release in upcoming_releases:
         release['formatted_date'] = format_date(release['release_date'])
+    logging.info(f"Upcoming releases took {(time.perf_counter() - releases_start)*1000:.2f}ms")
     
     # Set up async event loop for recently added and upgraded items
+    recent_start = time.perf_counter()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
@@ -332,11 +407,96 @@ def root():
     
     finally:
         loop.close()
+    logging.info(f"Recently added and upgraded items took {(time.perf_counter() - recent_start)*1000:.2f}ms")
     
     # Check if TMDB API key is set
+    api_start = time.time()
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
     stats['tmdb_api_key_set'] = bool(tmdb_api_key)
     
+    # Get active downloads data
+    try:
+        count, limit = get_cached_active_downloads()
+        
+        if not count or not limit:
+            stats['active_downloads_data'] = {
+                'count': 0,
+                'limit': 0,
+                'percentage': 0,
+                'status': 'normal'
+            }
+        else:
+            percentage = round((count / limit * 100) if limit > 0 else 0)
+            status = 'normal'
+            if percentage >= 90:
+                status = 'critical'
+            elif percentage >= 75:
+                status = 'warning'
+                
+            stats['active_downloads_data'] = {
+                'count': count,
+                'limit': limit,
+                'percentage': percentage,
+                'status': status
+            }
+    except Exception as e:
+        logging.error(f"Error getting active downloads: {str(e)}")
+        stats['active_downloads_data'] = {
+            'count': 0,
+            'limit': 0,
+            'percentage': 0,
+            'status': 'error'
+        }
+    logging.info(f"API checks took {(time.perf_counter() - api_start)*1000:.2f}ms")
+    
+    # Get usage stats data
+    usage_start = time.perf_counter()
+    try:
+        usage = get_cached_user_traffic()
+        
+        if not usage or usage.get('limit') is None:
+            stats['usage_stats_data'] = {
+                'used': '0 GB',
+                'limit': '2000 GB',
+                'percentage': 0,
+                'error': None
+            }
+        else:
+            try:
+                # Convert GB to bytes for calculation
+                daily_used = float(usage.get('downloaded', 0)) * 1024 * 1024 * 1024  # GB to bytes
+                daily_limit = float(usage.get('limit', 2000)) * 1024 * 1024 * 1024  # GB to bytes
+                
+                percentage = round((daily_used / daily_limit) * 100) if daily_limit > 0 else 0
+                
+                stats['usage_stats_data'] = {
+                    'used': format_bytes(daily_used),
+                    'limit': format_bytes(daily_limit),
+                    'percentage': percentage,
+                    'error': None
+                }
+            except (TypeError, ValueError) as e:
+                logging.error(f"Error converting usage values: {e}")
+                logging.error(f"Raw usage data that caused error: {usage}")
+                stats['usage_stats_data'] = {
+                    'used': '0 GB',
+                    'limit': '2000 GB',
+                    'percentage': 0,
+                    'error': 'conversion_error'
+                }
+    except Exception as e:
+        logging.error(f"Error getting usage stats: {str(e)}")
+        stats['usage_stats_data'] = {
+            'used': '0 GB',
+            'limit': '2000 GB',
+            'percentage': 0,
+            'error': 'provider_error'
+        }
+    logging.info(f"Usage stats took {(time.perf_counter() - usage_start)*1000:.2f}ms")
+
+    # Log total time
+    logging.info(f"Total route processing took {(time.perf_counter() - start_time)*1000:.2f}ms")
+
     return render_template('statistics.html',
                          stats=stats,
                          recently_aired=recently_aired,
@@ -377,7 +537,7 @@ def set_time_preference():
             item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
         else:
             item['formatted_collected_at'] = 'Unknown'
-    
+
     upgrade_enabled = get_setting('Scraping', 'enable_upgrading', 'False')
     upgrade_enabled_set = bool(upgrade_enabled)
     if upgrade_enabled_set:
@@ -412,86 +572,85 @@ def set_time_preference():
 
 @statistics_bp.route('/active_downloads', methods=['GET'])
 @user_required
+@cache_for_seconds(30)
 def active_downloads():
     """Get active downloads and limits for the debrid provider"""
     try:
-        active_count, limit = get_active_downloads()
+        provider = get_debrid_provider()
+        active_count, limit = provider.get_active_downloads()
         return jsonify({
             'active_count': active_count,
             'limit': limit,
-            'percentage': round((active_count / limit) * 100) if limit > 0 else 0
+            'percentage': round((active_count / limit) * 100) if limit > 0 else 0,
+            'error': None
         })
+    except TooManyDownloadsError as e:
+        logging.warning(f"Too many active downloads: {str(e)}")
+        # Parse out the counts from the error message
+        import re
+        match = re.search(r'(\d+)/(\d+)', str(e))
+        if match:
+            active_count, limit = map(int, match.groups())
+            return jsonify({
+                'active_count': active_count,
+                'limit': limit,
+                'percentage': round((active_count / limit) * 100) if limit > 0 else 0,
+                'error': 'too_many'
+            })
+        return jsonify({
+            'error': 'too_many',
+            'message': str(e)
+        }), 429  # Too Many Requests
     except Exception as e:
         logging.error(f"Error getting active downloads: {str(e)}")
         return jsonify({
-            'error': 'Failed to get active downloads information'
+            'error': 'failed',
+            'message': str(e)
         }), 500
 
-@statistics_bp.route('/usage_stats', methods=['GET'])
+@statistics_bp.route('/api/active_downloads', methods=['GET'])
 @user_required
-def usage_stats():
-    """Get daily usage statistics from the debrid provider"""
+def active_downloads_api():
     try:
-        usage = check_daily_usage()
-        logging.info(f"Raw usage data from check_daily_usage: {usage}")
+        provider = get_debrid_provider()
+        count, limit = provider.get_active_downloads()
         
-        if not usage:
-            logging.info("No usage data available, returning defaults")
+        if not count or not limit:
             return jsonify({
-                'daily': {
-                    'used': 0,
-                    'limit': 2000 * 1024 * 1024 * 1024,  # 2000GB in bytes
+                'active': {
+                    'count': 0,
+                    'limit': 0,
                     'percentage': 0,
-                    'is_over_limit': False
+                    'status': 'normal'
                 }
             })
 
-        # Convert GB to bytes for consistent formatting in frontend
-        try:
-            logging.info("Converting usage values from GB to bytes:")
-            daily_used = float(usage['downloaded']) * 1024 * 1024 * 1024  # GB to bytes
-            logging.info(f"  - Downloaded: {usage['downloaded']}GB -> {daily_used:,} bytes")
+        # Calculate percentage and determine status
+        percentage = round((count / limit * 100) if limit > 0 else 0)
+        
+        status = 'normal'
+        if percentage >= 90:
+            status = 'critical'
+        elif percentage >= 75:
+            status = 'warning'
             
-            daily_limit = float(usage['limit']) * 1024 * 1024 * 1024  # GB to bytes
-            logging.info(f"  - Limit: {usage['limit']}GB -> {daily_limit:,} bytes")
-            
-            percentage = round((float(usage['downloaded']) / float(usage['limit'])) * 100) if float(usage['limit']) > 0 else 0
-            logging.info(f"  - Usage percentage: {percentage}%")
-            
-            is_over_limit = float(usage['downloaded']) > float(usage['limit'])
-            logging.info(f"  - Over limit: {is_over_limit}")
-            
-            response = {
-                'daily': {
-                    'used': daily_used,
-                    'limit': daily_limit,
-                    'percentage': percentage,
-                    'is_over_limit': is_over_limit
-                }
-            }
-            logging.info(f"Final response being sent to frontend: {json.dumps(response, indent=2)}")
-            return jsonify(response)
-        except (TypeError, ValueError) as e:
-            logging.error(f"Error converting usage values: {e}")
-            logging.error(f"Raw usage data that caused error: {usage}")
-            return jsonify({
-                'daily': {
-                    'used': 0,
-                    'limit': 2000 * 1024 * 1024 * 1024,  # 2000GB in bytes
-                    'percentage': 0,
-                    'is_over_limit': False
-                }
-            })
-            
-    except Exception as e:
-        logging.error(f"Error getting usage stats: {str(e)}, usage data: {usage if 'usage' in locals() else 'not available'}")
-        logging.exception("Full traceback:")
         return jsonify({
-            'daily': {
-                'used': 0,
-                'limit': 2000 * 1024 * 1024 * 1024,  # 2000GB in bytes
+            'active': {
+                'count': count,
+                'limit': limit,
+                'percentage': percentage,
+                'status': status
+            }
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting active downloads: {str(e)}")
+        return jsonify({
+            'active': {
+                'count': 0,
+                'limit': 0,
                 'percentage': 0,
-                'is_over_limit': False
+                'status': 'error'
             }
         })
 
@@ -661,3 +820,74 @@ def format_datetime_preference(date_input, use_24hour_format):
         return f"{day_str} {formatted_time}"
     except ValueError:
         return str(date_input)  # Return original string if parsing fails
+
+def format_bytes(bytes_value, decimals=2):
+    """Format bytes to human readable string"""
+    if bytes_value == 0:
+        return "0 B"
+    
+    k = 1024
+    dm = decimals
+    sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+    
+    i = int(math.log(bytes_value, k))
+    return f"{round(bytes_value / (k ** i), dm)} {sizes[i]}"
+
+@statistics_bp.route('/usage_stats', methods=['GET'])
+@user_required
+@cache_for_seconds(30)
+def usage_stats():
+    """Get daily usage statistics from the debrid provider"""
+    try:
+        provider = get_debrid_provider()
+        usage = provider.get_user_traffic()
+        
+        if not usage or usage.get('limit') is None:
+            return jsonify({
+                'daily': {
+                    'used': '0 GB',
+                    'limit': '2000 GB',
+                    'percentage': 0,
+                    'error': None
+                }
+            })
+
+        try:
+            # Convert GB to bytes for calculation
+            daily_used = float(usage.get('downloaded', 0)) * 1024 * 1024 * 1024  # GB to bytes
+            daily_limit = float(usage.get('limit', 2000)) * 1024 * 1024 * 1024  # GB to bytes
+            
+            percentage = round((daily_used / daily_limit) * 100) if daily_limit > 0 else 0
+            
+            response = {
+                'daily': {
+                    'used': format_bytes(daily_used),
+                    'limit': format_bytes(daily_limit),
+                    'percentage': percentage,
+                    'error': None
+                }
+            }
+            return jsonify(response)
+            
+        except (TypeError, ValueError) as e:
+            logging.error(f"Error converting usage values: {e}")
+            logging.error(f"Raw usage data that caused error: {usage}")
+            return jsonify({
+                'daily': {
+                    'used': '0 GB',
+                    'limit': '2000 GB',
+                    'percentage': 0,
+                    'error': 'conversion_error'
+                }
+            })
+            
+    except Exception as e:
+        logging.error(f"Error getting usage stats: {str(e)}")
+        return jsonify({
+            'daily': {
+                'used': '0 GB',
+                'limit': '2000 GB',
+                'percentage': 0,
+                'error': 'provider_error'
+            }
+        })

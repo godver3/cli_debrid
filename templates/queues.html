@@ -52,7 +52,22 @@
 
     .item { 
         margin-left: 20px; 
-        padding: 5px 0; 
+        padding: 5px 0;
+        word-wrap: break-word;
+        word-break: break-all;
+        overflow-wrap: break-word;
+        max-width: 100%;
+    }
+
+    .item-content {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .item-detail {
+        display: block;
+        padding-left: 20px;
     }
 
     .filename-toggle {
@@ -68,6 +83,39 @@
 
     .filename-content {
         display: none;
+    }
+
+    .item-progress {
+        margin-left: 10px;
+        display: inline-flex;
+        align-items: center;
+        min-width: 200px;
+    }
+
+    .progress {
+        flex-grow: 1;
+        height: 20px;
+        background-color: #444;
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .progress-bar {
+        height: 100%;
+        background-color: #4CAF50;
+        transition: width 0.3s ease;
+        min-width: 24px;
+    }
+
+    .progress-text {
+        position: absolute;
+        left: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: white;
+        white-space: nowrap;
+        z-index: 1;
     }
 </style>
 
@@ -127,6 +175,33 @@
     }
 
     function generateRegularItems(queueName, items) {
+        if (queueName === 'Checking') {
+            // Split items into downloaded and downloading
+            const downloaded = items.filter(item => item.state === 'downloaded');
+            const downloading = items.filter(item => item.state === 'downloading');
+            
+            let content = '';
+            
+            if (downloaded.length > 0) {
+                content += '<div class="checking-group"><h5>Cached</h5>';
+                content += downloaded.map(item => generateCheckingItem(item)).join('');
+                content += '</div>';
+            }
+            
+            if (downloading.length > 0) {
+                content += '<div class="checking-group"><h5>Downloading</h5>';
+                content += downloading.map(item => generateCheckingItem(item)).join('');
+                content += '</div>';
+            }
+
+            // If no items in either category, show all items without grouping
+            if (downloaded.length === 0 && downloading.length === 0) {
+                content = items.map(item => generateCheckingItem(item)).join('');
+            }
+            
+            return content;
+        }
+        
         return items.map(item => {
             let seasonEpisode = '';
             if (item.type === 'episode' && item.season_number && item.episode_number) {
@@ -144,7 +219,7 @@
                 itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
             }
 
-            if (queueName === 'Upgrading' || queueName === 'Pending Uncached') {
+            if (queueName === 'Upgrading') {
                 let formattedTime = 'N/A';
                 if (item.time_added) {
                     // Convert the timestamp to a Date object and format it
@@ -152,26 +227,21 @@
                 }
                 itemContent += `
                     - Time Added: ${formattedTime}
+                    - Upgrades Found: ${item.upgrades_found || 0}
                 `;
-                
-                if (queueName === 'Upgrading') {
-                    itemContent;
+            }
+
+            if (queueName === 'Pending Uncached') {
+                let formattedTime = 'N/A';
+                if (item.time_added) {
+                    formattedTime = new Date(item.time_added).toLocaleString();
                 }
-                if (queueName === 'Pending Uncached') {
-                    itemContent += `- Magnet Link: ${item.magnet_link || 'Unknown'}`;
-                }
+                itemContent += ` - Time Added: ${formattedTime} - Magnet Link: ${item.filled_by_magnet || 'Unknown'}`;
             }
 
             if (queueName === 'Sleeping') {
                 itemContent += `
                     - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}
-                `;
-            }
-
-            if (queueName === 'Pending Uncached') {
-                itemContent += `
-                    - Time Added: ${item.time_added ? new Date(item.time_added).toLocaleString() : 'N/A'}
-                    - Magnet Link: ${item.magnet_link || 'Unknown'}
                 `;
             }
 
@@ -182,6 +252,43 @@
             itemContent += `</div>`;
             return itemContent;
         }).join('');
+    }
+
+    function generateCheckingItem(item) {
+        let seasonEpisode = '';
+        if (item.type === 'episode' && item.season_number && item.episode_number) {
+            let season = item.season_number.toString().padStart(2, '0');
+            let episode = item.episode_number.toString().padStart(2, '0');
+            seasonEpisode = ` S${season}E${episode}`;
+        }
+
+        let itemContent = `
+            <div class="item">
+                ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}
+        `;
+
+        if (item.filled_by_file) {
+            itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- File: ${item.filled_by_file}</span>`;
+        }
+
+        if (item.state === 'downloading' && item.progress !== undefined) {
+            itemContent += `
+                <div class="item-progress">
+                    <div class="progress" style="width: 200px;">
+                        <div class="progress-bar" role="progressbar" 
+                             style="width: ${item.progress}%" 
+                             aria-valuenow="${item.progress}" 
+                             aria-valuemin="0" 
+                             aria-valuemax="100">
+                        </div>
+                        <div class="progress-text">${item.progress}%</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        itemContent += `</div>`;
+        return itemContent;
     }
 
     function updateQueueContents() {

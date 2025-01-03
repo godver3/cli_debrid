@@ -608,35 +608,77 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         if isinstance(result, dict):
             magnet_link = result.get('magnet')
             if magnet_link:
-                if 'magnet:?xt=urn:btih:' in magnet_link:
-                    magnet_hash = extract_hash_from_magnet(magnet_link)
-                    result['hash'] = magnet_hash
-                    # Only add to hashes if the source is not Jackett or Prowlarr
-                    if result.get('source') not in ['jackett', 'prowlarr']:
+                try:
+                    # Handle Jackett/Prowlarr URLs
+                    if 'jackett' in magnet_link.lower() or 'prowlarr' in magnet_link.lower():
+                        file_param = re.search(r'file=([^&]+)', magnet_link)
+                        if file_param:
+                            from urllib.parse import unquote
+                            decoded_name = unquote(file_param.group(1))
+                            # Try to find a hash pattern in the decoded name
+                            hash_match = re.search(r'[a-fA-F0-9]{40}', decoded_name)
+                            if hash_match:
+                                magnet_hash = hash_match.group(0).lower()
+                                result['hash'] = magnet_hash
+                                hashes.append(magnet_hash)
+                                result['magnet'] = f"magnet:?xt=urn:btih:{magnet_hash}&dn={decoded_name}"
+                    elif 'magnet:?xt=urn:btih:' in magnet_link:
+                        magnet_hash = extract_hash_from_magnet(magnet_link)
+                        result['hash'] = magnet_hash
                         hashes.append(magnet_hash)
-                processed_results.append(result)
+                    processed_results.append(result)
+                except Exception as e:
+                    logging.error(f"Error processing magnet link {magnet_link}: {str(e)}")
+                    continue
 
-    # Get the debrid provider and check if it supports direct cache checking
+    # Get the debrid provider and check its capabilities
     debrid_provider = get_debrid_provider()
     supports_cache_check = debrid_provider.supports_direct_cache_check
+    supports_bulk_check = debrid_provider.supports_bulk_cache_checking
 
-    # Check cache status for all hashes at once if supported
+    # Check cache status for all hashes
     cache_status = {}
-    if supports_cache_check and hashes:
-        cache_status = debrid_provider.is_cached(hashes)
-        logging.info(f"Cache status returned: {cache_status}")
+    if hashes:
+        if supports_cache_check:
+            try:
+                if supports_bulk_check:
+                    # If provider supports bulk checking, check all hashes at once
+                    cache_status = debrid_provider.is_cached(hashes)
+                    if isinstance(cache_status, bool):
+                        # If we got a single boolean back, convert to dict
+                        cache_status = {hash_value: cache_status for hash_value in hashes}
+                    logging.info(f"Bulk cache status from provider: {cache_status}")
+                else:
+                    # Check hashes individually for providers that don't support bulk checking
+                    cache_status = {}
+                    for hash_value in hashes:
+                        try:
+                            is_cached = debrid_provider.is_cached(hash_value)
+                            cache_status[hash_value] = is_cached
+                            logging.info(f"Individual cache status for {hash_value}: {is_cached}")
+                        except Exception as e:
+                            logging.error(f"Error checking individual cache status for {hash_value}: {e}")
+                            cache_status[hash_value] = 'N/A'
+            except Exception as e:
+                logging.error(f"Error checking cache status: {e}")
+                # Fall back to N/A on error
+                cache_status = {hash_value: 'N/A' for hash_value in hashes}
+        else:
+            # Mark all results as N/A if provider doesn't support direct checking
+            cache_status = {hash_value: 'N/A' for hash_value in hashes}
+            logging.info("Provider does not support direct cache checking, marking all as N/A")
 
     # Update processed_results with cache status
     for result in processed_results:
         result_hash = result.get('hash')
         if result_hash:
-            if result.get('source') in ['jackett', 'prowlarr'] or not supports_cache_check:
-                result['cached'] = 'N/A'
-            elif result_hash in cache_status:
-                is_cached = cache_status[result_hash]
-                result['cached'] = 'Yes' if is_cached else 'No'
+            result['cached'] = cache_status.get(result_hash, 'N/A')
             # Use original title for logging
             original_title = result.get('parsed_info', {}).get('original_title', result.get('original_title', result.get('title', '')))
+            if result['cached'] == True:
+                result['cached'] = 'Yes'
+            elif result['cached'] == False:
+                result['cached'] = 'No'
             logging.info(f"Cache status for {original_title} (hash: {result_hash}): {result['cached']}")
     return processed_results, cache_status
 

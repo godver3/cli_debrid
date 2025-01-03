@@ -2,7 +2,15 @@ from typing import Optional
 from settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from .real_debrid import RealDebridProvider
-from .torbox import TorboxProvider
+from .torbox import TorBoxProvider
+from .common import (
+    extract_hash_from_magnet,
+    download_and_extract_hash,
+    timed_lru_cache,
+    torrent_to_magnet,
+    is_video_file,
+    is_unwanted_file
+)
 
 _provider_instance: Optional[DebridProvider] = None
 
@@ -19,92 +27,35 @@ def get_debrid_provider() -> DebridProvider:
     # Ensure settings file exists and is properly initialized
     ensure_settings_file()
     
-    provider_name = get_setting("Debrid Provider", "provider")
+    provider_name = get_setting("Debrid Provider", "provider", "").lower()
     
-    if provider_name == 'RealDebrid':
+    if provider_name == 'realdebrid':
         _provider_instance = RealDebridProvider()
-    elif provider_name == 'Torbox' or provider_name is None:
-        _provider_instance = TorboxProvider()
+    elif provider_name == 'torbox':
+        _provider_instance = TorBoxProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name}")
         
     return _provider_instance
 
-# Convenience functions that delegate to the configured provider
-def add_to_real_debrid(magnet_link, temp_file_path=None):
-    return get_debrid_provider().add_torrent(magnet_link, temp_file_path)
-    
-def is_cached_on_rd(hashes):
-    return get_debrid_provider().is_cached(hashes)
-    
-def get_cached_files(hash_):
-    return get_debrid_provider().get_cached_files(hash_)
-    
-def get_active_downloads(check=False):
-    return get_debrid_provider().get_active_downloads(check)
-    
-def get_user_traffic():
-    return get_debrid_provider().get_user_traffic()
-
-def check_daily_usage():
-    """Check the daily usage for the configured debrid provider"""
-    from datetime import datetime
-    
-    traffic = get_debrid_provider().get_user_traffic()
-    if not traffic:
-        return None
-        
-    # Get today in UTC since Real-Debrid uses UTC dates
-    today_utc = datetime.utcnow().strftime("%Y-%m-%d")
-    daily_traffic = traffic.get(today_utc, {})
-    
-    if not daily_traffic:
-        return None
-        
-    # Convert bytes to GB
-    daily_bytes = daily_traffic.get('bytes', 0)
-    daily_gb = daily_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
-    
-    # Real-Debrid has a 2000GB daily limit
-    DAILY_LIMIT_GB = 2000
-    
-    return {
-        'downloaded': round(daily_gb, 2),
-        'limit': DAILY_LIMIT_GB
-    }
-
-def extract_hash_from_magnet(magnet_link):
-    """Extract hash from a magnet link"""
-    import re
-    xt = re.search(r"xt=urn:btih:([a-zA-Z0-9]+)", magnet_link)
-    if xt:
-        return xt.group(1).lower()
-    return None
-
-def get_magnet_files(magnet_link):
-    """Get files from a magnet link"""
-    hash_ = extract_hash_from_magnet(magnet_link)
-    if hash_:
-        return get_cached_files(hash_)
-    return None
-
-def reset_provider():
+def reset_provider() -> None:
     """Reset the debrid provider instance, forcing it to be reinitialized on next use."""
     global _provider_instance
     _provider_instance = None
 
-# Export error classes
+# Export public interface
 __all__ = [
     'get_debrid_provider',
-    'add_to_real_debrid',
-    'is_cached_on_rd',
-    'get_cached_files',
-    'get_active_downloads',
-    'get_user_traffic',
-    'check_daily_usage',
-    'extract_hash_from_magnet',
-    'get_magnet_files',
     'reset_provider',
+    'DebridProvider',
     'TooManyDownloadsError',
-    'ProviderUnavailableError'
+    'ProviderUnavailableError',
+    'RealDebridProvider',
+    'TorBoxProvider',
+    'extract_hash_from_magnet',
+    'download_and_extract_hash',
+    'timed_lru_cache',
+    'torrent_to_magnet',
+    'is_video_file',
+    'is_unwanted_file'
 ]
