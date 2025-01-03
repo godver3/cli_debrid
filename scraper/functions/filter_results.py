@@ -197,11 +197,11 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             
             # Pattern matching
             normalized_filter_title = normalize_title(original_title)
-            logging.debug(f"Original title: {original_title}")
-            logging.debug(f"Normalized title: {normalized_filter_title}")
+            #logging.debug(f"Original title: {original_title}")
+            #logging.debug(f"Normalized title: {normalized_filter_title}")
             
             if filter_out_patterns:
-                logging.debug(f"Filter out patterns: {filter_out_patterns}")
+                #logging.debug(f"Filter out patterns: {filter_out_patterns}")
                 matched_patterns = [pattern for pattern in filter_out_patterns if smart_search(pattern, normalized_filter_title)]
                 if matched_patterns:
                     result['filter_reason'] = f"Matching filter_out pattern(s): {', '.join(matched_patterns)}"

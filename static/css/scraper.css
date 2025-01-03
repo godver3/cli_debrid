@@ -88,6 +88,19 @@ form#search-form input:-ms-input-placeholder {
     transition: transform 0.3s ease;
 }
 
+/* Add styles for placeholder images */
+.placeholder-poster {
+    width: 176px !important;
+    height: 264px !important;
+    object-fit: cover !important;
+}
+
+.placeholder-episode {
+    width: 300px !important;
+    height: 169px !important;
+    object-fit: cover !important;
+}
+
 .media-title {
     position: absolute;
     bottom: 0px;
@@ -150,29 +163,12 @@ h2.searchresult-item {
     padding-bottom: 10px;
 }
 
-/* Custom scrollbar styles */
-#searchResult > div::-webkit-scrollbar {
-    height: 8px;
-}
-
-#searchResult > div::-webkit-scrollbar-track {
-    background: #f1f1f1;
-}
-
-#searchResult > div::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 4px;
-}
-
-#searchResult > div::-webkit-scrollbar-thumb:hover {
-    background: #555;
-}
-
 .sresult img {
-    width: 200px;
-    height: auto;
+    width: 176px;
+    height: 264px;
     margin-right: 5px;
     border-radius: 16px;
+    object-fit: cover;
 }
 
 .searchresult-info {
@@ -289,13 +285,17 @@ button#seasonPackButton {
     background-size: cover;
     background-position: center top;
     z-index: 0;
-
-    /* Apply a mask to fade the bottom of the image to transparent */
-    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 40%, rgba(0, 0, 0, 0) 55%);
-    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 40%, rgba(0, 0, 0, 0) 55%);
 }
 
-
+.season-bg-image::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.6) 60%, rgba(0, 0, 0, 1) 100%);
+}
 
 #episodeResults > div {
     position: relative;
@@ -342,9 +342,10 @@ button#seasonPackButton {
 }
 
 .episode img {
-    height: auto;
-    margin-right: 20px;
-    border-radius: 16px;
+    width: 300px;
+    height: 169px;
+    object-fit: cover;
+    border-radius: 8px;
 }
 
 .episode-info {
