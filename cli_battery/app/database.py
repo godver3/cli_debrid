@@ -193,6 +193,28 @@ class DatabaseManager:
                 session.rollback()
                 return False
 
+    @staticmethod
+    def remove_metadata(imdb_id: str) -> bool:
+        """Remove all metadata entries for a given IMDB ID."""
+        with Session() as session:
+            try:
+                # Get the item
+                item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                if not item:
+                    logger.warning(f"No item found with IMDB ID {imdb_id}")
+                    return False
+
+                # Delete the item itself - this will cascade delete all metadata, seasons, episodes, and poster
+                session.delete(item)
+                session.commit()
+                
+                logger.info(f"Successfully removed item and all metadata for IMDB ID {imdb_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Error removing metadata for IMDB ID {imdb_id}: {str(e)}")
+                session.rollback()
+                return False
+
 def init_db(app):
     # Get db_content directory from environment variable with fallback
     db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')

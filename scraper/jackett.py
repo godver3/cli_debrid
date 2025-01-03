@@ -67,12 +67,12 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     enabled_indexers = settings.get('enabled_indexers', '').lower()
     seeders_only = settings.get('seeders_only', False)
 
-    logging.info(f"Scraping Jackett for title: {title}")
+    #logging.info(f"Scraping Jackett for title: {title}")
 
     if "UFC" in title.upper():
         ufc_number = title.upper().split("UFC")[-1].strip()
         params = f"UFC {ufc_number}"
-        logging.info(f"UFC event detected. Using search term: {params}")
+        #logging.info(f"UFC event detected. Using search term: {params}")
     elif content_type.lower() == 'movie':
         params = f"{title} {year}"
     else:
@@ -83,7 +83,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
                 params = f"{params}e{episode:02d}"
 
     params = rename_special_characters(params)
-    logging.debug(f"Search params after special character renaming: {params}")
+    #logging.debug(f"Search params after special character renaming: {params}")
 
     search_endpoint = f"{jackett_url}/api/v2.0/indexers/all/results?apikey={jackett_api}"
     query_params = {'Query': params}
@@ -93,7 +93,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
 
     full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
 
-    logging.info(f"Jackett URL: {full_url}")
+    #logging.info(f"Jackett URL: {full_url}")
 
     try:
         response = api.get(full_url, headers={'accept': 'application/json'})
