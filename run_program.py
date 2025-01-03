@@ -6,6 +6,7 @@ from initialization import initialize
 from settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
+from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
 from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime
 from content_checkers.mdb_list import get_wanted_from_mdblists
@@ -134,7 +135,8 @@ class ProgramRunner:
                 'MDBList': 900,
                 'Collected': 86400,
                 'Trakt Watchlist': 900,
-                'Trakt Lists': 900
+                'Trakt Lists': 900,
+                'Plex Watchlist': 900
             }
             
             for source, data in self.content_sources.items():
@@ -359,6 +361,8 @@ class ProgramRunner:
                     wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected()
+            elif source_type == 'Plex Watchlist':
+                wanted_content = get_wanted_from_plex_watchlist(versions)
             else:
                 logging.warning(f"Unknown source type: {source_type}")
                 return
