@@ -24,9 +24,9 @@ from scraper.functions import *
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}")
 
-    logging.info(f"Pre-filter genres: {genres}")
+    #logging.info(f"Pre-filter genres: {genres}")
     genres = filter_genres(genres)
-    logging.info(f"Post-filter genres: {genres}")
+    #logging.info(f"Post-filter genres: {genres}")
 
 
     try:
@@ -34,7 +34,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         task_timings = {}  # Dictionary to store timing information
         all_results = []
 
-        logging.info(f"Starting scraping for: {title} ({year}), Version: {version}")
+        #logging.info(f"Starting scraping for: {title} ({year}), Version: {version}")
 
         # Ensure content_type is correctly set
         task_start = time.time()
@@ -66,7 +66,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             season_episode_counts = get_all_season_episode_counts(tmdb_id)
         task_timings['episode_counts'] = time.time() - task_start
 
-        logging.debug(f"Retrieved runtime for {title}: {runtime} minutes, Episode count: {episode_count}")
+        #logging.debug(f"Retrieved runtime for {title}: {runtime} minutes, Episode count: {episode_count}")
 
         # Parse scraping settings based on version
         scraping_versions = get_setting('Scraping', 'versions', {})
@@ -74,15 +74,15 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         if version_settings is None:
             logging.warning(f"Version {version} not found in settings. Using default settings.")
             version_settings = {}
-        logging.debug(f"Using version settings: {version_settings}")
+        #logging.debug(f"Using version settings: {version_settings}")
 
         task_start = time.time()
         original_title = title
         title = normalize_title(title)
         task_timings['title_normalization'] = time.time() - task_start
 
-        logging.info(f"Normalized title: {title}")
-        logging.info(f"Original title: {original_title}")
+        #logging.info(f"Normalized title: {title}")
+        #logging.info(f"Original title: {original_title}")
 
         # Use ScraperManager to handle scraping
         task_start = time.time()
@@ -90,15 +90,15 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         all_results = scraper_manager.scrape_all(imdb_id, title, year, content_type, season, episode, multi, genres)
         task_timings['scraping'] = time.time() - task_start
 
-        logging.debug(f"Total results before filtering: {len(all_results)}")
+        #logging.debug(f"Total results before filtering: {len(all_results)}")
 
         # Deduplicate results before filtering
         task_start = time.time()
         all_results = deduplicate_results(all_results)
         task_timings['deduplication'] = time.time() - task_start
-        logging.debug(f"Total results after deduplication: {len(all_results)}")
+        logging.debug(f"Total results after deduplication and before filtering: {len(all_results)}")
 
-        logging.info(f"Starting normalization of {len(all_results)} results")
+        #logging.info(f"Starting normalization of {len(all_results)} results")
         task_start = time.time()
         
         # Extract titles and sizes for batch processing
@@ -123,11 +123,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             normalized_results.append(normalized_result)
             
         task_timings['normalization'] = time.time() - task_start
-        logging.info(f"Normalization complete. Processed {len(normalized_results)}/{len(all_results)} results")
+        #logging.info(f"Normalization complete. Processed {len(normalized_results)}/{len(all_results)} results")
         
         # Continue with the rest of the function...
 
-        logging.info(f"Filtering {len(normalized_results)} results")
+        #logging.info(f"Filtering {len(normalized_results)} results")
 
         # Filter results
         task_start = time.time()
@@ -135,9 +135,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         filtered_out_results = [result for result in normalized_results if result not in filtered_results]
         task_timings['filtering'] = time.time() - task_start
 
-        logging.debug(f"Filtering took {time.time() - task_start:.2f} seconds")
-        logging.info(f"Total results after filtering: {len(filtered_results)}")
+        #logging.debug(f"Filtering took {time.time() - task_start:.2f} seconds")
+        #logging.info(f"Total results after filtering: {len(filtered_results)}")
         logging.info(f"Total filtered out results: {len(filtered_out_results)}")
+
+        for result in filtered_out_results:
+            logging.info(f"-- Filtered out result: {result.get('original_title')} --- {result.get('filter_reason', 'Unknown')}")
 
         # Add is_multi_pack information to each result
         for result in filtered_results:
@@ -182,7 +185,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             final_results = sorted(filtered_results, key=stable_rank_key)
             final_results = sorted(final_results, key=lambda x: x.get('size', 0))
         else:
-            logging.info(f"Applying default sort order: None")
+            #logging.info(f"Applying default sort order: None")
             final_results = sorted(filtered_results, key=stable_rank_key)
 
         # Apply soft max size if present
@@ -199,10 +202,14 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         task_timings['sorting'] = time.time() - task_start
 
-        logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
+        #logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
 
-        logging.debug(f"Total results in final output: {len(final_results)}")
-        logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
+        logging.debug(f"Total scrape results: {len(final_results)}")
+        
+        for result in final_results:
+            logging.info(f"-- Final result: {result.get('original_title')}")
+        #logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
+
 
         # Log to scraper.log
         if content_type.lower() == 'episode':
@@ -255,12 +262,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Generate timing report at the end
         total_time = time.time() - start_time
-        logging.info("\n=== Scraping Performance Report ===")
+        #logging.info("\n=== Scraping Performance Report ===")
         for task, duration in task_timings.items():
             percentage = (duration / total_time) * 100
-            logging.info(f"{task.replace('_', ' ').title()}: {duration:.2f}s ({percentage:.1f}%)")
-        logging.info(f"Total Scraping Time: {total_time:.2f}s")
-        logging.info("===============================\n")
+            #logging.info(f"{task.replace('_', ' ').title()}: {duration:.2f}s ({percentage:.1f}%)")
+        #logging.info(f"Total Scraping Time: {total_time:.2f}s")
+        #logging.info("===============================\n")
 
         return final_results, filtered_out_results
 

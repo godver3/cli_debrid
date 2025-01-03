@@ -18,13 +18,13 @@ LOG_LEVELS = {
 @admin_required
 @onboarding_required
 def logs():
-    logs = get_recent_logs(100, level='all')  # Reduced from 500 to 100
+    logs = get_recent_logs(1000, level='all')  # Reduced from 500 to 100
     return render_template('logs.html', logs=logs)
 
 @logs_bp.route('/api/logs')
 @admin_required
 def api_logs():
-    lines = request.args.get('lines', default=250, type=int)  # Number of logs to retrieve
+    lines = request.args.get('lines', default=1000, type=int)  # Number of logs to retrieve
     download = request.args.get('download', default='false').lower() == 'true'
     since = request.args.get('since', default='')
     level = request.args.get('level', default='all').lower()  # New parameter for log level

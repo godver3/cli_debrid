@@ -230,7 +230,7 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
         logging.warning(f"No results found for search term: {base_title} ({year if year else 'no year specified'})")
         return {"error": "No results found"}
 
-    logging.info(f"Found results: {search_results}")
+    #logging.info(f"Found results: {search_results}")
 
     detailed_results = []
     for result in search_results:
@@ -259,7 +259,7 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                     poster_path = None
                     media_meta = (None, '', [], 0, '')
 
-            logging.info(f"Genres for {result['title']}: {media_meta[2]}")
+            #logging.info(f"Genres for {result['title']}: {media_meta[2]}")
 
             detailed_result = {
                 "id": tmdb_id,
@@ -355,7 +355,7 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
             logging.warning(f"No results found for show: {title}")
             return {"error": "No results found"}
 
-        logging.info(f"Found results: {trakt_data}")
+        #logging.info(f"Found results: {trakt_data}")
 
         # Fetch TMDB data
         tmdb_data = get_tmdb_data(media_id, 'tv', season)
@@ -566,7 +566,7 @@ def trending_shows():
         return []
 
 def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str]) -> List[Dict[str, Any]]:
-    logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}, genres={genres}")
+    #logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}, genres={genres}")
 
     # Convert TMDB ID to IMDB ID using the metadata battery
     tmdb_id = int(media_id)
@@ -590,16 +590,16 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     elif season is not None and episode is None:
         multi = True
 
-    logging.info(f"Adjusted scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
-                 f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
+    #logging.info(f"Scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
+                 #f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
 
-    logging.info(f"Genres: {genres}")
+    #logging.info(f"Genres: {genres}")
 
     # Call the scraper function with the version parameter
     scrape_results, filtered_out_results = scrape(imdb_id, str(tmdb_id), title, int(year), movie_or_episode, version, season, episode, multi, genres)
 
-    for result in scrape_results:
-        logging.info(f"Scrape result: {result}")
+    #for result in scrape_results:
+        #logging.info(f"Scrape result: {result}")
 
     # Process the results
     processed_results = []
@@ -687,7 +687,7 @@ def get_available_versions():
     return list(scraping_versions.keys())
 
 def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
-    logging.info(f"Fetching media details for ID: {media_id}, Type: {media_type}")
+    #logging.info(f"Fetching media details for ID: {media_id}, Type: {media_type}")
 
     # If media_id is a TMDB ID, convert it to IMDb ID
     if media_type == 'movie':
@@ -712,7 +712,7 @@ def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
         metadata['seasons'] = get_all_season_episode_counts(imdb_id)
         metadata['airtime'] = get_show_airtime_by_imdb_id(imdb_id)
 
-    logging.info(f"Successfully fetched media details for {metadata.get('title', 'Unknown Title')}")
+    logging.info(f"Successfully fetched media details for {metadata.get('title', 'Unknown Title')} ({metadata.get('year', 'Unknown Year')})")
     return metadata
 
 def parse_season_episode(search_term: str) -> Tuple[int, int, bool]:

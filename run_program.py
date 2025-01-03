@@ -652,6 +652,15 @@ class ProgramRunner:
         finally:
             conn.close()
 
+    def reinitialize(self):
+        """Force reinitialization of the program runner to pick up new settings"""
+        logging.info("Reinitializing ProgramRunner...")
+        self._initialized = False
+        self.__init__()
+        # Force refresh content sources
+        self.get_content_sources(force_refresh=True)
+        logging.info("ProgramRunner reinitialized successfully")
+
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
 
