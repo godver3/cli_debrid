@@ -111,10 +111,10 @@
                     <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
                 </div>
                 <div class="stat-item">
-                    <p data-label="Active Downloads"><span id="active_downloads">-</span>/<span id="download_limit">-</span></p>
+                    <p data-label="Active Downloads"><span id="active_downloads">{{ stats.active_downloads_data.count }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit }}</span></p>
                 </div>
                 <div class="stat-item">
-                    <p data-label="Daily Usage"><span id="daily_usage">-</span> GB / <span id="daily_limit">-</span> GB</p>
+                    <p data-label="Daily Usage"><span id="daily_usage">{{ stats.usage_stats_data.used }}</span> / <span id="daily_limit">{{ stats.usage_stats_data.limit }}</span></p>
                 </div>
                 <div class="stat-item">
                     <p data-label="Uptime">{{ '%d days %d hours %d minutes' | format(
@@ -255,92 +255,105 @@
 </div>
 
 <script>
-    function formatBytes(bytes, decimals = 2) {
-        if (bytes === 0) return '0';
-        // Convert bytes directly to GB (1 GB = 1024^3 bytes)
-        const gb = bytes / Math.pow(1024, 3);
-        return gb.toFixed(decimals);
+    // Update active downloads display based on data from server
+    function updateActiveDownloadsDisplay() {
+        const data = {{ stats.active_downloads_data|tojson|safe }};
+        const downloadsElement = document.getElementById('active_downloads');
+        const limitElement = document.getElementById('download_limit');
+        const statusElement = downloadsElement.parentElement;
+        
+        // Update the display values
+        downloadsElement.textContent = data.count;
+        limitElement.textContent = data.limit;
+        
+        // Update styling based on status
+        statusElement.classList.remove('warning', 'critical');
+        if (data.status === 'critical') {
+            statusElement.classList.add('critical');
+        } else if (data.status === 'warning') {
+            statusElement.classList.add('warning');
+        }
     }
 
-    function updateActiveDownloads() {
-        fetch('/statistics/active_downloads')
-            .then(response => response.json())
-            .then(data => {
-                const downloadElement = document.querySelector('[data-label="Active Downloads"]');
-                document.getElementById('active_downloads').textContent = data.active_count;
-                document.getElementById('download_limit').textContent = data.limit;
-                
-                if (data.error === 'too_many') {
-                    downloadElement.classList.add('critical');
-                    downloadElement.classList.remove('warning');
-                } else if (!data.error) {
-                    // Update color based on usage percentage
-                    if (data.percentage >= 90) {
-                        downloadElement.classList.add('critical');
-                        downloadElement.classList.remove('warning');
-                    } else if (data.percentage >= 75) {
-                        downloadElement.classList.add('warning');
-                        downloadElement.classList.remove('critical');
-                    } else {
-                        downloadElement.classList.remove('critical', 'warning');
-                    }
-                } else {
-                    // Handle other errors
-                    console.error('Error in active downloads:', data.message);
-                    downloadElement.classList.remove('critical', 'warning');
-                }
-            })
-            .catch(error => {
-                console.error('Error fetching active downloads:', error);
-                const downloadElement = document.querySelector('[data-label="Active Downloads"]');
-                downloadElement.classList.remove('critical', 'warning');
-            });
+    // Update usage stats display based on data from server
+    function updateUsageStatsDisplay() {
+        const data = {{ stats.usage_stats_data|tojson|safe }};
+        const dailyUsageElement = document.getElementById('daily_usage');
+        const dailyLimitElement = document.getElementById('daily_limit');
+        const usageElement = dailyUsageElement.parentElement;
+        
+        // Update with pre-formatted values from backend
+        dailyUsageElement.textContent = data.used;
+        dailyLimitElement.textContent = data.limit;
+        
+        // Update styling based on percentage
+        usageElement.classList.remove('warning', 'critical');
+        if (data.percentage >= 90) {
+            usageElement.classList.add('critical');
+        } else if (data.percentage >= 75) {
+            usageElement.classList.add('warning');
+        }
     }
 
-    function updateUsageStats() {
-        fetch('/statistics/usage_stats')
-            .then(response => response.json())
-            .then(data => {
-                const dailyElement = document.querySelector('[data-label="Daily Usage"]');
-                const dailyData = data.daily;
-                
-                // Always update the display values
-                document.getElementById('daily_usage').textContent = formatBytes(dailyData.used, 1);
-                document.getElementById('daily_limit').textContent = formatBytes(dailyData.limit, 1);
-                
-                if (dailyData.error) {
-                    console.error('Error in usage stats:', dailyData.error);
-                    dailyElement.classList.remove('critical', 'warning');
-                } else {
-                    if (dailyData.is_over_limit) {
-                        dailyElement.classList.add('critical');
-                        dailyElement.classList.remove('warning');
-                    } else if (dailyData.percentage >= 90) {
-                        dailyElement.classList.add('critical');
-                        dailyElement.classList.remove('warning');
-                    } else if (dailyData.percentage >= 75) {
-                        dailyElement.classList.add('warning');
-                        dailyElement.classList.remove('critical');
-                    } else {
-                        dailyElement.classList.remove('critical', 'warning');
-                    }
-                }
-            })
-            .catch(error => {
-                console.error('Error fetching usage stats:', error);
-                const dailyElement = document.querySelector('[data-label="Daily Usage"]');
-                dailyElement.classList.remove('critical', 'warning');
-            });
-    }
-
-    // Update both active downloads and usage stats immediately and every 30 seconds
+    // Initialize displays when page loads
     document.addEventListener('DOMContentLoaded', function() {
-        updateActiveDownloads();
-        updateUsageStats();
-        setInterval(() => {
-            updateActiveDownloads();
-            updateUsageStats();
-        }, 30000);
+        // Check if on mobile
+        if (window.innerWidth <= 768) {
+            // Add compact-view class to statistics-wrapper
+            document.querySelector('.statistics-wrapper').classList.add('compact-view');
+        }
+
+        // Initialize toggles based on session state
+        const timeFormatToggle = document.getElementById('time-format-toggle');
+        const compactToggle = document.getElementById('compact-toggle');
+        
+        // Set initial states
+        timeFormatToggle.checked = {{ 'true' if use_24hour_format else 'false' }};
+        compactToggle.checked = {{ 'true' if compact_view else 'false' }};
+
+        // Update displays
+        updateActiveDownloadsDisplay();
+        updateUsageStatsDisplay();
+    });
+
+    document.getElementById('time-format-toggle').addEventListener('change', function() {
+        const isChecked = this.checked;
+        fetch('/set_time_preference', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+                use24HourFormat: isChecked
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'OK') {
+                window.location.reload();
+            }
+        });
+    });
+
+    document.getElementById('compact-toggle').addEventListener('change', function() {
+        const isChecked = this.checked;
+        fetch('/set_compact_preference', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+                compactView: isChecked
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.location.reload();
+            }
+        });
     });
 </script>
 {% endblock %}
