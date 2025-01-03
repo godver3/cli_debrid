@@ -262,7 +262,6 @@ def index():
             session['search_term'] = search_term  # Store the search term in the session
             session['version'] = version  # Store the version in the session
             results = web_scrape(search_term, version)
-            logging.info(f"Search results for '{search_term}': {results}")  # Log the results
             return jsonify({'results': results})  # Wrap results in a dictionary here
         else:
             return jsonify({'error': 'No search term provided'})
@@ -280,11 +279,20 @@ def select_season():
         media_id = request.form.get('media_id')
         title = request.form.get('title')
         year = request.form.get('year')
+        
         if media_id:
-            results = web_scrape_tvshow(media_id, title, year)
-            return jsonify(results)
+            try:
+                results = web_scrape_tvshow(media_id, title, year)
+                if not results:
+                    return jsonify({'error': 'No results found'}), 404
+                    
+                session['show_results'] = results
+                return jsonify(results)
+            except Exception as e:
+                logging.error(f"Error in select_season: {str(e)}", exc_info=True)
+                return jsonify({'error': str(e)}), 500
         else:
-            return jsonify({'error': 'No media_id provided'})
+            return jsonify({'error': 'No media_id provided'}), 400
     
     return render_template('scraper.html', versions=versions)
 
@@ -298,11 +306,29 @@ def select_episode():
         season = request.form.get('season')
         title = request.form.get('title')
         year = request.form.get('year')
+        
         if media_id:
-            episodeResults = web_scrape_tvshow(media_id, title, year, season)
-            return jsonify(episodeResults)
+            try:
+                episodeResults = web_scrape_tvshow(media_id, title, year, season)
+                if not episodeResults:
+                    return jsonify({'error': 'No results found'}), 404
+                    
+                # Ensure each episode has required fields
+                if 'results' in episodeResults:
+                    for episode in episodeResults['results']:
+                        if 'vote_average' not in episode:
+                            episode['vote_average'] = 0.0
+                        if 'still_path' not in episode:
+                            episode['still_path'] = episode.get('poster_path')
+                        if 'episode_title' not in episode:
+                            episode['episode_title'] = f"Episode {episode.get('episode_num', '?')}"
+                            
+                return jsonify(episodeResults)
+            except Exception as e:
+                logging.error(f"Error in select_episode: {str(e)}", exc_info=True)
+                return jsonify({'error': str(e)}), 500
         else:
-            return jsonify({'error': 'No media_id provided'})
+            return jsonify({'error': 'No media_id provided'}), 400
     
     return render_template('scraper.html', versions=versions)
 
@@ -324,10 +350,6 @@ def select_media():
         # Extract keywords and genres
         genres = details.get('genres', [])
 
-        logging.info(f"Retrieved genres: {genres}")
-
-        logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}, genres={genres}")
-
         if not version or version == 'undefined':
             version = get_setting('Scraping', 'default_version', '1080p')  # Fallback to a default version
 
@@ -342,12 +364,9 @@ def select_media():
             else:
                 multi = False
 
-        logging.info(f"Selecting media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
-
         torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version, genres)
         
         if not torrent_results:
-            logging.warning("No torrent results found")
             return jsonify({'torrent_results': []})
 
         cached_results = []
@@ -357,7 +376,6 @@ def select_media():
                 result['cached'] = 'N/A'  # Fallback if somehow not set
             cached_results.append(result)
 
-        logging.info(f"Processed {len(cached_results)} results")
         return jsonify({'torrent_results': cached_results})
     except Exception as e:
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
@@ -441,7 +459,6 @@ def get_item_details():
 @scraper_bp.route('/run_scrape', methods=['POST'])
 def run_scrape():
     data = request.json
-    logging.debug(f"Received scrape data: {data}")
     try:
         imdb_id = data.get('imdb_id', '')
         tmdb_id = data.get('tmdb_id', '')
@@ -463,8 +480,6 @@ def run_scrape():
 
         year = int(year) if year else None
 
-        logging.debug(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, media_type={media_type}, version={version}, season={season}, episode={episode}, multi={multi}")
-
         # Load current config and get original version settings
         config = load_config()
         original_version_settings = config['Scraping']['versions'].get(version, {}).copy()
@@ -481,9 +496,6 @@ def run_scrape():
         # Save modified settings temporarily
         config['Scraping']['versions'][version] = updated_version_settings
         save_config(config)
-
-        logging.debug(f"Original version settings: {original_version_settings}")
-        logging.debug(f"Modified version settings: {updated_version_settings}")
 
         # Run second scrape with modified settings
         try:

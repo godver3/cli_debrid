@@ -6,7 +6,7 @@
     <div id="initialization-status" class="alert alert-info" style="display: none;">
         <i class="fas fa-sync fa-spin"></i> 
         <span id="init-step-text">Initializing system...</span>
-        <div class="progress mt-2">
+        <div id="progress-container" class="progress mt-2" style="display: none;">
             <div id="init-progress" class="progress-bar" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
         </div>
     </div>
@@ -301,15 +301,17 @@
                     if (data.program_running) {
                         if (data.program_initializing) {
                             initializationStatus.style.display = 'block';
+                            document.getElementById('progress-container').style.display = 'block';
                             if (data.initialization_status) {
                                 const progress = (data.initialization_status.current_step_number / data.initialization_status.total_steps) * 100;
                                 document.getElementById('init-step-text').textContent = `Initializing: ${data.initialization_status.current_step}`;
                                 document.getElementById('init-progress').style.width = `${progress}%`;
                                 document.getElementById('init-progress').setAttribute('aria-valuenow', progress);
                             }
-                            queueContents.innerHTML = '<p>Program is currently initializing...</p>';
+                            queueContents.innerHTML = '<p></p>';
                         } else {
                             initializationStatus.style.display = 'none';
+                            document.getElementById('progress-container').style.display = 'none';
                             let hasContent = false;
                             let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
                             
@@ -347,6 +349,7 @@
                         }
                     } else {
                         initializationStatus.style.display = 'none';
+                        document.getElementById('progress-container').style.display = 'none';
                         queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
                     }
                 }
@@ -356,6 +359,8 @@
 
     // Initial update
     document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('initialization-status').style.display = 'block';
+        document.getElementById('progress-container').style.display = 'block';
         updateQueueContents();
         // Set interval for refreshing after initial load
         setInterval(updateQueueContents, 5000);  // Refresh every 5 seconds

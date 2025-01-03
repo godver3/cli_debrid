@@ -85,13 +85,14 @@ class MetadataManager:
         age = now - last_updated
         is_stale = age > stale_threshold
 
-        logger.debug(
-            f"Staleness check: last_updated={last_updated.isoformat()}, "
-            f"age={age.days}d {age.seconds//3600}h, "
-            f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
-            f"(base={settings.staleness_threshold}d, variation={day_variation}d {hour_variation}h) "
-            f"-> {'stale' if is_stale else 'fresh'}"
-        )
+        if is_stale:
+            logger.debug(
+                f"Staleness check: last_updated={last_updated.isoformat()}, "
+                f"age={age.days}d {age.seconds//3600}h, "
+                f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
+                f"(base={settings.staleness_threshold}d, variation={day_variation}d {hour_variation}h) "
+                f"-> stale"
+            )
                 
         return is_stale
 
