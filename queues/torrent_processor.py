@@ -93,6 +93,7 @@ class TorrentProcessor:
             
         Raises:
             NoVideoFilesError: If the torrent has no valid video files
+            TorrentAdditionError: If there was an error checking the cache status
         """
         try:
             logging.debug("Checking cache status")
@@ -105,7 +106,7 @@ class TorrentProcessor:
             raise
         except Exception as e:
             logging.error(f"Error checking cache for magnet: {str(e)}", exc_info=True)
-            return False
+            raise TorrentAdditionError(f"Error checking cache status: {str(e)}")
             
     def add_to_account(self, magnet: str) -> Optional[Dict]:
         """
@@ -216,16 +217,16 @@ class TorrentProcessor:
                 try:
                     is_cached = self.check_cache(magnet)
                     logging.debug(f"Result {idx}: Cache status - {'Cached' if is_cached else 'Not cached'}")
-                except NoVideoFilesError:
-                    logging.debug(f"Result {idx}: No valid video files found in torrent")
+                except (NoVideoFilesError, TorrentAdditionError) as e:
+                    logging.debug(f"Result {idx}: Error checking cache status: {str(e)}")
+                    # Skip this result entirely since there was an error with the magnet/torrent
                     continue
                 
                 # Skip if we need cached and this isn't
                 if not accept_uncached and not is_cached:
                     logging.debug(f"Result {idx}: Skipping uncached result (accept_uncached={accept_uncached})")
-                    
                     continue
-
+                
                 # If uncached, check download limits before proceeding
                 if not is_cached:
                     try:

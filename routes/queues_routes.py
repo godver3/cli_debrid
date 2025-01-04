@@ -65,7 +65,22 @@ def api_queue_contents():
     queue_contents = queue_manager.get_queue_contents()
     program_running = program_is_running()
     program_initializing = program_is_initializing()
-    initialization_status = get_initialization_status() if program_initializing else None
+    
+    # Get initialization status and ensure it has all required fields
+    initialization_status = None
+    if program_initializing:
+        status = get_initialization_status()
+        if status:
+            initialization_status = {
+                'current_step': status.get('current_step', ''),
+                'total_steps': status.get('total_steps', 4),
+                'current_step_number': status.get('current_step_number', 0),
+                'progress_value': status.get('progress_value', 0),
+                'substep_details': status.get('substep_details', ''),
+                'error_details': status.get('error_details', None),
+                'is_substep': status.get('is_substep', False),
+                'current_phase': status.get('current_phase', None)
+            }
     
     for queue_name, items in queue_contents.items():
         if queue_name == 'Upgrading':

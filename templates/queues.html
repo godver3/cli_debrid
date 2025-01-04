@@ -10,8 +10,12 @@
             <div id="init-progress" class="progress-bar" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
         </div>
     </div>
-    <div id="queue-contents" class="queue-container">
+    <div id="queue-contents" class="queue-container" style="display: none;">
         <!-- Queue contents will be dynamically inserted here -->
+    </div>
+    <div id="loading-indicator" class="text-center">
+        <i class="fas fa-spinner fa-spin fa-2x"></i>
+        <p>Loading...</p>
     </div>
 </div>
 
@@ -117,10 +121,23 @@
         white-space: nowrap;
         z-index: 1;
     }
+
+    #loading-indicator {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+    }
+    
+    .container {
+        position: relative;
+        min-height: 200px;  /* Give some minimum height for the loading indicator to center in */
+    }
 </style>
 
 <script>
     let filenameToggleState = localStorage.getItem('filenameToggleState') === 'true' || false;
+    let hasReceivedFirstResponse = false;
 
     function toggleQueue(element) {
         const queueItems = element.nextElementSibling;
@@ -176,9 +193,9 @@
 
     function generateRegularItems(queueName, items) {
         if (queueName === 'Checking') {
-            // Split items into downloaded and downloading
+            // Split items into downloaded and non-downloaded
             const downloaded = items.filter(item => item.state === 'downloaded');
-            const downloading = items.filter(item => item.state === 'downloading');
+            const downloading = items.filter(item => item.state !== 'downloaded');
             
             let content = '';
             
@@ -190,13 +207,26 @@
             
             if (downloading.length > 0) {
                 content += '<div class="checking-group"><h5>Downloading</h5>';
-                content += downloading.map(item => generateCheckingItem(item)).join('');
-                content += '</div>';
-            }
+                // Group items by torrent_id
+                const groupedDownloading = {};
+                downloading.forEach(item => {
+                    const torrentId = item.torrent_id || 'unknown';
+                    if (!groupedDownloading[torrentId]) {
+                        groupedDownloading[torrentId] = {
+                            items: [],
+                            progress: item.progress
+                        };
+                    }
+                    groupedDownloading[torrentId].items.push(item);
+                });
 
-            // If no items in either category, show all items without grouping
-            if (downloaded.length === 0 && downloading.length === 0) {
-                content = items.map(item => generateCheckingItem(item)).join('');
+                // Generate content for each group
+                Object.entries(groupedDownloading).forEach(([torrentId, group]) => {
+                    content += '<div class="download-group">';
+                    content += group.items.map(item => generateCheckingItem(item, true)).join('');
+                    content += '</div>';
+                });
+                content += '</div>';
             }
             
             return content;
@@ -227,7 +257,6 @@
                 }
                 itemContent += `
                     - Time Added: ${formattedTime}
-                    - Upgrades Found: ${item.upgrades_found || 0}
                 `;
             }
 
@@ -254,7 +283,7 @@
         }).join('');
     }
 
-    function generateCheckingItem(item) {
+    function generateCheckingItem(item, showProgress = true) {
         let seasonEpisode = '';
         if (item.type === 'episode' && item.season_number && item.episode_number) {
             let season = item.season_number.toString().padStart(2, '0');
@@ -271,17 +300,20 @@
             itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- File: ${item.filled_by_file}</span>`;
         }
 
-        if (item.state === 'downloading' && item.progress !== undefined) {
-            itemContent += `
+        // Show progress bar for items that are downloading, unknown, or don't have a state set
+        if (showProgress && (!item.state || item.state === 'downloading' || item.state === 'unknown')) {
+            let progress = item.progress || 0;
+            let state = item.state || 'unknown';
+            itemContent += `<br/>
                 <div class="item-progress">
                     <div class="progress" style="width: 200px;">
                         <div class="progress-bar" role="progressbar" 
-                             style="width: ${item.progress}%" 
-                             aria-valuenow="${item.progress}" 
+                             style="width: ${progress}%" 
+                             aria-valuenow="${progress}" 
                              aria-valuemin="0" 
                              aria-valuemax="100">
                         </div>
-                        <div class="progress-text">${item.progress}%</div>
+                        <div class="progress-text">${progress}% - ${state}</div>
                     </div>
                 </div>
             `;
@@ -291,27 +323,79 @@
         return itemContent;
     }
 
+    function updateInitializationStatus(data) {
+        const initStatus = document.getElementById('initialization-status');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('init-progress');
+        const stepText = document.getElementById('init-step-text');
+
+        if (!data || !data.current_step) {
+            initStatus.style.display = 'none';
+            progressContainer.style.display = 'none';
+            return;
+        }
+
+        initStatus.style.display = 'block';
+        progressContainer.style.display = 'block';
+
+        // Use the progress value directly from the backend
+        let progress = data.progress_value || 0;
+        
+        // Special case for starting initialization
+        if (data.current_step === 'Starting initialization') {
+            progress = 0;
+        }
+
+        // Ensure progress stays within bounds
+        progress = Math.max(0, Math.min(100, progress));
+        
+        console.log(`Progress: ${progress.toFixed(1)}%, Step: ${data.current_step}, Phase: ${data.current_phase || 'none'}`);
+        
+        // Update progress bar
+        progressBar.style.width = `${progress}%`;
+        progressBar.setAttribute('aria-valuenow', progress);
+
+        // Update status text
+        let statusText = data.current_step;
+        if (data.substep_details) {
+            statusText += ` - ${data.substep_details}`;
+        }
+        stepText.textContent = statusText;
+
+        // Handle error state
+        if (data.error_details) {
+            initStatus.classList.remove('alert-info');
+            initStatus.classList.add('alert-danger');
+        } else {
+            initStatus.classList.remove('alert-danger');
+            initStatus.classList.add('alert-info');
+        }
+    }
+
     function updateQueueContents() {
+        const initializationStatus = document.getElementById('initialization-status');
+        const queueContents = document.getElementById('queue-contents');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        
         fetch('/queues/api/queue_contents')
             .then(response => response.json())
             .then(data => {
-                let queueContents = document.getElementById('queue-contents');
-                let initializationStatus = document.getElementById('initialization-status');
+                // Hide loading indicator after first response
+                if (!hasReceivedFirstResponse) {
+                    hasReceivedFirstResponse = true;
+                    loadingIndicator.style.display = 'none';
+                }
+
                 if (queueContents) {
                     if (data.program_running) {
-                        if (data.program_initializing) {
-                            initializationStatus.style.display = 'block';
-                            document.getElementById('progress-container').style.display = 'block';
-                            if (data.initialization_status) {
-                                const progress = (data.initialization_status.current_step_number / data.initialization_status.total_steps) * 100;
-                                document.getElementById('init-step-text').textContent = `Initializing: ${data.initialization_status.current_step}`;
-                                document.getElementById('init-progress').style.width = `${progress}%`;
-                                document.getElementById('init-progress').setAttribute('aria-valuenow', progress);
-                            }
-                            queueContents.innerHTML = '<p></p>';
+                        if (data.program_initializing && data.initialization_status) {
+                            updateInitializationStatus(data.initialization_status);
+                            queueContents.style.display = 'none';
                         } else {
                             initializationStatus.style.display = 'none';
                             document.getElementById('progress-container').style.display = 'none';
+                            queueContents.style.display = 'flex';
+                            
                             let hasContent = false;
                             let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
                             
@@ -350,17 +434,21 @@
                     } else {
                         initializationStatus.style.display = 'none';
                         document.getElementById('progress-container').style.display = 'none';
+                        queueContents.style.display = 'block';
                         queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
                     }
                 }
             })
-            .catch(error => console.error('Error fetching queue contents:', error));
+            .catch(error => {
+                console.error('Error fetching queue contents:', error);
+                if (!hasReceivedFirstResponse) {
+                    loadingIndicator.innerHTML = '<p class="text-danger">Error loading queue data. Please refresh the page.</p>';
+                }
+            });
     }
 
     // Initial update
     document.addEventListener('DOMContentLoaded', function() {
-        document.getElementById('initialization-status').style.display = 'block';
-        document.getElementById('progress-container').style.display = 'block';
         updateQueueContents();
         // Set interval for refreshing after initial load
         setInterval(updateQueueContents, 5000);  // Refresh every 5 seconds

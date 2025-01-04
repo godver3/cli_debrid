@@ -15,16 +15,23 @@
     /* Button styles */
     .btn {
         border: none;
+        outline: none;
         color: white;
         padding: 5px 10px;
+        margin: 0 5px;
         text-align: center;
         text-decoration: none;
         display: inline-block;
         font-size: 14px;
-        margin-bottom: 10px;
         cursor: pointer;
         border-radius: 4px;
-        transition: background-color 0.3s;
+        transition: all 0.3s ease;
+        box-shadow: none;
+    }
+
+    .btn:focus {
+        outline: none;
+        box-shadow: none;
     }
 
     .btn-primary { background-color: #4CAF50; }
@@ -95,8 +102,9 @@
     .version-buttons,
     .source-buttons {
         display: flex;
-        gap: 5px;
+        gap: 10px;
         align-items: center;
+        min-height: 32px;
     }
 
     /* Specific buttons */
@@ -106,27 +114,86 @@
         font-size: 16px;
     }
 
-    /* Add buttons */
+    /* Add and duplicate buttons */
     #add-source-btn,
     #add-notification-btn,
     .add-scraper-link,
-    .add-version-link {
+    .add-version-link,
+    .duplicate-source-btn,
+    .duplicate-scraper-btn,
+    .duplicate-version-btn {
         composes: btn btn-primary;
-        display: inline-block;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         padding: 5px 10px;
+        margin: 0 5px 5px;
         background-color: #4CAF50;
         color: white;
         text-decoration: none;
         border-radius: 4px;
-        transition: background-color 0.3s;
-        margin-bottom: 10px;
+        transition: all 0.3s ease;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+        height: 28px;
     }
 
     #add-source-btn:hover,
     #add-notification-btn:hover,
     .add-scraper-link:hover,
-    .add-version-link:hover {
+    .add-version-link:hover,
+    .duplicate-source-btn:hover,
+    .duplicate-scraper-btn:hover,
+    .duplicate-version-btn:hover {
         background-color: #45a049;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+    /* Remove any other duplicate button styles that might be conflicting */
+    .duplicate-version-btn {
+        border: none !important;
+        margin: 0;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Delete and rename buttons */
+    .rename-version-btn,
+    .delete-version-btn,
+    .delete-notification-btn,
+    .delete-source-btn,
+    .delete-scraper-btn {
+        composes: btn btn-primary;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 5px 10px;
+        margin: 0 5px;
+        border: none;
+        outline: none;
+        box-shadow: none;
+        background-color: #f44336;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: all 0.3s ease;
+        height: 28px;
+    }
+
+    .rename-version-btn:hover,
+    .delete-version-btn:hover,
+    .delete-notification-btn:hover,
+    .delete-source-btn:hover,
+    .delete-scraper-btn:hover {
+        background-color: #d32f2f;
+        border: none;
+        outline: none;
+        box-shadow: none;
     }
 
     /* Expand/Collapse buttons */
@@ -135,16 +202,15 @@
         background-color: #555;
         border: none;
         color: white;
-        padding: 15px 10px;
+        padding: 5px 10px;
+        margin: 0 5px 10px;
         text-align: center;
         text-decoration: none;
         display: inline-block;
         font-size: 14px;
-        margin-right: 10px;
         cursor: pointer;
         border-radius: 4px;
         transition: background-color 0.3s;
-        margin-bottom: 10px;
     }
 
     .settings-expand-all:hover,

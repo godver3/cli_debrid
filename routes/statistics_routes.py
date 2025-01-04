@@ -324,8 +324,8 @@ def root():
     # Get active downloads
     downloads_start = time.perf_counter()
     try:
-        active_count, limit = get_cached_active_downloads()
-        stats['active_downloads'] = active_count
+        count, limit = get_cached_active_downloads()
+        stats['active_downloads'] = count
         stats['active_downloads_error'] = None
     except TooManyDownloadsError as e:
         logging.warning(f"Too many active downloads: {str(e)}")
@@ -438,6 +438,25 @@ def root():
                 'limit': limit,
                 'percentage': percentage,
                 'status': status
+            }
+    except TooManyDownloadsError as e:
+        # Parse out the counts from the error message
+        import re
+        match = re.search(r'(\d+)/(\d+)', str(e))
+        if match:
+            count, limit = map(int, match.groups())
+            stats['active_downloads_data'] = {
+                'count': count,
+                'limit': limit,
+                'percentage': round((count / limit * 100) if limit > 0 else 0),
+                'status': 'critical'
+            }
+        else:
+            stats['active_downloads_data'] = {
+                'count': 0,
+                'limit': 0,
+                'percentage': 0,
+                'status': 'error'
             }
     except Exception as e:
         logging.error(f"Error getting active downloads: {str(e)}")
@@ -581,7 +600,7 @@ def active_downloads():
         return jsonify({
             'active_count': active_count,
             'limit': limit,
-            'percentage': round((active_count / limit) * 100) if limit > 0 else 0,
+            'percentage': round((active_count / limit * 100) if limit > 0 else 0),
             'error': None
         })
     except TooManyDownloadsError as e:
@@ -594,7 +613,7 @@ def active_downloads():
             return jsonify({
                 'active_count': active_count,
                 'limit': limit,
-                'percentage': round((active_count / limit) * 100) if limit > 0 else 0,
+                'percentage': round((active_count / limit * 100) if limit > 0 else 0),
                 'error': 'too_many'
             })
         return jsonify({
@@ -616,6 +635,7 @@ def active_downloads_api():
         count, limit = provider.get_active_downloads()
         
         if not count or not limit:
+            logging.warning("No active downloads data available")
             return jsonify({
                 'active': {
                     'count': 0,
