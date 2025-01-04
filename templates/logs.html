@@ -19,6 +19,28 @@
         position: relative; /* Add this */
     }
 
+    /* Mobile-specific adjustments */
+    @media screen and (max-width: 768px) {
+        .log-container {
+            width: 100vw;
+            margin: 0;
+            height: calc(100vh - 120px);
+            border-radius: 0;
+        }
+
+        .log-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        #log-level-filter,
+        #log-search {
+            flex: 1;
+            min-width: 120px;
+        }
+    }
+
     .log-controls {
         padding: 10px;
         background-color: #333;
@@ -45,18 +67,24 @@
     #log-entries {
         flex-grow: 1;
         overflow-y: auto;
+        overflow-x: hidden;
         padding: 10px;
         width: 100%;
         box-sizing: border-box;
+        -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
     }
 
     .log-entry {
         font-family: monospace;
         white-space: pre-wrap;
+        word-wrap: break-word;
+        word-break: break-all;
         padding: 2px 5px;
         border-left: 3px solid transparent;
         margin-bottom: 2px;
         line-height: 1.2;
+        max-width: 100%;
+        box-sizing: border-box;
     }
 
     .log-entry:not(:last-child) {
@@ -135,6 +163,20 @@
         font-size: 0.9em;
         display: none;
         z-index: 10;
+        opacity: 0.7;
+        animation: flash-opacity 2s ease-in-out infinite;
+    }
+
+    @keyframes flash-opacity {
+        0% { opacity: 0.7; }
+        50% { opacity: 0; }
+        100% { opacity: 0.7; }
+    }
+
+    @media screen and (max-width: 768px) {
+        #pause-indicator {
+            top: 55px;
+        }
     }
 
     /* Style for the new hidden div */

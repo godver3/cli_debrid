@@ -6,7 +6,7 @@ import os
 import time
 from urllib.parse import unquote
 
-from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
+from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError, TorrentAdditionError
 from ..common import (
     extract_hash_from_magnet,
     download_and_extract_hash,
@@ -192,32 +192,34 @@ class RealDebridProvider(DebridProvider):
                     
             if not result or 'id' not in result:
                 logging.error(f"Failed to add torrent - response: {result}")
-                return None
+                raise TorrentAdditionError(f"Failed to add torrent - response: {result}")
                 
             torrent_id = result['id']
             logging.debug(f"Initial add response: {result}")
             
             # Wait for files to be available
-            for attempt in range(10):  # Try for up to 10 seconds
+            max_attempts = 30  # Increase timeout to 30 seconds
+            success = False
+            for attempt in range(max_attempts):
                 info = self.get_torrent_info(torrent_id)
                 if not info:
                     logging.error("Failed to get torrent info")
-                    return None
-                    
+                    raise TorrentAdditionError("Failed to get torrent info")
+                
                 logging.debug(f"Torrent info (attempt {attempt + 1}): {info}")
                 status = info.get('status', '')
                 
                 # Early exit for invalid magnets
-                if status == 'magnet_error' and info.get('filename') == 'Invalid Magnet':
-                    logging.error("Invalid magnet link detected")
+                if status == 'magnet_error':
+                    logging.error(f"Magnet error detected: {info.get('filename')}")
                     self.remove_torrent(torrent_id)
-                    return None
+                    raise TorrentAdditionError(f"Magnet error: {info.get('filename')}")
                 
                 if status == 'magnet_conversion':
                     logging.debug("Waiting for magnet conversion...")
                     time.sleep(1)
                     continue
-                    
+                
                 if status == 'waiting_files_selection':
                     # Select only video files
                     files = info.get('files', [])
@@ -234,11 +236,12 @@ class RealDebridProvider(DebridProvider):
                             data = {'files': ','.join(video_file_ids)}
                             make_request('POST', f'/torrents/selectFiles/{torrent_id}', self.api_key, data=data)
                             logging.info(f"Selected video files: {video_file_ids}")
+                            success = True
                             break
                         else:
                             logging.error("No video files found in torrent")
                             self.remove_torrent(torrent_id)
-                            return None
+                            raise TorrentAdditionError("No video files found in torrent")
                     else:
                         logging.error("No files available in torrent info")
                         time.sleep(1)
@@ -246,17 +249,23 @@ class RealDebridProvider(DebridProvider):
                         
                 elif status in ['downloaded', 'downloading']:
                     logging.debug(f"Torrent is in {status} state")
+                    success = True
                     break
                 else:
                     logging.debug(f"Unknown status: {status}, waiting...")
                     time.sleep(1)
                     
-            self.update_status(torrent_id, TorrentStatus.ADDED)
+            if not success:
+                # Only raise timeout if we didn't succeed
+                logging.error("Timed out waiting for torrent files")
+                self.remove_torrent(torrent_id)
+                raise TorrentAdditionError("Timed out waiting for torrent files")
+                
             return torrent_id
             
         except Exception as e:
             logging.error(f"Error adding torrent: {str(e)}")
-            return None
+            raise
 
     def get_available_hosts(self) -> Optional[list]:
         """Get list of available torrent hosts"""

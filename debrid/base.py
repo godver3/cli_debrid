@@ -15,6 +15,10 @@ class ProviderUnavailableError(DebridProviderError):
     """Exception raised when the debrid service is unavailable"""
     pass
 
+class TorrentAdditionError(DebridProviderError):
+    """Exception raised when there is an error adding a torrent to the debrid service"""
+    pass
+
 class DebridProvider(ABC):
     """Abstract base class that defines the interface for debrid providers"""
     

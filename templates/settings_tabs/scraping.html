@@ -84,17 +84,23 @@
 
         for (const [selector, handler] of Object.entries(buttons)) {
             document.querySelectorAll(selector).forEach(btn => {
-                // Remove existing event listeners
-                btn.removeEventListener('click', handler);
-                // Add new event listener
-                btn.addEventListener('click', function() {
+                // Store the handler function as a property on the button element
+                const wrappedHandler = function() {
                     const versionId = this.getAttribute('data-version-id');
                     handler(versionId);
-                });
+                };
+                
+                // Remove old handler if it exists
+                if (btn._versionHandler) {
+                    btn.removeEventListener('click', btn._versionHandler);
+                }
+                
+                // Store and add new handler
+                btn._versionHandler = wrappedHandler;
+                btn.addEventListener('click', wrappedHandler);
             });
         }
     }
-
 
     function renameVersion(versionId) {
         window.showPopup({
@@ -260,14 +266,18 @@
         list.appendChild(newItem);
     }
 
-    document.addEventListener('dashboardInitialized', function() {
+    // Remove any existing initialization listeners
+    const initializeHandler = function() {
         initializeScrapingFunctionality();
-    });
+    };
 
-    // Add this new event listener
-    document.addEventListener('scrapingContentLoaded', function() {
-        initializeScrapingFunctionality();
-    });
+    // Clean up any existing listeners
+    document.removeEventListener('dashboardInitialized', initializeHandler);
+    document.removeEventListener('scrapingContentLoaded', initializeHandler);
+
+    // Add new listeners
+    document.addEventListener('dashboardInitialized', initializeHandler);
+    document.addEventListener('scrapingContentLoaded', initializeHandler);
 </script>
 
 {% for version, config in settings.Scraping.versions.items() %}
