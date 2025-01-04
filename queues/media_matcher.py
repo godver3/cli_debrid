@@ -220,10 +220,13 @@ class MediaMatcher:
         """
         related_items = []
         original_version = original_item.get('version')
+        original_title = original_item.get('title')
         
         for item in scraping_items:
-            # Skip if not an episode or different version
-            if item.get('type') != 'episode' or item.get('version') != original_version:
+            # Skip if not an episode, different version, or different title
+            if (item.get('type') != 'episode' or 
+                item.get('version') != original_version or
+                item.get('title') != original_title):
                 continue
                 
             # Try to match this item against the files
