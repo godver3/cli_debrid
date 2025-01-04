@@ -86,12 +86,12 @@ class AddingQueue:
                         logging.debug(f"Successfully parsed scrape results JSON for {item_identifier}")
                     except json.JSONDecodeError:
                         logging.error(f"Failed to parse scrape results JSON for {item_identifier}: {results}")
-                        self._handle_failed_item(item, "Invalid scrape results format")
+                        self._handle_failed_item(item, "Invalid scrape results format", queue_manager)
                         continue
                 
                 if not results:
                     logging.debug(f"No scrape results found for {item_identifier}")
-                    self._handle_failed_item(item, "No results found")
+                    self._handle_failed_item(item, "No results found", queue_manager)
                     continue
                     
                 # Log number of results found
@@ -126,7 +126,7 @@ class AddingQueue:
                 # Only handle as failure if we didn't move to pending uncached
                 if (not torrent_info or not magnet) and (not updated_item or updated_item.get('state') != 'Pending Uncached'):
                     logging.debug(f"No valid torrent info or magnet found for {item_identifier}")
-                    self._handle_failed_item(item, "No valid results found")
+                    self._handle_failed_item(item, "No valid results found", queue_manager)
                     continue
                     
                 logging.debug(f"Successfully found torrent info and magnet for {item_identifier}")
@@ -138,7 +138,10 @@ class AddingQueue:
                 
                 if not matches:
                     logging.debug(f"No matching files found in torrent for {item_identifier}")
-                    self._handle_failed_item(item, "No matching files found in torrent")
+                    logging.debug(f"Current torrent_id: {torrent_info.get('id')}")
+                    item['torrent_id'] = torrent_info.get('id')
+                    logging.debug(f"Moving {item_identifier} back to handle_failed_item with [{item['torrent_id']}]")
+                    self._handle_failed_item(item, "No matching files found in torrent", queue_manager)
                     continue
                     
                 # Get the best matching file
@@ -188,7 +191,7 @@ class AddingQueue:
                 
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
-                self._handle_failed_item(item, f"Processing error: {str(e)}")
+                self._handle_failed_item(item, f"Processing error: {str(e)}", queue_manager)
                 
         return success
 
@@ -207,29 +210,49 @@ class AddingQueue:
         """
         logging.debug(f"Processing results with accept_uncached={accept_uncached}")
         
-        # Process results to get best match
-        torrent_info, magnet = self.torrent_processor.process_results(
-            results,
-            accept_uncached=accept_uncached,
-            item=item
-        )
-        
-        if torrent_info and magnet:
-            cache_status = "uncached" if accept_uncached else "cached"
-            logging.debug(f"Found valid {cache_status} result for {item_identifier}")
-        
-        return torrent_info, magnet
+        try:
+            # Process results to get best match
+            torrent_info, magnet = self.torrent_processor.process_results(
+                results,
+                accept_uncached=accept_uncached,
+                item=item
+            )
+            
+            if torrent_info and magnet:
+                cache_status = "uncached" if accept_uncached else "cached"
+                logging.debug(f"Found valid {cache_status} result for {item_identifier}")
+            
+            return torrent_info, magnet
+        except TorrentAdditionError as e:
+            logging.error(f"Error processing results for {item_identifier}: {str(e)}")
+            self._handle_failed_item(item, f"Error checking cache status: {str(e)}", queue_manager)
+            return None, None
 
-    def _handle_failed_item(self, item: Dict, error: str):
+    def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any):
         """
-        Handle a failed item by moving it to Sleeping or Blacklisted state
+        Handle a failed item by moving it back to Wanted queue if media matching failed,
+        or to Sleeping/Blacklisted state for other failures
         
         Args:
             item: The media item that failed
             error: Error message describing why it failed
+            queue_manager: Global queue manager instance
         """
         try:
-            # Check if item is old (>7 days from release date)
+            # If failure was due to media matching after torrent addition
+            if "No matching files found in torrent" in error:
+                logging.info(f"Media matching failed for {item.get('title')}, moving back to Wanted queue")
+                logging.info(f"Torrent ID: {item.get('torrent_id')}")
+                # Remove the torrent from the debrid service
+                if 'torrent_id' in item:
+                    logging.debug(f"Removing unwanted torrent {item['torrent_id']} from debrid service")
+                    self.remove_unwanted_torrent(item['torrent_id'])
+                else:
+                    logging.warning(f"No torrent ID found for {item.get('title')}, skipping removal")
+                queue_manager.move_to_wanted(item, "Adding")
+                return
+
+            # For other failures, check if item is old (>7 days from release date)
             release_date_str = item.get('release_date')
             if release_date_str:
                 try:
