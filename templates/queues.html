@@ -122,6 +122,18 @@
         z-index: 1;
     }
 
+    .group-progress {
+        margin-top: 10px;
+        margin-left: 20px;
+    }
+
+    .checking-group h5 {
+        color: #aaa;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #666;
+        padding-bottom: 5px;
+    }
+
     #loading-indicator {
         position: absolute;
         left: 50%;
@@ -220,16 +232,36 @@
                     if (!groupedDownloading[torrentId]) {
                         groupedDownloading[torrentId] = {
                             items: [],
-                            progress: item.progress
+                            progress: item.progress,
+                            state: item.state
                         };
                     }
                     groupedDownloading[torrentId].items.push(item);
+                    // Update progress if this item has higher progress
+                    if (item.progress > groupedDownloading[torrentId].progress) {
+                        groupedDownloading[torrentId].progress = item.progress;
+                    }
                 });
 
                 // Generate content for each group
                 Object.entries(groupedDownloading).forEach(([torrentId, group]) => {
                     content += '<div class="download-group">';
-                    content += group.items.map(item => generateCheckingItem(item, true)).join('');
+                    // Add items first
+                    content += group.items.map(item => generateCheckingItem(item, false)).join('');
+                    // Add single progress bar for the group
+                    content += `
+                        <div class="item-progress group-progress">
+                            <div class="progress" style="width: 200px;">
+                                <div class="progress-bar" role="progressbar" 
+                                     style="width: ${group.progress}%" 
+                                     aria-valuenow="${group.progress}" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">
+                                </div>
+                                <div class="progress-text">${group.progress}% - ${group.state || 'downloading'}</div>
+                            </div>
+                        </div>
+                    `;
                     content += '</div>';
                 });
                 content += '</div>';
