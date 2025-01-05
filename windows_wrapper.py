@@ -101,6 +101,10 @@ def run_main():
     parser.add_argument('--battery-port', type=int, help='Port for battery web server')
     args = parser.parse_args()
     
+    # Set the battery port in the environment before starting any processes
+    if args.battery_port:
+        os.environ['CLI_DEBRID_BATTERY_PORT'] = str(args.battery_port)
+    
     script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
     processes = []
 
