@@ -107,10 +107,6 @@ def run_main():
     # Start both processes in parallel with appropriate ports
     for script_name in script_names:
         port = args.port if 'cli_battery' not in script_name else args.battery_port
-        if script_name == 'main.py':
-            port = 5000
-        if script_name == 'cli_battery/main.py':
-            port = 5001
         process = multiprocessing.Process(
             target=run_script, 
             args=(script_name,),
