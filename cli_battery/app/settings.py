@@ -28,13 +28,14 @@ class Settings:
     @cached_property
     def Trakt(self):
         if self._trakt is None:
+            battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
             self._trakt = {
                 'client_id': get_setting('Trakt', 'client_id', ''),
                 'client_secret': get_setting('Trakt', 'client_secret', ''),
                 'access_token': get_setting('Trakt', 'access_token', ''),
                 'refresh_token': get_setting('Trakt', 'refresh_token', ''),
                 'expires_at': get_setting('Trakt', 'expires_at', None),
-                'redirect_uri': get_setting('Trakt', 'redirect_uri', 'http://localhost:5001/trakt_callback')
+                'redirect_uri': get_setting('Trakt', 'redirect_uri', f'http://localhost:{battery_port}/trakt_callback')
             }
         return self._trakt
 
