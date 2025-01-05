@@ -269,7 +269,7 @@ SETTINGS_SCHEMA = {
         },
         "checking_queue_period": {
             "type": "integer",
-            "description": "Checking queue max period (in minutes) before moving items back to Wanted queue",
+            "description": "Checking queue max period (in seconds) before moving items back to Wanted queue",
             "default": 3600
         },
         "rescrape_missing_files": {
