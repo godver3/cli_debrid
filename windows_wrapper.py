@@ -106,15 +106,25 @@ def run_main():
 
     # Start both processes in parallel with appropriate ports
     for script_name in script_names:
-        port = args.port if 'cli_battery' not in script_name else args.battery_port
-        process = multiprocessing.Process(
-            target=run_script, 
-            args=(script_name,),
-            kwargs={'port': port}
-        )
+        if 'cli_battery' in script_name:
+            # For battery process, pass the battery port
+            process = multiprocessing.Process(
+                target=run_script, 
+                args=(script_name,),
+                kwargs={'battery_port': args.battery_port}
+            )
+            logging.info(f"Starting battery process on port {args.battery_port}")
+        else:
+            # For main process, pass the main port
+            process = multiprocessing.Process(
+                target=run_script, 
+                args=(script_name,),
+                kwargs={'port': args.port}
+            )
+            logging.info(f"Starting main process on port {args.port}")
+        
         processes.append(process)
         process.start()
-        logging.info(f"Started {script_name} on port {port}")
 
     try:
         # Wait for both processes to complete

@@ -138,19 +138,20 @@ def signal_handler(signum, frame):
 
 def update_web_ui_state(state):
     try:
-        api.post('http://localhost:5000/api/update_program_state', json={'state': state})
+        port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+        api.post(f'http://localhost:{port}/api/update_program_state', json={'state': state})
     except api.exceptions.RequestException:
         logging.error("Failed to update web UI state")
 
 def check_metadata_service():
     grpc_url = get_setting('Metadata Battery', 'url')
+    battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
     
     # Remove leading "http://" or "https://"
     grpc_url = re.sub(r'^https?://', '', grpc_url)
     
-    # Remove trailing ":5000" or ":5000/" if present
-    grpc_url = grpc_url.rstrip('/').removesuffix(':5001')
-    grpc_url = grpc_url.rstrip('/').removesuffix(':50051')
+    # Remove any trailing port numbers and slashes
+    grpc_url = re.sub(r':\d+/?$', '', grpc_url)
     
     # Append ":50051"
     grpc_url += ':50051'
@@ -402,11 +403,12 @@ def setup_tray_icon():
     def delayed_browser_launch():
         time.sleep(2)  # Wait for 2 seconds
         try:
-            if check_localhost_binding(5000):
-                webbrowser.open('http://localhost:5000')
+            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+            if check_localhost_binding(port):
+                webbrowser.open(f'http://localhost:{port}')
                 logging.info("Browser launched successfully")
             else:
-                logging.error("Failed to bind to localhost:5000")
+                logging.error(f"Failed to bind to localhost:{port}")
         except Exception as e:
             logging.error(f"Failed to launch browser: {e}")
     
@@ -783,6 +785,7 @@ def main():
     
     # Set metadata battery URL with the correct port
     set_setting('Metadata Battery', 'url', f'http://localhost:{battery_port}')
+    logging.info(f"Set metadata battery URL to http://localhost:{battery_port}")
 
     ensure_settings_file()
     verify_database()
@@ -811,7 +814,8 @@ def main():
     """)
     print(f"             {version}\n") 
     print(f"cli_debrid is initialized.")
-    print(f"The web UI is available at http://localhost:5000")
+    port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+    print(f"The web UI is available at http://localhost:{port}")
     print("Use the web UI to control the program.")
     print("Press Ctrl+C to stop the program.")
 
@@ -841,7 +845,8 @@ def main():
         time.sleep(2)  # Wait for server to initialize
         # Call the start_program route
         try:
-            response = requests.post('http://localhost:5000/program_operation/api/start_program')
+            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+            response = requests.post(f'http://localhost:{port}/program_operation/api/start_program')
             if response.status_code == 200:
                 print("Program started successfully")
             else:
