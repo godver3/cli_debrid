@@ -122,6 +122,9 @@ def push_trakt_auth_to_battery():
         battery_url = 'http://localhost'
         battery_port = os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')
 
+        logging.info(f"Battery URL: {battery_url}")
+        logging.info(f"Battery port: {battery_port}")
+
         if not battery_url:
             logging.error("Battery URL not set in settings")
             return jsonify({'error': 'Battery URL not set in settings'}), 400
@@ -129,6 +132,8 @@ def push_trakt_auth_to_battery():
         # Remove any existing port numbers and add the correct one
         # battery_url = re.sub(r':\d+/?$', '', battery_url)  # Remove any port number at the end
         battery_url = f"{battery_url}:{battery_port}"
+
+        logging.info(f"Battery URL: {battery_url}")
 
         auth_data = {
             'CLIENT_ID': trakt_config.get('CLIENT_ID'),

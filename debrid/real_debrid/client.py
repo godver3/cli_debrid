@@ -84,6 +84,12 @@ class RealDebridProvider(DebridProvider):
             hash_value = extract_hash_from_magnet(magnet_link)
             if not hash_value:
                 logging.error(f"Could not extract hash from magnet link: {magnet_link}")
+                # Add to not wanted since we can't process this magnet
+                try:
+                    add_to_not_wanted(magnet_link)
+                    logging.info(f"Added invalid magnet {magnet_link} to not wanted list")
+                except Exception as e:
+                    logging.error(f"Failed to add to not wanted list: {str(e)}")
                 results[magnet_link] = None
                 continue
                 
@@ -118,12 +124,29 @@ class RealDebridProvider(DebridProvider):
                 info = self.get_torrent_info(torrent_id)
                 if not info:
                     logging.error(f"Failed to get torrent info for ID: {torrent_id}")
+                    # Add to not wanted since we can't get info
+                    try:
+                        add_to_not_wanted(hash_value)
+                        logging.info(f"Added hash {hash_value} to not wanted list due to info fetch failure")
+                    except Exception as e:
+                        logging.error(f"Failed to add to not wanted list: {str(e)}")
                     results[hash_value] = None
                     continue
                     
                 # Check if it's already cached
                 status = info.get('status', '')
                 logging.debug(f"Torrent status: {status}")
+                
+                # Handle error statuses
+                if status in ['magnet_error', 'error', 'virus', 'dead']:
+                    logging.error(f"Torrent has error status: {status}")
+                    try:
+                        add_to_not_wanted(hash_value)
+                        logging.info(f"Added hash {hash_value} to not wanted list due to status: {status}")
+                    except Exception as e:
+                        logging.error(f"Failed to add to not wanted list: {str(e)}")
+                    results[hash_value] = None
+                    continue
                 
                 # If there are no video files, return None to indicate error
                 video_files = [f for f in info.get('files', []) if is_video_file(f.get('path', '') or f.get('name', ''))]
@@ -134,7 +157,7 @@ class RealDebridProvider(DebridProvider):
                     # Add to not wanted list - we only get magnet links or hashes here
                     try:
                         add_to_not_wanted(hash_value)
-                        logging.info(f"Added magnet hash {hash_value} to not wanted list")
+                        logging.info(f"Added magnet hash {hash_value} to not wanted list due to no video files")
                     except Exception as e:
                         logging.error(f"Failed to add to not wanted list: {str(e)}")
                     
@@ -157,6 +180,12 @@ class RealDebridProvider(DebridProvider):
                 logging.error(f"Error checking cache for magnet {magnet_link}: {str(e)}")
                 if torrent_id:
                     self.update_status(torrent_id, TorrentStatus.ERROR)
+                # Add to not wanted since we encountered an error
+                try:
+                    add_to_not_wanted(hash_value)
+                    logging.info(f"Added hash {hash_value} to not wanted list due to error: {str(e)}")
+                except Exception as add_err:
+                    logging.error(f"Failed to add to not wanted list: {str(add_err)}")
                 results[hash_value] = None
                 
             finally:
