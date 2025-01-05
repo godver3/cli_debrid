@@ -81,7 +81,7 @@ class TorrentProcessor:
             logging.error(f"Error processing magnet/URL {magnet_or_url}: {str(e)}", exc_info=True)
             return None
             
-    def check_cache(self, magnet: str) -> bool:
+    def check_cache(self, magnet: str) -> Optional[bool]:
         """
         Check if a magnet link is cached
         
@@ -89,24 +89,25 @@ class TorrentProcessor:
             magnet: Magnet link to check
             
         Returns:
-            True if cached, False if not cached
-            
-        Raises:
-            NoVideoFilesError: If the torrent has no valid video files
-            TorrentAdditionError: If there was an error checking the cache status
+            - True: Torrent is cached
+            - False: Torrent is not cached
+            - None: Error occurred (no video files, invalid magnet, etc)
         """
         try:
             logging.debug("Checking cache status")
             is_cached = self.debrid_provider.is_cached(magnet)
-            if is_cached is None:  # Special case for no video files
-                raise NoVideoFilesError("Torrent has no valid video files")
+            
+            # Handle the three possible states
+            if is_cached is None:
+                logging.debug("Cache check returned error state (None)")
+                return None
+            
             logging.debug(f"Cache check result: {'Cached' if is_cached else 'Not cached'}")
             return is_cached
-        except (NoVideoFilesError, TorrentAdditionError):
-            raise
+            
         except Exception as e:
             logging.error(f"Error checking cache for magnet: {str(e)}", exc_info=True)
-            raise TorrentAdditionError(f"Error checking cache status: {str(e)}")
+            return None
             
     def add_to_account(self, magnet: str) -> Optional[Dict]:
         """
@@ -214,14 +215,13 @@ class TorrentProcessor:
                 
                 # Check cache status
                 logging.debug(f"Result {idx}: Checking cache status")
-                try:
-                    is_cached = self.check_cache(magnet)
-                    logging.debug(f"Result {idx}: Cache status - {'Cached' if is_cached else 'Not cached'}")
-                except (NoVideoFilesError, TorrentAdditionError) as e:
-                    logging.debug(f"Result {idx}: Error checking cache status: {str(e)}")
-                    # Skip this result entirely since there was an error with the magnet/torrent
-                    continue
+                is_cached = self.check_cache(magnet)
                 
+                # Skip if there was an error checking cache
+                if is_cached is None:
+                    logging.debug(f"Result {idx}: Error checking cache status, skipping result")
+                    continue
+                    
                 # Skip if we need cached and this isn't
                 if not accept_uncached and not is_cached:
                     logging.debug(f"Result {idx}: Skipping uncached result (accept_uncached={accept_uncached})")
