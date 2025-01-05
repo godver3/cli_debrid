@@ -118,7 +118,8 @@ def update_trakt_config(key, value):
 def push_trakt_auth_to_battery():
     try:
         trakt_config = get_trakt_config()
-        battery_url = get_setting('Metadata Battery', 'url', 'http://localhost:5001')
+        #battery_url = get_setting('Metadata Battery', 'url', 'http://localhost:5001')
+        battery_url = 'http://localhost'
         battery_port = os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')
 
         if not battery_url:
@@ -126,7 +127,7 @@ def push_trakt_auth_to_battery():
             return jsonify({'error': 'Battery URL not set in settings'}), 400
 
         # Remove any existing port numbers and add the correct one
-        battery_url = re.sub(r':\d+/?$', '', battery_url)  # Remove any port number at the end
+        # battery_url = re.sub(r':\d+/?$', '', battery_url)  # Remove any port number at the end
         battery_url = f"{battery_url}:{battery_port}"
 
         auth_data = {
