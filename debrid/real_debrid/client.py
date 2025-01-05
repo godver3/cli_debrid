@@ -130,6 +130,13 @@ class RealDebridProvider(DebridProvider):
                         logging.info(f"Added hash {hash_value} to not wanted list due to info fetch failure")
                     except Exception as e:
                         logging.error(f"Failed to add to not wanted list: {str(e)}")
+                    # Remove the torrent since we can't get info
+                    try:
+                        self.remove_torrent(torrent_id)
+                        logging.debug(f"Removed torrent {torrent_id} after info fetch failure")
+                    except Exception as e:
+                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+                        self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                     results[hash_value] = None
                     continue
                     
@@ -145,6 +152,13 @@ class RealDebridProvider(DebridProvider):
                         logging.info(f"Added hash {hash_value} to not wanted list due to status: {status}")
                     except Exception as e:
                         logging.error(f"Failed to add to not wanted list: {str(e)}")
+                    # Remove the torrent since it has an error status
+                    try:
+                        self.remove_torrent(torrent_id)
+                        logging.debug(f"Removed torrent {torrent_id} due to error status: {status}")
+                    except Exception as e:
+                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+                        self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                     results[hash_value] = None
                     continue
                 
@@ -160,6 +174,14 @@ class RealDebridProvider(DebridProvider):
                         logging.info(f"Added magnet hash {hash_value} to not wanted list due to no video files")
                     except Exception as e:
                         logging.error(f"Failed to add to not wanted list: {str(e)}")
+                    
+                    # Remove the torrent since it has no video files
+                    try:
+                        self.remove_torrent(torrent_id)
+                        logging.debug(f"Removed torrent {torrent_id} due to no video files")
+                    except Exception as e:
+                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+                        self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                     
                     results[hash_value] = None
                     continue
@@ -180,6 +202,13 @@ class RealDebridProvider(DebridProvider):
                 logging.error(f"Error checking cache for magnet {magnet_link}: {str(e)}")
                 if torrent_id:
                     self.update_status(torrent_id, TorrentStatus.ERROR)
+                    # Remove the torrent in case of any unhandled error
+                    try:
+                        self.remove_torrent(torrent_id)
+                        logging.debug(f"Removed torrent {torrent_id} after unhandled error")
+                    except Exception as rm_err:
+                        logging.error(f"Error removing torrent {torrent_id}: {str(rm_err)}")
+                        self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                 # Add to not wanted since we encountered an error
                 try:
                     add_to_not_wanted(hash_value)
