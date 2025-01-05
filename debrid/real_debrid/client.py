@@ -48,12 +48,19 @@ class RealDebridProvider(DebridProvider):
         """Check if provider supports downloading uncached torrents"""
         return True
 
-    def is_cached(self, magnet_links: Union[str, List[str]]) -> Union[bool, Dict[str, bool]]:
+    def is_cached(self, magnet_links: Union[str, List[str]]) -> Union[bool, Dict[str, Optional[bool]]]:
         """
         Check if one or more magnet links are cached on Real-Debrid.
-        If a single magnet link is provided, returns a boolean.
-        If a list of magnet links is provided, returns a dict mapping hashes to booleans.
+        If a single magnet link is provided, returns a boolean or None (for error).
+        If a list of magnet links is provided, returns a dict mapping hashes to booleans or None (for error).
+        
+        Returns:
+            - True: Torrent is cached
+            - False: Torrent is not cached
+            - None: Error occurred during check (invalid magnet, no video files, etc)
         """
+        logging.debug(f"Starting cache check for {len([magnet_links] if isinstance(magnet_links, str) else magnet_links)} magnet(s)")
+        
         # If single magnet link, convert to list
         if isinstance(magnet_links, str):
             magnet_links = [magnet_links]
@@ -66,53 +73,66 @@ class RealDebridProvider(DebridProvider):
         
         # Process each magnet link
         for magnet_link in magnet_links:
+            logging.debug(f"Processing magnet link: {magnet_link[:60]}...")
+            
             # For hashes, convert to magnet link format
             if len(magnet_link) == 40 and all(c in '0123456789abcdefABCDEF' for c in magnet_link):
                 magnet_link = f"magnet:?xt=urn:btih:{magnet_link}"
+                logging.debug(f"Converted hash to magnet link: {magnet_link}")
             
             # Extract hash at the beginning to ensure it's always available
             hash_value = extract_hash_from_magnet(magnet_link)
             if not hash_value:
                 logging.error(f"Could not extract hash from magnet link: {magnet_link}")
-                results[magnet_link] = False
+                results[magnet_link] = None
                 continue
                 
+            logging.debug(f"Extracted hash: {hash_value}")
             torrent_id = None
             try:
                 # Add the magnet to RD
+                logging.debug("Attempting to add magnet to Real-Debrid")
                 torrent_id = self.add_torrent(magnet_link)
+                
                 if not torrent_id:
+                    logging.debug("Torrent ID not returned, checking if already exists")
                     # If add_torrent returns None, the torrent might already be added
                     # Try to get the hash and look up existing torrent
                     if hash_value:
                         # Search for existing torrent with this hash
+                        logging.debug("Searching for existing torrent with this hash")
                         torrents = make_request('GET', '/torrents', self.api_key) or []
                         for torrent in torrents:
                             if torrent.get('hash', '').lower() == hash_value.lower():
                                 torrent_id = torrent['id']
+                                logging.debug(f"Found existing torrent with ID: {torrent_id}")
                                 break
                     
                     if not torrent_id:
+                        logging.debug("No existing torrent found")
                         results[hash_value] = False
                         continue
                     
                 # Get torrent info
+                logging.debug(f"Getting info for torrent ID: {torrent_id}")
                 info = self.get_torrent_info(torrent_id)
                 if not info:
-                    results[hash_value] = False
+                    logging.error(f"Failed to get torrent info for ID: {torrent_id}")
+                    results[hash_value] = None
                     continue
                     
                 # Check if it's already cached
                 status = info.get('status', '')
+                logging.debug(f"Torrent status: {status}")
                 
                 # If there are no video files, return None to indicate error
-                if not any(is_video_file(f.get('path', '') or f.get('name', '')) for f in info.get('files', [])):
+                video_files = [f for f in info.get('files', []) if is_video_file(f.get('path', '') or f.get('name', ''))]
+                if not video_files:
                     logging.error("No video files found in torrent")
                     self.update_status(torrent_id, TorrentStatus.ERROR)
                     
                     # Add to not wanted list - we only get magnet links or hashes here
                     try:
-                        hash_value = extract_hash_from_magnet(magnet_link)
                         add_to_not_wanted(hash_value)
                         logging.info(f"Added magnet hash {hash_value} to not wanted list")
                     except Exception as e:
@@ -121,6 +141,7 @@ class RealDebridProvider(DebridProvider):
                     results[hash_value] = None
                     continue
                 
+                logging.debug(f"Found {len(video_files)} video files")
                 is_cached = status == 'downloaded'
                 
                 # Update status tracking
@@ -129,25 +150,27 @@ class RealDebridProvider(DebridProvider):
                     TorrentStatus.CACHED if is_cached else TorrentStatus.NOT_CACHED
                 )
                 
+                logging.debug(f"Cache status for hash {hash_value}: {'Cached' if is_cached else 'Not cached'}")
                 results[hash_value] = is_cached
                 
             except Exception as e:
                 logging.error(f"Error checking cache for magnet {magnet_link}: {str(e)}")
                 if torrent_id:
                     self.update_status(torrent_id, TorrentStatus.ERROR)
-                results[hash_value] = False
+                results[hash_value] = None
                 
             finally:
                 # Always clean up the torrent if we added it
                 if torrent_id:
                     try:
                         self.remove_torrent(torrent_id)
-                        logging.info(f"Successfully removed torrent {torrent_id} after cache check")
+                        logging.debug(f"Successfully removed torrent {torrent_id} after cache check")
                     except Exception as e:
                         logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
                         self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
 
-        # Return single boolean if input was single magnet, otherwise return dict
+        logging.debug(f"Cache check complete. Results: {results}")
+        # Return single result if input was single magnet, otherwise return dict
         return results[list(results.keys())[0]] if return_single else results
 
     def add_torrent(self, magnet_link: str, temp_file_path: Optional[str] = None) -> Optional[str]:
