@@ -63,6 +63,8 @@ def make_request(
             response = api.get(url, **kwargs)
         elif method.upper() == 'POST':
             response = api.post(url, data=data, files=files, **kwargs)
+        elif method.upper() == 'PUT':
+            response = api.put(url, data=data, files=files, **kwargs)
         elif method.upper() == 'DELETE':
             response = api.delete(url, **kwargs)
         else:

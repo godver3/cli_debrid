@@ -5,6 +5,8 @@ import tempfile
 import os
 import time
 from urllib.parse import unquote
+import hashlib
+import bencodepy
 
 from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError, TorrentAdditionError
 from ..common import (
@@ -48,11 +50,11 @@ class RealDebridProvider(DebridProvider):
         """Check if provider supports downloading uncached torrents"""
         return True
 
-    def is_cached(self, magnet_links: Union[str, List[str]]) -> Union[bool, Dict[str, Optional[bool]]]:
+    def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None) -> Union[bool, Dict[str, Optional[bool]]]:
         """
-        Check if one or more magnet links are cached on Real-Debrid.
-        If a single magnet link is provided, returns a boolean or None (for error).
-        If a list of magnet links is provided, returns a dict mapping hashes to booleans or None (for error).
+        Check if one or more magnet links or torrent files are cached on Real-Debrid.
+        If a single input is provided, returns a boolean or None (for error).
+        If a list of inputs is provided, returns a dict mapping hashes to booleans or None (for error).
         
         Returns:
             - True: Torrent is cached
@@ -60,6 +62,7 @@ class RealDebridProvider(DebridProvider):
             - None: Error occurred during check (invalid magnet, no video files, etc)
         """
         logging.debug(f"Starting cache check for {len([magnet_links] if isinstance(magnet_links, str) else magnet_links)} magnet(s)")
+        logging.debug(f"Temp file path: {temp_file_path}")
         
         # If single magnet link, convert to list
         if isinstance(magnet_links, str):
@@ -73,7 +76,7 @@ class RealDebridProvider(DebridProvider):
         
         # Process each magnet link
         for magnet_link in magnet_links:
-            logging.debug(f"Processing magnet link: {magnet_link[:60]}...")
+            logging.debug(f"Processing magnet/URL: {magnet_link[:60]}...")
             
             # For hashes, convert to magnet link format
             if len(magnet_link) == 40 and all(c in '0123456789abcdefABCDEF' for c in magnet_link):
@@ -81,13 +84,26 @@ class RealDebridProvider(DebridProvider):
                 logging.debug(f"Converted hash to magnet link: {magnet_link}")
             
             # Extract hash at the beginning to ensure it's always available
-            hash_value = extract_hash_from_magnet(magnet_link)
+            hash_value = None
+            if magnet_link.startswith('magnet:'):
+                hash_value = extract_hash_from_magnet(magnet_link)
+            elif temp_file_path:
+                try:
+                    with open(temp_file_path, 'rb') as f:
+                        torrent_data = bencodepy.decode(f.read())
+                        info = torrent_data[b'info']
+                        hash_value = hashlib.sha1(bencodepy.encode(info)).hexdigest()
+                except Exception as e:
+                    logging.error(f"Could not extract hash from torrent file: {str(e)}")
+                    results[magnet_link] = None
+                    continue
+            
             if not hash_value:
-                logging.error(f"Could not extract hash from magnet link: {magnet_link}")
-                # Add to not wanted since we can't process this magnet
+                logging.error(f"Could not extract hash from input: {magnet_link}")
+                # Add to not wanted since we can't process this input
                 try:
                     add_to_not_wanted(magnet_link)
-                    logging.info(f"Added invalid magnet {magnet_link} to not wanted list")
+                    logging.info(f"Added invalid input {magnet_link} to not wanted list")
                 except Exception as e:
                     logging.error(f"Failed to add to not wanted list: {str(e)}")
                 results[magnet_link] = None
@@ -96,9 +112,9 @@ class RealDebridProvider(DebridProvider):
             logging.debug(f"Extracted hash: {hash_value}")
             torrent_id = None
             try:
-                # Add the magnet to RD
-                logging.debug("Attempting to add magnet to Real-Debrid")
-                torrent_id = self.add_torrent(magnet_link)
+                # Add the magnet/torrent to RD
+                logging.debug("Attempting to add to Real-Debrid")
+                torrent_id = self.add_torrent(magnet_link if magnet_link.startswith('magnet:') else None, temp_file_path)
                 
                 if not torrent_id:
                     logging.debug("Torrent ID not returned, checking if already exists")
@@ -168,10 +184,10 @@ class RealDebridProvider(DebridProvider):
                     logging.error("No video files found in torrent")
                     self.update_status(torrent_id, TorrentStatus.ERROR)
                     
-                    # Add to not wanted list - we only get magnet links or hashes here
+                    # Add to not wanted list
                     try:
                         add_to_not_wanted(hash_value)
-                        logging.info(f"Added magnet hash {hash_value} to not wanted list due to no video files")
+                        logging.info(f"Added hash {hash_value} to not wanted list due to no video files")
                     except Exception as e:
                         logging.error(f"Failed to add to not wanted list: {str(e)}")
                     
@@ -199,7 +215,7 @@ class RealDebridProvider(DebridProvider):
                 results[hash_value] = is_cached
                 
             except Exception as e:
-                logging.error(f"Error checking cache for magnet {magnet_link}: {str(e)}")
+                logging.error(f"Error checking cache: {str(e)}")
                 if torrent_id:
                     self.update_status(torrent_id, TorrentStatus.ERROR)
                     # Remove the torrent in case of any unhandled error
@@ -231,46 +247,49 @@ class RealDebridProvider(DebridProvider):
         # Return single result if input was single magnet, otherwise return dict
         return results[list(results.keys())[0]] if return_single else results
 
-    def add_torrent(self, magnet_link: str, temp_file_path: Optional[str] = None) -> Optional[str]:
+    def add_torrent(self, magnet_link: Optional[str], temp_file_path: Optional[str] = None) -> Optional[str]:
         """Add a torrent to Real-Debrid"""
         try:
-            # URL decode the magnet link if needed
-            if '%' in magnet_link:
-                magnet_link = unquote(magnet_link)
-
-            # Check if torrent already exists
-            hash_value = extract_hash_from_magnet(magnet_link)
-            if hash_value:
-                torrents = make_request('GET', '/torrents', self.api_key) or []
-                for torrent in torrents:
-                    if torrent.get('hash', '').lower() == hash_value.lower():
-                        logging.info(f"Torrent already exists with ID {torrent['id']}")
-                        return torrent['id']
-
-            # Get available hosts
-            hosts = self.get_available_hosts()
-            host = hosts[0] if hosts else None
+            logging.debug(f"Adding torrent with magnet_link={magnet_link}, temp_file_path={temp_file_path}")
             
-            # Handle both magnet links and torrent files
-            if magnet_link.startswith('magnet:'):
+            # Handle torrent file upload
+            if temp_file_path:
+                logging.debug(f"Using temp file: {temp_file_path}")
+                if not os.path.exists(temp_file_path):
+                    logging.error(f"Temp file does not exist: {temp_file_path}")
+                    raise ValueError(f"Temp file does not exist: {temp_file_path}")
+                    
+                # Add the torrent file directly
+                with open(temp_file_path, 'rb') as f:
+                    file_content = f.read()
+                    logging.debug("Uploading torrent file to Real-Debrid")
+                    result = make_request('PUT', '/torrents/addTorrent', self.api_key, data=file_content)
+            # Handle magnet link
+            elif magnet_link:
+                logging.debug("Using magnet link")
+                # URL decode the magnet link if needed
+                if '%' in magnet_link:
+                    magnet_link = unquote(magnet_link)
+                    logging.debug(f"URL decoded magnet link: {magnet_link}")
+
+                # Check if torrent already exists
+                hash_value = extract_hash_from_magnet(magnet_link)
+                if hash_value:
+                    logging.debug(f"Checking if hash {hash_value} already exists")
+                    torrents = make_request('GET', '/torrents', self.api_key) or []
+                    for torrent in torrents:
+                        if torrent.get('hash', '').lower() == hash_value.lower():
+                            logging.info(f"Torrent already exists with ID {torrent['id']}")
+                            return torrent['id']
+
+                # Add magnet link
                 data = {'magnet': magnet_link}
-                if host:
-                    data['host'] = host
+                logging.debug("Adding magnet link to Real-Debrid")
                 result = make_request('POST', '/torrents/addMagnet', self.api_key, data=data)
             else:
-                # If we have a torrent file path, use it directly
-                if temp_file_path:
-                    file_path = temp_file_path
-                else:
-                    # Convert torrent URL to magnet
-                    magnet = torrent_to_magnet(magnet_link)
-                    if not magnet:
-                        return None
-                    data = {'magnet': magnet}
-                    if host:
-                        data['host'] = host
-                    result = make_request('POST', '/torrents/addMagnet', self.api_key, data=data)
-                    
+                logging.error("Neither magnet_link nor temp_file_path provided")
+                raise ValueError("Either magnet_link or temp_file_path must be provided")
+
             if not result or 'id' not in result:
                 logging.error(f"Failed to add torrent - response: {result}")
                 raise TorrentAdditionError(f"Failed to add torrent - response: {result}")
@@ -315,10 +334,21 @@ class RealDebridProvider(DebridProvider):
                                 
                         if video_file_ids:
                             data = {'files': ','.join(video_file_ids)}
-                            make_request('POST', f'/torrents/selectFiles/{torrent_id}', self.api_key, data=data)
-                            logging.info(f"Selected video files: {video_file_ids}")
-                            success = True
-                            break
+                            # Add retry mechanism for file selection
+                            max_selection_retries = 5
+                            for selection_attempt in range(max_selection_retries):
+                                try:
+                                    make_request('POST', f'/torrents/selectFiles/{torrent_id}', self.api_key, data=data)
+                                    logging.info(f"Selected video files: {video_file_ids}")
+                                    success = True
+                                    break
+                                except Exception as e:
+                                    if selection_attempt < max_selection_retries - 1:
+                                        logging.warning(f"File selection attempt {selection_attempt + 1} failed, retrying in 1s: {str(e)}")
+                                        time.sleep(1)
+                                    else:
+                                        logging.error(f"All file selection attempts failed: {str(e)}")
+                                        raise
                         else:
                             logging.error("No video files found in torrent")
                             self.remove_torrent(torrent_id)

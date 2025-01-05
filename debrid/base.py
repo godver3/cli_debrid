@@ -62,8 +62,18 @@ class DebridProvider(ABC):
         pass
     
     @abstractmethod
-    def is_cached(self, magnet_link: str) -> bool:
-        """Check if a magnet link is cached on the service"""
+    def is_cached(self, magnet_or_url: Union[str, List[str]], temp_file_path: Optional[str] = None) -> Union[bool, Dict[str, Optional[bool]]]:
+        """
+        Check if a magnet link or torrent file is cached on the service.
+        
+        Args:
+            magnet_or_url: Magnet link, hash, or URL to check
+            temp_file_path: Optional path to torrent file
+            
+        Returns:
+            - For single input: bool or None (error)
+            - For list input: dict mapping hashes to bool or None (error)
+        """
         pass
     
     @abstractmethod
