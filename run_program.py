@@ -298,7 +298,8 @@ class ProgramRunner:
                 logging.error(f"Queue '{queue_name}' not found in queue manager!")
                 return None
             
-            method_name = f'process_{queue_name.lower()}'
+            # Convert queue name to method name, replacing spaces with underscores
+            method_name = f'process_{queue_name.lower().replace(" ", "_")}'
             if not hasattr(self.queue_manager, method_name):
                 logging.error(f"Process method '{method_name}' not found in queue manager!")
                 return None
