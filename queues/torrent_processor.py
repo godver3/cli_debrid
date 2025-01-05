@@ -7,12 +7,15 @@ import logging
 import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
+import tempfile
+import requests
+import os
+import bencodepy
+import hashlib
 
 from debrid.base import DebridProvider, TooManyDownloadsError
 from debrid.common import (
-    download_and_convert_to_magnet,
     extract_hash_from_magnet,
-    torrent_to_magnet,
     is_video_file,
     is_unwanted_file,
     download_and_extract_hash
@@ -43,15 +46,18 @@ class TorrentProcessor:
         """
         self.debrid_provider = debrid_provider
         
-    def process_magnet(self, magnet_or_url: str) -> Optional[str]:
+    def process_torrent(self, magnet_or_url: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        Process a magnet link or torrent URL into a magnet link
+        Process a magnet link or torrent URL
         
         Args:
             magnet_or_url: Either a magnet link or URL to a torrent file
             
         Returns:
-            Magnet link if successful, None otherwise
+            Tuple of (magnet_link, temp_file_path) where:
+                - For magnet links: (magnet_link, None)
+                - For torrent files: (None, temp_file_path)
+                - Returns (None, None) on error
         """
         try:
             logging.debug(f"Processing magnet/URL: {magnet_or_url[:100]}...")  # Log first 100 chars
@@ -59,34 +65,43 @@ class TorrentProcessor:
             # If it's already a magnet link, return it
             if magnet_or_url.startswith('magnet:'):
                 logging.debug("Input is already a magnet link")
-                return magnet_or_url
+                return magnet_or_url, None
                 
             # Check if it's a URL
             parsed = urlparse(magnet_or_url)
             if not parsed.scheme or not parsed.netloc:
                 logging.error(f"Invalid URL or magnet link: {magnet_or_url}")
-                return None
+                return None, None
                 
-            logging.debug("Input is a URL, attempting to download and convert to magnet")
-            # Download and convert torrent to magnet
-            magnet = download_and_convert_to_magnet(magnet_or_url)
-            if not magnet:
-                logging.error(f"Failed to convert torrent to magnet: {magnet_or_url}")
-                return None
-                
-            logging.debug("Successfully converted torrent to magnet")
-            return magnet
+            logging.debug("Input is a URL, attempting to download torrent file")
+            # Download the torrent file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
+                try:
+                    response = requests.get(magnet_or_url, timeout=30)
+                    response.raise_for_status()
+                    tmp.write(response.content)
+                    tmp.flush()
+                    logging.debug("Successfully downloaded torrent file")
+                    return None, tmp.name
+                except Exception as e:
+                    logging.error(f"Failed to download torrent file: {str(e)}")
+                    try:
+                        os.unlink(tmp.name)
+                    except:
+                        pass
+                    return None, None
             
         except Exception as e:
             logging.error(f"Error processing magnet/URL {magnet_or_url}: {str(e)}", exc_info=True)
-            return None
+            return None, None
             
-    def check_cache(self, magnet: str) -> Optional[bool]:
+    def check_cache(self, magnet_or_url: str, temp_file: Optional[str] = None) -> Optional[bool]:
         """
-        Check if a magnet link is cached
+        Check if a magnet link or torrent file is cached
         
         Args:
-            magnet: Magnet link to check
+            magnet_or_url: Magnet link or URL
+            temp_file: Optional path to torrent file
             
         Returns:
             - True: Torrent is cached
@@ -95,7 +110,7 @@ class TorrentProcessor:
         """
         try:
             logging.debug("Checking cache status")
-            is_cached = self.debrid_provider.is_cached(magnet)
+            is_cached = self.debrid_provider.is_cached(magnet_or_url, temp_file)
             
             # Handle the three possible states
             if is_cached is None:
@@ -106,15 +121,15 @@ class TorrentProcessor:
             return is_cached
             
         except Exception as e:
-            logging.error(f"Error checking cache for magnet: {str(e)}", exc_info=True)
+            logging.error(f"Error checking cache: {str(e)}", exc_info=True)
             return None
             
-    def add_to_account(self, magnet: str) -> Optional[Dict]:
+    def add_to_account(self, magnet_or_url: str) -> Optional[Dict]:
         """
-        Add a magnet to the debrid account
+        Add a magnet or torrent to the debrid account
         
         Args:
-            magnet: Magnet link to add
+            magnet_or_url: Magnet link or torrent URL to add
             
         Returns:
             Torrent info if successful, None otherwise
@@ -123,11 +138,16 @@ class TorrentProcessor:
         info = None
         max_retries = 3
         retry_delay = 2  # seconds
+        temp_file = None
         
         try:
             logging.debug("Adding torrent to debrid account")
+            
+            # Process the magnet/URL
+            magnet, temp_file = self.process_torrent(magnet_or_url)
+            
             # Add the torrent
-            add_response = self.debrid_provider.add_torrent(magnet)
+            add_response = self.debrid_provider.add_torrent(magnet if magnet else magnet_or_url, temp_file)
             logging.debug(f"Full add_torrent response: {add_response}")
             
             torrent_id = add_response
@@ -169,6 +189,13 @@ class TorrentProcessor:
             return None
             
         finally:
+            # Clean up temp file if it exists
+            if temp_file:
+                try:
+                    os.unlink(temp_file)
+                except Exception as e:
+                    logging.error(f"Error cleaning up temp file: {str(e)}")
+            
             # If we failed after adding the torrent, try to clean it up
             if torrent_id and (not info or len(info.get('files', [])) == 0):
                 try:
@@ -206,17 +233,17 @@ class TorrentProcessor:
                     continue
                     
                 logging.debug(f"Result {idx}: Found magnet link: {original_link}")
-                magnet = self.process_magnet(original_link)
-                if not magnet:
-                    logging.debug(f"Result {idx}: Failed to process magnet link")
+                magnet, temp_file = self.process_torrent(original_link)
+                if not magnet and not temp_file:
+                    logging.debug(f"Result {idx}: Failed to process magnet/torrent")
                     continue
                     
-                logging.debug(f"Result {idx}: Processed magnet link: {magnet}")
+                logging.debug(f"Result {idx}: Processed magnet/torrent successfully")
                 
                 # Check cache status
                 logging.debug(f"Result {idx}: Checking cache status")
-                is_cached = self.check_cache(magnet)
-                
+                is_cached = self.check_cache(magnet if magnet else original_link, temp_file)
+                    
                 # Skip if there was an error checking cache
                 if is_cached is None:
                     logging.debug(f"Result {idx}: Error checking cache status, skipping result")
@@ -257,10 +284,10 @@ class TorrentProcessor:
                     except Exception as e:
                         logging.error(f"Error checking download limits: {str(e)}")
                         continue
-                    
+                
                 # Try to add it
                 logging.debug(f"Result {idx}: Attempting to add torrent to debrid service")
-                info = self.add_to_account(magnet)
+                info = self.add_to_account(original_link)
                 if info:
                     logging.debug(f"Result {idx}: Successfully added torrent (ID: {info.get('id')})")
                     logging.debug(f"Result {idx}: Torrent info - Size: {info.get('bytes', 0)} bytes, Files: {len(info.get('files', []))} files")
@@ -287,10 +314,7 @@ class TorrentProcessor:
                                         logging.info(f"Added successful magnet hash {hash_value} to not wanted list")
                                 except Exception as e:
                                     logging.error(f"Result {idx}: Failed to process magnet for not wanted: {str(e)}")
-                            # elif 'url' in result:
-                            #     # Dead code - all scrapers use 'magnet' key
-                            #     pass
-                        return info, magnet
+                        return info, original_link
                     else:
                         logging.debug(f"Result {idx}: Torrent has no files, continuing to next result")
                         # Clean up the empty torrent
