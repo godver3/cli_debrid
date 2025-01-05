@@ -778,7 +778,11 @@ def main():
         logging.info("Resetting Torbox debrid provider to Real-Debrid")
         set_setting('Debrid Provider', 'provider', 'RealDebrid')
 
-    set_setting('Metadata Battery', 'url', 'http://localhost:50051')
+    # Get battery port from environment variable
+    battery_port = os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')
+    
+    # Set metadata battery URL with the correct port
+    set_setting('Metadata Battery', 'url', f'http://localhost:{battery_port}')
 
     ensure_settings_file()
     verify_database()

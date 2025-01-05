@@ -12,6 +12,7 @@ from api_tracker import api
 import logging
 import time
 import socket
+import os
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -19,7 +20,10 @@ program_runner = None
 
 def run_server():
     from extensions import app
-    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)
+    
+    # Get port from environment variable or use default
+    port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port)
 
 def start_server():
     from extensions import app

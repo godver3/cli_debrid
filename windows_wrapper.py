@@ -68,7 +68,7 @@ def get_script_path(script_name):
         base_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_dir, script_name)
 
-def run_script(script_name):
+def run_script(script_name, port=None, battery_port=None):
     script_path = get_script_path(script_name)
     logging.info(f"Running script: {script_path}")
     try:
@@ -79,6 +79,13 @@ def run_script(script_name):
         
         # Set up environment before running the script
         setup_environment()
+        
+        # Set environment variables for ports
+        if port:
+            os.environ['CLI_DEBRID_PORT'] = str(port)
+        if battery_port:
+            os.environ['CLI_DEBRID_BATTERY_PORT'] = str(battery_port)
+            
         runpy.run_path(script_path, run_name='__main__')
     except Exception as e:
         logging.error(f"Error running script {script_name}: {str(e)}")
@@ -86,15 +93,32 @@ def run_script(script_name):
 
 def run_main():
     logging.info("Starting run_main()")
+    
+    # Parse command line arguments
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port', type=int, help='Port for main web server')
+    parser.add_argument('--battery-port', type=int, help='Port for battery web server')
+    args = parser.parse_args()
+    
     script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
     processes = []
 
-    # Start both processes in parallel
+    # Start both processes in parallel with appropriate ports
     for script_name in script_names:
-        process = multiprocessing.Process(target=run_script, args=(script_name,))
+        port = args.port if 'cli_battery' not in script_name else args.battery_port
+        if script_name == 'main.py':
+            port = 5000
+        if script_name == 'cli_battery/main.py':
+            port = 5001
+        process = multiprocessing.Process(
+            target=run_script, 
+            args=(script_name,),
+            kwargs={'port': port}
+        )
         processes.append(process)
         process.start()
-        logging.info(f"Started {script_name}")
+        logging.info(f"Started {script_name} on port {port}")
 
     try:
         # Wait for both processes to complete

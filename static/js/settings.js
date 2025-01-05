@@ -626,6 +626,28 @@ function updateSettings() {
         console.warn("Torbox API Key input element not found!");
     }
 
+    const plexWatchlistRemoval = document.getElementById('scraping-plex_watchlist_removal');
+    console.log("Plex Watchlist Removal element:", plexWatchlistRemoval);
+    
+    if (plexWatchlistRemoval) {
+        settingsData['Scraping']['plex_watchlist_removal'] = plexWatchlistRemoval.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Plex Watchlist Removal checkbox element not found!");
+    }
+
+    const plexWatchlistKeepSeries = document.getElementById('scraping-plex_watchlist_keep_series');
+    console.log("Plex Watchlist Keep Series element:", plexWatchlistKeepSeries);
+    
+    if (plexWatchlistKeepSeries) {
+        settingsData['Scraping']['plex_watchlist_keep_series'] = plexWatchlistKeepSeries.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Plex Watchlist Keep Series checkbox element not found!");
+    }
+
     const debridProvider = document.getElementById('debrid provider-provider');
     console.log("Debrid Provider element:", debridProvider);
     
