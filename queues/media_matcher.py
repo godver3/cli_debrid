@@ -26,7 +26,7 @@ class MediaMatcher:
         Returns:
             List of matched files with their corresponding items
         """
-        logging.info(f"Attempting to match content for item: {item.get('title')} (type: {item.get('type')})")
+        logging.debug(f"Matching content for {item.get('title')} ({item.get('type')})")
         if item.get('type') == 'movie':
             return self._match_movie_content(files, item)
         elif item.get('type') == 'episode':
@@ -44,18 +44,17 @@ class MediaMatcher:
                 
             # Skip sample files
             if 'sample' in file['path'].lower():
-                logging.info(f"Skipping sample file: {file['path']}")
                 continue
                 
             video_files.append(file)
         
         if not video_files:
-            logging.info("No video files found")
+            logging.debug("No video files found")
             return []
             
         # Sort by size descending and take the largest
         largest_file = max(video_files, key=lambda x: x.get('bytes', 0))
-        logging.info(f"Selected largest video file: {largest_file['path']} ({largest_file.get('bytes', 0)} bytes)")
+        logging.debug(f"Selected largest video: {largest_file['path']}")
         
         # Get just the filename using os.path.basename
         file_path = os.path.basename(largest_file['path'])
@@ -73,10 +72,10 @@ class MediaMatcher:
         item_episode = item.get('episode') or item.get('episode_number')
         
         if not all([series_title, item_season is not None, item_episode is not None]):
-            logging.info(f"Missing required TV info: title='{series_title}', S{item_season}E{item_episode}")
+            logging.debug(f"Missing required TV info: title='{series_title}', S{item_season}E{item_episode}")
             return []
             
-        logging.info(f"Matching TV show: '{series_title}' S{item_season}E{item_episode}")
+        logging.debug(f"Matching TV: '{series_title}' S{item_season}E{item_episode}")
         
         for file in files:
             if not self.is_video_file(file['path']):
@@ -84,22 +83,17 @@ class MediaMatcher:
                 
             # Skip sample files
             if 'sample' in file['path'].lower():
-                logging.info(f"Skipping sample file: {file['path']}")
                 continue
                 
             parsed = parse_with_ptt(file['path'])
-            logging.info(f"Parsed file: {file['path']}")
-            logging.info(f"Season/Episode info: seasons={parsed.get('seasons')}, episodes={parsed.get('episodes')}")
             
             # Check if this file matches our season/episode
             if (item_season in parsed.get('seasons', []) and 
                 item_episode in parsed.get('episodes', [])):
-                logging.info(f"✓ Matched TV episode: S{item_season}E{item_episode} in {file['path']}")
+                logging.debug(f"Matched: S{item_season}E{item_episode} in {os.path.basename(file['path'])}")
                 # Get just the filename using os.path.basename
                 file_path = os.path.basename(file['path'])
                 matches.append((file_path, item))
-            else:
-                logging.info(f"✗ No match: S{item_season}E{item_episode} not in file")
                 
         return matches
 
@@ -112,7 +106,6 @@ class MediaMatcher:
         parsed_title = self._normalize_title(parsed.get('title', ''))
         queue_title = self._normalize_title(item.get('title', ''))
         if not parsed_title or not queue_title:
-            logging.info("Missing parsed title or queue title")
             return False
             
         # Match based on normalized title match
@@ -123,10 +116,7 @@ class MediaMatcher:
         if parsed.get('year') and item.get('year'):
             year_match = self._is_acceptable_year_mismatch(item, parsed)
         
-        logging.info(f"Movie match results:")
-        logging.info(f"- Title: {title_match} (normalized: '{parsed_title}' == '{queue_title}')")
-        logging.info(f"- Original titles: '{parsed.get('title', '')}' vs '{item.get('title', '')}'")
-        logging.info(f"- Year: {year_match} ({parsed.get('year')} vs {item.get('year')})")
+        logging.debug(f"Movie match: '{parsed.get('title')}' ({parsed.get('year')}) -> {title_match and year_match}")
         
         # Match only if both title and year match
         return title_match and year_match
@@ -147,14 +137,13 @@ class MediaMatcher:
             'featurette', 'making of',
             'alternate'
         ]):
-            logging.info(f"Skipping extras/special content: {original_title}")
+            logging.debug(f"Skipping extras/special: {original_title}")
             return False
             
         # Get parsed title and queue title
         parsed_title = self._normalize_title(parsed.get('title', ''))
         queue_title = self._normalize_title(item.get('series_title', '') or item.get('title', ''))
         if not parsed_title or not queue_title:
-            logging.info("Missing parsed title or queue title")
             return False
             
         # Match based on normalized title match
@@ -165,20 +154,18 @@ class MediaMatcher:
         item_episode = item.get('episode') or item.get('episode_number')
         
         if item_season is None or item_episode is None:
-            logging.info(f"Missing season/episode in item: season={item_season}, episode={item_episode}")
             return False
             
         # Check if the requested season and episode are in the parsed seasons/episodes lists
         season_match = item_season in parsed.get('seasons', [])
         episode_match = item_episode in parsed.get('episodes', [])
         
-        logging.info(f"TV episode match results:")
-        logging.info(f"- Title: {title_match} ('{parsed_title}' == '{queue_title}')")
-        logging.info(f"- Season: {season_match} ({item_season} in {parsed.get('seasons', [])})")
-        logging.info(f"- Episode: {episode_match} ({item_episode} in {parsed.get('episodes', [])})")
+        match_result = title_match and season_match and episode_match
+        if match_result:
+            logging.debug(f"Matched episode: '{parsed.get('title')}' S{item_season}E{item_episode}")
         
         # Match only if title, season, and episode all match
-        return title_match and season_match and episode_match
+        return match_result
 
     @staticmethod
     def is_video_file(filename: str) -> bool:
@@ -232,7 +219,7 @@ class MediaMatcher:
             # Try to match this item against the files
             matches = self._match_tv_content(files, item)
             if matches:
-                logging.info(f"Found related episode: {item.get('title')} S{item.get('season_number')}E{item.get('episode_number')} (version: {item.get('version')})")
+                logging.debug(f"Found related: S{item.get('season_number')}E{item.get('episode_number')} ({item.get('version')})")
                 related_items.append(item)
                 
         return related_items
