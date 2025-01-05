@@ -781,7 +781,7 @@ def main():
         set_setting('Debrid Provider', 'provider', 'RealDebrid')
 
     # Get battery port from environment variable
-    battery_port = os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')
+    battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
     
     # Set metadata battery URL with the correct port
     set_setting('Metadata Battery', 'url', f'http://localhost:{battery_port}')
