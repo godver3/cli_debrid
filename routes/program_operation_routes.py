@@ -13,6 +13,7 @@ import logging
 import time
 import socket
 import os
+import re
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -29,13 +30,16 @@ def start_server():
     from extensions import app
     import socket
     
+    # Get port from environment variable or use default
+    port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+    
     # Check if port is available
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(('0.0.0.0', 5000))
+        sock.bind(('0.0.0.0', port))
         sock.close()
     except socket.error:
-        logging.error("Port 5000 is already in use. Please close any other instances or applications using this port.")
+        logging.error(f"Port {port} is already in use. Please close any other instances or applications using this port.")
         return False
         
     with app.app_context():
@@ -50,6 +54,7 @@ def check_service_connectivity():
     plex_url = get_setting('Plex', 'url')
     plex_token = get_setting('Plex', 'token')
     metadata_battery_url = get_setting('Metadata Battery', 'url')
+    battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
     
     # Get debrid provider settings
     debrid_provider = get_setting('Debrid Provider', 'provider')
@@ -86,12 +91,11 @@ def check_service_connectivity():
 
     # Check Metadata Battery connectivity and Trakt authorization
     try:
-        # Remove trailing ":5000" or ":5000/" if present
-        metadata_battery_url = metadata_battery_url.rstrip('/').removesuffix(':5001')
-        metadata_battery_url = metadata_battery_url.rstrip('/').removesuffix(':50051')
+        # Remove any trailing port numbers and slashes
+        metadata_battery_url = re.sub(r':\d+/?$', '', metadata_battery_url)
         
-        # Append ":50051"
-        metadata_battery_url += ':5001'
+        # Use the configured battery port
+        metadata_battery_url += f':{battery_port}'
         response = api.get(f"{metadata_battery_url}/check_trakt_auth", timeout=5)
         response.raise_for_status()
         trakt_status = response.json().get('status')
