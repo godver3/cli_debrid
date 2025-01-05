@@ -286,6 +286,16 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Disable the not wanted check for items in the queue",
             "default": False
+        },
+        "plex_watchlist_removal": {
+            "type": "boolean",
+            "description": "Remove items from Plex Watchlist when they have been collected",
+            "default": False
+        },
+        "plex_watchlist_keep_series": {
+            "type": "boolean",
+            "description": "Keep series in Plex Watchlist when they have been collected, only delete movies",
+            "default": False
         }
     },
     "Scrapers": {
