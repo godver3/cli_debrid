@@ -120,7 +120,7 @@ def push_trakt_auth_to_battery():
         trakt_config = get_trakt_config()
         #battery_url = get_setting('Metadata Battery', 'url', 'http://localhost:5001')
         battery_url = 'http://localhost'
-        battery_port = os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')
+        battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
 
         logging.info(f"Battery URL: {battery_url}")
         logging.info(f"Battery port: {battery_port}")
