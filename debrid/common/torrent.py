@@ -19,7 +19,7 @@ def torrent_to_magnet(file_path: str) -> Optional[str]:
         info = torrent_data[b'info']
         
         # Calculate the info hash
-        info_hash = hashlib.sha1(bencodepy.encode(info)).hexdigest()
+        info_hash = hashlib.sha1(bencodepy.encode(info)).hexdigest().lower()
         
         # Get the display name
         if b'name.utf-8' in info:
@@ -45,19 +45,20 @@ def torrent_to_magnet(file_path: str) -> Optional[str]:
         # Remove duplicates while preserving order
         trackers = list(dict.fromkeys(trackers))
         
-        # Build magnet parameters
-        magnet_params = {
-            'xt': f'urn:btih:{info_hash}',
-            'dn': display_name
-        }
+        # Build the magnet URI manually to avoid double encoding
+        magnet_parts = [f'magnet:?xt=urn:btih:{info_hash}']
+        
+        # Add display name
+        magnet_parts.append(f'dn={urlencode({"": display_name})[1:]}')
         
         # Add trackers
-        if trackers:
-            magnet_params['tr'] = trackers
+        for tracker in trackers:
+            magnet_parts.append(f'tr={urlencode({"": tracker})[1:]}')
             
-        # Build the magnet URI
-        magnet = 'magnet:?' + urlencode(magnet_params, True)
+        # Join all parts with &
+        magnet = '&'.join(magnet_parts)
         
+        logging.debug(f"Generated magnet link: {magnet}")
         return magnet
         
     except Exception as e:
@@ -103,7 +104,7 @@ def download_and_convert_to_magnet(url: str) -> Optional[str]:
             
             temp_file.write(response.content)
             temp_file.flush()
-            
+        
             # Convert to magnet
             return torrent_to_magnet(temp_file.name)
             
