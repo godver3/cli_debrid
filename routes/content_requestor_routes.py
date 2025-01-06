@@ -55,14 +55,14 @@ def request_content():
         tmdb_id = str(data.get('id'))
         media_type = data.get('mediaType', '').lower()
         versions = data.get('versions', [])  # Get selected versions
+                  
+        # Convert TMDB ID to IMDB ID with media type hint
+        imdb_id, source = DirectAPI.tmdb_to_imdb(tmdb_id, media_type=media_type)
         
         # Convert 'show' to 'tv' for consistency
         if media_type == 'show':
             media_type = 'tv'
-            
-        # Convert TMDB ID to IMDB ID with media type hint
-        imdb_id, source = DirectAPI.tmdb_to_imdb(tmdb_id, media_type=media_type)
-        
+
         if not imdb_id:
             return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID for {media_type}'}), 400
             

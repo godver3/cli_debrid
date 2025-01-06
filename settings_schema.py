@@ -64,8 +64,8 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Debrid service provider",
             "default": "RealDebrid",
-            "choices": ["Torbox", "RealDebrid"]
-            #"choices": ["RealDebrid"]
+            #"choices": ["Torbox", "RealDebrid"]
+            "choices": ["RealDebrid"]
         },
         "api_key": {
             "type": "string",
@@ -296,6 +296,21 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Keep series in Plex Watchlist when they have been collected, only delete movies",
             "default": False
+        },
+        "symlink_collected_files": {
+            "type": "boolean",
+            "description": "Symlink collected files to the collected folder (Plex must be able to see original and symlinked path the exact same as cli_debrid does)",
+            "default": False
+        },
+        "original_files_path": {
+            "type": "string",
+            "description": "Path to the original files",
+            "default": "/mnt/zurg/__all__"
+        },
+        "symlinked_files_path": {
+            "type": "string",
+            "description": "Path to the destination folder",
+            "default": "/mnt/symlinked"
         }
     },
     "Scrapers": {

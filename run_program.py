@@ -100,7 +100,6 @@ class ProgramRunner:
             'Blacklisted',
             'Pending Uncached',
             'Upgrading',
-            'task_plex_full_scan', 
             'task_refresh_release_dates',
             'task_generate_airtime_report',
             'task_check_service_connectivity',
@@ -110,6 +109,11 @@ class ProgramRunner:
             'task_reconcile_queues',
             'task_heartbeat'
         }
+
+        if not get_setting('Debug', 'symlink_collected_files'):
+            self.enabled_tasks.add('task_plex_full_scan')
+        else:
+            self.enabled_tasks.add('task_local_library_scan')
         
         # Add this line to store content sources
         self.content_sources = None
@@ -195,6 +199,7 @@ class ProgramRunner:
 
     def handle_connectivity_failure(self):
         from routes.program_operation_routes import stop_program, check_service_connectivity
+        from extensions import app  # Import the Flask app
 
         logging.warning("Pausing program queue due to connectivity failure")
         self.pause_queue()
@@ -214,8 +219,9 @@ class ProgramRunner:
             logging.warning(f"Service connectivity check failed. Retry {retry_count}/{max_retries}")
 
         logging.error("Service connectivity not restored after 5 minutes. Stopping the program.")
-        stop_result = stop_program()
-        logging.info(f"Program stop result: {stop_result}")
+        with app.app_context():
+            stop_result = stop_program()
+            logging.info(f"Program stop result: {stop_result}")
 
     def pause_queue(self):
         from queue_manager import QueueManager
@@ -837,6 +843,14 @@ def get_and_add_recent_collected_from_plex():
     
     logging.error("Failed to retrieve content")
     return None
+
+def run_local_library_scan():
+    from utilities.local_library_scan import local_library_scan
+    local_library_scan()
+
+def run_recent_local_library_scan():
+    from utilities.local_library_scan import recent_local_library_scan
+    recent_local_library_scan()
 
 def run_program():
     global program_runner
