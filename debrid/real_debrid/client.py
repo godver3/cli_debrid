@@ -7,6 +7,7 @@ import time
 from urllib.parse import unquote
 import hashlib
 import bencodepy
+import inspect
 
 from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError, TorrentAdditionError
 from ..common import (
@@ -391,25 +392,32 @@ class RealDebridProvider(DebridProvider):
     def get_active_downloads(self) -> Tuple[int, int]:
         """Get number of active downloads and download limit"""
         try:
+            logging.info("Fetching active downloads from Real-Debrid API...")
             # Get active torrents count and limit
             active_data = make_request('GET', '/torrents/activeCount', self.api_key)
-            #logging.info(f"Active torrents data: {active_data}")
+            logging.info(f"Active torrents response: {active_data}")
+            
             active_count = active_data.get('nb', 0)
-            max_downloads = active_data.get('limit', self.MAX_DOWNLOADS)
+            raw_max_downloads = active_data.get('limit', self.MAX_DOWNLOADS)
+            logging.info(f"Raw values - Active count: {active_count}, Max downloads: {raw_max_downloads}")
 
-            max_downloads = round(max_downloads * 0.75)
+            # Calculate adjusted max downloads (75% of limit)
+            max_downloads = round(raw_max_downloads * 0.75)
+            logging.info(f"Adjusted max downloads (75% of limit): {max_downloads}")
             
             if active_count >= max_downloads:
+                logging.warning(f"Active downloads ({active_count}) exceeds adjusted limit ({max_downloads})")
                 raise TooManyDownloadsError(
                     f"Too many active downloads ({active_count}/{max_downloads})"
                 )
                 
+            logging.info(f"Final values - Active downloads: {active_count}, Max limit: {max_downloads}")
             return active_count, max_downloads
             
         except TooManyDownloadsError:
             raise
         except Exception as e:
-            logging.error(f"Error getting active downloads: {str(e)}")
+            logging.error(f"Error getting active downloads: {str(e)}", exc_info=True)
             raise ProviderUnavailableError(f"Failed to get active downloads: {str(e)}")
 
     def get_user_traffic(self) -> Dict:
@@ -461,6 +469,15 @@ class RealDebridProvider(DebridProvider):
     def get_torrent_info(self, torrent_id: str) -> Optional[Dict]:
         """Get information about a specific torrent"""
         try:
+            # Get caller function information
+            caller_frame = inspect.currentframe().f_back
+            caller_name = caller_frame.f_code.co_name
+            caller_filename = caller_frame.f_code.co_filename
+            caller_lineno = caller_frame.f_lineno
+            #logging.debug(
+            #    f"get_torrent_info called by {caller_name} in {caller_filename}:{caller_lineno}, with torrent_id={torrent_id}"
+            #)
+
             info = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
             
             # Update status based on response
@@ -485,10 +502,19 @@ class RealDebridProvider(DebridProvider):
     def remove_torrent(self, torrent_id: str) -> None:
         """Remove a torrent from Real-Debrid"""
         try:
+            # Get stack trace for debugging
+            import traceback
+            caller_info = traceback.extract_stack()[-2]  # Get caller info
+            logging.debug(f"Removing torrent {torrent_id} - called from {caller_info.filename}:{caller_info.lineno}")
+            
             make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
             self.update_status(torrent_id, TorrentStatus.REMOVED)
+            logging.debug(f"Successfully removed torrent {torrent_id}")
         except Exception as e:
-            logging.error(f"Error removing torrent: {str(e)}")
+            if "404" in str(e):
+                logging.warning(f"Torrent {torrent_id} already removed from Real-Debrid")
+            else:
+                logging.error(f"Error removing torrent: {str(e)}")
             raise
 
     def cleanup(self) -> None:

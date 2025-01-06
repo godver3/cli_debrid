@@ -8,6 +8,7 @@ Flask==3.0.3
 Flask_Cors==5.0.0
 Flask_Login==0.6.3
 flask_sqlalchemy==3.1.1
+Flask-Limiter==3.5.0
 fuzzywuzzy==0.18.0
 grpcio==1.66.1
 guessit==3.8.0

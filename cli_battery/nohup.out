@@ -1,0 +1,1238 @@
+[32m2025-01-06 04:58:36,615 - database.py:init_db - INFO - Successfully connected to cli_battery database: sqlite:////user/db_content/cli_battery.db[0m
+[32m2025-01-06 04:58:36,795 - main.py:main - INFO - Starting cli_battery[0m
+[32m2025-01-06 04:58:36,800 - database.py:init_db - INFO - Successfully connected to cli_battery database: sqlite:////user/db_content/cli_battery.db[0m
+[32m2025-01-06 04:58:36,816 - database.py:init_db - INFO - Successfully connected to cli_battery database: sqlite:////user/db_content/cli_battery.db[0m
+[32m2025-01-06 04:58:36,818 - database.py:init_db - INFO - Successfully connected to cli_battery database: sqlite:////user/db_content/cli_battery.db[0m
+[32m2025-01-06 04:58:36,820 - background_jobs.py:start - INFO - Background job scheduler started[0m
+[32m2025-01-06 04:58:36,821 - background_jobs.py:start - INFO - Initial metadata refresh scheduled in 30 seconds[0m
+[32m2025-01-06 04:58:36,821 - main.py:main - INFO - Database initialized successfully[0m
+[32m2025-01-06 04:58:36,821 - main.py:main - INFO - Starting Flask server on port 5001[0m
+Attempting to connect to database: sqlite:////user/db_content/cli_battery.db
+Attempting to connect to database: sqlite:////user/db_content/cli_battery.db
+Attempting to connect to database: sqlite:////user/db_content/cli_battery.db
+Attempting to connect to database: sqlite:////user/db_content/cli_battery.db
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://192.168.1.51:5001
+[33mPress CTRL+C to quit[0m
+[32m2025-01-06 04:59:06,874 - background_jobs.py:refresh_stale_metadata - INFO - Checking 3087 items for stale metadata...[0m
+[36m2025-01-06 04:59:06,876 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T09:35:16.581057+00:00, age=2d 2h, threshold=2d 2h (base=7d, variation=-5d 2h) -> stale[0m
+[36m2025-01-06 04:59:06,878 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt13332622[0m
+[36m2025-01-06 04:59:06,878 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt13332622[0m
+[36m2025-01-06 04:59:07,184 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt13332622[0m
+[36m2025-01-06 04:59:07,184 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt13332622[0m
+[36m2025-01-06 04:59:07,187 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Before last_updated=2025-01-04 09:35:16.581057[0m
+[36m2025-01-06 04:59:07,613 - metadata_manager.py:refresh_metadata - DEBUG - After update: Before last_updated=2025-01-06 11:59:07[0m
+[36m2025-01-06 04:59:07,615 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T11:33:30.259560+00:00, age=2d 0h, threshold=1d 21h (base=7d, variation=-5d -3h) -> stale[0m
+[36m2025-01-06 04:59:07,616 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt26591147[0m
+[36m2025-01-06 04:59:07,616 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt26591147[0m
+[36m2025-01-06 04:59:07,991 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt26591147[0m
+[36m2025-01-06 04:59:07,992 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt26591147[0m
+[36m2025-01-06 04:59:07,993 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Matlock last_updated=2025-01-04 11:33:30.259560[0m
+[36m2025-01-06 04:59:08,026 - metadata_manager.py:refresh_metadata - DEBUG - After update: Matlock last_updated=2025-01-06 11:59:08[0m
+[36m2025-01-06 04:59:08,030 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T00:41:37+00:00, age=3d 11h, threshold=1d 18h (base=7d, variation=-5d -6h) -> stale[0m
+[36m2025-01-06 04:59:08,032 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0939235[0m
+[36m2025-01-06 04:59:08,032 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0939235[0m
+[36m2025-01-06 04:59:08,517 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0939235[0m
+[36m2025-01-06 04:59:08,517 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0939235[0m
+[36m2025-01-06 04:59:08,518 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Fallen Angel last_updated=2025-01-03 00:41:37[0m
+[36m2025-01-06 04:59:08,527 - metadata_manager.py:refresh_metadata - DEBUG - After update: Fallen Angel last_updated=2025-01-06 11:59:08[0m
+[36m2025-01-06 04:59:08,531 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T11:50:19.918003+00:00, age=2d 0h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 04:59:08,532 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt21382296[0m
+[36m2025-01-06 04:59:08,532 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt21382296[0m
+[36m2025-01-06 04:59:09,072 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt21382296[0m
+[36m2025-01-06 04:59:09,072 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt21382296[0m
+[36m2025-01-06 04:59:09,073 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Carry-On last_updated=2025-01-04 11:50:19.918003[0m
+[36m2025-01-06 04:59:09,100 - metadata_manager.py:refresh_metadata - DEBUG - After update: Carry-On last_updated=2025-01-06 11:59:09[0m
+[36m2025-01-06 04:59:09,109 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T22:08:09.488533+00:00, age=1d 13h, threshold=1d 13h (base=7d, variation=-5d -11h) -> stale[0m
+[36m2025-01-06 04:59:09,110 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2347285[0m
+[36m2025-01-06 04:59:09,111 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2347285[0m
+[36m2025-01-06 04:59:10,406 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2347285[0m
+[36m2025-01-06 04:59:10,406 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2347285[0m
+[36m2025-01-06 04:59:10,407 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Best Christmas Pageant Ever last_updated=2025-01-04 22:08:09.488533[0m
+[36m2025-01-06 04:59:10,436 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Best Christmas Pageant Ever last_updated=2025-01-06 11:59:10[0m
+[36m2025-01-06 04:59:10,437 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:41:48+00:00, age=2d 15h, threshold=2d 0h (base=7d, variation=-5d 0h) -> stale[0m
+[36m2025-01-06 04:59:10,439 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt32843258[0m
+[36m2025-01-06 04:59:10,439 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt32843258[0m
+[36m2025-01-06 04:59:11,280 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt32843258[0m
+[36m2025-01-06 04:59:11,280 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt32843258[0m
+[36m2025-01-06 04:59:11,281 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Volunteers: The Battle of Life and Death last_updated=2025-01-03 20:41:48[0m
+[36m2025-01-06 04:59:11,292 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Volunteers: The Battle of Life and Death last_updated=2025-01-06 11:59:11[0m
+[36m2025-01-06 04:59:11,296 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T09:20:00.153851+00:00, age=2d 2h, threshold=1d 22h (base=7d, variation=-5d -2h) -> stale[0m
+[36m2025-01-06 04:59:11,297 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt31158590[0m
+[36m2025-01-06 04:59:11,297 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt31158590[0m
+[36m2025-01-06 04:59:11,952 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt31158590[0m
+[36m2025-01-06 04:59:11,953 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt31158590[0m
+[36m2025-01-06 04:59:11,954 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Tomorrow and I last_updated=2025-01-04 09:20:00.153851[0m
+[36m2025-01-06 04:59:11,981 - metadata_manager.py:refresh_metadata - DEBUG - After update: Tomorrow and I last_updated=2025-01-06 11:59:11[0m
+[32m2025-01-06 04:59:11,984 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 100/3087 items checked[0m
+[36m2025-01-06 04:59:11,989 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:33:03+00:00, age=2d 14h, threshold=2d 10h (base=7d, variation=-5d 10h) -> stale[0m
+[36m2025-01-06 04:59:11,990 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt11225626[0m
+[36m2025-01-06 04:59:11,990 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt11225626[0m
+[36m2025-01-06 04:59:13,286 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt11225626[0m
+[36m2025-01-06 04:59:13,286 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt11225626[0m
+[36m2025-01-06 04:59:13,287 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Am I OK? last_updated=2025-01-03 21:33:03[0m
+[36m2025-01-06 04:59:13,302 - metadata_manager.py:refresh_metadata - DEBUG - After update: Am I OK? last_updated=2025-01-06 11:59:13[0m
+[36m2025-01-06 04:59:13,306 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:51:53+00:00, age=2d 14h, threshold=2d 1h (base=7d, variation=-5d 1h) -> stale[0m
+[36m2025-01-06 04:59:13,307 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0930083[0m
+[36m2025-01-06 04:59:13,308 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0930083[0m
+[36m2025-01-06 04:59:13,908 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0930083[0m
+[36m2025-01-06 04:59:13,908 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0930083[0m
+[36m2025-01-06 04:59:13,909 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Noroi: The Curse last_updated=2025-01-03 21:51:53[0m
+[36m2025-01-06 04:59:13,922 - metadata_manager.py:refresh_metadata - DEBUG - After update: Noroi: The Curse last_updated=2025-01-06 11:59:13[0m
+[32m2025-01-06 04:59:13,935 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 200/3087 items checked[0m
+[36m2025-01-06 04:59:13,942 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T19:32:25+00:00, age=1d 16h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 04:59:13,943 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt14230388[0m
+[36m2025-01-06 04:59:13,944 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt14230388[0m
+[36m2025-01-06 04:59:15,242 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt14230388[0m
+[36m2025-01-06 04:59:15,243 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt14230388[0m
+[36m2025-01-06 04:59:15,244 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Asteroid City last_updated=2025-01-04 19:32:25[0m
+[36m2025-01-06 04:59:15,262 - metadata_manager.py:refresh_metadata - DEBUG - After update: Asteroid City last_updated=2025-01-06 11:59:15[0m
+[36m2025-01-06 04:59:15,263 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T22:15:36.252255+00:00, age=2d 13h, threshold=1d 22h (base=7d, variation=-5d -2h) -> stale[0m
+[36m2025-01-06 04:59:15,264 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt4005402[0m
+[36m2025-01-06 04:59:15,265 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt4005402[0m
+[36m2025-01-06 04:59:16,525 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt4005402[0m
+[36m2025-01-06 04:59:16,526 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt4005402[0m
+[36m2025-01-06 04:59:16,527 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Colonia last_updated=2025-01-03 22:15:36.252255[0m
+[36m2025-01-06 04:59:16,559 - metadata_manager.py:refresh_metadata - DEBUG - After update: Colonia last_updated=2025-01-06 11:59:16[0m
+[36m2025-01-06 04:59:16,567 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:45:59+00:00, age=2d 14h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 04:59:16,569 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt8579674[0m
+[36m2025-01-06 04:59:16,569 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt8579674[0m
+[36m2025-01-06 04:59:17,789 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt8579674[0m
+[36m2025-01-06 04:59:17,789 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt8579674[0m
+[36m2025-01-06 04:59:17,790 - metadata_manager.py:refresh_metadata - DEBUG - Before update: 1917 last_updated=2025-01-03 21:45:59[0m
+[36m2025-01-06 04:59:17,803 - metadata_manager.py:refresh_metadata - DEBUG - After update: 1917 last_updated=2025-01-06 11:59:17[0m
+[32m2025-01-06 04:59:17,812 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 300/3087 items checked[0m
+[36m2025-01-06 04:59:17,821 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T01:12:51+00:00, age=3d 10h, threshold=2d 8h (base=7d, variation=-5d 8h) -> stale[0m
+[36m2025-01-06 04:59:17,823 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt22180518[0m
+[36m2025-01-06 04:59:17,823 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt22180518[0m
+[36m2025-01-06 04:59:18,445 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt22180518[0m
+[36m2025-01-06 04:59:18,445 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt22180518[0m
+[36m2025-01-06 04:59:18,446 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Disco Boy last_updated=2025-01-03 01:12:51[0m
+[36m2025-01-06 04:59:18,455 - metadata_manager.py:refresh_metadata - DEBUG - After update: Disco Boy last_updated=2025-01-06 11:59:18[0m
+[36m2025-01-06 04:59:18,457 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T11:20:38.839392+00:00, age=2d 0h, threshold=1d 17h (base=7d, variation=-5d -7h) -> stale[0m
+[36m2025-01-06 04:59:18,458 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt26940324[0m
+[36m2025-01-06 04:59:18,459 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt26940324[0m
+[36m2025-01-06 04:59:19,040 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt26940324[0m
+[36m2025-01-06 04:59:19,040 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt26940324[0m
+[36m2025-01-06 04:59:19,041 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Jackpot! last_updated=2025-01-04 11:20:38.839392[0m
+[36m2025-01-06 04:59:19,070 - metadata_manager.py:refresh_metadata - DEBUG - After update: Jackpot! last_updated=2025-01-06 11:59:19[0m
+[36m2025-01-06 04:59:19,076 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:16:19.306202+00:00, age=2d 15h, threshold=2d 8h (base=7d, variation=-5d 8h) -> stale[0m
+[36m2025-01-06 04:59:19,077 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt14858658[0m
+[36m2025-01-06 04:59:19,078 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt14858658[0m
+[36m2025-01-06 04:59:19,544 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt14858658[0m
+[36m2025-01-06 04:59:19,544 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt14858658[0m
+[36m2025-01-06 04:59:19,545 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Blink Twice last_updated=2025-01-03 20:16:19.306202[0m
+[36m2025-01-06 04:59:19,574 - metadata_manager.py:refresh_metadata - DEBUG - After update: Blink Twice last_updated=2025-01-06 11:59:19[0m
+[32m2025-01-06 04:59:19,580 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 400/3087 items checked[0m
+[36m2025-01-06 04:59:19,588 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T23:30:11.317104+00:00, age=3d 12h, threshold=1d 13h (base=7d, variation=-5d -11h) -> stale[0m
+[36m2025-01-06 04:59:19,590 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt5012320[0m
+[36m2025-01-06 04:59:19,590 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt5012320[0m
+[36m2025-01-06 04:59:20,556 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt5012320[0m
+[36m2025-01-06 04:59:20,556 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt5012320[0m
+[36m2025-01-06 04:59:20,557 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Out of My Mind last_updated=2025-01-02 23:30:11.317104[0m
+[36m2025-01-06 04:59:20,585 - metadata_manager.py:refresh_metadata - DEBUG - After update: Out of My Mind last_updated=2025-01-06 11:59:20[0m
+[36m2025-01-06 04:59:20,594 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:32:49+00:00, age=2d 4h, threshold=1d 21h (base=7d, variation=-5d -3h) -> stale[0m
+[36m2025-01-06 04:59:20,595 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt5368798[0m
+[36m2025-01-06 04:59:20,595 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt5368798[0m
+[36m2025-01-06 04:59:21,492 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt5368798[0m
+[36m2025-01-06 04:59:21,492 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt5368798[0m
+[36m2025-01-06 04:59:21,493 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Hanky Panky last_updated=2025-01-04 07:32:49[0m
+[36m2025-01-06 04:59:21,516 - metadata_manager.py:refresh_metadata - DEBUG - After update: Hanky Panky last_updated=2025-01-06 11:59:21[0m
+[36m2025-01-06 04:59:21,519 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T16:48:02+00:00, age=3d 19h, threshold=2d 10h (base=7d, variation=-5d 10h) -> stale[0m
+[36m2025-01-06 04:59:21,520 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt19869662[0m
+[36m2025-01-06 04:59:21,520 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt19869662[0m
+[36m2025-01-06 04:59:22,114 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt19869662[0m
+[36m2025-01-06 04:59:22,114 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt19869662[0m
+[36m2025-01-06 04:59:22,115 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Irena's Vow last_updated=2025-01-02 16:48:02[0m
+[36m2025-01-06 04:59:22,125 - metadata_manager.py:refresh_metadata - DEBUG - After update: Irena's Vow last_updated=2025-01-06 11:59:22[0m
+[36m2025-01-06 04:59:22,127 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T23:55:06+00:00, age=2d 12h, threshold=2d 12h (base=7d, variation=-5d 12h) -> stale[0m
+[36m2025-01-06 04:59:22,129 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt18938922[0m
+[36m2025-01-06 04:59:22,129 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt18938922[0m
+[36m2025-01-06 04:59:23,057 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt18938922[0m
+[36m2025-01-06 04:59:23,057 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt18938922[0m
+[36m2025-01-06 04:59:23,058 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Seize Them! last_updated=2025-01-03 23:55:06[0m
+[36m2025-01-06 04:59:23,078 - metadata_manager.py:refresh_metadata - DEBUG - After update: Seize Them! last_updated=2025-01-06 11:59:23[0m
+[32m2025-01-06 04:59:23,080 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 500/3087 items checked[0m
+[36m2025-01-06 04:59:23,088 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T04:15:01+00:00, age=2d 7h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 04:59:23,090 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt20420628[0m
+[36m2025-01-06 04:59:23,090 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt20420628[0m
+[36m2025-01-06 04:59:23,954 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt20420628[0m
+[36m2025-01-06 04:59:23,955 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt20420628[0m
+[36m2025-01-06 04:59:23,956 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Freud's Last Session last_updated=2025-01-04 04:15:01[0m
+[36m2025-01-06 04:59:23,965 - metadata_manager.py:refresh_metadata - DEBUG - After update: Freud's Last Session last_updated=2025-01-06 11:59:23[0m
+[36m2025-01-06 04:59:23,970 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T22:33:22.136191+00:00, age=2d 13h, threshold=1d 21h (base=7d, variation=-5d -3h) -> stale[0m
+[36m2025-01-06 04:59:23,971 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt33397790[0m
+[36m2025-01-06 04:59:23,971 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt33397790[0m
+[36m2025-01-06 04:59:24,215 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt33397790[0m
+[36m2025-01-06 04:59:24,216 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt33397790[0m
+[36m2025-01-06 04:59:24,217 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Anatomy of Lies last_updated=2025-01-03 22:33:22.136191[0m
+[36m2025-01-06 04:59:24,244 - metadata_manager.py:refresh_metadata - DEBUG - After update: Anatomy of Lies last_updated=2025-01-06 11:59:24[0m
+[36m2025-01-06 04:59:24,245 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T22:21:14.559467+00:00, age=2d 13h, threshold=2d 4h (base=7d, variation=-5d 4h) -> stale[0m
+[36m2025-01-06 04:59:24,246 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt27031263[0m
+[36m2025-01-06 04:59:24,247 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt27031263[0m
+[36m2025-01-06 04:59:24,495 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt27031263[0m
+[36m2025-01-06 04:59:24,495 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt27031263[0m
+[36m2025-01-06 04:59:24,497 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Teacup last_updated=2025-01-03 22:21:14.559467[0m
+[36m2025-01-06 04:59:24,527 - metadata_manager.py:refresh_metadata - DEBUG - After update: Teacup last_updated=2025-01-06 11:59:24[0m
+[36m2025-01-06 04:59:24,530 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T19:53:06.456458+00:00, age=2d 16h, threshold=2d 7h (base=7d, variation=-5d 7h) -> stale[0m
+[36m2025-01-06 04:59:24,532 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt26933824[0m
+[36m2025-01-06 04:59:24,532 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt26933824[0m
+[36m2025-01-06 04:59:24,907 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt26933824[0m
+[36m2025-01-06 04:59:24,908 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt26933824[0m
+[36m2025-01-06 04:59:24,909 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Nobody Wants This last_updated=2025-01-03 19:53:06.456458[0m
+[36m2025-01-06 04:59:24,937 - metadata_manager.py:refresh_metadata - DEBUG - After update: Nobody Wants This last_updated=2025-01-06 11:59:24[0m
+[36m2025-01-06 04:59:24,943 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:34:51.366229+00:00, age=2d 4h, threshold=2d 2h (base=7d, variation=-5d 2h) -> stale[0m
+[36m2025-01-06 04:59:24,945 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt32937646[0m
+[36m2025-01-06 04:59:24,945 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt32937646[0m
+[36m2025-01-06 04:59:25,183 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt32937646[0m
+[36m2025-01-06 04:59:25,184 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt32937646[0m
+[36m2025-01-06 04:59:25,185 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Chimp Crazy last_updated=2025-01-04 07:34:51.366229[0m
+[36m2025-01-06 04:59:25,213 - metadata_manager.py:refresh_metadata - DEBUG - After update: Chimp Crazy last_updated=2025-01-06 11:59:25[0m
+[32m2025-01-06 04:59:25,213 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 600/3087 items checked[0m
+[36m2025-01-06 04:59:25,228 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T17:33:54.343913+00:00, age=1d 18h, threshold=1d 18h (base=7d, variation=-5d -6h) -> stale[0m
+[36m2025-01-06 04:59:25,230 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt18291136[0m
+[36m2025-01-06 04:59:25,230 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt18291136[0m
+[36m2025-01-06 04:59:25,552 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt18291136[0m
+[36m2025-01-06 04:59:25,552 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt18291136[0m
+[36m2025-01-06 04:59:25,553 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Knuckles last_updated=2025-01-04 17:33:54.343913[0m
+[36m2025-01-06 04:59:25,588 - metadata_manager.py:refresh_metadata - DEBUG - After update: Knuckles last_updated=2025-01-06 11:59:25[0m
+[32m2025-01-06 04:59:25,597 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 700/3087 items checked[0m
+[36m2025-01-06 04:59:25,598 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T23:55:08+00:00, age=2d 12h, threshold=2d 0h (base=7d, variation=-5d 0h) -> stale[0m
+[36m2025-01-06 04:59:25,600 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt10970364[0m
+[36m2025-01-06 04:59:25,600 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt10970364[0m
+[36m2025-01-06 04:59:25,927 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt10970364[0m
+[36m2025-01-06 04:59:25,928 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt10970364[0m
+[36m2025-01-06 04:59:25,928 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Girls on the Bus last_updated=2025-01-03 23:55:08[0m
+[36m2025-01-06 04:59:25,938 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Girls on the Bus last_updated=2025-01-06 11:59:25[0m
+[36m2025-01-06 04:59:25,946 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T05:28:48.123939+00:00, age=2d 6h, threshold=2d 4h (base=7d, variation=-5d 4h) -> stale[0m
+[36m2025-01-06 04:59:25,947 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt28510783[0m
+[36m2025-01-06 04:59:25,947 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt28510783[0m
+[36m2025-01-06 04:59:26,409 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt28510783[0m
+[36m2025-01-06 04:59:26,410 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt28510783[0m
+[36m2025-01-06 04:59:26,411 - metadata_manager.py:refresh_metadata - DEBUG - Before update: G'wed last_updated=2025-01-04 05:28:48.123939[0m
+[36m2025-01-06 04:59:26,439 - metadata_manager.py:refresh_metadata - DEBUG - After update: G'wed last_updated=2025-01-06 11:59:26[0m
+[36m2025-01-06 04:59:26,439 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T04:33:02.502677+00:00, age=2d 7h, threshold=2d 0h (base=7d, variation=-5d 0h) -> stale[0m
+[36m2025-01-06 04:59:26,441 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt15258106[0m
+[36m2025-01-06 04:59:26,441 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt15258106[0m
+[36m2025-01-06 04:59:26,773 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt15258106[0m
+[36m2025-01-06 04:59:26,773 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt15258106[0m
+[36m2025-01-06 04:59:26,774 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Arctic Ascent with Alex Honnold last_updated=2025-01-04 04:33:02.502677[0m
+[36m2025-01-06 04:59:26,803 - metadata_manager.py:refresh_metadata - DEBUG - After update: Arctic Ascent with Alex Honnold last_updated=2025-01-06 11:59:26[0m
+[36m2025-01-06 04:59:26,809 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T19:32:37+00:00, age=1d 16h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 04:59:26,810 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt5611024[0m
+[36m2025-01-06 04:59:26,810 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt5611024[0m
+[36m2025-01-06 04:59:27,077 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt5611024[0m
+[36m2025-01-06 04:59:27,077 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt5611024[0m
+[36m2025-01-06 04:59:27,078 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Fool Me Once last_updated=2025-01-04 19:32:37[0m
+[36m2025-01-06 04:59:27,096 - metadata_manager.py:refresh_metadata - DEBUG - After update: Fool Me Once last_updated=2025-01-06 11:59:27[0m
+[36m2025-01-06 04:59:27,098 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T18:34:23.372353+00:00, age=1d 17h, threshold=1d 16h (base=7d, variation=-5d -8h) -> stale[0m
+[36m2025-01-06 04:59:27,099 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt27618867[0m
+[36m2025-01-06 04:59:27,099 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt27618867[0m
+[36m2025-01-06 04:59:27,684 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt27618867[0m
+[36m2025-01-06 04:59:27,684 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt27618867[0m
+[36m2025-01-06 04:59:27,685 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Serial Killer's Wife last_updated=2025-01-04 18:34:23.372353[0m
+[36m2025-01-06 04:59:27,712 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Serial Killer's Wife last_updated=2025-01-06 11:59:27[0m
+[36m2025-01-06 04:59:27,714 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:33:29+00:00, age=4d 3h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 04:59:27,716 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt29629260[0m
+[36m2025-01-06 04:59:27,716 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt29629260[0m
+[33m2025-01-06 04:59:27,950 - trakt_metadata.py:refresh_metadata - WARNING - TraktMetadata: Failed to get metadata for tt29629260[0m
+[33m2025-01-06 04:59:27,950 - metadata_manager.py:refresh_metadata - WARNING - No new metadata received for tt29629260[0m
+[36m2025-01-06 04:59:27,954 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T11:36:13.431466+00:00, age=2d 0h, threshold=1d 18h (base=7d, variation=-5d -6h) -> stale[0m
+[36m2025-01-06 04:59:27,956 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0079367[0m
+[36m2025-01-06 04:59:27,956 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0079367[0m
+[36m2025-01-06 04:59:28,753 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0079367[0m
+[36m2025-01-06 04:59:28,753 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0079367[0m
+[36m2025-01-06 04:59:28,754 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Jerk last_updated=2025-01-04 11:36:13.431466[0m
+[36m2025-01-06 04:59:28,784 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Jerk last_updated=2025-01-06 11:59:28[0m
+[32m2025-01-06 04:59:28,785 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 800/3087 items checked[0m
+[36m2025-01-06 04:59:28,792 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T13:36:20.043256+00:00, age=1d 22h, threshold=1d 16h (base=7d, variation=-5d -8h) -> stale[0m
+[36m2025-01-06 04:59:28,794 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt14694192[0m
+[36m2025-01-06 04:59:28,794 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt14694192[0m
+[36m2025-01-06 04:59:29,543 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt14694192[0m
+[36m2025-01-06 04:59:29,543 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt14694192[0m
+[36m2025-01-06 04:59:29,544 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Smoke Master last_updated=2025-01-04 13:36:20.043256[0m
+[36m2025-01-06 04:59:29,579 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Smoke Master last_updated=2025-01-06 11:59:29[0m
+[36m2025-01-06 04:59:29,587 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T11:21:15.922155+00:00, age=2d 0h, threshold=1d 17h (base=7d, variation=-5d -7h) -> stale[0m
+[36m2025-01-06 04:59:29,589 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt14875820[0m
+[36m2025-01-06 04:59:29,589 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt14875820[0m
+[36m2025-01-06 04:59:30,455 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt14875820[0m
+[36m2025-01-06 04:59:30,456 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt14875820[0m
+[36m2025-01-06 04:59:30,457 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Johnny & Clyde last_updated=2025-01-04 11:21:15.922155[0m
+[36m2025-01-06 04:59:30,493 - metadata_manager.py:refresh_metadata - DEBUG - After update: Johnny & Clyde last_updated=2025-01-06 11:59:30[0m
+[36m2025-01-06 04:59:30,502 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:33:13+00:00, age=2d 14h, threshold=2d 8h (base=7d, variation=-5d 8h) -> stale[0m
+[36m2025-01-06 04:59:30,504 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt3488298[0m
+[36m2025-01-06 04:59:30,504 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt3488298[0m
+[36m2025-01-06 04:59:30,826 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt3488298[0m
+[36m2025-01-06 04:59:30,827 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt3488298[0m
+[36m2025-01-06 04:59:30,828 - metadata_manager.py:refresh_metadata - DEBUG - Before update: American Crime last_updated=2025-01-03 21:33:13[0m
+[36m2025-01-06 04:59:30,848 - metadata_manager.py:refresh_metadata - DEBUG - After update: American Crime last_updated=2025-01-06 11:59:30[0m
+[32m2025-01-06 04:59:30,849 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 900/3087 items checked[0m
+[32m2025-01-06 04:59:30,870 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1000/3087 items checked[0m
+[32m2025-01-06 04:59:30,891 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1100/3087 items checked[0m
+[36m2025-01-06 04:59:30,891 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:43:40.261828+00:00, age=2d 15h, threshold=2d 7h (base=7d, variation=-5d 7h) -> stale[0m
+[36m2025-01-06 04:59:30,892 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0106004[0m
+[36m2025-01-06 04:59:30,893 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0106004[0m
+[36m2025-01-06 04:59:31,125 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0106004[0m
+[36m2025-01-06 04:59:31,125 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0106004[0m
+[36m2025-01-06 04:59:31,126 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Frasier last_updated=2025-01-03 20:43:40.261828[0m
+[36m2025-01-06 04:59:31,155 - metadata_manager.py:refresh_metadata - DEBUG - After update: Frasier last_updated=2025-01-06 11:59:31[0m
+[36m2025-01-06 04:59:31,158 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T03:32:55.412573+00:00, age=3d 8h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 04:59:31,159 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1355642[0m
+[36m2025-01-06 04:59:31,159 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1355642[0m
+[36m2025-01-06 04:59:31,405 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1355642[0m
+[36m2025-01-06 04:59:31,406 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1355642[0m
+[36m2025-01-06 04:59:31,407 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Fullmetal Alchemist: Brotherhood last_updated=2025-01-03 03:32:55.412573[0m
+[36m2025-01-06 04:59:31,435 - metadata_manager.py:refresh_metadata - DEBUG - After update: Fullmetal Alchemist: Brotherhood last_updated=2025-01-06 11:59:31[0m
+[36m2025-01-06 04:59:31,438 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:33:15+00:00, age=2d 14h, threshold=1d 18h (base=7d, variation=-5d -6h) -> stale[0m
+[36m2025-01-06 04:59:31,439 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt6470478[0m
+[36m2025-01-06 04:59:31,440 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt6470478[0m
+[36m2025-01-06 04:59:31,688 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt6470478[0m
+[36m2025-01-06 04:59:31,688 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt6470478[0m
+[36m2025-01-06 04:59:31,689 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Good Doctor last_updated=2025-01-03 21:33:15[0m
+[36m2025-01-06 04:59:31,708 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Good Doctor last_updated=2025-01-06 11:59:31[0m
+[36m2025-01-06 04:59:31,721 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:42:28.693694+00:00, age=2d 15h, threshold=2d 11h (base=7d, variation=-5d 11h) -> stale[0m
+[36m2025-01-06 04:59:31,722 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt10975574[0m
+[36m2025-01-06 04:59:31,723 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt10975574[0m
+[36m2025-01-06 04:59:32,034 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt10975574[0m
+[36m2025-01-06 04:59:32,034 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt10975574[0m
+[36m2025-01-06 04:59:32,035 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Julia last_updated=2025-01-03 20:42:28.693694[0m
+[36m2025-01-06 04:59:32,065 - metadata_manager.py:refresh_metadata - DEBUG - After update: Julia last_updated=2025-01-06 11:59:32[0m
+[36m2025-01-06 04:59:32,070 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:46:06+00:00, age=2d 14h, threshold=1d 15h (base=7d, variation=-5d -9h) -> stale[0m
+[36m2025-01-06 04:59:32,071 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt15399640[0m
+[36m2025-01-06 04:59:32,071 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt15399640[0m
+[36m2025-01-06 04:59:32,306 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt15399640[0m
+[36m2025-01-06 04:59:32,306 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt15399640[0m
+[36m2025-01-06 04:59:32,307 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Lawmen: Bass Reeves last_updated=2025-01-03 21:46:06[0m
+[36m2025-01-06 04:59:32,327 - metadata_manager.py:refresh_metadata - DEBUG - After update: Lawmen: Bass Reeves last_updated=2025-01-06 11:59:32[0m
+[36m2025-01-06 04:59:32,328 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T21:33:37.934775+00:00, age=1d 14h, threshold=1d 13h (base=7d, variation=-5d -11h) -> stale[0m
+[36m2025-01-06 04:59:32,330 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt4384086[0m
+[36m2025-01-06 04:59:32,330 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt4384086[0m
+[36m2025-01-06 04:59:32,707 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt4384086[0m
+[36m2025-01-06 04:59:32,708 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt4384086[0m
+[36m2025-01-06 04:59:32,709 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Life in Pieces last_updated=2025-01-04 21:33:37.934775[0m
+[36m2025-01-06 04:59:32,737 - metadata_manager.py:refresh_metadata - DEBUG - After update: Life in Pieces last_updated=2025-01-06 11:59:32[0m
+[36m2025-01-06 04:59:32,738 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T22:25:34.495888+00:00, age=2d 13h, threshold=1d 22h (base=7d, variation=-5d -2h) -> stale[0m
+[36m2025-01-06 04:59:32,740 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt23181388[0m
+[36m2025-01-06 04:59:32,740 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt23181388[0m
+[36m2025-01-06 04:59:33,017 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt23181388[0m
+[36m2025-01-06 04:59:33,017 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt23181388[0m
+[36m2025-01-06 04:59:33,018 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Life on Our Planet last_updated=2025-01-03 22:25:34.495888[0m
+[36m2025-01-06 04:59:33,045 - metadata_manager.py:refresh_metadata - DEBUG - After update: Life on Our Planet last_updated=2025-01-06 11:59:33[0m
+[32m2025-01-06 04:59:33,046 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1200/3087 items checked[0m
+[36m2025-01-06 04:59:33,054 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T23:55:09+00:00, age=2d 12h, threshold=2d 3h (base=7d, variation=-5d 3h) -> stale[0m
+[36m2025-01-06 04:59:33,055 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt31158587[0m
+[36m2025-01-06 04:59:33,055 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt31158587[0m
+[36m2025-01-06 04:59:33,526 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt31158587[0m
+[36m2025-01-06 04:59:33,526 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt31158587[0m
+[36m2025-01-06 04:59:33,527 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Master of the House last_updated=2025-01-03 23:55:09[0m
+[36m2025-01-06 04:59:33,546 - metadata_manager.py:refresh_metadata - DEBUG - After update: Master of the House last_updated=2025-01-06 11:59:33[0m
+[36m2025-01-06 04:59:33,553 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T13:32:34+00:00, age=1d 22h, threshold=1d 15h (base=7d, variation=-5d -9h) -> stale[0m
+[36m2025-01-06 04:59:33,555 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt13433814[0m
+[36m2025-01-06 04:59:33,555 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt13433814[0m
+[36m2025-01-06 04:59:33,787 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt13433814[0m
+[36m2025-01-06 04:59:33,788 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt13433814[0m
+[36m2025-01-06 04:59:33,789 - metadata_manager.py:refresh_metadata - DEBUG - Before update: My Dad the Bounty Hunter last_updated=2025-01-04 13:32:34[0m
+[36m2025-01-06 04:59:33,810 - metadata_manager.py:refresh_metadata - DEBUG - After update: My Dad the Bounty Hunter last_updated=2025-01-06 11:59:33[0m
+[36m2025-01-06 04:59:33,812 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T22:22:15.038262+00:00, age=2d 13h, threshold=1d 22h (base=7d, variation=-5d -2h) -> stale[0m
+[36m2025-01-06 04:59:33,814 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt8714904[0m
+[36m2025-01-06 04:59:33,814 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt8714904[0m
+[36m2025-01-06 04:59:34,039 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt8714904[0m
+[36m2025-01-06 04:59:34,039 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt8714904[0m
+[36m2025-01-06 04:59:34,040 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Narcos: Mexico last_updated=2025-01-03 22:22:15.038262[0m
+[36m2025-01-06 04:59:34,070 - metadata_manager.py:refresh_metadata - DEBUG - After update: Narcos: Mexico last_updated=2025-01-06 11:59:34[0m
+[36m2025-01-06 04:59:34,072 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T18:55:26+00:00, age=2d 17h, threshold=2d 9h (base=7d, variation=-5d 9h) -> stale[0m
+[36m2025-01-06 04:59:34,074 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt29611613[0m
+[36m2025-01-06 04:59:34,074 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt29611613[0m
+[36m2025-01-06 04:59:34,441 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt29611613[0m
+[36m2025-01-06 04:59:34,441 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt29611613[0m
+[36m2025-01-06 04:59:34,442 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Northern Lights last_updated=2025-01-03 18:55:26[0m
+[36m2025-01-06 04:59:34,462 - metadata_manager.py:refresh_metadata - DEBUG - After update: Northern Lights last_updated=2025-01-06 11:59:34[0m
+[36m2025-01-06 04:59:34,468 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T19:33:54.657460+00:00, age=1d 16h, threshold=1d 13h (base=7d, variation=-5d -11h) -> stale[0m
+[36m2025-01-06 04:59:34,470 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1266020[0m
+[36m2025-01-06 04:59:34,470 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1266020[0m
+[36m2025-01-06 04:59:34,705 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1266020[0m
+[36m2025-01-06 04:59:34,705 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1266020[0m
+[36m2025-01-06 04:59:34,706 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Parks and Recreation last_updated=2025-01-04 19:33:54.657460[0m
+[36m2025-01-06 04:59:34,734 - metadata_manager.py:refresh_metadata - DEBUG - After update: Parks and Recreation last_updated=2025-01-06 11:59:34[0m
+[32m2025-01-06 04:59:34,735 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1300/3087 items checked[0m
+[36m2025-01-06 04:59:34,754 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T12:21:21.296204+00:00, age=2d 23h, threshold=1d 20h (base=7d, variation=-5d -4h) -> stale[0m
+[36m2025-01-06 04:59:34,756 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt11743610[0m
+[36m2025-01-06 04:59:34,756 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt11743610[0m
+[36m2025-01-06 04:59:35,200 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt11743610[0m
+[36m2025-01-06 04:59:35,201 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt11743610[0m
+[36m2025-01-06 04:59:35,202 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Terminal List last_updated=2025-01-03 12:21:21.296204[0m
+[36m2025-01-06 04:59:35,230 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Terminal List last_updated=2025-01-06 11:59:35[0m
+[32m2025-01-06 04:59:35,232 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1400/3087 items checked[0m
+[36m2025-01-06 04:59:35,233 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T04:25:04.688627+00:00, age=2d 7h, threshold=1d 20h (base=7d, variation=-5d -4h) -> stale[0m
+[36m2025-01-06 04:59:35,235 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1279972[0m
+[36m2025-01-06 04:59:35,235 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1279972[0m
+[36m2025-01-06 04:59:35,542 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1279972[0m
+[36m2025-01-06 04:59:35,542 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1279972[0m
+[36m2025-01-06 04:59:35,543 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Treme last_updated=2025-01-04 04:25:04.688627[0m
+[36m2025-01-06 04:59:35,571 - metadata_manager.py:refresh_metadata - DEBUG - After update: Treme last_updated=2025-01-06 11:59:35[0m
+[36m2025-01-06 04:59:35,586 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:46:10+00:00, age=2d 14h, threshold=1d 18h (base=7d, variation=-5d -6h) -> stale[0m
+[36m2025-01-06 04:59:35,587 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0068854[0m
+[36m2025-01-06 04:59:35,588 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0068854[0m
+[36m2025-01-06 04:59:36,123 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0068854[0m
+[36m2025-01-06 04:59:36,124 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0068854[0m
+[36m2025-01-06 04:59:36,125 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Life of Leonardo da Vinci last_updated=2025-01-03 21:46:10[0m
+[36m2025-01-06 04:59:36,135 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Life of Leonardo da Vinci last_updated=2025-01-06 11:59:36[0m
+[36m2025-01-06 04:59:36,142 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T08:00:08+00:00, age=3d 3h, threshold=2d 7h (base=7d, variation=-5d 7h) -> stale[0m
+[36m2025-01-06 04:59:36,143 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2543164[0m
+[36m2025-01-06 04:59:36,143 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2543164[0m
+[36m2025-01-06 04:59:36,736 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2543164[0m
+[36m2025-01-06 04:59:36,736 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2543164[0m
+[36m2025-01-06 04:59:36,737 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Arrival last_updated=2025-01-03 08:00:08[0m
+[36m2025-01-06 04:59:36,748 - metadata_manager.py:refresh_metadata - DEBUG - After update: Arrival last_updated=2025-01-06 11:59:36[0m
+[32m2025-01-06 04:59:36,748 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1500/3087 items checked[0m
+[36m2025-01-06 04:59:36,753 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T01:56:01.129248+00:00, age=2d 10h, threshold=1d 15h (base=7d, variation=-5d -9h) -> stale[0m
+[36m2025-01-06 04:59:36,754 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt28277817[0m
+[36m2025-01-06 04:59:36,754 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt28277817[0m
+[36m2025-01-06 04:59:37,456 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt28277817[0m
+[36m2025-01-06 04:59:37,456 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt28277817[0m
+[36m2025-01-06 04:59:37,457 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Bird last_updated=2025-01-04 01:56:01.129248[0m
+[36m2025-01-06 04:59:37,486 - metadata_manager.py:refresh_metadata - DEBUG - After update: Bird last_updated=2025-01-06 11:59:37[0m
+[36m2025-01-06 04:59:37,489 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:33:21+00:00, age=2d 14h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 04:59:37,490 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2463208[0m
+[36m2025-01-06 04:59:37,490 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2463208[0m
+[36m2025-01-06 04:59:38,231 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2463208[0m
+[36m2025-01-06 04:59:38,231 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2463208[0m
+[36m2025-01-06 04:59:38,232 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Adam Project last_updated=2025-01-03 21:33:21[0m
+[36m2025-01-06 04:59:38,245 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Adam Project last_updated=2025-01-06 11:59:38[0m
+[36m2025-01-06 04:59:38,248 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:42:07+00:00, age=2d 15h, threshold=2d 10h (base=7d, variation=-5d 10h) -> stale[0m
+[36m2025-01-06 04:59:38,249 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0144117[0m
+[36m2025-01-06 04:59:38,249 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0144117[0m
+[36m2025-01-06 04:59:39,406 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0144117[0m
+[36m2025-01-06 04:59:39,406 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0144117[0m
+[36m2025-01-06 04:59:39,407 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Boondock Saints last_updated=2025-01-03 20:42:07[0m
+[36m2025-01-06 04:59:39,423 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Boondock Saints last_updated=2025-01-06 11:59:39[0m
+[36m2025-01-06 04:59:39,425 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T17:29:09+00:00, age=2d 18h, threshold=2d 9h (base=7d, variation=-5d 9h) -> stale[0m
+[36m2025-01-06 04:59:39,426 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt29233347[0m
+[36m2025-01-06 04:59:39,427 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt29233347[0m
+[36m2025-01-06 04:59:40,022 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt29233347[0m
+[36m2025-01-06 04:59:40,023 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt29233347[0m
+[36m2025-01-06 04:59:40,029 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Christmas in Notting Hill last_updated=2025-01-03 17:29:09[0m
+[36m2025-01-06 04:59:40,043 - metadata_manager.py:refresh_metadata - DEBUG - After update: Christmas in Notting Hill last_updated=2025-01-06 11:59:40[0m
+[36m2025-01-06 04:59:40,048 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:46:13+00:00, age=2d 14h, threshold=2d 2h (base=7d, variation=-5d 2h) -> stale[0m
+[36m2025-01-06 04:59:40,049 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2278388[0m
+[36m2025-01-06 04:59:40,049 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2278388[0m
+[36m2025-01-06 04:59:40,745 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2278388[0m
+[36m2025-01-06 04:59:40,745 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2278388[0m
+[36m2025-01-06 04:59:40,746 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Grand Budapest Hotel last_updated=2025-01-03 21:46:13[0m
+[36m2025-01-06 04:59:40,759 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Grand Budapest Hotel last_updated=2025-01-06 11:59:40[0m
+[36m2025-01-06 04:59:40,762 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T17:29:10+00:00, age=2d 18h, threshold=2d 6h (base=7d, variation=-5d 6h) -> stale[0m
+[36m2025-01-06 04:59:40,764 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt16491324[0m
+[36m2025-01-06 04:59:40,764 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt16491324[0m
+[36m2025-01-06 04:59:41,512 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt16491324[0m
+[36m2025-01-06 04:59:41,512 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt16491324[0m
+[36m2025-01-06 04:59:41,513 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Honor Society last_updated=2025-01-03 17:29:10[0m
+[36m2025-01-06 04:59:41,524 - metadata_manager.py:refresh_metadata - DEBUG - After update: Honor Society last_updated=2025-01-06 11:59:41[0m
+[36m2025-01-06 04:59:41,527 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T00:42:05+00:00, age=3d 11h, threshold=2d 9h (base=7d, variation=-5d 9h) -> stale[0m
+[36m2025-01-06 04:59:41,528 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0443543[0m
+[36m2025-01-06 04:59:41,528 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0443543[0m
+[36m2025-01-06 04:59:42,705 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0443543[0m
+[36m2025-01-06 04:59:42,705 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0443543[0m
+[36m2025-01-06 04:59:42,706 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Illusionist last_updated=2025-01-03 00:42:05[0m
+[36m2025-01-06 04:59:42,721 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Illusionist last_updated=2025-01-06 11:59:42[0m
+[36m2025-01-06 04:59:42,726 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T01:13:04+00:00, age=3d 10h, threshold=2d 2h (base=7d, variation=-5d 2h) -> stale[0m
+[36m2025-01-06 04:59:42,727 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt5153956[0m
+[36m2025-01-06 04:59:42,727 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt5153956[0m
+[36m2025-01-06 04:59:43,396 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt5153956[0m
+[36m2025-01-06 04:59:43,397 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt5153956[0m
+[36m2025-01-06 04:59:43,398 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Last Sentinel last_updated=2025-01-03 01:13:04[0m
+[36m2025-01-06 04:59:43,408 - metadata_manager.py:refresh_metadata - DEBUG - After update: Last Sentinel last_updated=2025-01-06 11:59:43[0m
+[32m2025-01-06 04:59:43,410 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1600/3087 items checked[0m
+[36m2025-01-06 04:59:43,414 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:33:24+00:00, age=2d 14h, threshold=1d 20h (base=7d, variation=-5d -4h) -> stale[0m
+[36m2025-01-06 04:59:43,415 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1409024[0m
+[36m2025-01-06 04:59:43,416 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1409024[0m
+[36m2025-01-06 04:59:44,002 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1409024[0m
+[36m2025-01-06 04:59:44,002 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1409024[0m
+[36m2025-01-06 04:59:44,003 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Men in Black 3 last_updated=2025-01-03 21:33:24[0m
+[36m2025-01-06 04:59:44,016 - metadata_manager.py:refresh_metadata - DEBUG - After update: Men in Black 3 last_updated=2025-01-06 11:59:44[0m
+[36m2025-01-06 04:59:44,018 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T01:13:06+00:00, age=3d 10h, threshold=2d 8h (base=7d, variation=-5d 8h) -> stale[0m
+[36m2025-01-06 04:59:44,020 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0327056[0m
+[36m2025-01-06 04:59:44,020 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0327056[0m
+[36m2025-01-06 04:59:44,577 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0327056[0m
+[36m2025-01-06 04:59:44,578 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0327056[0m
+[36m2025-01-06 04:59:44,579 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Mystic River last_updated=2025-01-03 01:13:06[0m
+[36m2025-01-06 04:59:44,589 - metadata_manager.py:refresh_metadata - DEBUG - After update: Mystic River last_updated=2025-01-06 11:59:44[0m
+[36m2025-01-06 04:59:44,603 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T18:55:40+00:00, age=2d 17h, threshold=1d 19h (base=7d, variation=-5d -5h) -> stale[0m
+[36m2025-01-06 04:59:44,604 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt26742994[0m
+[36m2025-01-06 04:59:44,604 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt26742994[0m
+[36m2025-01-06 04:59:46,007 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt26742994[0m
+[36m2025-01-06 04:59:46,007 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt26742994[0m
+[36m2025-01-06 04:59:46,008 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Sunrise last_updated=2025-01-03 18:55:40[0m
+[36m2025-01-06 04:59:46,019 - metadata_manager.py:refresh_metadata - DEBUG - After update: Sunrise last_updated=2025-01-06 11:59:46[0m
+[32m2025-01-06 04:59:46,022 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1700/3087 items checked[0m
+[36m2025-01-06 04:59:46,023 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T17:29:18+00:00, age=2d 18h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 04:59:46,024 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt31189901[0m
+[36m2025-01-06 04:59:46,024 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt31189901[0m
+[36m2025-01-06 04:59:46,770 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt31189901[0m
+[36m2025-01-06 04:59:46,771 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt31189901[0m
+[36m2025-01-06 04:59:46,772 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Truth vs. Alex Jones last_updated=2025-01-03 17:29:18[0m
+[36m2025-01-06 04:59:46,783 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Truth vs. Alex Jones last_updated=2025-01-06 11:59:46[0m
+[36m2025-01-06 04:59:46,787 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-01T05:55:26+00:00, age=5d 6h, threshold=3d 12h (base=7d, variation=-3d -12h) -> stale[0m
+[36m2025-01-06 04:59:46,789 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1270798[0m
+[36m2025-01-06 04:59:46,789 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1270798[0m
+[36m2025-01-06 04:59:47,277 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1270798[0m
+[36m2025-01-06 04:59:47,278 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1270798[0m
+[36m2025-01-06 04:59:47,279 - metadata_manager.py:refresh_metadata - DEBUG - Before update: X-Men: First Class last_updated=2025-01-01 05:55:26[0m
+[36m2025-01-06 04:59:47,290 - metadata_manager.py:refresh_metadata - DEBUG - After update: X-Men: First Class last_updated=2025-01-06 11:59:47[0m
+[36m2025-01-06 04:59:47,291 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:42:13+00:00, age=2d 15h, threshold=2d 7h (base=7d, variation=-5d 7h) -> stale[0m
+[36m2025-01-06 04:59:47,292 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0376994[0m
+[36m2025-01-06 04:59:47,292 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0376994[0m
+[36m2025-01-06 04:59:47,853 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0376994[0m
+[36m2025-01-06 04:59:47,853 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0376994[0m
+[36m2025-01-06 04:59:47,854 - metadata_manager.py:refresh_metadata - DEBUG - Before update: X-Men: The Last Stand last_updated=2025-01-03 20:42:13[0m
+[36m2025-01-06 04:59:47,865 - metadata_manager.py:refresh_metadata - DEBUG - After update: X-Men: The Last Stand last_updated=2025-01-06 11:59:47[0m
+[36m2025-01-06 04:59:47,872 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T19:32:51+00:00, age=1d 16h, threshold=1d 16h (base=7d, variation=-5d -8h) -> stale[0m
+[36m2025-01-06 04:59:47,873 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1745960[0m
+[36m2025-01-06 04:59:47,873 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1745960[0m
+[36m2025-01-06 04:59:48,314 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1745960[0m
+[36m2025-01-06 04:59:48,314 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1745960[0m
+[36m2025-01-06 04:59:48,315 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Top Gun: Maverick last_updated=2025-01-04 19:32:51[0m
+[36m2025-01-06 04:59:48,327 - metadata_manager.py:refresh_metadata - DEBUG - After update: Top Gun: Maverick last_updated=2025-01-06 11:59:48[0m
+[36m2025-01-06 04:59:48,329 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-01T06:12:39+00:00, age=5d 5h, threshold=2d 4h (base=7d, variation=-5d 4h) -> stale[0m
+[36m2025-01-06 04:59:48,330 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2948356[0m
+[36m2025-01-06 04:59:48,331 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2948356[0m
+[36m2025-01-06 04:59:49,026 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2948356[0m
+[36m2025-01-06 04:59:49,027 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2948356[0m
+[36m2025-01-06 04:59:49,028 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Zootopia last_updated=2025-01-01 06:12:39[0m
+[36m2025-01-06 04:59:49,039 - metadata_manager.py:refresh_metadata - DEBUG - After update: Zootopia last_updated=2025-01-06 11:59:49[0m
+[36m2025-01-06 04:59:49,042 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T18:55:44+00:00, age=2d 17h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 04:59:49,043 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt10545296[0m
+[36m2025-01-06 04:59:49,044 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt10545296[0m
+[36m2025-01-06 04:59:50,142 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt10545296[0m
+[36m2025-01-06 04:59:50,143 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt10545296[0m
+[36m2025-01-06 04:59:50,144 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Hunger Games: The Ballad of Songbirds & Snakes last_updated=2025-01-03 18:55:44[0m
+[36m2025-01-06 04:59:50,155 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Hunger Games: The Ballad of Songbirds & Snakes last_updated=2025-01-06 11:59:50[0m
+[36m2025-01-06 04:59:50,156 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T02:00:58+00:00, age=3d 9h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 04:59:50,158 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2226597[0m
+[36m2025-01-06 04:59:50,158 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2226597[0m
+[36m2025-01-06 04:59:51,014 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2226597[0m
+[36m2025-01-06 04:59:51,014 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2226597[0m
+[36m2025-01-06 04:59:51,015 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Mountain Between Us last_updated=2025-01-03 02:00:58[0m
+[36m2025-01-06 04:59:51,027 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Mountain Between Us last_updated=2025-01-06 11:59:51[0m
+[36m2025-01-06 04:59:51,028 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T23:55:19+00:00, age=2d 12h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 04:59:51,029 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0418279[0m
+[36m2025-01-06 04:59:51,030 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0418279[0m
+[36m2025-01-06 04:59:51,602 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0418279[0m
+[36m2025-01-06 04:59:51,602 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0418279[0m
+[36m2025-01-06 04:59:51,603 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Transformers last_updated=2025-01-03 23:55:19[0m
+[36m2025-01-06 04:59:51,615 - metadata_manager.py:refresh_metadata - DEBUG - After update: Transformers last_updated=2025-01-06 11:59:51[0m
+[36m2025-01-06 04:59:51,619 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:46:47.831636+00:00, age=4d 3h, threshold=3d 13h (base=7d, variation=-3d -11h) -> stale[0m
+[36m2025-01-06 04:59:51,620 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt3300542[0m
+[36m2025-01-06 04:59:51,620 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt3300542[0m
+[36m2025-01-06 04:59:52,384 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt3300542[0m
+[36m2025-01-06 04:59:52,384 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt3300542[0m
+[36m2025-01-06 04:59:52,385 - metadata_manager.py:refresh_metadata - DEBUG - Before update: London Has Fallen last_updated=2025-01-02 08:46:47.831636[0m
+[36m2025-01-06 04:59:52,412 - metadata_manager.py:refresh_metadata - DEBUG - After update: London Has Fallen last_updated=2025-01-06 11:59:52[0m
+[36m2025-01-06 04:59:52,414 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:33:10+00:00, age=2d 4h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 04:59:52,416 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0112691[0m
+[36m2025-01-06 04:59:52,416 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0112691[0m
+[36m2025-01-06 04:59:52,987 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0112691[0m
+[36m2025-01-06 04:59:52,987 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0112691[0m
+[36m2025-01-06 04:59:52,988 - metadata_manager.py:refresh_metadata - DEBUG - Before update: A Close Shave last_updated=2025-01-04 07:33:10[0m
+[36m2025-01-06 04:59:53,009 - metadata_manager.py:refresh_metadata - DEBUG - After update: A Close Shave last_updated=2025-01-06 11:59:53[0m
+[32m2025-01-06 04:59:53,015 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1800/3087 items checked[0m
+[36m2025-01-06 04:59:53,017 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T18:55:47+00:00, age=2d 17h, threshold=1d 18h (base=7d, variation=-5d -6h) -> stale[0m
+[36m2025-01-06 04:59:53,019 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0416449[0m
+[36m2025-01-06 04:59:53,019 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0416449[0m
+[36m2025-01-06 04:59:53,826 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0416449[0m
+[36m2025-01-06 04:59:53,827 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0416449[0m
+[36m2025-01-06 04:59:53,828 - metadata_manager.py:refresh_metadata - DEBUG - Before update: 300 last_updated=2025-01-03 18:55:47[0m
+[36m2025-01-06 04:59:53,850 - metadata_manager.py:refresh_metadata - DEBUG - After update: 300 last_updated=2025-01-06 11:59:53[0m
+[36m2025-01-06 04:59:53,853 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:42:15+00:00, age=2d 15h, threshold=1d 21h (base=7d, variation=-5d -3h) -> stale[0m
+[36m2025-01-06 04:59:53,855 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1815862[0m
+[36m2025-01-06 04:59:53,855 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1815862[0m
+[36m2025-01-06 04:59:55,047 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1815862[0m
+[36m2025-01-06 04:59:55,048 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1815862[0m
+[36m2025-01-06 04:59:55,049 - metadata_manager.py:refresh_metadata - DEBUG - Before update: After Earth last_updated=2025-01-03 20:42:15[0m
+[36m2025-01-06 04:59:55,077 - metadata_manager.py:refresh_metadata - DEBUG - After update: After Earth last_updated=2025-01-06 11:59:55[0m
+[36m2025-01-06 04:59:55,079 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:42:48+00:00, age=2d 14h, threshold=2d 0h (base=7d, variation=-5d 0h) -> stale[0m
+[36m2025-01-06 04:59:55,081 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt13070038[0m
+[36m2025-01-06 04:59:55,081 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt13070038[0m
+[36m2025-01-06 04:59:55,890 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt13070038[0m
+[36m2025-01-06 04:59:55,890 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt13070038[0m
+[36m2025-01-06 04:59:55,891 - metadata_manager.py:refresh_metadata - DEBUG - Before update: After Ever Happy last_updated=2025-01-03 21:42:48[0m
+[36m2025-01-06 04:59:55,912 - metadata_manager.py:refresh_metadata - DEBUG - After update: After Ever Happy last_updated=2025-01-06 11:59:55[0m
+[36m2025-01-06 04:59:55,915 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T18:55:48+00:00, age=2d 17h, threshold=2d 6h (base=7d, variation=-5d 6h) -> stale[0m
+[36m2025-01-06 04:59:55,917 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt3706352[0m
+[36m2025-01-06 04:59:55,917 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt3706352[0m
+[36m2025-01-06 04:59:56,734 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt3706352[0m
+[36m2025-01-06 04:59:56,734 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt3706352[0m
+[36m2025-01-06 04:59:56,735 - metadata_manager.py:refresh_metadata - DEBUG - Before update: All the Old Knives last_updated=2025-01-03 18:55:48[0m
+[36m2025-01-06 04:59:56,755 - metadata_manager.py:refresh_metadata - DEBUG - After update: All the Old Knives last_updated=2025-01-06 11:59:56[0m
+[36m2025-01-06 04:59:56,759 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:33:34+00:00, age=2d 14h, threshold=2d 2h (base=7d, variation=-5d 2h) -> stale[0m
+[36m2025-01-06 04:59:56,760 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt30007864[0m
+[36m2025-01-06 04:59:56,760 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt30007864[0m
+[36m2025-01-06 04:59:57,459 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt30007864[0m
+[36m2025-01-06 04:59:57,459 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt30007864[0m
+[36m2025-01-06 04:59:57,460 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The American Society of Magical Negroes last_updated=2025-01-03 21:33:34[0m
+[36m2025-01-06 04:59:57,479 - metadata_manager.py:refresh_metadata - DEBUG - After update: The American Society of Magical Negroes last_updated=2025-01-06 11:59:57[0m
+[36m2025-01-06 04:59:57,485 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T04:15:14+00:00, age=2d 7h, threshold=1d 17h (base=7d, variation=-5d -7h) -> stale[0m
+[36m2025-01-06 04:59:57,486 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt14636190[0m
+[36m2025-01-06 04:59:57,487 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt14636190[0m
+[36m2025-01-06 04:59:58,051 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt14636190[0m
+[36m2025-01-06 04:59:58,051 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt14636190[0m
+[36m2025-01-06 04:59:58,052 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Aqua Teen Forever: Plantasm last_updated=2025-01-04 04:15:14[0m
+[36m2025-01-06 04:59:58,072 - metadata_manager.py:refresh_metadata - DEBUG - After update: Aqua Teen Forever: Plantasm last_updated=2025-01-06 11:59:58[0m
+[36m2025-01-06 04:59:58,077 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:46:24+00:00, age=2d 14h, threshold=1d 13h (base=7d, variation=-5d -11h) -> stale[0m
+[36m2025-01-06 04:59:58,078 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt10640346[0m
+[36m2025-01-06 04:59:58,079 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt10640346[0m
+[36m2025-01-06 04:59:59,152 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt10640346[0m
+[36m2025-01-06 04:59:59,153 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt10640346[0m
+[36m2025-01-06 04:59:59,154 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Babylon last_updated=2025-01-03 21:46:24[0m
+[36m2025-01-06 04:59:59,177 - metadata_manager.py:refresh_metadata - DEBUG - After update: Babylon last_updated=2025-01-06 11:59:59[0m
+[36m2025-01-06 04:59:59,180 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:42:19+00:00, age=2d 15h, threshold=2d 10h (base=7d, variation=-5d 10h) -> stale[0m
+[36m2025-01-06 04:59:59,181 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt9853500[0m
+[36m2025-01-06 04:59:59,181 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt9853500[0m
+[36m2025-01-06 04:59:59,736 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt9853500[0m
+[36m2025-01-06 04:59:59,736 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt9853500[0m
+[36m2025-01-06 04:59:59,737 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Bandit last_updated=2025-01-03 20:42:19[0m
+[36m2025-01-06 04:59:59,756 - metadata_manager.py:refresh_metadata - DEBUG - After update: Bandit last_updated=2025-01-06 11:59:59[0m
+[36m2025-01-06 04:59:59,759 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:46:26+00:00, age=2d 14h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 04:59:59,760 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2975590[0m
+[36m2025-01-06 04:59:59,760 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2975590[0m
+[36m2025-01-06 05:00:00,659 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2975590[0m
+[36m2025-01-06 05:00:00,662 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2975590[0m
+[36m2025-01-06 05:00:00,664 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Batman v Superman: Dawn of Justice last_updated=2025-01-03 21:46:26[0m
+[36m2025-01-06 05:00:00,700 - metadata_manager.py:refresh_metadata - DEBUG - After update: Batman v Superman: Dawn of Justice last_updated=2025-01-06 12:00:00[0m
+[32m2025-01-06 05:00:00,701 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 1900/3087 items checked[0m
+[36m2025-01-06 05:00:00,708 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T15:37:32+00:00, age=2d 20h, threshold=2d 1h (base=7d, variation=-5d 1h) -> stale[0m
+[36m2025-01-06 05:00:00,710 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1086064[0m
+[36m2025-01-06 05:00:00,711 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1086064[0m
+[36m2025-01-06 05:00:01,329 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1086064[0m
+[36m2025-01-06 05:00:01,329 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1086064[0m
+[36m2025-01-06 05:00:01,330 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Bill & Ted Face the Music last_updated=2025-01-03 15:37:32[0m
+[36m2025-01-06 05:00:01,359 - metadata_manager.py:refresh_metadata - DEBUG - After update: Bill & Ted Face the Music last_updated=2025-01-06 12:00:01[0m
+[36m2025-01-06 05:00:01,364 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:52:25+00:00, age=2d 14h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 05:00:01,366 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt8363392[0m
+[36m2025-01-06 05:00:01,366 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt8363392[0m
+[36m2025-01-06 05:00:01,955 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt8363392[0m
+[36m2025-01-06 05:00:01,955 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt8363392[0m
+[36m2025-01-06 05:00:01,957 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Blackout last_updated=2025-01-03 21:52:25[0m
+[36m2025-01-06 05:00:01,979 - metadata_manager.py:refresh_metadata - DEBUG - After update: Blackout last_updated=2025-01-06 12:00:01[0m
+[36m2025-01-06 05:00:01,983 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:52:26+00:00, age=2d 14h, threshold=2d 7h (base=7d, variation=-5d 7h) -> stale[0m
+[36m2025-01-06 05:00:01,985 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt3427252[0m
+[36m2025-01-06 05:00:01,985 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt3427252[0m
+[36m2025-01-06 05:00:02,974 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt3427252[0m
+[36m2025-01-06 05:00:02,974 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt3427252[0m
+[36m2025-01-06 05:00:02,975 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Boogeyman last_updated=2025-01-03 21:52:26[0m
+[36m2025-01-06 05:00:02,998 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Boogeyman last_updated=2025-01-06 12:00:02[0m
+[36m2025-01-06 05:00:03,004 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:52:27+00:00, age=2d 14h, threshold=2d 8h (base=7d, variation=-5d 8h) -> stale[0m
+[36m2025-01-06 05:00:03,005 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt12593682[0m
+[36m2025-01-06 05:00:03,005 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt12593682[0m
+[36m2025-01-06 05:00:03,582 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt12593682[0m
+[36m2025-01-06 05:00:03,582 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt12593682[0m
+[36m2025-01-06 05:00:03,583 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Bullet Train last_updated=2025-01-03 21:52:27[0m
+[36m2025-01-06 05:00:03,604 - metadata_manager.py:refresh_metadata - DEBUG - After update: Bullet Train last_updated=2025-01-06 12:00:03[0m
+[36m2025-01-06 05:00:03,609 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T00:56:32.494990+00:00, age=4d 11h, threshold=3d 12h (base=7d, variation=-3d -12h) -> stale[0m
+[36m2025-01-06 05:00:03,610 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0317219[0m
+[36m2025-01-06 05:00:03,610 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0317219[0m
+[36m2025-01-06 05:00:04,356 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0317219[0m
+[36m2025-01-06 05:00:04,356 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0317219[0m
+[36m2025-01-06 05:00:04,357 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Cars last_updated=2025-01-02 00:56:32.494990[0m
+[36m2025-01-06 05:00:04,397 - metadata_manager.py:refresh_metadata - DEBUG - After update: Cars last_updated=2025-01-06 12:00:04[0m
+[36m2025-01-06 05:00:04,399 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:42:25+00:00, age=2d 15h, threshold=2d 10h (base=7d, variation=-5d 10h) -> stale[0m
+[36m2025-01-06 05:00:04,400 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt11727866[0m
+[36m2025-01-06 05:00:04,400 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt11727866[0m
+[36m2025-01-06 05:00:05,249 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt11727866[0m
+[36m2025-01-06 05:00:05,249 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt11727866[0m
+[36m2025-01-06 05:00:05,250 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Catherine Called Birdy last_updated=2025-01-03 20:42:25[0m
+[36m2025-01-06 05:00:05,270 - metadata_manager.py:refresh_metadata - DEBUG - After update: Catherine Called Birdy last_updated=2025-01-06 12:00:05[0m
+[36m2025-01-06 05:00:05,272 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T13:33:01+00:00, age=1d 22h, threshold=1d 13h (base=7d, variation=-5d -11h) -> stale[0m
+[36m2025-01-06 05:00:05,273 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2076822[0m
+[36m2025-01-06 05:00:05,274 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2076822[0m
+[36m2025-01-06 05:00:06,392 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2076822[0m
+[36m2025-01-06 05:00:06,392 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2076822[0m
+[36m2025-01-06 05:00:06,393 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Chaos Walking last_updated=2025-01-04 13:33:01[0m
+[36m2025-01-06 05:00:06,421 - metadata_manager.py:refresh_metadata - DEBUG - After update: Chaos Walking last_updated=2025-01-06 12:00:06[0m
+[32m2025-01-06 05:00:06,423 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2000/3087 items checked[0m
+[36m2025-01-06 05:00:06,429 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T23:55:28+00:00, age=2d 12h, threshold=1d 19h (base=7d, variation=-5d -5h) -> stale[0m
+[36m2025-01-06 05:00:06,431 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1598778[0m
+[36m2025-01-06 05:00:06,431 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1598778[0m
+[36m2025-01-06 05:00:07,226 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1598778[0m
+[36m2025-01-06 05:00:07,226 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1598778[0m
+[36m2025-01-06 05:00:07,227 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Contagion last_updated=2025-01-03 23:55:28[0m
+[36m2025-01-06 05:00:07,248 - metadata_manager.py:refresh_metadata - DEBUG - After update: Contagion last_updated=2025-01-06 12:00:07[0m
+[36m2025-01-06 05:00:07,255 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:42:58+00:00, age=2d 14h, threshold=2d 12h (base=7d, variation=-5d 12h) -> stale[0m
+[36m2025-01-06 05:00:07,256 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt23173980[0m
+[36m2025-01-06 05:00:07,256 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt23173980[0m
+[36m2025-01-06 05:00:08,344 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt23173980[0m
+[36m2025-01-06 05:00:08,345 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt23173980[0m
+[36m2025-01-06 05:00:08,346 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Darkness of Man last_updated=2025-01-03 21:42:58[0m
+[36m2025-01-06 05:00:08,366 - metadata_manager.py:refresh_metadata - DEBUG - After update: Darkness of Man last_updated=2025-01-06 12:00:08[0m
+[36m2025-01-06 05:00:08,370 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T23:55:31+00:00, age=2d 12h, threshold=2d 11h (base=7d, variation=-5d 11h) -> stale[0m
+[36m2025-01-06 05:00:08,372 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2180339[0m
+[36m2025-01-06 05:00:08,372 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2180339[0m
+[36m2025-01-06 05:00:09,544 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2180339[0m
+[36m2025-01-06 05:00:09,544 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2180339[0m
+[36m2025-01-06 05:00:09,545 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Deep Water last_updated=2025-01-03 23:55:31[0m
+[36m2025-01-06 05:00:09,570 - metadata_manager.py:refresh_metadata - DEBUG - After update: Deep Water last_updated=2025-01-06 12:00:09[0m
+[36m2025-01-06 05:00:09,576 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:33:27+00:00, age=2d 4h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 05:00:09,578 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0120655[0m
+[36m2025-01-06 05:00:09,578 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0120655[0m
+[36m2025-01-06 05:00:10,985 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0120655[0m
+[36m2025-01-06 05:00:10,985 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0120655[0m
+[36m2025-01-06 05:00:10,986 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Dogma last_updated=2025-01-04 07:33:27[0m
+[36m2025-01-06 05:00:11,008 - metadata_manager.py:refresh_metadata - DEBUG - After update: Dogma last_updated=2025-01-06 12:00:11[0m
+[32m2025-01-06 05:00:11,010 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2100/3087 items checked[0m
+[36m2025-01-06 05:00:11,013 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T23:55:34+00:00, age=2d 12h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 05:00:11,015 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1535108[0m
+[36m2025-01-06 05:00:11,015 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1535108[0m
+[36m2025-01-06 05:00:11,896 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1535108[0m
+[36m2025-01-06 05:00:11,896 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1535108[0m
+[36m2025-01-06 05:00:11,897 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Elysium last_updated=2025-01-03 23:55:34[0m
+[36m2025-01-06 05:00:11,918 - metadata_manager.py:refresh_metadata - DEBUG - After update: Elysium last_updated=2025-01-06 12:00:11[0m
+[36m2025-01-06 05:00:11,926 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T19:33:20+00:00, age=1d 16h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 05:00:11,927 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0106856[0m
+[36m2025-01-06 05:00:11,927 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0106856[0m
+[36m2025-01-06 05:00:12,897 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0106856[0m
+[36m2025-01-06 05:00:12,898 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0106856[0m
+[36m2025-01-06 05:00:12,899 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Falling Down last_updated=2025-01-04 19:33:20[0m
+[36m2025-01-06 05:00:12,924 - metadata_manager.py:refresh_metadata - DEBUG - After update: Falling Down last_updated=2025-01-06 12:00:12[0m
+[36m2025-01-06 05:00:12,926 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T02:44:34.574164+00:00, age=4d 9h, threshold=3d 15h (base=7d, variation=-3d -9h) -> stale[0m
+[36m2025-01-06 05:00:12,928 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1013752[0m
+[36m2025-01-06 05:00:12,928 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1013752[0m
+[36m2025-01-06 05:00:14,333 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1013752[0m
+[36m2025-01-06 05:00:14,333 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1013752[0m
+[36m2025-01-06 05:00:14,334 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Fast & Furious last_updated=2025-01-02 02:44:34.574164[0m
+[36m2025-01-06 05:00:14,362 - metadata_manager.py:refresh_metadata - DEBUG - After update: Fast & Furious last_updated=2025-01-06 12:00:14[0m
+[32m2025-01-06 05:00:14,373 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2200/3087 items checked[0m
+[36m2025-01-06 05:00:14,374 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:52:38+00:00, age=2d 14h, threshold=2d 0h (base=7d, variation=-5d 0h) -> stale[0m
+[36m2025-01-06 05:00:14,375 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt24429218[0m
+[36m2025-01-06 05:00:14,376 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt24429218[0m
+[36m2025-01-06 05:00:15,527 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt24429218[0m
+[36m2025-01-06 05:00:15,528 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt24429218[0m
+[36m2025-01-06 05:00:15,529 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Genie last_updated=2025-01-03 21:52:38[0m
+[36m2025-01-06 05:00:15,549 - metadata_manager.py:refresh_metadata - DEBUG - After update: Genie last_updated=2025-01-06 12:00:15[0m
+[36m2025-01-06 05:00:15,550 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T04:15:26+00:00, age=2d 7h, threshold=2d 1h (base=7d, variation=-5d 1h) -> stale[0m
+[36m2025-01-06 05:00:15,552 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0099653[0m
+[36m2025-01-06 05:00:15,552 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0099653[0m
+[36m2025-01-06 05:00:16,227 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0099653[0m
+[36m2025-01-06 05:00:16,228 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0099653[0m
+[36m2025-01-06 05:00:16,229 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Ghost last_updated=2025-01-04 04:15:26[0m
+[36m2025-01-06 05:00:16,250 - metadata_manager.py:refresh_metadata - DEBUG - After update: Ghost last_updated=2025-01-06 12:00:16[0m
+[36m2025-01-06 05:00:16,253 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T20:42:39+00:00, age=2d 15h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 05:00:16,254 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt6823368[0m
+[36m2025-01-06 05:00:16,254 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt6823368[0m
+[36m2025-01-06 05:00:17,707 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt6823368[0m
+[36m2025-01-06 05:00:17,707 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt6823368[0m
+[36m2025-01-06 05:00:17,708 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Glass last_updated=2025-01-03 20:42:39[0m
+[36m2025-01-06 05:00:17,728 - metadata_manager.py:refresh_metadata - DEBUG - After update: Glass last_updated=2025-01-06 12:00:17[0m
+[36m2025-01-06 05:00:17,728 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:52:39+00:00, age=2d 14h, threshold=1d 22h (base=7d, variation=-5d -2h) -> stale[0m
+[36m2025-01-06 05:00:17,730 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt11564570[0m
+[36m2025-01-06 05:00:17,730 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt11564570[0m
+[36m2025-01-06 05:00:18,882 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt11564570[0m
+[36m2025-01-06 05:00:18,883 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt11564570[0m
+[36m2025-01-06 05:00:18,884 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Glass Onion: A Knives Out Mystery last_updated=2025-01-03 21:52:39[0m
+[36m2025-01-06 05:00:18,904 - metadata_manager.py:refresh_metadata - DEBUG - After update: Glass Onion: A Knives Out Mystery last_updated=2025-01-06 12:00:18[0m
+[36m2025-01-06 05:00:18,909 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:33:32+00:00, age=2d 4h, threshold=1d 15h (base=7d, variation=-5d -9h) -> stale[0m
+[36m2025-01-06 05:00:18,910 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1051904[0m
+[36m2025-01-06 05:00:18,910 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1051904[0m
+[36m2025-01-06 05:00:19,478 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1051904[0m
+[36m2025-01-06 05:00:19,478 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1051904[0m
+[36m2025-01-06 05:00:19,479 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Goosebumps last_updated=2025-01-04 07:33:32[0m
+[36m2025-01-06 05:00:19,504 - metadata_manager.py:refresh_metadata - DEBUG - After update: Goosebumps last_updated=2025-01-06 12:00:19[0m
+[36m2025-01-06 05:00:19,506 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:10:24.304843+00:00, age=4d 3h, threshold=2d 6h (base=7d, variation=-5d 6h) -> stale[0m
+[36m2025-01-06 05:00:19,508 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt20192230[0m
+[36m2025-01-06 05:00:19,508 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt20192230[0m
+[36m2025-01-06 05:00:20,781 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt20192230[0m
+[36m2025-01-06 05:00:20,781 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt20192230[0m
+[36m2025-01-06 05:00:20,782 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Green Lantern: Beware My Power last_updated=2025-01-02 08:10:24.304843[0m
+[36m2025-01-06 05:00:20,811 - metadata_manager.py:refresh_metadata - DEBUG - After update: Green Lantern: Beware My Power last_updated=2025-01-06 12:00:20[0m
+[36m2025-01-06 05:00:20,812 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:11:30.710133+00:00, age=4d 3h, threshold=3d 14h (base=7d, variation=-3d -10h) -> stale[0m
+[36m2025-01-06 05:00:20,814 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt7737786[0m
+[36m2025-01-06 05:00:20,814 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt7737786[0m
+[36m2025-01-06 05:00:21,612 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt7737786[0m
+[36m2025-01-06 05:00:21,612 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt7737786[0m
+[36m2025-01-06 05:00:21,613 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Greenland last_updated=2025-01-02 08:11:30.710133[0m
+[36m2025-01-06 05:00:21,648 - metadata_manager.py:refresh_metadata - DEBUG - After update: Greenland last_updated=2025-01-06 12:00:21[0m
+[36m2025-01-06 05:00:21,648 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T19:33:29+00:00, age=1d 16h, threshold=1d 16h (base=7d, variation=-5d -8h) -> stale[0m
+[36m2025-01-06 05:00:21,650 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0087363[0m
+[36m2025-01-06 05:00:21,650 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0087363[0m
+[36m2025-01-06 05:00:23,048 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0087363[0m
+[36m2025-01-06 05:00:23,048 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0087363[0m
+[36m2025-01-06 05:00:23,050 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Gremlins last_updated=2025-01-04 19:33:29[0m
+[36m2025-01-06 05:00:23,075 - metadata_manager.py:refresh_metadata - DEBUG - After update: Gremlins last_updated=2025-01-06 12:00:23[0m
+[36m2025-01-06 05:00:23,084 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T23:55:38+00:00, age=2d 12h, threshold=2d 7h (base=7d, variation=-5d 7h) -> stale[0m
+[36m2025-01-06 05:00:23,086 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2510894[0m
+[36m2025-01-06 05:00:23,086 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2510894[0m
+[36m2025-01-06 05:00:24,063 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2510894[0m
+[36m2025-01-06 05:00:24,063 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2510894[0m
+[36m2025-01-06 05:00:24,064 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Hotel Transylvania 2 last_updated=2025-01-03 23:55:38[0m
+[36m2025-01-06 05:00:24,085 - metadata_manager.py:refresh_metadata - DEBUG - After update: Hotel Transylvania 2 last_updated=2025-01-06 12:00:24[0m
+[36m2025-01-06 05:00:24,086 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:38:47.280216+00:00, age=4d 3h, threshold=2d 0h (base=7d, variation=-5d 0h) -> stale[0m
+[36m2025-01-06 05:00:24,088 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt21440780[0m
+[36m2025-01-06 05:00:24,088 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt21440780[0m
+[36m2025-01-06 05:00:25,535 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt21440780[0m
+[36m2025-01-06 05:00:25,535 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt21440780[0m
+[36m2025-01-06 05:00:25,536 - metadata_manager.py:refresh_metadata - DEBUG - Before update: How to Blow Up a Pipeline last_updated=2025-01-02 08:38:47.280216[0m
+[36m2025-01-06 05:00:25,565 - metadata_manager.py:refresh_metadata - DEBUG - After update: How to Blow Up a Pipeline last_updated=2025-01-06 12:00:25[0m
+[36m2025-01-06 05:00:25,566 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:38:56.826794+00:00, age=4d 3h, threshold=3d 21h (base=7d, variation=-3d -3h) -> stale[0m
+[36m2025-01-06 05:00:25,567 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1646971[0m
+[36m2025-01-06 05:00:25,568 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1646971[0m
+[36m2025-01-06 05:00:26,559 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1646971[0m
+[36m2025-01-06 05:00:26,559 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1646971[0m
+[36m2025-01-06 05:00:26,560 - metadata_manager.py:refresh_metadata - DEBUG - Before update: How to Train Your Dragon 2 last_updated=2025-01-02 08:38:56.826794[0m
+[36m2025-01-06 05:00:26,589 - metadata_manager.py:refresh_metadata - DEBUG - After update: How to Train Your Dragon 2 last_updated=2025-01-06 12:00:26[0m
+[32m2025-01-06 05:00:26,593 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2300/3087 items checked[0m
+[36m2025-01-06 05:00:26,596 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:46:39+00:00, age=2d 14h, threshold=1d 20h (base=7d, variation=-5d -4h) -> stale[0m
+[36m2025-01-06 05:00:26,597 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt9466114[0m
+[36m2025-01-06 05:00:26,598 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt9466114[0m
+[36m2025-01-06 05:00:27,612 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt9466114[0m
+[36m2025-01-06 05:00:27,613 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt9466114[0m
+[36m2025-01-06 05:00:27,614 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Idea of You last_updated=2025-01-03 21:46:39[0m
+[36m2025-01-06 05:00:27,819 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Idea of You last_updated=2025-01-06 12:00:27[0m
+[36m2025-01-06 05:00:27,820 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:39:59.534010+00:00, age=4d 3h, threshold=3d 16h (base=7d, variation=-3d -8h) -> stale[0m
+[36m2025-01-06 05:00:27,821 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt26658104[0m
+[36m2025-01-06 05:00:27,822 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt26658104[0m
+[36m2025-01-06 05:00:28,614 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt26658104[0m
+[36m2025-01-06 05:00:28,614 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt26658104[0m
+[36m2025-01-06 05:00:28,615 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Imaginary last_updated=2025-01-02 08:39:59.534010[0m
+[36m2025-01-06 05:00:28,645 - metadata_manager.py:refresh_metadata - DEBUG - After update: Imaginary last_updated=2025-01-06 12:00:28[0m
+[36m2025-01-06 05:00:28,649 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:40:47.917765+00:00, age=4d 3h, threshold=1d 20h (base=7d, variation=-5d -4h) -> stale[0m
+[36m2025-01-06 05:00:28,651 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1130080[0m
+[36m2025-01-06 05:00:28,651 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1130080[0m
+[36m2025-01-06 05:00:29,552 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1130080[0m
+[36m2025-01-06 05:00:29,553 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1130080[0m
+[36m2025-01-06 05:00:29,554 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Informant! last_updated=2025-01-02 08:40:47.917765[0m
+[36m2025-01-06 05:00:29,583 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Informant! last_updated=2025-01-06 12:00:29[0m
+[36m2025-01-06 05:00:29,584 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:41:05.459823+00:00, age=4d 3h, threshold=3d 23h (base=7d, variation=-3d -1h) -> stale[0m
+[36m2025-01-06 05:00:29,586 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt14174940[0m
+[36m2025-01-06 05:00:29,586 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt14174940[0m
+[36m2025-01-06 05:00:30,524 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt14174940[0m
+[36m2025-01-06 05:00:30,524 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt14174940[0m
+[36m2025-01-06 05:00:30,526 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Interceptor last_updated=2025-01-02 08:41:05.459823[0m
+[36m2025-01-06 05:00:30,560 - metadata_manager.py:refresh_metadata - DEBUG - After update: Interceptor last_updated=2025-01-06 12:00:30[0m
+[36m2025-01-06 05:00:30,563 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T19:33:44+00:00, age=1d 16h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 05:00:30,565 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1302006[0m
+[36m2025-01-06 05:00:30,565 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1302006[0m
+[36m2025-01-06 05:00:31,480 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1302006[0m
+[36m2025-01-06 05:00:31,480 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1302006[0m
+[36m2025-01-06 05:00:31,481 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Irishman last_updated=2025-01-04 19:33:44[0m
+[36m2025-01-06 05:00:31,507 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Irishman last_updated=2025-01-06 12:00:31[0m
+[36m2025-01-06 05:00:31,508 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T04:15:31+00:00, age=2d 7h, threshold=1d 18h (base=7d, variation=-5d -6h) -> stale[0m
+[36m2025-01-06 05:00:31,509 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0371746[0m
+[36m2025-01-06 05:00:31,509 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0371746[0m
+[36m2025-01-06 05:00:32,314 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0371746[0m
+[36m2025-01-06 05:00:32,315 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0371746[0m
+[36m2025-01-06 05:00:32,316 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Iron Man last_updated=2025-01-04 04:15:31[0m
+[36m2025-01-06 05:00:32,336 - metadata_manager.py:refresh_metadata - DEBUG - After update: Iron Man last_updated=2025-01-06 12:00:32[0m
+[36m2025-01-06 05:00:32,344 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:43:19.688015+00:00, age=4d 3h, threshold=3d 22h (base=7d, variation=-3d -2h) -> stale[0m
+[36m2025-01-06 05:00:32,346 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0974015[0m
+[36m2025-01-06 05:00:32,347 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0974015[0m
+[36m2025-01-06 05:00:33,804 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0974015[0m
+[36m2025-01-06 05:00:33,804 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0974015[0m
+[36m2025-01-06 05:00:33,805 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Justice League last_updated=2025-01-02 08:43:19.688015[0m
+[36m2025-01-06 05:00:33,835 - metadata_manager.py:refresh_metadata - DEBUG - After update: Justice League last_updated=2025-01-06 12:00:33[0m
+[36m2025-01-06 05:00:33,843 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T13:33:37+00:00, age=1d 22h, threshold=1d 20h (base=7d, variation=-5d -4h) -> stale[0m
+[36m2025-01-06 05:00:33,844 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt4244994[0m
+[36m2025-01-06 05:00:33,844 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt4244994[0m
+[36m2025-01-06 05:00:34,923 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt4244994[0m
+[36m2025-01-06 05:00:34,924 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt4244994[0m
+[36m2025-01-06 05:00:34,925 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Last Duel last_updated=2025-01-04 13:33:37[0m
+[36m2025-01-06 05:00:34,947 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Last Duel last_updated=2025-01-06 12:00:34[0m
+[36m2025-01-06 05:00:34,948 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:45:19.187104+00:00, age=4d 3h, threshold=2d 11h (base=7d, variation=-5d 11h) -> stale[0m
+[36m2025-01-06 05:00:34,949 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt9639470[0m
+[36m2025-01-06 05:00:34,949 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt9639470[0m
+[36m2025-01-06 05:00:35,873 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt9639470[0m
+[36m2025-01-06 05:00:35,873 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt9639470[0m
+[36m2025-01-06 05:00:35,874 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Last Night in Soho last_updated=2025-01-02 08:45:19.187104[0m
+[36m2025-01-06 05:00:35,903 - metadata_manager.py:refresh_metadata - DEBUG - After update: Last Night in Soho last_updated=2025-01-06 12:00:35[0m
+[32m2025-01-06 05:00:35,904 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2400/3087 items checked[0m
+[36m2025-01-06 05:00:35,907 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:46:04.488396+00:00, age=4d 3h, threshold=3d 13h (base=7d, variation=-3d -11h) -> stale[0m
+[36m2025-01-06 05:00:35,909 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1707386[0m
+[36m2025-01-06 05:00:35,909 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1707386[0m
+[36m2025-01-06 05:00:37,067 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1707386[0m
+[36m2025-01-06 05:00:37,067 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1707386[0m
+[36m2025-01-06 05:00:37,069 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Les Misérables last_updated=2025-01-02 08:46:04.488396[0m
+[36m2025-01-06 05:00:37,119 - metadata_manager.py:refresh_metadata - DEBUG - After update: Les Misérables last_updated=2025-01-06 12:00:37[0m
+[36m2025-01-06 05:00:37,125 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:52:45+00:00, age=2d 14h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 05:00:37,131 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1276104[0m
+[36m2025-01-06 05:00:37,132 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1276104[0m
+[36m2025-01-06 05:00:37,988 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1276104[0m
+[36m2025-01-06 05:00:37,988 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1276104[0m
+[36m2025-01-06 05:00:37,989 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Looper last_updated=2025-01-03 21:52:45[0m
+[36m2025-01-06 05:00:38,009 - metadata_manager.py:refresh_metadata - DEBUG - After update: Looper last_updated=2025-01-06 12:00:38[0m
+[36m2025-01-06 05:00:38,015 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:48:29.501086+00:00, age=4d 3h, threshold=1d 16h (base=7d, variation=-5d -8h) -> stale[0m
+[36m2025-01-06 05:00:38,016 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt14967618[0m
+[36m2025-01-06 05:00:38,016 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt14967618[0m
+[36m2025-01-06 05:00:39,029 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt14967618[0m
+[36m2025-01-06 05:00:39,030 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt14967618[0m
+[36m2025-01-06 05:00:39,031 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Margaux last_updated=2025-01-02 08:48:29.501086[0m
+[36m2025-01-06 05:00:39,060 - metadata_manager.py:refresh_metadata - DEBUG - After update: Margaux last_updated=2025-01-06 12:00:39[0m
+[32m2025-01-06 05:00:39,071 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2500/3087 items checked[0m
+[36m2025-01-06 05:00:39,078 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:53:02.788330+00:00, age=4d 3h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 05:00:39,080 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1259571[0m
+[36m2025-01-06 05:00:39,080 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1259571[0m
+[36m2025-01-06 05:00:40,019 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1259571[0m
+[36m2025-01-06 05:00:40,019 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1259571[0m
+[36m2025-01-06 05:00:40,020 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Twilight Saga: New Moon last_updated=2025-01-02 08:53:02.788330[0m
+[36m2025-01-06 05:00:40,050 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Twilight Saga: New Moon last_updated=2025-01-06 12:00:40[0m
+[36m2025-01-06 05:00:40,052 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T13:34:00+00:00, age=1d 22h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 05:00:40,054 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt9682428[0m
+[36m2025-01-06 05:00:40,054 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt9682428[0m
+[36m2025-01-06 05:00:41,553 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt9682428[0m
+[36m2025-01-06 05:00:41,553 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt9682428[0m
+[36m2025-01-06 05:00:41,554 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Night Swim last_updated=2025-01-04 13:34:00[0m
+[36m2025-01-06 05:00:41,576 - metadata_manager.py:refresh_metadata - DEBUG - After update: Night Swim last_updated=2025-01-06 12:00:41[0m
+[36m2025-01-06 05:00:41,577 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:53:26.098108+00:00, age=4d 3h, threshold=1d 16h (base=7d, variation=-5d -8h) -> stale[0m
+[36m2025-01-06 05:00:41,579 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt19500164[0m
+[36m2025-01-06 05:00:41,579 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt19500164[0m
+[36m2025-01-06 05:00:42,947 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt19500164[0m
+[36m2025-01-06 05:00:42,947 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt19500164[0m
+[36m2025-01-06 05:00:42,948 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Nimona last_updated=2025-01-02 08:53:26.098108[0m
+[36m2025-01-06 05:00:42,978 - metadata_manager.py:refresh_metadata - DEBUG - After update: Nimona last_updated=2025-01-06 12:00:42[0m
+[36m2025-01-06 05:00:42,982 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:33:53+00:00, age=2d 4h, threshold=2d 1h (base=7d, variation=-5d 1h) -> stale[0m
+[36m2025-01-06 05:00:42,983 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0349903[0m
+[36m2025-01-06 05:00:42,984 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0349903[0m
+[36m2025-01-06 05:00:43,757 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0349903[0m
+[36m2025-01-06 05:00:43,758 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0349903[0m
+[36m2025-01-06 05:00:43,759 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Ocean's Twelve last_updated=2025-01-04 07:33:53[0m
+[36m2025-01-06 05:00:43,790 - metadata_manager.py:refresh_metadata - DEBUG - After update: Ocean's Twelve last_updated=2025-01-06 12:00:43[0m
+[36m2025-01-06 05:00:43,796 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:55:55.836175+00:00, age=4d 3h, threshold=4d 3h (base=7d, variation=-3d 3h) -> stale[0m
+[36m2025-01-06 05:00:43,797 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt21979910[0m
+[36m2025-01-06 05:00:43,798 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt21979910[0m
+[36m2025-01-06 05:00:44,736 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt21979910[0m
+[36m2025-01-06 05:00:44,736 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt21979910[0m
+[36m2025-01-06 05:00:44,738 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Passenger last_updated=2025-01-02 08:55:55.836175[0m
+[36m2025-01-06 05:00:44,771 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Passenger last_updated=2025-01-06 12:00:44[0m
+[36m2025-01-06 05:00:44,773 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:56:13.597134+00:00, age=4d 3h, threshold=1d 16h (base=7d, variation=-5d -8h) -> stale[0m
+[36m2025-01-06 05:00:44,774 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1092026[0m
+[36m2025-01-06 05:00:44,774 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1092026[0m
+[36m2025-01-06 05:00:45,504 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1092026[0m
+[36m2025-01-06 05:00:45,504 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1092026[0m
+[36m2025-01-06 05:00:45,505 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Paul last_updated=2025-01-02 08:56:13.597134[0m
+[36m2025-01-06 05:00:45,537 - metadata_manager.py:refresh_metadata - DEBUG - After update: Paul last_updated=2025-01-06 12:00:45[0m
+[32m2025-01-06 05:00:45,540 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2600/3087 items checked[0m
+[36m2025-01-06 05:00:45,541 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:57:09.146323+00:00, age=4d 3h, threshold=1d 19h (base=7d, variation=-5d -5h) -> stale[0m
+[36m2025-01-06 05:00:45,543 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt4765284[0m
+[36m2025-01-06 05:00:45,543 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt4765284[0m
+[36m2025-01-06 05:00:46,315 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt4765284[0m
+[36m2025-01-06 05:00:46,315 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt4765284[0m
+[36m2025-01-06 05:00:46,316 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Pitch Perfect 3 last_updated=2025-01-02 08:57:09.146323[0m
+[36m2025-01-06 05:00:46,346 - metadata_manager.py:refresh_metadata - DEBUG - After update: Pitch Perfect 3 last_updated=2025-01-06 12:00:46[0m
+[36m2025-01-06 05:00:46,347 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T13:34:09+00:00, age=1d 22h, threshold=1d 21h (base=7d, variation=-5d -3h) -> stale[0m
+[36m2025-01-06 05:00:46,349 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt5884796[0m
+[36m2025-01-06 05:00:46,349 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt5884796[0m
+[36m2025-01-06 05:00:47,019 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt5884796[0m
+[36m2025-01-06 05:00:47,020 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt5884796[0m
+[36m2025-01-06 05:00:47,021 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Plane last_updated=2025-01-04 13:34:09[0m
+[36m2025-01-06 05:00:47,047 - metadata_manager.py:refresh_metadata - DEBUG - After update: Plane last_updated=2025-01-06 12:00:47[0m
+[36m2025-01-06 05:00:47,049 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:57:47.342344+00:00, age=4d 3h, threshold=1d 22h (base=7d, variation=-5d -2h) -> stale[0m
+[36m2025-01-06 05:00:47,051 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0100403[0m
+[36m2025-01-06 05:00:47,051 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0100403[0m
+[36m2025-01-06 05:00:47,967 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0100403[0m
+[36m2025-01-06 05:00:47,968 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0100403[0m
+[36m2025-01-06 05:00:47,969 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Predator 2 last_updated=2025-01-02 08:57:47.342344[0m
+[36m2025-01-06 05:00:48,036 - metadata_manager.py:refresh_metadata - DEBUG - After update: Predator 2 last_updated=2025-01-06 12:00:48[0m
+[36m2025-01-06 05:00:48,045 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T08:59:52.554281+00:00, age=4d 3h, threshold=1d 17h (base=7d, variation=-5d -7h) -> stale[0m
+[36m2025-01-06 05:00:48,047 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt21837726[0m
+[36m2025-01-06 05:00:48,047 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt21837726[0m
+[36m2025-01-06 05:00:49,567 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt21837726[0m
+[36m2025-01-06 05:00:49,567 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt21837726[0m
+[36m2025-01-06 05:00:49,568 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Redeem Team last_updated=2025-01-02 08:59:52.554281[0m
+[36m2025-01-06 05:00:49,602 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Redeem Team last_updated=2025-01-06 12:00:49[0m
+[36m2025-01-06 05:00:49,603 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:00:11.743398+00:00, age=4d 3h, threshold=4d 2h (base=7d, variation=-3d 2h) -> stale[0m
+[36m2025-01-06 05:00:49,605 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0120804[0m
+[36m2025-01-06 05:00:49,605 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0120804[0m
+[36m2025-01-06 05:00:50,867 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0120804[0m
+[36m2025-01-06 05:00:50,868 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0120804[0m
+[36m2025-01-06 05:00:50,869 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Resident Evil last_updated=2025-01-02 09:00:11.743398[0m
+[36m2025-01-06 05:00:50,898 - metadata_manager.py:refresh_metadata - DEBUG - After update: Resident Evil last_updated=2025-01-06 12:00:50[0m
+[36m2025-01-06 05:00:50,900 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:34:01+00:00, age=2d 4h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 05:00:50,901 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt1663202[0m
+[36m2025-01-06 05:00:50,901 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt1663202[0m
+[36m2025-01-06 05:00:51,548 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt1663202[0m
+[36m2025-01-06 05:00:51,548 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt1663202[0m
+[36m2025-01-06 05:00:51,549 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Revenant last_updated=2025-01-04 07:34:01[0m
+[36m2025-01-06 05:00:51,571 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Revenant last_updated=2025-01-06 12:00:51[0m
+[36m2025-01-06 05:00:51,573 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T13:34:21+00:00, age=1d 22h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 05:00:51,575 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0075148[0m
+[36m2025-01-06 05:00:51,575 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0075148[0m
+[36m2025-01-06 05:00:52,603 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0075148[0m
+[36m2025-01-06 05:00:52,603 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0075148[0m
+[36m2025-01-06 05:00:52,604 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Rocky last_updated=2025-01-04 13:34:21[0m
+[36m2025-01-06 05:00:52,631 - metadata_manager.py:refresh_metadata - DEBUG - After update: Rocky last_updated=2025-01-06 12:00:52[0m
+[36m2025-01-06 05:00:52,635 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:01:51.220965+00:00, age=4d 2h, threshold=2d 3h (base=7d, variation=-5d 3h) -> stale[0m
+[36m2025-01-06 05:00:52,637 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt8337158[0m
+[36m2025-01-06 05:00:52,637 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt8337158[0m
+[36m2025-01-06 05:00:53,511 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt8337158[0m
+[36m2025-01-06 05:00:53,511 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt8337158[0m
+[36m2025-01-06 05:00:53,512 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Rumble last_updated=2025-01-02 09:01:51.220965[0m
+[36m2025-01-06 05:00:53,541 - metadata_manager.py:refresh_metadata - DEBUG - After update: Rumble last_updated=2025-01-06 12:00:53[0m
+[36m2025-01-06 05:00:53,546 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:03:15.242165+00:00, age=4d 2h, threshold=3d 17h (base=7d, variation=-3d -7h) -> stale[0m
+[36m2025-01-06 05:00:53,548 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt14001894[0m
+[36m2025-01-06 05:00:53,548 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt14001894[0m
+[36m2025-01-06 05:00:54,168 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt14001894[0m
+[36m2025-01-06 05:00:54,168 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt14001894[0m
+[36m2025-01-06 05:00:54,170 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Secret Headquarters last_updated=2025-01-02 09:03:15.242165[0m
+[36m2025-01-06 05:00:54,208 - metadata_manager.py:refresh_metadata - DEBUG - After update: Secret Headquarters last_updated=2025-01-06 12:00:54[0m
+[32m2025-01-06 05:00:54,209 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2700/3087 items checked[0m
+[36m2025-01-06 05:00:54,212 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:34:05+00:00, age=2d 4h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 05:00:54,214 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0448115[0m
+[36m2025-01-06 05:00:54,214 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0448115[0m
+[36m2025-01-06 05:00:55,159 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0448115[0m
+[36m2025-01-06 05:00:55,160 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0448115[0m
+[36m2025-01-06 05:00:55,161 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Shazam! last_updated=2025-01-04 07:34:05[0m
+[36m2025-01-06 05:00:55,183 - metadata_manager.py:refresh_metadata - DEBUG - After update: Shazam! last_updated=2025-01-06 12:00:55[0m
+[36m2025-01-06 05:00:55,187 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:05:20.570032+00:00, age=4d 2h, threshold=2d 0h (base=7d, variation=-5d 0h) -> stale[0m
+[36m2025-01-06 05:00:55,189 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0167404[0m
+[36m2025-01-06 05:00:55,189 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0167404[0m
+[36m2025-01-06 05:00:56,060 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0167404[0m
+[36m2025-01-06 05:00:56,061 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0167404[0m
+[36m2025-01-06 05:00:56,062 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Sixth Sense last_updated=2025-01-02 09:05:20.570032[0m
+[36m2025-01-06 05:00:56,093 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Sixth Sense last_updated=2025-01-06 12:00:56[0m
+[36m2025-01-06 05:00:56,096 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:34:09+00:00, age=2d 4h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 05:00:56,097 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt2017020[0m
+[36m2025-01-06 05:00:56,097 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt2017020[0m
+[36m2025-01-06 05:00:57,610 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt2017020[0m
+[36m2025-01-06 05:00:57,610 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt2017020[0m
+[36m2025-01-06 05:00:57,611 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Smurfs 2 last_updated=2025-01-04 07:34:09[0m
+[36m2025-01-06 05:00:57,634 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Smurfs 2 last_updated=2025-01-06 12:00:57[0m
+[36m2025-01-06 05:00:57,635 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:05:56.204806+00:00, age=4d 2h, threshold=3d 14h (base=7d, variation=-3d -10h) -> stale[0m
+[36m2025-01-06 05:00:57,637 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0208092[0m
+[36m2025-01-06 05:00:57,637 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0208092[0m
+[36m2025-01-06 05:00:58,351 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0208092[0m
+[36m2025-01-06 05:00:58,352 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0208092[0m
+[36m2025-01-06 05:00:58,353 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Snatch last_updated=2025-01-02 09:05:56.204806[0m
+[36m2025-01-06 05:00:58,382 - metadata_manager.py:refresh_metadata - DEBUG - After update: Snatch last_updated=2025-01-06 12:00:58[0m
+[36m2025-01-06 05:00:58,390 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:07:53.686058+00:00, age=4d 2h, threshold=1d 16h (base=7d, variation=-5d -8h) -> stale[0m
+[36m2025-01-06 05:00:58,391 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0076759[0m
+[36m2025-01-06 05:00:58,392 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0076759[0m
+[36m2025-01-06 05:00:59,554 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0076759[0m
+[36m2025-01-06 05:00:59,554 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0076759[0m
+[36m2025-01-06 05:00:59,556 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Star Wars last_updated=2025-01-02 09:07:53.686058[0m
+[36m2025-01-06 05:00:59,598 - metadata_manager.py:refresh_metadata - DEBUG - After update: Star Wars last_updated=2025-01-06 12:00:59[0m
+[36m2025-01-06 05:00:59,609 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:09:15.664456+00:00, age=4d 2h, threshold=3d 23h (base=7d, variation=-3d -1h) -> stale[0m
+[36m2025-01-06 05:00:59,612 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0829482[0m
+[36m2025-01-06 05:00:59,612 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0829482[0m
+[36m2025-01-06 05:01:00,638 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0829482[0m
+[36m2025-01-06 05:01:00,638 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0829482[0m
+[36m2025-01-06 05:01:00,639 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Superbad last_updated=2025-01-02 09:09:15.664456[0m
+[36m2025-01-06 05:01:00,677 - metadata_manager.py:refresh_metadata - DEBUG - After update: Superbad last_updated=2025-01-06 12:01:00[0m
+[32m2025-01-06 05:01:00,680 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2800/3087 items checked[0m
+[36m2025-01-06 05:01:00,688 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:34:14+00:00, age=2d 4h, threshold=2d 3h (base=7d, variation=-5d 3h) -> stale[0m
+[36m2025-01-06 05:01:00,690 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0059800[0m
+[36m2025-01-06 05:01:00,691 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0059800[0m
+[36m2025-01-06 05:01:01,797 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0059800[0m
+[36m2025-01-06 05:01:01,797 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0059800[0m
+[36m2025-01-06 05:01:01,798 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Thunderball last_updated=2025-01-04 07:34:14[0m
+[36m2025-01-06 05:01:01,819 - metadata_manager.py:refresh_metadata - DEBUG - After update: Thunderball last_updated=2025-01-06 12:01:01[0m
+[36m2025-01-06 05:01:01,823 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:11:52.206934+00:00, age=4d 2h, threshold=1d 12h (base=7d, variation=-5d -12h) -> stale[0m
+[36m2025-01-06 05:01:01,825 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0114709[0m
+[36m2025-01-06 05:01:01,825 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0114709[0m
+[36m2025-01-06 05:01:02,363 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0114709[0m
+[36m2025-01-06 05:01:02,363 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0114709[0m
+[36m2025-01-06 05:01:02,364 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Toy Story last_updated=2025-01-02 09:11:52.206934[0m
+[36m2025-01-06 05:01:02,394 - metadata_manager.py:refresh_metadata - DEBUG - After update: Toy Story last_updated=2025-01-06 12:01:02[0m
+[36m2025-01-06 05:01:02,397 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T21:43:10+00:00, age=2d 14h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 05:01:02,399 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt11116912[0m
+[36m2025-01-06 05:01:02,400 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt11116912[0m
+[36m2025-01-06 05:01:02,985 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt11116912[0m
+[36m2025-01-06 05:01:02,985 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt11116912[0m
+[36m2025-01-06 05:01:02,986 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Troll last_updated=2025-01-03 21:43:10[0m
+[36m2025-01-06 05:01:03,005 - metadata_manager.py:refresh_metadata - DEBUG - After update: Troll last_updated=2025-01-06 12:01:03[0m
+[36m2025-01-06 05:01:03,009 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:13:16.449271+00:00, age=4d 2h, threshold=3d 18h (base=7d, variation=-3d -6h) -> stale[0m
+[36m2025-01-06 05:01:03,011 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0217869[0m
+[36m2025-01-06 05:01:03,011 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0217869[0m
+[36m2025-01-06 05:01:04,134 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0217869[0m
+[36m2025-01-06 05:01:04,134 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0217869[0m
+[36m2025-01-06 05:01:04,135 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Unbreakable last_updated=2025-01-02 09:13:16.449271[0m
+[36m2025-01-06 05:01:04,165 - metadata_manager.py:refresh_metadata - DEBUG - After update: Unbreakable last_updated=2025-01-06 12:01:04[0m
+[36m2025-01-06 05:01:04,167 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T07:34:18+00:00, age=2d 4h, threshold=2d 4h (base=7d, variation=-5d 4h) -> stale[0m
+[36m2025-01-06 05:01:04,168 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt5774060[0m
+[36m2025-01-06 05:01:04,169 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt5774060[0m
+[36m2025-01-06 05:01:05,042 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt5774060[0m
+[36m2025-01-06 05:01:05,042 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt5774060[0m
+[36m2025-01-06 05:01:05,043 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Underwater last_updated=2025-01-04 07:34:18[0m
+[36m2025-01-06 05:01:05,066 - metadata_manager.py:refresh_metadata - DEBUG - After update: Underwater last_updated=2025-01-06 12:01:05[0m
+[36m2025-01-06 05:01:05,072 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:14:41.447680+00:00, age=4d 2h, threshold=2d 12h (base=7d, variation=-5d 12h) -> stale[0m
+[36m2025-01-06 05:01:05,073 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0803096[0m
+[36m2025-01-06 05:01:05,074 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0803096[0m
+[36m2025-01-06 05:01:05,796 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0803096[0m
+[36m2025-01-06 05:01:05,796 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0803096[0m
+[36m2025-01-06 05:01:05,797 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Warcraft last_updated=2025-01-02 09:14:41.447680[0m
+[36m2025-01-06 05:01:05,827 - metadata_manager.py:refresh_metadata - DEBUG - After update: Warcraft last_updated=2025-01-06 12:01:05[0m
+[32m2025-01-06 05:01:05,828 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 2900/3087 items checked[0m
+[36m2025-01-06 05:01:05,829 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T19:34:42+00:00, age=1d 16h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 05:01:05,831 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt15318872[0m
+[36m2025-01-06 05:01:05,831 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt15318872[0m
+[36m2025-01-06 05:01:06,721 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt15318872[0m
+[36m2025-01-06 05:01:06,721 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt15318872[0m
+[36m2025-01-06 05:01:06,722 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Werewolf by Night last_updated=2025-01-04 19:34:42[0m
+[36m2025-01-06 05:01:06,746 - metadata_manager.py:refresh_metadata - DEBUG - After update: Werewolf by Night last_updated=2025-01-06 12:01:06[0m
+[36m2025-01-06 05:01:06,749 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:15:36.372906+00:00, age=4d 2h, threshold=3d 18h (base=7d, variation=-3d -6h) -> stale[0m
+[36m2025-01-06 05:01:06,750 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt0067992[0m
+[36m2025-01-06 05:01:06,751 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt0067992[0m
+[36m2025-01-06 05:01:07,686 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt0067992[0m
+[36m2025-01-06 05:01:07,687 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt0067992[0m
+[36m2025-01-06 05:01:07,688 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Willy Wonka & the Chocolate Factory last_updated=2025-01-02 09:15:36.372906[0m
+[36m2025-01-06 05:01:07,716 - metadata_manager.py:refresh_metadata - DEBUG - After update: Willy Wonka & the Chocolate Factory last_updated=2025-01-06 12:01:07[0m
+[36m2025-01-06 05:01:07,721 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:17:00.928034+00:00, age=4d 2h, threshold=1d 23h (base=7d, variation=-5d -1h) -> stale[0m
+[36m2025-01-06 05:01:07,723 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt8079248[0m
+[36m2025-01-06 05:01:07,723 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt8079248[0m
+[36m2025-01-06 05:01:08,301 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt8079248[0m
+[36m2025-01-06 05:01:08,302 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt8079248[0m
+[36m2025-01-06 05:01:08,303 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Yesterday last_updated=2025-01-02 09:17:00.928034[0m
+[36m2025-01-06 05:01:08,332 - metadata_manager.py:refresh_metadata - DEBUG - After update: Yesterday last_updated=2025-01-06 12:01:08[0m
+[36m2025-01-06 05:01:08,333 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-02T09:17:04.087683+00:00, age=4d 2h, threshold=1d 22h (base=7d, variation=-5d -2h) -> stale[0m
+[36m2025-01-06 05:01:08,335 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt15451150[0m
+[36m2025-01-06 05:01:08,335 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt15451150[0m
+[36m2025-01-06 05:01:09,680 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt15451150[0m
+[36m2025-01-06 05:01:09,680 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt15451150[0m
+[36m2025-01-06 05:01:09,681 - metadata_manager.py:refresh_metadata - DEBUG - Before update: You Can't Run Forever last_updated=2025-01-02 09:17:04.087683[0m
+[36m2025-01-06 05:01:09,710 - metadata_manager.py:refresh_metadata - DEBUG - After update: You Can't Run Forever last_updated=2025-01-06 12:01:09[0m
+[36m2025-01-06 05:01:09,716 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-03T16:14:54.341238+00:00, age=2d 19h, threshold=2d 9h (base=7d, variation=-5d 9h) -> stale[0m
+[36m2025-01-06 05:01:09,717 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt29536384[0m
+[36m2025-01-06 05:01:09,717 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt29536384[0m
+[36m2025-01-06 05:01:10,652 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt29536384[0m
+[36m2025-01-06 05:01:10,652 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt29536384[0m
+[36m2025-01-06 05:01:10,654 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Lake George last_updated=2025-01-03 16:14:54.341238[0m
+[36m2025-01-06 05:01:10,704 - metadata_manager.py:refresh_metadata - DEBUG - After update: Lake George last_updated=2025-01-06 12:01:10[0m
+[32m2025-01-06 05:01:10,716 - background_jobs.py:refresh_stale_metadata - INFO - Progress: 3000/3087 items checked[0m
+[36m2025-01-06 05:01:10,729 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T08:34:34.870996+00:00, age=2d 3h, threshold=1d 20h (base=7d, variation=-5d -4h) -> stale[0m
+[36m2025-01-06 05:01:10,731 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt19854762[0m
+[36m2025-01-06 05:01:10,732 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt19854762[0m
+[36m2025-01-06 05:01:11,007 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt19854762[0m
+[36m2025-01-06 05:01:11,007 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt19854762[0m
+[36m2025-01-06 05:01:11,008 - metadata_manager.py:refresh_metadata - DEBUG - Before update: Hijack last_updated=2025-01-04 08:34:34.870996[0m
+[36m2025-01-06 05:01:11,037 - metadata_manager.py:refresh_metadata - DEBUG - After update: Hijack last_updated=2025-01-06 12:01:11[0m
+[36m2025-01-06 05:01:11,041 - metadata_manager.py:is_metadata_stale - DEBUG - Staleness check: last_updated=2025-01-04T15:35:46.640369+00:00, age=1d 20h, threshold=1d 14h (base=7d, variation=-5d -10h) -> stale[0m
+[36m2025-01-06 05:01:11,043 - metadata_manager.py:refresh_metadata - DEBUG - Refreshing metadata for tt26656917[0m
+[36m2025-01-06 05:01:11,043 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Refreshing metadata for tt26656917[0m
+[36m2025-01-06 05:01:11,367 - trakt_metadata.py:refresh_metadata - DEBUG - TraktMetadata: Successfully got metadata for tt26656917[0m
+[36m2025-01-06 05:01:11,367 - metadata_manager.py:refresh_metadata - DEBUG - Got new metadata for tt26656917[0m
+[36m2025-01-06 05:01:11,368 - metadata_manager.py:refresh_metadata - DEBUG - Before update: The Agency last_updated=2025-01-04 15:35:46.640369[0m
+[36m2025-01-06 05:01:11,402 - metadata_manager.py:refresh_metadata - DEBUG - After update: The Agency last_updated=2025-01-06 12:01:11[0m
+[32m2025-01-06 05:01:11,412 - background_jobs.py:refresh_stale_metadata - INFO - Metadata refresh complete: 152/152 stale items refreshed (3087 total items checked)[0m
+127.0.0.1 - - [06/Jan/2025 05:02:45] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:04:10] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:05:10] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:05:38] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:05:38] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:15:22] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:16:27] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:17:29] "GET /check_trakt_auth HTTP/1.1" 200 -
+[36m2025-01-06 05:17:36,562 - site_routes.py:home - DEBUG - Current staleness_threshold: 7[0m
+[36m2025-01-06 05:17:36,562 - site_routes.py:home - DEBUG - Stats: {'total_providers': 1, 'active_providers': 0, 'total_items': 3087, 'total_metadata': 71156, 'last_update': '2025-01-06 12:01:11', 'staleness_threshold': '7 days'}[0m
+[36m2025-01-06 05:17:36,636 - site_routes.py:inject_stats - DEBUG - Injected stats: {'total_items': 3087, 'total_metadata': 71156, 'providers': {'Trakt': 47228, 'trakt': 23928}, 'last_update': datetime.datetime(2025, 1, 6, 12, 1, 11), 'staleness_threshold': '7 days'}[0m
+172.17.0.7 - - [06/Jan/2025 05:17:36] "GET / HTTP/1.1" 200 -
+172.17.0.7 - - [06/Jan/2025 05:17:37] "[33mGET /wp-includes/ID3/license.txt HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:37] "[33mGET /feed/ HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:38] "[33mGET /xmlrpc.php?rsd HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:38] "[33mGET /blog/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:39] "[33mGET /web/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:39] "[33mGET /wordpress/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:39] "[33mGET /wp/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:40] "[33mGET /2020/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:40] "[33mGET /2019/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:41] "[33mGET /2021/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:41] "[33mGET /shop/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:42] "[33mGET /wp1/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:42] "[33mGET /test/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:43] "[33mGET /site/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+172.17.0.7 - - [06/Jan/2025 05:17:43] "[33mGET /cms/wp-includes/wlwmanifest.xml HTTP/1.1[0m" 404 -
+127.0.0.1 - - [06/Jan/2025 05:18:35] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:19:37] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:21:20] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:22:40] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:24:04] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:25:31] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:26:32] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:27:49] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:29:10] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:32:10] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:33:15] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:34:17] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:35:31] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:36:32] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:37:42] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:38:43] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:39:44] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:40:45] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:41:46] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:42:46] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:43:47] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:44:47] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:45:48] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:47:18] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:48:19] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:49:20] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:50:21] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:51:21] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:52:27] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:53:27] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:54:29] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:55:31] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:56:33] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:57:34] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:58:36] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 05:59:37] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:00:39] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:01:40] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:02:40] "GET /check_trakt_auth HTTP/1.1" 200 -
+[36m2025-01-06 06:03:40,032 - site_routes.py:home - DEBUG - Current staleness_threshold: 7[0m
+[36m2025-01-06 06:03:40,038 - site_routes.py:home - DEBUG - Stats: {'total_providers': 1, 'active_providers': 0, 'total_items': 3087, 'total_metadata': 71118, 'last_update': '2025-01-06 13:02:17', 'staleness_threshold': '7 days'}[0m
+[36m2025-01-06 06:03:40,111 - site_routes.py:inject_stats - DEBUG - Injected stats: {'total_items': 3087, 'total_metadata': 71118, 'providers': {'Trakt': 47190, 'trakt': 23928}, 'last_update': datetime.datetime(2025, 1, 6, 13, 2, 17), 'staleness_threshold': '7 days'}[0m
+172.17.0.7 - - [06/Jan/2025 06:03:40] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:05:42] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:06:33] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:07:33] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:08:33] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:09:34] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:10:35] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:11:37] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:12:38] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:12:47] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:13:48] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:14:45] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:15:46] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:16:43] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:17:44] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:18:45] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:18:57] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:19:58] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:20:58] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:21:20] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:21:52] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:22:54] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:24:27] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:25:54] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:27:41] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:28:34] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:34:35] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:38:40] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:40:12] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:40:30] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:43:09] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:45:54] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:47:41] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:48:52] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:50:29] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:51:30] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:52:31] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:53:32] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:54:32] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:55:33] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:56:33] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:57:34] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:58:20] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 06:59:21] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:00:21] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:01:22] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:01:52] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:02:53] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:03:53] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:04:20] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:05:26] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:06:29] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:07:30] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:08:31] "GET /check_trakt_auth HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jan/2025 07:09:32] "GET /check_trakt_auth HTTP/1.1" 200 -
