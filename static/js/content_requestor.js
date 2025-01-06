@@ -1,10 +1,61 @@
 let selectedContent = null;
 let availableVersions = [];
 
-// Fetch available versions when the page loads
+// Initialize everything when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize Loading object
+    window.Loading.init();
+    
+    // Initialize event listeners
+    initializeEventListeners();
+    
+    // Fetch versions
     fetchVersions();
 });
+
+function initializeEventListeners() {
+    // Add form submit event listener
+    const searchForm = document.getElementById('search-form');
+    if (searchForm) {
+        searchForm.addEventListener('submit', searchMedia);
+    }
+
+    // Event listeners for modal buttons
+    const confirmVersionsBtn = document.getElementById('confirmVersions');
+    if (confirmVersionsBtn) {
+        confirmVersionsBtn.addEventListener('click', () => {
+            const selectedVersions = Array.from(document.querySelectorAll('input[name="versions"]:checked'))
+                .map(checkbox => checkbox.value);
+            
+            if (selectedVersions.length === 0) {
+                window.showPopup({
+                    type: window.POPUP_TYPES.WARNING,
+                    title: 'Warning',
+                    message: 'Please select at least one version'
+                });
+                return;
+            }
+            
+            requestContent(selectedContent, selectedVersions);
+            document.getElementById('versionModal').style.display = 'none';
+        });
+    }
+
+    const cancelVersionsBtn = document.getElementById('cancelVersions');
+    if (cancelVersionsBtn) {
+        cancelVersionsBtn.addEventListener('click', () => {
+            document.getElementById('versionModal').style.display = 'none';
+        });
+    }
+
+    // Close modal when clicking outside
+    window.addEventListener('click', (event) => {
+        const modal = document.getElementById('versionModal');
+        if (event.target === modal) {
+            modal.style.display = 'none';
+        }
+    });
+}
 
 async function fetchVersions() {
     try {
@@ -15,8 +66,8 @@ async function fetchVersions() {
         }
     } catch (error) {
         console.error('Error fetching versions:', error);
-        showPopup({
-            type: 'error',
+        window.showPopup({
+            type: window.POPUP_TYPES.ERROR,
             title: 'Error',
             message: 'Error fetching versions'
         });
@@ -29,7 +80,7 @@ async function searchMedia(event) {
     
     if (!searchTerm) return;
 
-    Loading.show();
+    window.Loading.show();
     
     try {
         const response = await fetch('/content/search', {
@@ -44,13 +95,13 @@ async function searchMedia(event) {
         displayResults(results);
     } catch (error) {
         console.error('Error searching:', error);
-        showPopup({
-            type: 'error',
+        window.showPopup({
+            type: window.POPUP_TYPES.ERROR,
             title: 'Error',
             message: 'Error searching for content'
         });
     } finally {
-        Loading.hide();
+        window.Loading.hide();
     }
 }
 
@@ -108,6 +159,7 @@ function showVersionModal(content) {
 }
 
 async function requestContent(content, selectedVersions) {
+    window.Loading.show();
     try {
         const response = await fetch('/content/request', {
             method: 'POST',
@@ -122,58 +174,27 @@ async function requestContent(content, selectedVersions) {
 
         const result = await response.json();
         if (result.success) {
-            showPopup({
-                type: 'success',
+            window.showPopup({
+                type: window.POPUP_TYPES.SUCCESS,
                 title: 'Success',
                 message: `Successfully requested ${content.title}`,
                 autoClose: 3000
             });
         } else {
-            showPopup({
-                type: 'error',
+            window.showPopup({
+                type: window.POPUP_TYPES.ERROR,
                 title: 'Error',
                 message: result.error || 'Error requesting content'
             });
         }
     } catch (error) {
         console.error('Error requesting content:', error);
-        showPopup({
-            type: 'error',
+        window.showPopup({
+            type: window.POPUP_TYPES.ERROR,
             title: 'Error',
             message: 'Error requesting content'
         });
+    } finally {
+        window.Loading.hide();
     }
-}
-
-// Event listeners for modal buttons
-document.getElementById('confirmVersions').addEventListener('click', () => {
-    const selectedVersions = Array.from(document.querySelectorAll('input[name="versions"]:checked'))
-        .map(checkbox => checkbox.value);
-    
-    if (selectedVersions.length === 0) {
-        showPopup({
-            type: 'warning',
-            title: 'Warning',
-            message: 'Please select at least one version'
-        });
-        return;
-    }
-    
-    requestContent(selectedContent, selectedVersions);
-    document.getElementById('versionModal').style.display = 'none';
-});
-
-document.getElementById('cancelVersions').addEventListener('click', () => {
-    document.getElementById('versionModal').style.display = 'none';
-});
-
-// Close modal when clicking outside
-window.addEventListener('click', (event) => {
-    const modal = document.getElementById('versionModal');
-    if (event.target === modal) {
-        modal.style.display = 'none';
-    }
-});
-
-// Add form submit event listener
-document.getElementById('search-form').addEventListener('submit', searchMedia); 
+} 

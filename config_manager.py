@@ -88,6 +88,7 @@ def save_config(config):
     lock_file = acquire_lock()
     try:
         config = clean_notifications(config)
+        config = trim_trailing_slashes(config)
         
         # Ensure only valid top-level keys are present
         valid_keys = set(SETTINGS_SCHEMA.keys())
@@ -414,4 +415,12 @@ def update_scraper(scraper_id, scraper_config):
 def clean_notifications(config):
     if 'Notifications' in config:
         config['Notifications'] = {k: v for k, v in config['Notifications'].items() if v is not None}
+    return config
+
+def trim_trailing_slashes(config):
+    """Trim trailing slashes from file paths in the Debug section."""
+    if 'Debug' in config:
+        for key in ['original_files_path', 'symlinked_files_path']:
+            if key in config['Debug'] and isinstance(config['Debug'][key], str):
+                config['Debug'][key] = config['Debug'][key].rstrip('/')
     return config

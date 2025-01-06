@@ -242,7 +242,7 @@ class TorrentProcessor:
                 
                 # Check cache status
                 logging.debug(f"Result {idx}: Checking cache status")
-                is_cached = self.check_cache(magnet if magnet else original_link, temp_file)
+                is_cached = self.debrid_provider.is_cached(magnet if magnet else original_link, temp_file)
                     
                 # Skip if there was an error checking cache
                 if is_cached is None:
@@ -285,11 +285,31 @@ class TorrentProcessor:
                         logging.error(f"Error checking download limits: {str(e)}")
                         continue
                 
-                # Try to add it
-                logging.debug(f"Result {idx}: Attempting to add torrent to debrid service")
-                info = self.add_to_account(original_link)
+                # For cached torrents, try to get the existing torrent ID
+                info = None
+                if is_cached:
+                    hash_value = None
+                    if magnet:
+                        from debrid.common import extract_hash_from_magnet
+                        hash_value = extract_hash_from_magnet(magnet)
+                    elif temp_file:
+                        from debrid.common import extract_hash_from_file
+                        hash_value = extract_hash_from_file(temp_file)
+                        
+                    if hash_value:
+                        torrent_id = self.debrid_provider.get_cached_torrent_id(hash_value)
+                        if torrent_id:
+                            info = self.debrid_provider.get_torrent_info(torrent_id)
+                            if info:
+                                logging.debug(f"Result {idx}: Retrieved info for cached torrent {torrent_id}")
+                
+                # If we don't have info yet (uncached or couldn't get cached info), add the torrent
+                if not info:
+                    logging.debug(f"Result {idx}: Attempting to add torrent to debrid service")
+                    info = self.debrid_provider.add_torrent(original_link)
+                
                 if info:
-                    logging.debug(f"Result {idx}: Successfully added torrent (ID: {info.get('id')})")
+                    logging.debug(f"Result {idx}: Successfully processed torrent")
                     logging.debug(f"Result {idx}: Torrent info - Size: {info.get('bytes', 0)} bytes, Files: {len(info.get('files', []))} files")
                     
                     # Only proceed if the torrent has files
