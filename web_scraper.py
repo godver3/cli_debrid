@@ -38,12 +38,17 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
         data = response.json()
 
         if data:
-            # Sort results based on year match and title similarity
+            # Sort results based on multiple criteria
             sorted_results = sorted(
                 data,
                 key=lambda x: (
+                    # Exact title match gets highest priority
+                    x['movie' if x['type'] == 'movie' else 'show']['title'].lower() == search_term.lower(),
+                    # Year match gets second priority
                     (str(x['movie' if x['type'] == 'movie' else 'show']['year']) == str(year) if year else False),
+                    # Title similarity gets third priority
                     fuzz.ratio(search_term.lower(), x['movie' if x['type'] == 'movie' else 'show']['title'].lower()),
+                    # Number of votes (popularity) gets fourth priority
                     x['movie' if x['type'] == 'movie' else 'show'].get('votes', 0)
                 ),
                 reverse=True
@@ -55,6 +60,10 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                 media_type = result['type']
                 item = result['movie' if media_type == 'movie' else 'show']
                 
+                # Skip items with no TMDB ID
+                if not item['ids'].get('tmdb'):
+                    continue
+
                 tmdb_id = item['ids']['tmdb']
                 cached_poster_url = get_cached_poster_url(tmdb_id, media_type)
                 cached_media_meta = get_cached_media_meta(tmdb_id, media_type)
@@ -65,14 +74,17 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                 else:
                     logging.info(f"Fetching data for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
                     media_meta = get_media_meta(tmdb_id, media_type)
-                    if media_meta:
+                    if media_meta and media_meta[0]:  # Only proceed if we have a poster
                         poster_path = media_meta[0]
                         cache_poster_url(tmdb_id, media_type, poster_path)
                         cache_media_meta(tmdb_id, media_type, media_meta)
                         logging.info(f"Cached poster and metadata for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
                     else:
-                        poster_path = None
-                        media_meta = (None, '', [], 0, '')
+                        continue  # Skip items without posters
+
+                # Skip items with low vote counts or ratings
+                if media_meta[3] < 5.0 or item.get('votes', 0) < 100:
+                    continue
 
                 converted_results.append({
                     'mediaType': media_type,
@@ -83,10 +95,14 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                     'overview': media_meta[1],
                     'genres': media_meta[2],
                     'voteAverage': media_meta[3],
-                    'backdropPath': media_meta[4]
+                    'backdropPath': media_meta[4],
+                    'votes': item.get('votes', 0)
                 })
+
+            # Limit to top 20 results
+            converted_results = converted_results[:20]
             
-            logging.info(f"Sorted results: {converted_results[:5]}")  # Log top 5 results for debugging
+            logging.info(f"Returning {len(converted_results)} filtered results")
             return converted_results
         else:
             logging.warning(f"No results found for search term: {search_term}")
