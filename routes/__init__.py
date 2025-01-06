@@ -24,6 +24,7 @@ from .program_operation_routes import program_operation_bp
 from .video_routes import video_routes
 from api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from extensions import app
+from .content_requestor_routes import content_requestor_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -132,6 +133,7 @@ def register_blueprints(app):
         (tooltip_bp, '/tooltip'),
         (over_usage_bp, '/over_usage'),
         (video_routes, '/video'),
+        (content_requestor_bp, '/content'),
         (root_bp, '/'),
     ]
     
