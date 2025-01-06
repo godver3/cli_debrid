@@ -24,7 +24,7 @@ import pickle
 from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
 import ntplib
 from content_checkers.trakt import check_trakt_early_releases
-from debrid.base import TooManyDownloadsError
+from debrid.base import TooManyDownloadsError, RateLimitError
 import tempfile
 
 queue_logger = logging.getLogger('queue_logger')
@@ -287,7 +287,6 @@ class ProgramRunner:
 
     def safe_process_queue(self, queue_name: str):
         try:
-            # logging.info(f"Starting to process {queue_name} queue")
             start_time = time.time()
             
             if not hasattr(self, 'queue_manager') or not hasattr(self.queue_manager, 'queues'):
@@ -307,8 +306,6 @@ class ProgramRunner:
             process_method = getattr(self.queue_manager, method_name)
             
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            # if queue_contents:
-                # logging.debug(f"{queue_name} queue contains {len(queue_contents)} items")
             
             if self.queue_manager.is_paused():
                 logging.warning(f"Queue processing is paused. Skipping {queue_name} queue.")
@@ -320,13 +317,14 @@ class ProgramRunner:
                 logging.warning("Pausing queue due to too many active downloads on Real-Debrid")
                 self.queue_manager.pause_queue()
                 return None
+            except RateLimitError:
+                logging.warning("Rate limit exceeded on Debrid API")
+                self.handle_rate_limit()
+                return None
             
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            # if queue_contents:
-                # logging.debug(f"{queue_name} queue contains {len(queue_contents)} items after processing")
             
             duration = time.time() - start_time
-            # logging.info(f"Finished processing {queue_name} queue in {duration:.2f} seconds")
             
             return result
         
@@ -661,6 +659,21 @@ class ProgramRunner:
         # Force refresh content sources
         self.get_content_sources(force_refresh=True)
         logging.info("ProgramRunner reinitialized successfully")
+
+    def handle_rate_limit(self):
+        """Handle rate limit by pausing the queue for 30 minutes"""
+        logging.warning("Rate limit exceeded. Pausing queue for 30 minutes.")
+        self.pause_queue()
+        
+        # Schedule queue resume after 30 minutes
+        resume_time = datetime.now() + timedelta(minutes=30)
+        logging.info(f"Queue will resume at {resume_time}")
+        
+        # Sleep for 30 minutes
+        time.sleep(1800)  # 30 minutes in seconds
+        
+        logging.info("Rate limit pause period complete. Resuming queue.")
+        self.resume_queue()
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

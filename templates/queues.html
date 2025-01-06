@@ -228,19 +228,15 @@
                 // Group items by torrent_id
                 const groupedDownloading = {};
                 downloading.forEach(item => {
-                    const torrentId = item.torrent_id || 'unknown';
+                    const torrentId = item.filled_by_torrent_id || 'unknown';
                     if (!groupedDownloading[torrentId]) {
                         groupedDownloading[torrentId] = {
                             items: [],
-                            progress: item.progress,
-                            state: item.state
+                            progress: item.progress || 0,
+                            state: item.state || 'unknown'
                         };
                     }
                     groupedDownloading[torrentId].items.push(item);
-                    // Update progress if this item has higher progress
-                    if (item.progress > groupedDownloading[torrentId].progress) {
-                        groupedDownloading[torrentId].progress = item.progress;
-                    }
                 });
 
                 // Generate content for each group
@@ -258,7 +254,7 @@
                                      aria-valuemin="0" 
                                      aria-valuemax="100">
                                 </div>
-                                <div class="progress-text">${group.progress}% - ${group.state || 'downloading'}</div>
+                                <div class="progress-text">${group.progress}% - ${group.state}</div>
                             </div>
                         </div>
                     `;
@@ -416,7 +412,28 @@
         const loadingIndicator = document.getElementById('loading-indicator');
         
         fetch('/queues/api/queue_contents')
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        // Rate limit hit - wait longer before next request
+                        const retryAfter = response.headers.get('Retry-After') || 5;
+                        console.log(`Rate limit hit, waiting ${retryAfter} seconds before next request`);
+                        // Clear existing interval and set a new one with longer delay
+                        if (window.queueUpdateInterval) {
+                            clearInterval(window.queueUpdateInterval);
+                        }
+                        window.queueUpdateInterval = setInterval(updateQueueContents, (parseInt(retryAfter) + 1) * 1000);
+                        throw new Error('Rate limit exceeded');
+                    }
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                // Reset interval to normal if request succeeds
+                if (window.queueUpdateInterval) {
+                    clearInterval(window.queueUpdateInterval);
+                }
+                window.queueUpdateInterval = setInterval(updateQueueContents, 5000);
+                return response.json();
+            })
             .then(data => {
                 // Hide loading indicator after first response
                 if (!hasReceivedFirstResponse) {
@@ -482,14 +499,26 @@
                 if (!hasReceivedFirstResponse) {
                     loadingIndicator.innerHTML = '<p class="text-danger">Error loading queue data. Please refresh the page.</p>';
                 }
+                // If it's not a rate limit error, increase the interval with exponential backoff
+                if (!error.message.includes('Rate limit exceeded')) {
+                    const currentInterval = window.queueUpdateInterval ? 
+                        parseInt(window.queueUpdateInterval._idleTimeout) : 5000;
+                    const newInterval = Math.min(currentInterval * 2, 30000); // Max 30 seconds
+                    
+                    if (window.queueUpdateInterval) {
+                        clearInterval(window.queueUpdateInterval);
+                    }
+                    console.log(`Error occurred, increasing polling interval to ${newInterval}ms`);
+                    window.queueUpdateInterval = setInterval(updateQueueContents, newInterval);
+                }
             });
     }
 
     // Initial update
     document.addEventListener('DOMContentLoaded', function() {
         updateQueueContents();
-        // Set interval for refreshing after initial load
-        setInterval(updateQueueContents, 5000);  // Refresh every 5 seconds
+        // Store the interval ID so we can modify it later
+        window.queueUpdateInterval = setInterval(updateQueueContents, 5000);  // Start with 5 second refresh
     });
 
     console.log('Queue script loaded and running');

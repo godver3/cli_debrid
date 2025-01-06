@@ -3,7 +3,7 @@ import logging
 from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from ..base import ProviderUnavailableError
+from ..base import ProviderUnavailableError, RateLimitError
 from .exceptions import RealDebridAPIError, RealDebridAuthError
 from settings import get_setting
 from api_tracker import api
@@ -53,6 +53,7 @@ def make_request(
         RealDebridAPIError: If the API returns an error
         RealDebridAuthError: If authentication fails
         ProviderUnavailableError: If the service is unavailable
+        RateLimitError: If rate limit is exceeded
     """
     url = f"https://api.real-debrid.com/rest/1.0{endpoint}"
     headers = {'Authorization': f'Bearer {api_key}'}
@@ -77,7 +78,7 @@ def make_request(
             elif response.status_code == 403:
                 raise RealDebridAuthError("Access denied")
             elif response.status_code == 429:
-                raise RealDebridAPIError("Rate limit exceeded")
+                raise RateLimitError("Rate limit exceeded")
             elif response.status_code == 404:
                 # Check if this is a duplicate torrent add attempt
                 if method == 'POST' and endpoint == '/torrents/addMagnet':
