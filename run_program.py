@@ -313,10 +313,10 @@ class ProgramRunner:
             
             try:
                 result = process_method()
-            except TooManyDownloadsError:
-                logging.warning("Pausing queue due to too many active downloads on Real-Debrid")
-                self.queue_manager.pause_queue()
-                return None
+            #except TooManyDownloadsError:
+            #    logging.warning("Pausing queue due to too many active downloads on Debrid")
+            #    self.queue_manager.pause_queue()
+            #    return None
             except RateLimitError:
                 logging.warning("Rate limit exceeded on Debrid API")
                 self.handle_rate_limit()

@@ -45,6 +45,10 @@
         padding: 10px;
         background-color: #333;
         border-bottom: 1px solid #555;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
     }
 
     #log-level-filter {
@@ -192,6 +196,75 @@
         z-index: 1000;
         font-size: 0.3em;
     }
+
+    #share-logs-btn {
+        padding: 5px 10px;
+        background-color: #2ecc71;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        min-width: 100px;
+        position: relative;
+    }
+
+    #share-logs-btn:hover {
+        background-color: #27ae60;
+    }
+
+    #share-logs-btn:disabled {
+        background-color: #95a5a6;
+        cursor: not-allowed;
+    }
+
+    .share-progress {
+        position: absolute;
+        bottom: -2px;
+        left: 0;
+        height: 2px;
+        background-color: #3498db;
+        transition: width 0.3s ease-in-out;
+    }
+
+    #share-url {
+        color: #3498db;
+        text-decoration: none;
+        font-family: monospace;
+        padding: 5px 10px;
+        background-color: #2c3e50;
+        border-radius: 3px;
+        display: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 300px;
+    }
+
+    #share-url:hover {
+        background-color: #34495e;
+        text-decoration: underline;
+    }
+
+    #copy-url-btn {
+        background: none;
+        border: none;
+        color: #3498db;
+        cursor: pointer;
+        padding: 5px;
+        display: none;
+        transition: color 0.2s;
+    }
+
+    #copy-url-btn:hover {
+        color: #2980b9;
+    }
+
+    #copy-url-btn svg {
+        width: 16px;
+        height: 16px;
+        vertical-align: middle;
+    }
 </style>
 
 <div class="log-container">
@@ -206,6 +279,16 @@
             <option value="critical">Critical</option>
         </select>
         <input type="text" id="log-search" placeholder="Search logs...">
+        <button id="share-logs-btn" title="Share logs via transfer.sh">
+            Share Logs
+            <div class="share-progress" style="width: 0%"></div>
+        </button>
+        <a id="share-url" href="#" target="_blank" title="Click to open shared logs"></a>
+        <button id="copy-url-btn" title="Copy URL to clipboard">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+            </svg>
+        </button>
     </div>
     <div id="log-entries">
     {% for log in logs %}
@@ -225,49 +308,78 @@ let lastLogTimestamp = '';
 let currentLevel = 'all';
 let isPaused = false;
 let isScrolledToBottom = true;
-const MAX_LOGS = 500; // Adjusted to 500 as per your requirement
+const MAX_LOGS = 500;
 
 function checkScrollPosition() {
     const logEntries = document.getElementById('log-entries');
     const previousScrolledToBottom = isScrolledToBottom;
-    isScrolledToBottom = logEntries.scrollHeight - logEntries.clientHeight <= logEntries.scrollTop + 1;
     
-    if (!previousScrolledToBottom && isScrolledToBottom) {
-        isPaused = false;
-        document.getElementById('pause-indicator').style.display = 'none';
-        updateLogs(); // Fetch any logs we missed while paused
-    } else if (previousScrolledToBottom && !isScrolledToBottom) {
-        isPaused = true;
-        document.getElementById('pause-indicator').style.display = 'block';
-    }
+    // Increase tolerance for mobile devices
+    const tolerance = window.innerWidth <= 768 ? 50 : 2;
+    
+    // Add debounce to avoid rapid changes
+    clearTimeout(window.scrollTimeout);
+    window.scrollTimeout = setTimeout(() => {
+        isScrolledToBottom = Math.abs(logEntries.scrollHeight - logEntries.clientHeight - logEntries.scrollTop) < tolerance;
+        
+        // Only update pause state if we've been in the new position for a moment
+        if (isScrolledToBottom !== previousScrolledToBottom) {
+            // Add a small delay before pausing to prevent accidental pauses
+            clearTimeout(window.pauseTimeout);
+            window.pauseTimeout = setTimeout(() => {
+                isPaused = !isScrolledToBottom;
+                document.getElementById('pause-indicator').style.display = isPaused ? 'block' : 'none';
+            }, 250);  // 250ms delay before actually pausing
+        }
+    }, 100);  // 100ms debounce
 }
 
 function scrollToBottom(element) {
     element.scrollTop = element.scrollHeight;
+    // Force a check of scroll position after scrolling
+    checkScrollPosition();
 }
 
 function updateLogs(forceRefresh = false) {
-    if (isPaused && !forceRefresh) return;
-
-    const logEntries = document.getElementById('log-entries');
     const levelFilter = document.getElementById('log-level-filter').value.toLowerCase();
 
-    // If the level has changed, we need to reset and fetch all logs
+    // If forcing refresh or changing levels, reset and start new stream
     if (levelFilter !== currentLevel || forceRefresh) {
+        const logEntries = document.getElementById('log-entries');
         lastLogTimestamp = '';
         logEntries.innerHTML = ''; // Clear existing logs
         currentLevel = levelFilter;
-    }
+        isPaused = false;
+        document.getElementById('pause-indicator').style.display = 'none';
+        
+        // Close existing EventSource if it exists
+        if (window.logStream) {
+            window.logStream.close();
+            window.logStream = null;
+        }
 
-    const searchTerm = document.getElementById('log-search').value.toLowerCase();
-
-    fetch('/logs/api/logs?lines=' + MAX_LOGS +
-                 (lastLogTimestamp ? `&since=${encodeURIComponent(lastLogTimestamp)}` : '') +
-                 `&level=${encodeURIComponent(levelFilter)}`)
-        .then(response => response.json())
-        .then(data => {
-            if (Array.isArray(data) && data.length > 0) {
+        // Create new EventSource connection
+        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}`);
+        
+        window.logStream.onopen = function() {
+            console.log('Stream connected');
+        };
+        
+        window.logStream.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (!Array.isArray(data)) return;
+                
+                // Skip empty updates
+                if (data.length === 0) return;
+                
+                // Skip if paused
+                if (isPaused) return;
+                
                 const fragment = document.createDocumentFragment();
+                const searchTerm = document.getElementById('log-search').value.toLowerCase();
+                let addedLogs = false;
+                
                 data.forEach(log => {
                     // Check if the log matches the search term
                     const logText = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`.toLowerCase();
@@ -276,27 +388,43 @@ function updateLogs(forceRefresh = false) {
                         div.className = `log-entry ${log.level}`;
                         div.textContent = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`;
                         fragment.appendChild(div);
+                        addedLogs = true;
                     }
                 });
 
-                // Append new logs to the end
-                logEntries.appendChild(fragment);
+                if (addedLogs) {
+                    // Append new logs to the end
+                    const logEntries = document.getElementById('log-entries');
+                    logEntries.appendChild(fragment);
 
-                // Remove old logs if we're over the limit
-                while (logEntries.children.length > MAX_LOGS) {
-                    logEntries.removeChild(logEntries.firstChild);
-                }
+                    // Remove old logs if we're over the limit
+                    while (logEntries.children.length > MAX_LOGS) {
+                        logEntries.removeChild(logEntries.firstChild);
+                    }
 
-                lastLogTimestamp = data[data.length - 1].timestamp;
-                
-                if (isScrolledToBottom) {
-                    scrollToBottom(logEntries);
+                    lastLogTimestamp = data[data.length - 1].timestamp;
+                    
+                    if (isScrolledToBottom) {
+                        scrollToBottom(logEntries);
+                    }
                 }
+            } catch (error) {
+                console.error('Error processing message:', error);
             }
-        })
-        .catch(error => {
-            console.error('Error fetching logs:', error);
-        });
+        };
+        
+        window.logStream.onerror = function(error) {
+            console.error('EventSource failed:', error);
+            // Attempt to reconnect after 2 seconds
+            setTimeout(() => {
+                if (window.logStream) {
+                    window.logStream.close();
+                    window.logStream = null;
+                    updateLogs(true);
+                }
+            }, 2000);
+        };
+    }
 }
 
 function filterLogs() {
@@ -321,20 +449,135 @@ document.getElementById('log-search').addEventListener('input', filterLogs);
 
 function initialLoad() {
     loadSavedLogLevel();
-    updateLogs(true).then(() => {
-        const logEntries = document.getElementById('log-entries');
+    const logEntries = document.getElementById('log-entries');
+    updateLogs(true);
+    // Initial scroll to bottom and check position
+    setTimeout(() => {
         scrollToBottom(logEntries);
-    });
+        checkScrollPosition();
+    }, 100);
     document.body.classList.add('logs-page');
 }
 
 window.addEventListener('load', initialLoad);
 
-// Update logs every 5 seconds, but only if not paused
-setInterval(() => {
-    if (!isPaused) {
-        updateLogs();
+// Add share logs functionality
+document.getElementById('share-logs-btn').addEventListener('click', function() {
+    const button = this;
+    const progressBar = button.querySelector('.share-progress');
+    const shareUrl = document.getElementById('share-url');
+    const copyBtn = document.getElementById('copy-url-btn');
+    button.disabled = true;
+    button.textContent = 'Preparing...';
+    progressBar.style.width = '0%';
+    shareUrl.style.display = 'none';
+    copyBtn.style.display = 'none';
+
+    // Function to format file size
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
     }
-}, 5000);
+
+    fetch('/logs/api/logs/share', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Update share URL link and show copy button
+            shareUrl.href = data.url;
+            shareUrl.textContent = `${data.service} link`;
+            shareUrl.style.display = 'inline-block';
+            copyBtn.style.display = 'inline-block';
+            
+            // Copy URL to clipboard
+            navigator.clipboard.writeText(data.url).then(() => {
+                const sizeInfo = data.originalSize && data.compressedSize ? 
+                    `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
+                const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
+                
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: `Logs shared successfully! URL copied to clipboard.${serviceInfo}${sizeInfo}`,
+                    autoClose: 5000
+                });
+            }).catch(() => {
+                const sizeInfo = data.originalSize && data.compressedSize ? 
+                    `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
+                const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
+                
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: `Logs shared successfully!\nURL: ${data.url}${serviceInfo}${sizeInfo}`,
+                    autoClose: 5000
+                });
+            });
+        } else {
+            throw new Error(data.error || 'Failed to share logs');
+        }
+    })
+    .catch(error => {
+        console.error('Error sharing logs:', error);
+        shareUrl.style.display = 'none';
+        copyBtn.style.display = 'none';
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Error',
+            message: error.message || 'An error occurred while sharing logs',
+            autoClose: 5000
+        });
+    })
+    .finally(() => {
+        button.disabled = false;
+        button.textContent = 'Share Logs';
+        progressBar.style.width = '0%';
+    });
+
+    // Simulate progress until we get a response
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        if (progress < 90) {
+            progress += Math.random() * 10;
+            progressBar.style.width = Math.min(progress, 90) + '%';
+        }
+    }, 500);
+
+    // Clear the interval when the request completes
+    setTimeout(() => {
+        clearInterval(progressInterval);
+        progressBar.style.width = '100%';
+    }, 10000);
+});
+
+// Add copy button functionality
+document.getElementById('copy-url-btn').addEventListener('click', function() {
+    const shareUrl = document.getElementById('share-url');
+    navigator.clipboard.writeText(shareUrl.href).then(() => {
+        showPopup({
+            type: POPUP_TYPES.SUCCESS,
+            title: 'Success',
+            message: 'URL copied to clipboard!',
+            autoClose: 2000
+        });
+    }).catch(() => {
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Error',
+            message: 'Failed to copy URL to clipboard',
+            autoClose: 2000
+        });
+    });
+});
+
+// Add cleanup when leaving the page
+window.addEventListener('beforeunload', () => {
+    if (window.logStream) {
+        window.logStream.close();
+    }
+});
 </script>
 {% endblock %}
