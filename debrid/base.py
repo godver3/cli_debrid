@@ -19,6 +19,10 @@ class TorrentAdditionError(DebridProviderError):
     """Exception raised when there is an error adding a torrent to the debrid service"""
     pass
 
+class RateLimitError(DebridProviderError):
+    """Exception raised when the debrid service rate limit is exceeded"""
+    pass
+
 class DebridProvider(ABC):
     """Abstract base class that defines the interface for debrid providers"""
     

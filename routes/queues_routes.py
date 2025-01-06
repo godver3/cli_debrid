@@ -5,10 +5,14 @@ from queue_manager import QueueManager
 import logging
 from .program_operation_routes import program_is_running, program_is_initializing
 from initialization import get_initialization_status
+from cli_battery.app.limiter import limiter
 
 queues_bp = Blueprint('queues', __name__)
-
 queue_manager = QueueManager()
+
+def init_limiter(app):
+    """Initialize the rate limiter with the Flask app"""
+    limiter.init_app(app)
 
 @queues_bp.route('/')
 @user_required
@@ -38,8 +42,14 @@ def index():
             for item in items:
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
+                item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
                 item['progress'] = item.get('progress', 0)
                 item['state'] = item.get('state', 'unknown')
+                # Use the cached progress information instead of making direct API calls
+                if item.get('filled_by_torrent_id') and item['filled_by_torrent_id'] != 'Unknown':
+                    checking_queue = queue_manager.queues['Checking']
+                    item['progress'] = checking_queue.get_torrent_progress(item['filled_by_torrent_id'])
+                    item['state'] = checking_queue.get_torrent_state(item['filled_by_torrent_id'])
         elif queue_name == 'Sleeping':
             for item in items:
                 item['wake_count'] = queue_manager.get_wake_count(item['id'])
@@ -61,6 +71,7 @@ def index():
 
 @queues_bp.route('/api/queue_contents')
 @user_required
+@limiter.limit("1 per 5 seconds")  # Allow one request every 5 seconds per IP
 def api_queue_contents():
     queue_contents = queue_manager.get_queue_contents()
     program_running = program_is_running()
@@ -109,8 +120,14 @@ def api_queue_contents():
             for item in items:
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
+                item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
                 item['progress'] = item.get('progress', 0)
                 item['state'] = item.get('state', 'unknown')
+                # Use the cached progress information instead of making direct API calls
+                if item.get('filled_by_torrent_id') and item['filled_by_torrent_id'] != 'Unknown':
+                    checking_queue = queue_manager.queues['Checking']
+                    item['progress'] = checking_queue.get_torrent_progress(item['filled_by_torrent_id'])
+                    item['state'] = checking_queue.get_torrent_state(item['filled_by_torrent_id'])
         elif queue_name == 'Sleeping':
             for item in items:
                 if 'wake_count' not in item or item['wake_count'] is None:

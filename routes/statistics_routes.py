@@ -324,17 +324,62 @@ def root():
     # Get active downloads
     downloads_start = time.perf_counter()
     try:
-        count, limit = get_cached_active_downloads()
-        stats['active_downloads'] = count
-        stats['active_downloads_error'] = None
+        provider = get_debrid_provider()
+        count, limit = provider.get_active_downloads()
+        logging.info(f"Got active downloads from provider - count: {count}, limit: {limit}")
+        
+        # Always use the raw limit from provider or fallback to MAX_DOWNLOADS
+        raw_limit = limit if limit else provider.MAX_DOWNLOADS
+        # Calculate adjusted limit (75% of raw limit)
+        adjusted_limit = round(raw_limit)
+        
+        logging.info(f"Calculated limits - raw: {raw_limit}, adjusted: {adjusted_limit}")
+        
+        percentage = round((count / adjusted_limit * 100) if adjusted_limit > 0 else 0)
+        status = 'normal'
+        if percentage >= 90:
+            status = 'critical'
+        elif percentage >= 75:
+            status = 'warning'
+            
+        stats['active_downloads_data'] = {
+            'count': count,
+            'limit': adjusted_limit,
+            'percentage': percentage,
+            'status': status
+        }
+        logging.info(f"Set active_downloads_data: {stats['active_downloads_data']}")
+        
     except TooManyDownloadsError as e:
         logging.warning(f"Too many active downloads: {str(e)}")
-        stats['active_downloads'] = str(e)
-        stats['active_downloads_error'] = 'too_many'
+        # Parse out the counts from the error message
+        import re
+        match = re.search(r'(\d+)/(\d+)', str(e))
+        if match:
+            count, limit = map(int, match.groups())
+            stats['active_downloads_data'] = {
+                'count': count,
+                'limit': limit,
+                'percentage': round((count / limit * 100) if limit > 0 else 0),
+                'status': 'critical'
+            }
+        else:
+            # Fallback to MAX_DOWNLOADS if we can't parse the error
+            stats['active_downloads_data'] = {
+                'count': 0,
+                'limit': round(provider.MAX_DOWNLOADS * 0.75),
+                'percentage': 0,
+                'status': 'error'
+            }
     except Exception as e:
-        logging.error(f"Error getting active downloads: {str(e)}")
-        stats['active_downloads'] = 0
-        stats['active_downloads_error'] = 'error'
+        logging.error(f"Error getting active downloads: {str(e)}", exc_info=True)
+        # Fallback to MAX_DOWNLOADS on error
+        stats['active_downloads_data'] = {
+            'count': 0,
+            'limit': round(provider.MAX_DOWNLOADS * 0.75),
+            'percentage': 0,
+            'status': 'error'
+        }
     logging.info(f"Active downloads check took {(time.perf_counter() - downloads_start)*1000:.2f}ms")
     
     # Get recently aired and upcoming shows
@@ -413,60 +458,6 @@ def root():
     api_start = time.time()
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
     stats['tmdb_api_key_set'] = bool(tmdb_api_key)
-    
-    # Get active downloads data
-    try:
-        count, limit = get_cached_active_downloads()
-        
-        if not count or not limit:
-            stats['active_downloads_data'] = {
-                'count': 0,
-                'limit': 0,
-                'percentage': 0,
-                'status': 'normal'
-            }
-        else:
-            percentage = round((count / limit * 100) if limit > 0 else 0)
-            status = 'normal'
-            if percentage >= 90:
-                status = 'critical'
-            elif percentage >= 75:
-                status = 'warning'
-                
-            stats['active_downloads_data'] = {
-                'count': count,
-                'limit': limit,
-                'percentage': percentage,
-                'status': status
-            }
-    except TooManyDownloadsError as e:
-        # Parse out the counts from the error message
-        import re
-        match = re.search(r'(\d+)/(\d+)', str(e))
-        if match:
-            count, limit = map(int, match.groups())
-            stats['active_downloads_data'] = {
-                'count': count,
-                'limit': limit,
-                'percentage': round((count / limit * 100) if limit > 0 else 0),
-                'status': 'critical'
-            }
-        else:
-            stats['active_downloads_data'] = {
-                'count': 0,
-                'limit': 0,
-                'percentage': 0,
-                'status': 'error'
-            }
-    except Exception as e:
-        logging.error(f"Error getting active downloads: {str(e)}")
-        stats['active_downloads_data'] = {
-            'count': 0,
-            'limit': 0,
-            'percentage': 0,
-            'status': 'error'
-        }
-    logging.info(f"API checks took {(time.perf_counter() - api_start)*1000:.2f}ms")
     
     # Get usage stats data
     usage_start = time.perf_counter()

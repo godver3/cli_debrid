@@ -35,18 +35,28 @@ def add_collected_items(media_items_batch, recent=False):
                     filenames_in_batch.add(filename)
         
         if filenames_in_batch:
-            # Fetch existing items that match filenames in the batch or in upgrading_from
-            placeholders = ', '.join(['?'] * len(filenames_in_batch))
-            query = f'''
-                SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
-                       filled_by_file, collected_at, release_date, upgrading_from
-                FROM media_items
-                WHERE filled_by_file IN ({placeholders})
-                   OR upgrading_from IN ({placeholders})
-            '''
-            params = list(filenames_in_batch) * 2  # Parameters for both placeholders
-            cursor = conn.execute(query, params)
-            for row in cursor:
+            # Process filenames in batches to avoid SQLite variable limit
+            batch_size = 450  # Will become 900 when doubled (under 999 limit)
+            filenames_list = list(filenames_in_batch)
+            existing_items = []
+            
+            for i in range(0, len(filenames_list), batch_size):
+                batch = filenames_list[i:i + batch_size]
+                placeholders = ', '.join(['?'] * len(batch))
+                query = f'''
+                    SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
+                           filled_by_file, collected_at, release_date, upgrading_from
+                    FROM media_items
+                    WHERE filled_by_file IN ({placeholders})
+                       OR upgrading_from IN ({placeholders})
+                '''
+                params = batch * 2  # Parameters for both placeholders
+                cursor = conn.execute(query, params)
+                existing_items.extend(cursor.fetchall())
+                cursor.close()
+            
+            # Process the results
+            for row in existing_items:
                 filled_by_file = row['filled_by_file']
                 upgrading_from = os.path.basename(row['upgrading_from'] or '')
                 state = row['state']
@@ -65,7 +75,6 @@ def add_collected_items(media_items_batch, recent=False):
                     existing_file_map[filled_by_file] = row_to_dict(row)
                 if upgrading_from:
                     existing_file_map[upgrading_from] = row_to_dict(row)
-            cursor.close()
 
         # Create a set to store filtered out filenames
         filtered_out_files = set()

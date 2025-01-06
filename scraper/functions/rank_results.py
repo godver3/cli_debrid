@@ -53,10 +53,12 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     weighted_bitrate = normalized_bitrate * bitrate_weight
 
     # Handle the case where torrent_year might be a list
-    if isinstance(torrent_year, list):
+    if query_year is None:
+        year_match = 0  # No year match if query_year is None
+    elif isinstance(torrent_year, list):
         year_match = 5 if query_year in torrent_year else (1 if any(abs(query_year - y) <= 1 for y in torrent_year) else 0)
     else:
-        year_match = 5 if query_year == torrent_year else (1 if abs(query_year - (torrent_year or 0)) <= 1 else 0)
+        year_match = 5 if query_year == torrent_year else (1 if torrent_year and abs(query_year - (torrent_year or 0)) <= 1 else 0)
 
     # Only apply season and episode matching for TV shows
     if content_type.lower() == 'episode':
