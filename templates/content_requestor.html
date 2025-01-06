@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Request Content{% endblock %}
+{% block content %}
+<!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}"> -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper_trending.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/content_requestor.css') }}">
+
+<div class="request-container">
+    <form id="search-form" class="search-form">
+        <input type="text" name="search_term" placeholder="Search for movies or TV shows..." required>
+        <button type="submit">Search</button>
+    </form>
+
+    <!-- Add version selection modal -->
+    <div id="versionModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Select Versions</h3>
+            <div id="versionCheckboxes">
+                <!-- Version checkboxes will be dynamically inserted here -->
+            </div>
+            <div class="modal-buttons">
+                <button id="confirmVersions">Confirm</button>
+                <button id="cancelVersions">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="searchResults" class="results-grid">
+        <!-- Search results will be dynamically inserted here -->
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+<script src="{{ url_for('static', filename='js/content_requestor.js') }}"></script>
+{% endblock %} 
