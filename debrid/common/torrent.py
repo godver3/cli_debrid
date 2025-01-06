@@ -118,3 +118,22 @@ def download_and_convert_to_magnet(url: str) -> Optional[str]:
                 os.unlink(temp_file.name)
             except Exception as e:
                 logging.error(f"Error cleaning up temporary file: {str(e)}")
+
+def extract_hash_from_file(file_path: str) -> Optional[str]:
+    """
+    Extract hash from a local torrent file
+    
+    Args:
+        file_path: Path to the torrent file
+        
+    Returns:
+        Torrent hash string or None if extraction fails
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            torrent_data = bencodepy.decode(f.read())
+        info = torrent_data[b'info']
+        return hashlib.sha1(bencodepy.encode(info)).hexdigest()
+    except Exception as e:
+        logging.error(f"Error extracting hash from torrent file: {str(e)}")
+        return None

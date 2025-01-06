@@ -659,6 +659,39 @@ function updateSettings() {
         console.warn("Debrid Provider select element not found!");
     }
 
+    const symlinkCollectedFiles = document.getElementById('file management-symlink_collected_files');
+    console.log("Symlink Collected Files element:", symlinkCollectedFiles);
+    
+    if (symlinkCollectedFiles) {
+        settingsData['Debug']['symlink_collected_files'] = symlinkCollectedFiles.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Symlink Collected Files checkbox element not found!");
+    }
+
+    const originalFilesPath = document.getElementById('file management-original_files_path');
+    console.log("Original Files Path element:", originalFilesPath);
+    
+    if (originalFilesPath) {
+        settingsData['Debug']['original_files_path'] = originalFilesPath.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Original Files Path input element not found!");
+    }
+
+    const symlinkedFilesPath = document.getElementById('file management-symlinked_files_path');
+    console.log("Symlinked Files Path element:", symlinkedFilesPath);
+    
+    if (symlinkedFilesPath) {
+        settingsData['Debug']['symlinked_files_path'] = symlinkedFilesPath.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Symlinked Files Path input element not found!");
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {

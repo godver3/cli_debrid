@@ -60,6 +60,7 @@ class DebridProvider(ABC):
         self.rate_limiter = RateLimiter(calls_per_second=rate_limit)
         self._api_key = api_key
         self._status = {}
+        self._cached_torrent_ids = {}  # Store torrent IDs for cached content
         self._setup_encryption()
         
         # Log provider capabilities
@@ -155,3 +156,7 @@ class DebridProvider(ABC):
     def cleanup(self) -> None:
         """Clean up any resources or stale torrents"""
         self._status.clear()
+
+    def get_cached_torrent_id(self, hash_value: str) -> Optional[str]:
+        """Get stored torrent ID for a cached hash"""
+        return self._cached_torrent_ids.get(hash_value)

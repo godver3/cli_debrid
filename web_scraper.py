@@ -54,6 +54,12 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                 reverse=True
             )
             
+            for result in sorted_results:
+                if result['type'] == 'movie':
+                    logging.debug(f"Result title: {result['movie']['title']}")
+                else:
+                    logging.debug(f"Result title: {result['show']['title']}")
+
             # Convert Trakt results and include poster paths
             converted_results = []
             for result in sorted_results:
@@ -62,6 +68,7 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                 
                 # Skip items with no TMDB ID
                 if not item['ids'].get('tmdb'):
+                    logging.debug(f"No TMDB ID found for {item['title']}")
                     continue
 
                 tmdb_id = item['ids']['tmdb']
@@ -80,10 +87,13 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                         cache_media_meta(tmdb_id, media_type, media_meta)
                         logging.info(f"Cached poster and metadata for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
                     else:
+                        logging.debug(f"No poster found for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
                         continue  # Skip items without posters
 
                 # Skip items with low vote counts or ratings
-                if media_meta[3] < 5.0 or item.get('votes', 0) < 100:
+                if media_meta[3] < 4.0 or item.get('votes', 0) < 20:
+                    logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to low vote count or rating")
+                    logging.debug(f"Vote count: {item.get('votes', 0)}, Rating: {media_meta[3]}")
                     continue
 
                 converted_results.append({

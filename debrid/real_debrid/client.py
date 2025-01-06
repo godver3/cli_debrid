@@ -27,7 +27,11 @@ class RealDebridProvider(DebridProvider):
     
     API_BASE_URL = "https://api.real-debrid.com/rest/1.0"
     MAX_DOWNLOADS = 25
-
+    
+    def __init__(self):
+        super().__init__()
+        self._cached_torrent_ids = {}  # Store torrent IDs for cached content
+        
     def _load_api_key(self) -> str:
         """Load API key from settings"""
         try:
@@ -197,6 +201,18 @@ class RealDebridProvider(DebridProvider):
                     TorrentStatus.CACHED if is_cached else TorrentStatus.NOT_CACHED
                 )
                 
+                # Store torrent ID if cached, remove if not cached
+                if is_cached:
+                    self._cached_torrent_ids[hash_value] = torrent_id
+                    logging.debug(f"Stored cached torrent ID {torrent_id} for hash {hash_value}")
+                else:
+                    try:
+                        self.remove_torrent(torrent_id)
+                        logging.debug(f"Removed uncached torrent {torrent_id}")
+                    except Exception as e:
+                        logging.error(f"Error removing uncached torrent {torrent_id}: {str(e)}")
+                        self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
+                
                 logging.debug(f"Cache status for hash {hash_value}: {'Cached' if is_cached else 'Not cached'}")
                 results[hash_value] = is_cached
                 
@@ -218,20 +234,14 @@ class RealDebridProvider(DebridProvider):
                 except Exception as add_err:
                     logging.error(f"Failed to add to not wanted list: {str(add_err)}")
                 results[hash_value] = None
-                
-            finally:
-                # Always clean up the torrent if we added it
-                if torrent_id:
-                    try:
-                        self.remove_torrent(torrent_id)
-                        logging.debug(f"Successfully removed torrent {torrent_id} after cache check")
-                    except Exception as e:
-                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
-                        self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
 
         logging.debug(f"Cache check complete. Results: {results}")
         # Return single result if input was single magnet, otherwise return dict
         return results[list(results.keys())[0]] if return_single else results
+        
+    def get_cached_torrent_id(self, hash_value: str) -> Optional[str]:
+        """Get stored torrent ID for a cached hash"""
+        return self._cached_torrent_ids.get(hash_value)
 
     def add_torrent(self, magnet_link: Optional[str], temp_file_path: Optional[str] = None) -> Optional[str]:
         """Add a torrent to Real-Debrid"""
