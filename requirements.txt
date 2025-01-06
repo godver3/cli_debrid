@@ -40,3 +40,4 @@ pystray==0.19.5
 tzlocal==5.2
 pywin32==306
 APScheduler==3.10.4
+PyGithub==2.1.1
