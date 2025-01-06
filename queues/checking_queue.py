@@ -2,7 +2,8 @@ import logging
 import time
 from typing import Dict, Any
 from database import get_all_media_items
-from run_program import get_and_add_recent_collected_from_plex
+from run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
+from utilities.local_library_scan import check_local_file_for_item
 from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from queues.adding_queue import AddingQueue
 from debrid import get_debrid_provider
@@ -169,7 +170,16 @@ class CheckingQueue:
         current_time = time.time()
 
         # Process collected content from Plex
-        get_and_add_recent_collected_from_plex()
+        if not get_setting('Debug', 'symlink_collected_files'):
+            get_and_add_recent_collected_from_plex()
+        else:
+            for item in self.items:
+                if check_local_file_for_item(item):
+                    logging.info(f"Local file found for item {item['id']}")
+                    pass
+                else:
+                    logging.info(f"Local file not found for item {item['id']}, running recent local library scan")
+                    run_recent_local_library_scan()
 
         adding_queue = AddingQueue()
 
