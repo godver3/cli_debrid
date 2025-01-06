@@ -52,12 +52,13 @@ class CheckingQueue:
         for item in self.items:
             item_info = dict(item)  # Create a copy of the item
             torrent_id = item.get('filled_by_torrent_id')
+            progress = None
+            state = 'unknown'  # Initialize state with default value
             if torrent_id:
                 progress = self.get_torrent_progress(torrent_id)
-                if progress:
-                    state = self.get_torrent_state(torrent_id)
+                state = self.get_torrent_state(torrent_id)  # Get state regardless of progress
                 item_info['progress'] = progress
-                item_info['state'] = state
+            item_info['state'] = state
             items_with_info.append(item_info)
         return items_with_info
 

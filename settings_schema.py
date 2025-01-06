@@ -64,8 +64,8 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Debrid service provider",
             "default": "RealDebrid",
-            #"choices": ["Torbox", "RealDebrid"]
-            "choices": ["RealDebrid"]
+            "choices": ["Torbox", "RealDebrid"]
+            #"choices": ["RealDebrid"]
         },
         "api_key": {
             "type": "string",
@@ -261,7 +261,7 @@ SETTINGS_SCHEMA = {
         },
         "content_source_check_period": {
             "type": "dict",
-            "description": "Override Content Source checking period (in minutes)",
+            "description": "Override Content Source checking period (in minutes) - note that a minimum of 5 minutes is recommended",
             "default": {},
             "schema": {
                 "*": {"type": "integer", "min": 1}

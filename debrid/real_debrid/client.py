@@ -36,21 +36,6 @@ class RealDebridProvider(DebridProvider):
         except Exception as e:
             raise ProviderUnavailableError(f"Failed to load API key: {str(e)}")
 
-    @property
-    def supports_direct_cache_check(self) -> bool:
-        """Check if provider supports direct cache checking"""
-        return False
-
-    @property
-    def supports_bulk_cache_checking(self) -> bool:
-        """Check if provider supports checking multiple hashes in a single API call"""
-        return False
-
-    @property
-    def supports_uncached(self) -> bool:
-        """Check if provider supports downloading uncached torrents"""
-        return True
-
     def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None) -> Union[bool, Dict[str, Optional[bool]]]:
         """
         Check if one or more magnet links or torrent files are cached on Real-Debrid.

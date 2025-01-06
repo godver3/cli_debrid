@@ -2,6 +2,35 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Union, Tuple
 from .common import RateLimiter, timed_lru_cache
 from .status import TorrentStatus
+import hashlib
+import platform
+import base64
+import logging
+from cryptography.fernet import Fernet
+from .common.c7d9e45f import _v, _p1, _p2, _p3
+import functools
+
+class EncryptedCapabilityDescriptor:
+    """A descriptor that protects capability values from being overridden"""
+    
+    def __init__(self, capability_name: str):
+        self.capability_name = capability_name
+        # Use a random name for the cached value to make it harder to find
+        self.cached_name = f"_{hashlib.sha256(capability_name.encode()).hexdigest()[:8]}"
+    
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        # Cache the decrypted value to prevent tampering with _get_encrypted_value
+        if not hasattr(instance, self.cached_name):
+            # Get the value through a chain of protected calls
+            value = instance._get_capability_value(self.capability_name)
+            # Store in instance dict directly to bypass any __setattr__ overrides
+            instance.__dict__[self.cached_name] = value
+        return instance.__dict__[self.cached_name]
+    
+    def __set__(self, instance, value):
+        raise AttributeError("Can't modify capability values")
 
 class DebridProviderError(Exception):
     """Base exception class for all debrid provider errors"""
@@ -27,17 +56,37 @@ class DebridProvider(ABC):
     """Abstract base class that defines the interface for debrid providers"""
     
     def __init__(self, api_key: str = None, rate_limit: float = 0.5):
-        """
-        Initialize the provider
-        
-        Args:
-            api_key: Optional API key. If not provided, will attempt to load from settings
-            rate_limit: API rate limit in calls per second
-        """
+        """Initialize the provider"""
         self.rate_limiter = RateLimiter(calls_per_second=rate_limit)
         self._api_key = api_key
-        self._status = {}  # Track status of operations
+        self._status = {}
+        self._setup_encryption()
+        
+        # Log provider capabilities
+        logging.debug(f"[{self.__class__.__name__}] Capability check:")
+        logging.debug(f"[{self.__class__.__name__}] - supports_direct_cache_check: {self.supports_direct_cache_check}")
+        logging.debug(f"[{self.__class__.__name__}] - supports_bulk_cache_checking: {self.supports_bulk_cache_checking}")
+        logging.debug(f"[{self.__class__.__name__}] - supports_uncached: {self.supports_uncached}")
     
+    def _setup_encryption(self) -> None:
+        """Setup encryption for provider capabilities"""
+        key_base = self.__class__.__name__.encode() + b'debrid_capabilities_key'
+        key = base64.urlsafe_b64encode(hashlib.sha256(key_base).digest()[:32])
+        self._cipher = Fernet(key)
+    
+    def _get_encrypted_value(self, capability: str) -> bool:
+        """Get decrypted boolean value for a capability"""
+        try:
+            encrypted = _v[self.__class__.__name__][capability]
+            decrypted = self._cipher.decrypt(encrypted)
+            return decrypted.decode() == 'True'
+        except Exception:
+            return False
+            
+    def _get_capability_value(self, capability: str) -> bool:
+        """Protected method to get capability value through encryption"""
+        return self._get_encrypted_value(capability)
+
     @property
     def api_key(self) -> str:
         """Get the API key, loading from settings if not set"""
@@ -50,15 +99,10 @@ class DebridProvider(ABC):
         """Load API key from settings"""
         pass
     
-    @property
-    def supports_direct_cache_check(self) -> bool:
-        """Whether this provider supports checking cache status without adding the torrent"""
-        return True
-    
-    @property
-    def supports_bulk_cache_checking(self) -> bool:
-        """Whether this provider supports checking multiple hashes in a single API call"""
-        return False
+    # Define properties using imported descriptors
+    supports_direct_cache_check = _p1
+    supports_bulk_cache_checking = _p2
+    supports_uncached = _p3
     
     @abstractmethod
     def add_torrent(self, magnet_link: str, temp_file_path: Optional[str] = None) -> str:

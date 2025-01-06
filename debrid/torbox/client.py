@@ -37,21 +37,6 @@ class TorBoxProvider(DebridProvider):
         except Exception as e:
             raise ProviderUnavailableError(f"Failed to load API key: {str(e)}")
 
-    @property
-    def supports_direct_cache_check(self) -> bool:
-        """Check if provider supports direct cache checking"""
-        return True
-
-    @property
-    def supports_bulk_cache_checking(self) -> bool:
-        """Check if provider supports checking multiple hashes in a single API call"""
-        return True
-
-    @property
-    def supports_uncached(self) -> bool:
-        """Check if provider supports downloading uncached torrents"""
-        return False
-
     def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None) -> Union[bool, Dict[str, bool]]:
         """
         Check if one or more magnet links or torrent files are cached on TorBox.
