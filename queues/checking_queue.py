@@ -205,7 +205,7 @@ class CheckingQueue:
                     logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
                     
                     # Check if we've exceeded the checking queue period for non-actively-downloading items
-                    if current_progress == last_progress:
+                    if current_progress == 100:
                         oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
                         time_in_queue = current_time - oldest_item_time
                         checking_queue_limit = get_setting('Debug', 'checking_queue_period')
@@ -225,7 +225,7 @@ class CheckingQueue:
                             continue
 
                     # Skip remaining checks if the torrent is completed
-                    if last_progress == 100:
+                    if current_progress == 100:
                         continue
                     
                     if current_time - last_check >= 300:  # 5 minutes
