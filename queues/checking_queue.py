@@ -3,12 +3,15 @@ import time
 from typing import Dict, Any
 from database import get_all_media_items
 from run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
-from utilities.local_library_scan import check_local_file_for_item
+from utilities.local_library_scan import check_local_file_for_item, local_library_scan
+from utilities.plex_functions import plex_update_item
 from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from queues.adding_queue import AddingQueue
 from debrid import get_debrid_provider
 from settings import get_setting
 from debrid.common import timed_lru_cache
+from pathlib import Path
+import os
 
 class CheckingQueue:
     def __init__(self):
@@ -166,20 +169,50 @@ class CheckingQueue:
 
     def process(self, queue_manager):
         logging.debug(f"Starting to process checking queue with {len(self.items)} items")
-        logging.debug("Processing checking queue")
         current_time = time.time()
 
-        # Process collected content from Plex
-        if not get_setting('Debug', 'symlink_collected_files'):
-            get_and_add_recent_collected_from_plex()
-        else:
+        # Process collected content based on symlink setting
+        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            # First check all items for local files directly
+            items_to_scan = []
             for item in self.items:
                 if check_local_file_for_item(item):
-                    logging.info(f"Local file found for item {item['id']}")
-                    pass
+                    logging.info(f"Local file found and symlinked for item {item['id']}")
+
+                    if get_setting('File Management', 'plex_url_for_symlink', default=False):
+                        # Call Plex update for the item if we have a Plex URL
+                        plex_update_item(item)
+
+                    # Check if the item was marked for upgrading by check_local_file_for_item
+                    from database.core import get_db_connection
+                    conn = get_db_connection()
+                    cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
+                    current_state = cursor.fetchone()['state']
+                    conn.close()
+
+                    if current_state == 'Upgrading':
+                        logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
+                    else:
+                        queue_manager.move_to_collected(item, "Checking")
                 else:
-                    logging.info(f"Local file not found for item {item['id']}, running recent local library scan")
-                    run_recent_local_library_scan()
+                    items_to_scan.append(item)
+            
+            # If we have items that weren't found directly, do a full scan
+            if items_to_scan:
+                logging.info("Full library scan disabled for now")
+                '''
+                logging.info(f"Scanning for {len(items_to_scan)} missing items")
+                found_items = local_library_scan(items_to_scan)
+                logging.info(f"Full scan for {len(found_items)} items")
+                
+                # Process found items
+                for item_id, found_info in found_items.items():
+                    item = found_info['item']
+                    logging.info(f"Found and symlinked file for item {item['id']}")
+                    queue_manager.move_to_collected(item, "Checking")
+                '''
+        else:
+            get_and_add_recent_collected_from_plex()
 
         adding_queue = AddingQueue()
 
@@ -201,7 +234,7 @@ class CheckingQueue:
         # Process items by torrent ID
         for torrent_id, items in items_by_torrent.items():
             try:
-                logging.debug(f"Processing torrent {torrent_id} with {len(items)} associated items: {[item['id'] for item in items]}")
+                logging.debug(f"Processing torrent {torrent_id} with {len(items)} associated items")
                 torrent_info = self.debrid_provider.get_torrent_info(torrent_id)
                 
                 if torrent_info:
@@ -294,6 +327,4 @@ class CheckingQueue:
         
         # Clean up progress cache for removed torrents
         current_torrent_ids = {item.get('filled_by_torrent_id') for item in self.items if item.get('filled_by_torrent_id')}
-        # self.progress_cache = {k: v for k, v in self.progress_cache.items() if k in current_torrent_ids}
-        # self.progress_cache_times = {k: v for k, v in self.progress_cache_times.items() if k in current_torrent_ids}
         logging.debug(f"Cleaned up checking time for item ID: {current_item_ids}")

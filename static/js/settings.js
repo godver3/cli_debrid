@@ -7,11 +7,71 @@ function loadSettingsData() {
         .then(response => response.json())
         .then(data => {
             settingsData = data;
+            // After loading settings data, handle descriptions
+            handleDescriptions();
             return data;
         })
         .catch(error => {
             console.error('Error loading settings:', error);
         });
+}
+
+// Function to handle descriptions
+function handleDescriptions() {
+    document.querySelectorAll('.settings-description').forEach(descElement => {
+        const description = descElement.textContent;
+        if (Array.isArray(description)) {
+            // If description is an array, create multiple paragraphs
+            const descriptionHtml = description.map(line => 
+                `<p class="settings-description">${line}</p>`
+            ).join('');
+            descElement.outerHTML = descriptionHtml;
+        }
+    });
+}
+
+// Function to toggle Plex section visibility
+function togglePlexSection() {
+    console.log('togglePlexSection called');
+    
+    const fileManagementSelect = document.getElementById('file management-file_collection_management');
+    const plexSection = document.getElementById('plex-settings-section');
+    
+    console.log('File Management Select element:', fileManagementSelect);
+    console.log('Plex Section element:', plexSection);
+    
+    if (fileManagementSelect && plexSection) {
+        const shouldDisplay = fileManagementSelect.value === 'Plex';
+        console.log('Should display Plex section:', shouldDisplay);
+        plexSection.style.display = shouldDisplay ? 'block' : 'none';
+        console.log('Set display style to:', plexSection.style.display);
+    } else {
+        console.warn('Missing required elements - fileManagementSelect or plexSection not found');
+    }
+
+    // Toggle path input fields and Plex symlink settings
+    const originalFilesPath = document.getElementById('file management-original_files_path');
+    const symlinkedFilesPath = document.getElementById('file management-symlinked_files_path');
+    const plexSymlinkSettings = document.querySelectorAll('.symlink-plex-setting');
+
+    if (fileManagementSelect) {
+        const isSymlinked = fileManagementSelect.value === 'Symlinked/Local';
+        
+        // Handle path fields
+        const pathElements = [
+            originalFilesPath?.closest('.settings-form-group'),
+            symlinkedFilesPath?.closest('.settings-form-group')
+        ].filter(Boolean);
+
+        pathElements.forEach(element => {
+            element.style.display = isSymlinked ? 'block' : 'none';
+        });
+
+        // Handle Plex symlink settings
+        plexSymlinkSettings.forEach(element => {
+            element.style.display = isSymlinked ? 'block' : 'none';
+        });
+    }
 }
 
 function updateSettings() {
@@ -659,39 +719,6 @@ function updateSettings() {
         console.warn("Debrid Provider select element not found!");
     }
 
-    const symlinkCollectedFiles = document.getElementById('file management-symlink_collected_files');
-    console.log("Symlink Collected Files element:", symlinkCollectedFiles);
-    
-    if (symlinkCollectedFiles) {
-        settingsData['Debug']['symlink_collected_files'] = symlinkCollectedFiles.checked;
-
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Symlink Collected Files checkbox element not found!");
-    }
-
-    const originalFilesPath = document.getElementById('file management-original_files_path');
-    console.log("Original Files Path element:", originalFilesPath);
-    
-    if (originalFilesPath) {
-        settingsData['Debug']['original_files_path'] = originalFilesPath.value;
-
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Original Files Path input element not found!");
-    }
-
-    const symlinkedFilesPath = document.getElementById('file management-symlinked_files_path');
-    console.log("Symlinked Files Path element:", symlinkedFilesPath);
-    
-    if (symlinkedFilesPath) {
-        settingsData['Debug']['symlinked_files_path'] = symlinkedFilesPath.value;
-
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Symlinked Files Path input element not found!");
-    }
-
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {
@@ -741,12 +768,44 @@ function updateContentSourceCheckPeriods() {
 // Update the DOMContentLoaded event listener
 document.addEventListener('DOMContentLoaded', () => {
     loadSettingsData().then(() => {
+        // Initial toggle of Plex section
+        togglePlexSection();
+        handleDescriptions();
+        
+        // Add event listener for File Management library type changes
+        const fileManagementSelect = document.getElementById('file management-file_collection_management');
+        if (fileManagementSelect) {
+            fileManagementSelect.addEventListener('change', togglePlexSection);
+        }
+        
+        // Add mutation observer to handle dynamic changes
+        const requiredTab = document.querySelector('#required');
+        if (requiredTab) {
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                        // Check if any of the added nodes contain the Plex section
+                        mutation.addedNodes.forEach((node) => {
+                            if (node.nodeType === 1 && node.querySelector) {  // Element node
+                                const header = node.querySelector('.settings-section-header h4');
+                                if (header && header.textContent.trim() === 'Plex') {
+                                    console.log('Plex section dynamically added, updating visibility');
+                                    togglePlexSection();
+                                }
+                            }
+                        });
+                    }
+                });
+            });
+            
+            observer.observe(requiredTab, { childList: true, subtree: true });
+        }
+        
         // Ensure the content-source-check-periods element exists before calling the function
         if (document.getElementById('content-source-check-periods')) {
             updateContentSourceCheckPeriods();
         } else {
             console.warn("Element with id 'content-source-check-periods' not found. Make sure it exists in your HTML.");
         }
-        // Add any other initialization functions here
     });
 });

@@ -35,7 +35,23 @@
                     <input type="{{ value.type }}" id="debug-{{ key }}" name="Debug.{{ key }}" value="{{ settings.Debug[key] }}" class="settings-input">
                 {% endif %}
                 {% if value.description %}
-                    <p class="settings-description">{{ value.description }}</p>
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
                 {% endif %}
             </div>
             {% endif %}

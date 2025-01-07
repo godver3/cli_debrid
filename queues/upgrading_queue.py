@@ -190,7 +190,7 @@ class UpgradingQueue:
 
         if results:
             # Find the position of the current item's 'filled_by_magnet' in the results
-            current_title = item.get('filled_by_title')
+            current_title = item.get('original_scraped_torrent_title')
             current_position = next((index for index, result in enumerate(results) if result.get('title') == current_title), None)
 
             for index, result in enumerate(results):
