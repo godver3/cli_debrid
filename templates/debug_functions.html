@@ -195,6 +195,13 @@
                 <button type="submit">Propagate Version</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Convert Library to Symlinks</h3>
+            <form id="convert-to-symlinks-form">
+                <p>This function will convert an existing Plex library to use symlinks. This is ONLY intended for converting existing Plex libraries to a Symlinked library, and should only be done once. This action is not reversible.</p>
+                <button type="submit">Convert to Symlinks</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -204,7 +211,12 @@
         const forms = document.querySelectorAll('form:not(#bulk-queue-action-form)');
         
         forms.forEach(form => {
-            if (form.id !== 'send-test-notification-form' && form.id !== 'get-collected-form' && form.id !== 'get-wanted-form' && form.id !== 'run-task-form' && form.id !== 'bulk-queue-action-form') {
+            if (form.id !== 'send-test-notification-form' && 
+                form.id !== 'get-collected-form' && 
+                form.id !== 'get-wanted-form' && 
+                form.id !== 'run-task-form' && 
+                form.id !== 'bulk-queue-action-form' &&
+                form.id !== 'convert-to-symlinks-form') {
                 form.addEventListener('submit', function(e) {
                     e.preventDefault();
                     const url = form.action;
@@ -837,6 +849,56 @@
         loadVersions();
 
         // Removed the duplicate handler for version propagator form since it's handled by the generic form handler
+
+        // Add event listener for convert to symlinks form
+        const convertToSymlinksForm = document.getElementById('convert-to-symlinks-form');
+        if (convertToSymlinksForm) {
+            convertToSymlinksForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: 'Are you sure you want to convert library items to use symlinks? This is ONLY intended for converting existing Plex libraries to a Symlinked library, and should only be done once. This action is not reversible.',
+                    title: 'Confirmation',
+                    onConfirm: () => {
+                        Loading.show();
+                        fetch('/debug/convert_to_symlinks', {
+                            method: 'POST',
+                        })
+                        .then(response => {
+                            const contentType = response.headers.get('content-type');
+                            if (!response.ok) {
+                                return response.text().then(text => {
+                                    throw new Error(text || 'An error occurred');
+                                });
+                            }
+                            if (contentType && contentType.includes('application/json')) {
+                                return response.json();
+                            }
+                            return response.text();
+                        })
+                        .then(data => {
+                            Loading.hide();
+                            const message = typeof data === 'object' ? data.message : data;
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: message,
+                                title: 'Success'
+                            });
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            console.error('Error:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: error.message || 'An error occurred',
+                                title: 'Error'
+                            });
+                        });
+                    }
+                });
+            });
+        }
     });
 </script>
 {% endblock %}

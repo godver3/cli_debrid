@@ -3,15 +3,8 @@
 {% block title %}Settings{% endblock %}
 
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
 <style>
-    /* Common styles */
-    .settings-container {
-        width: 95%; 
-        max-width: 1200px;
-        margin: 0 auto; 
-        padding: 20px;
-    }
-
     /* Button styles */
     .btn {
         border: none;
@@ -230,7 +223,9 @@
     }
 
     .settings-form-group {
-        margin-bottom: 15px;
+        margin-bottom: 2px;
+        padding-top: 2px;
+        padding-top: 2px;
     }
 
     .settings-input-wrapper {
@@ -367,7 +362,6 @@
     .filter-weight {
         flex: 0 0 60px;
     }
-
 
     /* Responsive styles for settings tabs */
     @media screen and (max-width: 768px) {

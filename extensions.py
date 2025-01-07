@@ -86,6 +86,10 @@ def is_behind_proxy():
 
 @app.before_request
 def handle_https():
+    # Skip HTTPS redirect for webhook routes
+    if request.path.startswith('/webhook'):
+        return
+        
     if is_behind_proxy():
         if request.headers.get('X-Forwarded-Proto') == 'http':
             url = request.url.replace('http://', 'https://', 1)
