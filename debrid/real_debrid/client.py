@@ -31,6 +31,7 @@ class RealDebridProvider(DebridProvider):
     def __init__(self):
         super().__init__()
         self._cached_torrent_ids = {}  # Store torrent IDs for cached content
+        self._cached_torrent_titles = {}  # Store torrent titles for cached content
         
     def _load_api_key(self) -> str:
         """Load API key from settings"""
@@ -204,7 +205,8 @@ class RealDebridProvider(DebridProvider):
                 # Store torrent ID if cached, remove if not cached
                 if is_cached:
                     self._cached_torrent_ids[hash_value] = torrent_id
-                    logging.debug(f"Stored cached torrent ID {torrent_id} for hash {hash_value}")
+                    self._cached_torrent_titles[hash_value] = info.get('filename', '')
+                    logging.debug(f"Stored cached torrent ID {torrent_id} and title for hash {hash_value}")
                 else:
                     try:
                         self.remove_torrent(torrent_id)
@@ -243,10 +245,30 @@ class RealDebridProvider(DebridProvider):
         """Get stored torrent ID for a cached hash"""
         return self._cached_torrent_ids.get(hash_value)
 
+    def get_cached_torrent_title(self, hash_value: str) -> Optional[str]:
+        """Get stored torrent title for a cached hash"""
+        return self._cached_torrent_titles.get(hash_value)
+
     def add_torrent(self, magnet_link: Optional[str], temp_file_path: Optional[str] = None) -> Optional[str]:
         """Add a torrent to Real-Debrid"""
         try:
             logging.debug(f"Adding torrent with magnet_link={magnet_link}, temp_file_path={temp_file_path}")
+            
+            # Extract hash value at the beginning
+            hash_value = None
+            if magnet_link:
+                hash_value = extract_hash_from_magnet(magnet_link)
+            elif temp_file_path:
+                try:
+                    with open(temp_file_path, 'rb') as f:
+                        torrent_data = bencodepy.decode(f.read())
+                        info = torrent_data[b'info']
+                        hash_value = hashlib.sha1(bencodepy.encode(info)).hexdigest()
+                except Exception as e:
+                    logging.error(f"Could not extract hash from torrent file: {str(e)}")
+            
+            if not hash_value:
+                logging.error("Could not extract hash from magnet link or torrent file")
             
             # Handle torrent file upload
             if temp_file_path:
@@ -269,13 +291,14 @@ class RealDebridProvider(DebridProvider):
                     logging.debug(f"URL decoded magnet link: {magnet_link}")
 
                 # Check if torrent already exists
-                hash_value = extract_hash_from_magnet(magnet_link)
                 if hash_value:
                     logging.debug(f"Checking if hash {hash_value} already exists")
                     torrents = make_request('GET', '/torrents', self.api_key) or []
                     for torrent in torrents:
                         if torrent.get('hash', '').lower() == hash_value.lower():
                             logging.info(f"Torrent already exists with ID {torrent['id']}")
+                            # Cache the filename for existing torrent
+                            self._cached_torrent_titles[hash_value] = torrent.get('filename', '')
                             return torrent['id']
 
                 # Add magnet link
@@ -317,6 +340,11 @@ class RealDebridProvider(DebridProvider):
                     continue
                 
                 if status == 'waiting_files_selection':
+                    # Cache the filename when we have it
+                    if hash_value and info.get('filename'):
+                        self._cached_torrent_titles[hash_value] = info.get('filename')
+                        logging.debug(f"Cached filename '{info.get('filename')}' for hash {hash_value}")
+                    
                     # Select only video files
                     files = info.get('files', [])
                     if files:

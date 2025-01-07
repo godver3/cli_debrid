@@ -38,25 +38,37 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "file_collection_management": {
             "type": "string",
-            "description": "Manage files collected in Plex.",
+            "description": "Select library management method.",
             "default": "Plex",
-            "choices": ["Plex"]#, "Zurg"]
+            "choices": ["Plex", "Symlinked/Local"]
         },
-        #"zurg_all_folder": {
-        #    "type": "string",
-        #    "description": "Zurg __all__ Folder",
-        #    "default": "",
-        #},
-        #"zurg_movies_folder": {
-        #    "type": "string",
-        #    "description": "Zurg Movies Folder",
-        #    "default": "",
-        #},
-        #"zurg_shows_folder": {
-        #    "type": "string",
-        #    "description": "Zurg Shows Folder",
-        #    "default": "",
-        #},
+        "original_files_path": {
+            "type": "string",
+            "description": "Path to the original files (in Zurg use the /__all__ folder)",
+            "default": "/mnt/zurg/__all__"
+        },
+        "symlinked_files_path": {
+            "type": "string",
+            "description": "Path to the destination folder (where you want your files symlinked to)",
+            "default": "/mnt/symlinked"
+        },
+        "symlink_organize_by_type": {
+            "type": "boolean",
+            "description": "Organize symlinked files into Movies and TV Shows folders",
+            "default": True
+        },
+        "plex_url_for_symlink": {
+            "type": "string",
+            "description": "Plex server URL for symlink updates (optional)",
+            "default": "",
+            "validate": "url"
+        },
+        "plex_token_for_symlink": {
+            "type": "string",
+            "description": "Plex authentication token (optional)",
+            "default": "",
+            "sensitive": True
+        }
     },
     "Debrid Provider": {
         "tab": "Required Settings",
@@ -297,20 +309,21 @@ SETTINGS_SCHEMA = {
             "description": "Keep series in Plex Watchlist when they have been collected, only delete movies",
             "default": False
         },
-        "symlink_collected_files": {
-            "type": "boolean",
-            "description": "Symlink collected files to the collected folder (Plex must be able to see original and symlinked path the exact same as cli_debrid does)",
-            "default": False
-        },
-        "original_files_path": {
+        "symlink_movie_template": {
             "type": "string",
-            "description": "Path to the original files",
-            "default": "/mnt/zurg/__all__"
+            "description": [
+                "Template for movie symlink names. Available variables: {title}, {year}, {imdb_id}, {tmdb_id}, {quality}, {original_filename}",
+                "Example: {title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})",
+            ],
+            "default": "{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})"
         },
-        "symlinked_files_path": {
+        "symlink_episode_template": {
             "type": "string",
-            "description": "Path to the destination folder",
-            "default": "/mnt/symlinked"
+            "description": [
+                "Template for episode symlink names. Available variables: {title}, {year}, {imdb_id}, {tmdb_id}, {season_number}, {episode_number}, {episode_title}, {version}, {original_filename}",
+                "Example: {title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} -{imdb_id} - {version} - ({original_filename})",
+            ],
+            "default": "{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} -{imdb_id} - {version} - ({original_filename})"
         }
     },
     "Scrapers": {

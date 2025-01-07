@@ -86,6 +86,7 @@ class ProgramRunner:
             'task_check_trakt_early_releases': 3600,  # Run every hour
             'task_reconcile_queues': 300,  # Run every 5 minutes
             'task_heartbeat': 120,  # Run every 2 minutes
+            'task_local_library_scan': 900,  # Run every 5 minutes
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -110,7 +111,7 @@ class ProgramRunner:
             'task_heartbeat'
         }
 
-        if not get_setting('Debug', 'symlink_collected_files'):
+        if get_setting('File Management', 'file_collection_management') == 'Plex':
             self.enabled_tasks.add('task_plex_full_scan')
         else:
             self.enabled_tasks.add('task_local_library_scan')
@@ -681,6 +682,29 @@ class ProgramRunner:
         logging.info("Rate limit pause period complete. Resuming queue.")
         self.resume_queue()
 
+    def task_local_library_scan(self):
+        """Run local library scan for symlinked files."""
+        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            from database import get_all_media_items
+            from utilities.local_library_scan import local_library_scan
+            
+            # Get all items in Checking state
+            items = get_all_media_items(state="Checking")
+            if items:
+                logging.info(f"Running local library scan for {len(items)} items in Checking state")
+                found_items = local_library_scan(items)
+                if found_items:
+                    logging.info(f"Found {len(found_items)} items during local library scan")
+                    
+                    # Move found items to Collected state
+                    for item_id, found_info in found_items.items():
+                        item = found_info['item']
+                        from queue_manager import QueueManager
+                        queue_manager = QueueManager()
+                        queue_manager.move_to_collected(item, "Checking")
+            else:
+                logging.debug("No items in Checking state to scan for")
+
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
 
@@ -846,11 +870,13 @@ def get_and_add_recent_collected_from_plex():
 
 def run_local_library_scan():
     from utilities.local_library_scan import local_library_scan
-    local_library_scan()
+    logging.info("Full library scan disabled for now")
+    #local_library_scan()
 
 def run_recent_local_library_scan():
     from utilities.local_library_scan import recent_local_library_scan
-    recent_local_library_scan()
+    logging.info("Recent library scan disabled for now")
+    #recent_local_library_scan()
 
 def run_program():
     global program_runner

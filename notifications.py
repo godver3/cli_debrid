@@ -7,6 +7,21 @@ from settings_schema import SETTINGS_SCHEMA
 from collections import defaultdict
 from datetime import datetime
 
+def safe_format_date(date_value):
+    if not date_value:
+        return "Unknown"
+    try:
+        if isinstance(date_value, str):
+            return datetime.fromisoformat(date_value).strftime('%Y-%m-%d')
+        elif isinstance(date_value, datetime):
+            return date_value.strftime('%Y-%m-%d')
+        else:
+            logging.warning(f"Unexpected date type: {type(date_value)}")
+            return "Unknown"
+    except Exception as e:
+        logging.warning(f"Error formatting date {date_value}: {str(e)}")
+        return "Unknown"
+
 def consolidate_items(notifications):
     consolidated = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     
@@ -81,7 +96,7 @@ def format_notification_content(notifications, notification_type):
                 for item in items['items']:
                     versions = ', '.join(sorted(item['versions']))
                     status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                    collected_date = safe_format_date(item['original_collected_at'])
                     if item['is_upgrade']:
                         content.append(f"{movies_emoji} {status_emoji} **{movie}** [{versions}] (Upgraded, originally collected on {collected_date})")
                     else:
@@ -96,7 +111,7 @@ def format_notification_content(notifications, notification_type):
                 if seasons.get('seasons'):
                     for item in seasons['seasons']:
                         status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                        collected_date = safe_format_date(item['original_collected_at'])
                         status = f"Upgraded, originally collected on {collected_date}" if item['is_upgrade'] else "New collection"
                         content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})")
                 
@@ -114,7 +129,7 @@ def format_notification_content(notifications, notification_type):
                         
                         for (version, is_upgrade, collected_at), eps in episode_groups.items():
                             status_emoji = upgrade_emoji if is_upgrade else new_emoji
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
+                            collected_date = safe_format_date(collected_at)
                             status = f"Upgraded, originally collected on {collected_date}" if is_upgrade else "New collection"
                             
                             # Sort episodes
@@ -147,7 +162,7 @@ def format_notification_content(notifications, notification_type):
                 for item in items['items']:
                     versions = ', '.join(sorted(item['versions']))
                     status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                    collected_date = safe_format_date(item['original_collected_at'])
                     if item['is_upgrade']:
                         content.append(f"{movies_emoji} {status_emoji} <b>{movie}</b> [{versions}] (Upgraded, originally collected on {collected_date})<br>")
                     else:
@@ -162,7 +177,7 @@ def format_notification_content(notifications, notification_type):
                 if seasons.get('seasons'):
                     for item in seasons['seasons']:
                         status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                        collected_date = safe_format_date(item['original_collected_at'])
                         status = f"Upgraded, originally collected on {collected_date}" if item['is_upgrade'] else "New collection"
                         content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})<br>")
                 
@@ -180,7 +195,7 @@ def format_notification_content(notifications, notification_type):
                         
                         for (version, is_upgrade, collected_at), eps in episode_groups.items():
                             status_emoji = upgrade_emoji if is_upgrade else new_emoji
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
+                            collected_date = safe_format_date(collected_at)
                             status = f"Upgraded, originally collected on {collected_date}" if is_upgrade else "New collection"
                             
                             # Sort episodes
@@ -213,7 +228,7 @@ def format_notification_content(notifications, notification_type):
                 for item in items['items']:
                     versions = ', '.join(sorted(item['versions']))
                     status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                    collected_date = safe_format_date(item['original_collected_at'])
                     if item['is_upgrade']:
                         content.append(f"{movies_emoji} {status_emoji} <i>{movie}</i> [{versions}] (Upgraded, originally collected on {collected_date})")
                     else:
@@ -228,7 +243,7 @@ def format_notification_content(notifications, notification_type):
                 if seasons.get('seasons'):
                     for item in seasons['seasons']:
                         status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                        collected_date = safe_format_date(item['original_collected_at'])
                         status = f"Upgraded, originally collected on {collected_date}" if item['is_upgrade'] else "New collection"
                         content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})")
                 
@@ -246,7 +261,7 @@ def format_notification_content(notifications, notification_type):
                         
                         for (version, is_upgrade, collected_at), eps in episode_groups.items():
                             status_emoji = upgrade_emoji if is_upgrade else new_emoji
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
+                            collected_date = safe_format_date(collected_at)
                             status = f"Upgraded, originally collected on {collected_date}" if is_upgrade else "New collection"
                             
                             # Sort episodes
@@ -279,7 +294,7 @@ def format_notification_content(notifications, notification_type):
                 for item in items['items']:
                     versions = ', '.join(sorted(item['versions']))
                     status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                    collected_date = safe_format_date(item['original_collected_at'])
                     if item['is_upgrade']:
                         content.append(f"{movies_emoji} {status_emoji} {movie} [{versions}] (Upgraded, originally collected on {collected_date})")
                     else:
@@ -294,7 +309,7 @@ def format_notification_content(notifications, notification_type):
                 if seasons.get('seasons'):
                     for item in seasons['seasons']:
                         status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                        collected_date = safe_format_date(item['original_collected_at'])
                         status = f"Upgraded, originally collected on {collected_date}" if item['is_upgrade'] else "New collection"
                         content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})")
                 
@@ -312,7 +327,7 @@ def format_notification_content(notifications, notification_type):
                         
                         for (version, is_upgrade, collected_at), eps in episode_groups.items():
                             status_emoji = upgrade_emoji if is_upgrade else new_emoji
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
+                            collected_date = safe_format_date(collected_at)
                             status = f"Upgraded, originally collected on {collected_date}" if is_upgrade else "New collection"
                             
                             # Sort episodes
@@ -338,7 +353,7 @@ def format_notification_content(notifications, notification_type):
                 for item in items['items']:
                     versions = ', '.join(sorted(item['versions']))
                     status = "Upgraded" if item['is_upgrade'] else "New collection"
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                    collected_date = safe_format_date(item['original_collected_at'])
                     if item['is_upgrade']:
                         content.append(f"  • {movie} [{versions}] (Upgraded, originally collected on {collected_date})")
                     else:
@@ -353,7 +368,7 @@ def format_notification_content(notifications, notification_type):
                 if seasons.get('seasons'):
                     for item in seasons['seasons']:
                         status = "Upgraded" if item['is_upgrade'] else "New collection"
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
+                        collected_date = safe_format_date(item['original_collected_at'])
                         content.append(f"    - {item['season']} [{item['version']}] ({status}, originally collected on {collected_date})")
                 
                 # Handle individual episodes
@@ -370,7 +385,7 @@ def format_notification_content(notifications, notification_type):
                         
                         for (version, is_upgrade, collected_at), eps in episode_groups.items():
                             status = "Upgraded" if is_upgrade else "New collection"
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
+                            collected_date = safe_format_date(collected_at)
                             
                             # Sort episodes
                             eps.sort(key=lambda x: (

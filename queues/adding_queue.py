@@ -96,6 +96,10 @@ class AddingQueue:
                     
                 # Log number of results found
                 logging.debug(f"Found {len(results)} scrape results for {item_identifier}")
+
+                for result in results:
+                    logging.debug(f"Original scraped torrent title: {result.get('original_title')}")
+                    result['original_scraped_torrent_title'] = result.get('original_title')
                 
                 logging.debug(f"Uncached content management: {get_setting('Scraping', 'uncached_content_handling')}")
 
@@ -133,6 +137,8 @@ class AddingQueue:
                 
                 # Match content
                 files = torrent_info.get('files', [])
+                torrent_title = self.debrid_provider.get_cached_torrent_title(torrent_info.get('hash'))
+                logging.debug(f"Cached torrent title: {torrent_title}")
                 logging.debug(f"Found {len(files)} files in torrent for {item_identifier}")
                 matches = self.media_matcher.match_content(files, item)
                 
@@ -148,12 +154,16 @@ class AddingQueue:
                 matched_file = matches[0][0]  # First match's path
                 logging.debug(f"Best matching file for {item_identifier}: {matched_file}")
                 
+                original_scraped_torrent_title = torrent_info.get('original_scraped_torrent_title')
+                logging.debug(f"Updating item with original_scraped_torrent_title: {original_scraped_torrent_title}")
+                update_media_item(item['id'], original_scraped_torrent_title=original_scraped_torrent_title)
+
                 # Move item to checking
                 logging.debug(f"Moving {item_identifier} to checking queue")
                 queue_manager.move_to_checking(
                     item=item,
                     from_queue="Adding",
-                    title=results[0].get('title', ''),  # Use first result's title
+                    title=torrent_title,  # Use cached torrent title
                     link=magnet,
                     filled_by_file=matched_file,
                     torrent_id=torrent_info.get('id')
@@ -179,7 +189,7 @@ class AddingQueue:
                             queue_manager.move_to_checking(
                                 item=related,
                                 from_queue="Scraping",
-                                title=results[0].get('title', ''),
+                                title=torrent_title,
                                 link=magnet,
                                 filled_by_file=related_file,
                                 torrent_id=torrent_info.get('id')

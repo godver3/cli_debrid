@@ -300,6 +300,7 @@ class TorrentProcessor:
                         torrent_id = self.debrid_provider.get_cached_torrent_id(hash_value)
                         if torrent_id:
                             info = self.debrid_provider.get_torrent_info(torrent_id)
+                            torrent_title = self.debrid_provider.get_cached_torrent_title(hash_value)
                             if info:
                                 logging.debug(f"Result {idx}: Retrieved info for cached torrent {torrent_id}")
                 
@@ -310,7 +311,9 @@ class TorrentProcessor:
                 
                 if info:
                     logging.debug(f"Result {idx}: Successfully processed torrent")
-                    logging.debug(f"Result {idx}: Torrent info - Size: {info.get('bytes', 0)} bytes, Files: {len(info.get('files', []))} files")
+                    info['title'] = torrent_title
+                    info['original_scraped_torrent_title'] = result.get('original_title')
+                    logging.debug(f"Result {idx}: Torrent info - Size: {info.get('bytes', 0)} bytes, Files: {len(info.get('files', []))} files, Title: {info.get('title', '')}, original_scraped_torrent_title: {info.get('original_scraped_torrent_title', '')}")
                     
                     # Only proceed if the torrent has files
                     if len(info.get('files', [])) > 0:

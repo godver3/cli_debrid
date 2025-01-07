@@ -1,0 +1,84 @@
+/* Common styles */
+.settings-container {
+    width: 95%; 
+    max-width: 1200px;
+    margin: 0 auto; 
+    padding: 20px;
+}
+
+/* Description styles */
+.settings-description {
+    color: #aaa;
+    font-size: 0.9em;
+    line-height: 1.4;
+    margin: 8px 0;
+}
+
+.settings-description p {
+    margin: 0 0 8px 0;
+}
+
+.settings-description ul {
+    margin: 4px 0 8px 24px;
+    padding: 0;
+    list-style-type: disc;
+}
+
+.settings-description li {
+    margin: 4px 0;
+    padding: 0;
+    display: list-item;
+}
+
+.settings-description a {
+    color: #dfdfdf;
+}
+
+/* Form group styles */
+.settings-form-group {
+    margin-bottom: 15px;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+/* Checkbox specific styles */
+.settings-form-group:has(input[type="checkbox"]) {
+    margin-bottom: 0;
+    padding: 5px 10px;
+}
+
+.settings-form-group:has(input[type="checkbox"]) .settings-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-form-group:has(input[type="checkbox"]) .settings-description {
+    margin: 0;
+    display: inline;
+}
+
+.settings-form-group:has(input[type="checkbox"]) .settings-description p {
+    margin: 0;
+    display: inline;
+}
+
+.settings-title {
+    font-weight: 500;
+    margin-bottom: 5px;
+    display: block;
+    color: #fff;
+}
+
+.settings-input {
+    width: 100%;
+    padding: 8px;
+    background-color: #444;
+    border: 1px solid #666;
+    color: #fff;
+    border-radius: 3px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+/* Rest of your existing styles... */ 

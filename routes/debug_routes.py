@@ -28,6 +28,7 @@ from not_wanted_magnets import (
     purge_not_wanted_magnets_file, save_not_wanted_magnets,
     load_not_wanted_urls, save_not_wanted_urls
 )
+import json
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -46,14 +47,16 @@ def async_get_wanted_content(source):
 def async_get_collected_from_plex(collection_type):
     try:
         if collection_type == 'all':
-            if get_setting('Debug', 'symlink_collected_files'):
-                run_local_library_scan()
+            if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                logging.info("Full library scan disabled for now")
+                #run_local_library_scan()
             else:
                 get_and_add_all_collected_from_plex()
             message = 'Successfully retrieved and added all collected items from Library'
         elif collection_type == 'recent':
-            if get_setting('Debug', 'symlink_collected_files'):
-                run_recent_local_library_scan()
+            if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                logging.info("Recent library scan disabled for now")
+                #run_recent_local_library_scan()
             else:
                 get_and_add_recent_collected_from_plex()
             message = 'Successfully retrieved and added recent collected items from Library'
@@ -773,3 +776,147 @@ def get_versions():
     except Exception as e:
         logging.error(f"Error getting versions: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
+
+@debug_bp.route('/convert_to_symlinks', methods=['POST'])
+@admin_required
+def convert_to_symlinks():
+    """Convert existing library items to use symlinks."""
+    try:
+        # Get database connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Get symlinked files path from settings
+        symlinked_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
+        if not symlinked_path:
+            logging.error("Symlinked files path not configured")
+            return "Symlinked files path not configured", 400
+
+        # Get all items with location_on_disk set
+        cursor.execute("""
+            SELECT *
+            FROM media_items 
+            WHERE location_on_disk IS NOT NULL 
+            AND location_on_disk != ''
+            AND state = 'Collected'
+        """)
+        items = cursor.fetchall()
+
+        if not items:
+            logging.error("No items found with location_on_disk set")
+            return "No items found with location_on_disk set", 404
+
+        logging.info(f"Found {len(items)} items to convert to symlinks")
+
+        # Convert items to symlinks
+        from utilities.local_library_scan import convert_item_to_symlink
+        results = []
+        processed = 0
+        total = len(items)
+        wanted_count = 0
+        deleted_count = 0
+        skipped_count = 0
+
+        for item in items:
+            item_dict = dict(item)
+            
+            # Check if item is already in symlink folder
+            current_location = item_dict.get('location_on_disk', '')
+            if current_location.startswith(symlinked_path):
+                logging.info(f"Skipping {item_dict['title']} ({item_dict['version']}) - already in symlink folder")
+                skipped_count += 1
+                continue
+
+            result = convert_item_to_symlink(item_dict)
+            results.append(result)
+
+            if result['success']:
+                # Update database with new location and original path
+                cursor.execute("""
+                    UPDATE media_items 
+                    SET location_on_disk = ?,
+                        original_path_for_symlink = ?
+                    WHERE id = ?
+                """, (result['new_location'], result['old_location'], result['item_id']))
+            else:
+                # If error is "Source file not found", handle specially
+                if "Source file not found" in result['error']:
+                    # Check if we have another item with same title, type, and version that's either Wanted or Collected
+                    cursor.execute("""
+                        SELECT COUNT(*) as count 
+                        FROM media_items 
+                        WHERE title = ? 
+                        AND type = ? 
+                        AND TRIM(version, '*') = TRIM(?, '*')
+                        AND state IN ('Wanted', 'Collected')
+                        AND id != ?
+                    """, (item_dict['title'], item_dict['type'], item_dict['version'], item_dict['id']))
+                    
+                    has_duplicate = cursor.fetchone()['count'] > 0
+                    
+                    if has_duplicate:
+                        # Delete this item as we already have a copy
+                        cursor.execute("DELETE FROM media_items WHERE id = ?", (result['item_id'],))
+                        deleted_count += 1
+                        logging.info(f"Deleted item {item_dict['title']} ({item_dict['version']}) as duplicate exists")
+                    else:
+                        # Update the item to Wanted state
+                        cursor.execute("""
+                            UPDATE media_items 
+                            SET state = 'Wanted',
+                                filled_by_file = NULL,
+                                filled_by_title = NULL,
+                                filled_by_magnet = NULL,
+                                filled_by_torrent_id = NULL,
+                                collected_at = NULL,
+                                location_on_disk = NULL,
+                                last_updated = CURRENT_TIMESTAMP,
+                                version = TRIM(version, '*')
+                            WHERE id = ?
+                        """, (result['item_id'],))
+                        wanted_count += 1
+                        logging.info(f"Moved item {item_dict['title']} ({item_dict['version']}) to Wanted state")
+            
+            # Log progress every 50 items
+            processed += 1
+            if processed % 50 == 0:
+                logging.info(f"Progress: {processed}/{total} items processed")
+                conn.commit()  # Intermediate commit to avoid long transactions
+
+        conn.commit()
+        conn.close()
+
+        # Count successes and failures
+        successes = sum(1 for r in results if r['success'])
+        failures = sum(1 for r in results if not r['success'])
+
+        # Group failures by error type for better reporting
+        error_summary = {}
+        for r in results:
+            if not r['success']:
+                error_type = r['error']
+                if error_type not in error_summary:
+                    error_summary[error_type] = 0
+                error_summary[error_type] += 1
+
+        # Log the summary
+        logging.info(f"Processed {len(results)} items: {successes} successful, {failures} failed")
+        if failures > 0:
+            logging.warning("Error summary:")
+            for error_type, count in error_summary.items():
+                logging.warning(f"- {error_type}: {count} items")
+
+        summary = f"Processed {len(results)} items: {successes} successful, {failures} failed"
+        if wanted_count > 0 or deleted_count > 0 or skipped_count > 0:
+            if wanted_count > 0:
+                summary += f"\nMoved {wanted_count} items back to Wanted state"
+            if deleted_count > 0:
+                summary += f"\nDeleted {deleted_count} duplicate items"
+            if skipped_count > 0:
+                summary += f"\nSkipped {skipped_count} items already in symlink folder"
+
+        return summary, 200
+
+    except Exception as e:
+        logging.error(f"Error converting library to symlinks: {str(e)}")
+        return f"Error converting library to symlinks: {str(e)}", 500
