@@ -325,7 +325,7 @@ def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
     
     Args:
         items: List of items to scan for
-        
+    
     Returns:
         Dict mapping item IDs to their found file information
     """
