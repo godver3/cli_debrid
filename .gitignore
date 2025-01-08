@@ -136,3 +136,4 @@ build_venv/
 build_env/
 
 nohup.out
+run.sh

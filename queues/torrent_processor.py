@@ -146,8 +146,8 @@ class TorrentProcessor:
             # Process the magnet/URL
             magnet, temp_file = self.process_torrent(magnet_or_url)
             
-            # Add the torrent
-            add_response = self.debrid_provider.add_torrent(magnet if magnet else magnet_or_url, temp_file)
+            # Add the torrent - if we have a temp file but no magnet, pass None as magnet
+            add_response = self.debrid_provider.add_torrent(magnet if magnet else None, temp_file)
             logging.debug(f"Full add_torrent response: {add_response}")
             
             torrent_id = add_response
@@ -287,6 +287,7 @@ class TorrentProcessor:
                 
                 # For cached torrents, try to get the existing torrent ID
                 info = None
+                torrent_title = None  # Initialize torrent_title here
                 if is_cached:
                     hash_value = None
                     if magnet:
@@ -307,11 +308,24 @@ class TorrentProcessor:
                 # If we don't have info yet (uncached or couldn't get cached info), add the torrent
                 if not info:
                     logging.debug(f"Result {idx}: Attempting to add torrent to debrid service")
-                    info = self.debrid_provider.add_torrent(original_link)
+                    # Process the torrent first to handle URLs properly
+                    magnet, temp_file = self.process_torrent(original_link)
+                    try:
+                        # Use add_to_account which returns full torrent info
+                        info = self.add_to_account(original_link)
+                        if info:
+                            # For uncached torrents, use the filename from the torrent info
+                            torrent_title = info.get('filename', '')
+                    finally:
+                        if temp_file and os.path.exists(temp_file):
+                            try:
+                                os.unlink(temp_file)
+                            except Exception as e:
+                                logging.error(f"Error cleaning up temp file: {str(e)}")
                 
                 if info:
                     logging.debug(f"Result {idx}: Successfully processed torrent")
-                    info['title'] = torrent_title
+                    info['title'] = torrent_title or result.get('title', '')  # Fallback to result title if no torrent_title
                     info['original_scraped_torrent_title'] = result.get('original_title')
                     logging.debug(f"Result {idx}: Torrent info - Size: {info.get('bytes', 0)} bytes, Files: {len(info.get('files', []))} files, Title: {info.get('title', '')}, original_scraped_torrent_title: {info.get('original_scraped_torrent_title', '')}")
                     

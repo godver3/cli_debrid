@@ -9,6 +9,7 @@ import platform
 import psutil
 import webbrowser
 import socket
+from datetime import datetime
 
 # Import Windows-specific modules only on Windows
 if platform.system() == 'Windows':
@@ -107,6 +108,45 @@ def backup_config():
         logging.info(f"Backup of config.json created: {backup_path}")
     else:
         logging.warning("config.json not found, no backup created.")
+
+def backup_database():
+    """
+    Creates a backup of the media_items.db file with a timestamp.
+    Keeps only the two most recent backups.
+    """
+    try:
+        # Get db_content directory from environment variable
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        db_path = os.path.join(db_content_dir, 'media_items.db')
+        
+        if not os.path.exists(db_path):
+            logging.warning("media_items.db not found, no backup created.")
+            return
+            
+        # Create backup directory if it doesn't exist
+        backup_dir = os.path.join(db_content_dir, 'backups')
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # Generate backup filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = os.path.join(backup_dir, f'media_items_{timestamp}.db')
+        
+        # Create the backup
+        shutil.copy2(db_path, backup_path)
+        logging.info(f"Backup of media_items.db created: {backup_path}")
+        
+        # Get list of existing backups and sort by modification time
+        existing_backups = [os.path.join(backup_dir, f) for f in os.listdir(backup_dir) 
+                          if f.startswith('media_items_') and f.endswith('.db')]
+        existing_backups.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        
+        # Remove older backups, keeping only the two most recent
+        for old_backup in existing_backups[2:]:
+            os.remove(old_backup)
+            logging.info(f"Removed old backup: {old_backup}")
+            
+    except Exception as e:
+        logging.error(f"Error creating database backup: {str(e)}")
 
 def get_version():
     try:
@@ -767,6 +807,7 @@ def main():
 
     setup_directories()
     backup_config()
+    backup_database()  # Add the database backup call here
 
     from settings import ensure_settings_file, get_setting, set_setting
     from database import verify_database

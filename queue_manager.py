@@ -301,7 +301,7 @@ class QueueManager:
     def is_paused(self):
         return self.paused
 
-    def move_to_collected(self, item: Dict[str, Any], from_queue: str):
+    def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False):
         """Move an item to the Collected state after symlink is created."""
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Collected state")
@@ -320,12 +320,13 @@ class QueueManager:
             self.queues[from_queue].remove_item(item)
             logging.info(f"Successfully moved item {item_identifier} to Collected state")
             
-            # Add to collected notifications
-            from database.collected_items import add_to_collected_notifications
-            updated_item_dict = dict(updated_item)
-            updated_item_dict['is_upgrade'] = False  # Not an upgrade since it's a new collection
-            updated_item_dict['original_collected_at'] = collected_at
-            add_to_collected_notifications(updated_item_dict)
+            # Add to collected notifications if not skipped
+            if not skip_notification:
+                from database.collected_items import add_to_collected_notifications
+                updated_item_dict = dict(updated_item)
+                updated_item_dict['is_upgrade'] = False  # Not an upgrade since it's a new collection
+                updated_item_dict['original_collected_at'] = collected_at
+                add_to_collected_notifications(updated_item_dict)
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 

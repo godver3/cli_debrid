@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 import re
 from datetime import datetime
+import time
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -132,43 +133,14 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         # Create the directory path first
         dir_path = os.path.join(symlinked_path, *parts)
         
-        # Then join with the final filename, handling duplicates
+        # Then join with the final filename
         base_path = os.path.join(dir_path, os.path.splitext(final_filename)[0])
         full_path = f"{base_path}{extension}"
         
-        # If the path exists, try appending numbers until we find a free one
-        counter = 1
-        original_base_path = base_path
-        max_attempts = 100  # Prevent infinite loops
-        
-        while os.path.exists(full_path) and counter <= max_attempts:
-            # For long filenames, insert the counter before any existing ellipsis
-            if "..." in original_base_path:
-                pre_ellipsis = original_base_path.rsplit("...", 1)[0]
-                # Ensure we have room for the counter
-                if len(pre_ellipsis) > 220:  # Leave room for counter, ellipsis, and extension
-                    pre_ellipsis = pre_ellipsis[:220]
-                base_path = f"{pre_ellipsis}_{counter}..."
-            else:
-                base_path = f"{original_base_path}.{counter}"
-            full_path = f"{base_path}{extension}"
+        # If the path exists, log it and return the path anyway
+        if os.path.exists(full_path):
+            logging.info(f"Symlink path already exists: {full_path}")
             
-            # Check if the new filename exceeds max length
-            filename = os.path.basename(full_path)
-            if len(filename) > max_filename_length:
-                filename_without_ext = os.path.splitext(filename)[0]
-                # Ensure we leave room for counter and extension
-                max_base_length = max_filename_length - len(str(counter)) - len(extension) - 5  # 5 for "..." and "_"
-                truncated = filename_without_ext[:max_base_length] + "..."
-                base_path = os.path.join(os.path.dirname(base_path), truncated)
-                full_path = f"{base_path}{extension}"
-                logging.debug(f"Truncated filename after counter to {len(os.path.basename(full_path))} chars: {os.path.basename(full_path)}")
-            counter += 1
-            
-        if counter > max_attempts:
-            logging.error(f"Failed to find unique filename after {max_attempts} attempts")
-            return None
-        
         return full_path
         
     except Exception as e:
@@ -194,129 +166,168 @@ def create_symlink(source_path: str, dest_path: str) -> bool:
         logging.error(f"Failed to create symlink {source_path} -> {dest_path}: {str(e)}")
         return False
 
-def check_local_file_for_item(item: Dict[str, Any]) -> bool:
+def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False) -> bool:
     """
-    Check if the local file for the item exists and create symlink if needed
+    Check if the local file for the item exists and create symlink if needed.
+    When called from webhook endpoint, will retry up to 5 times with 1 second delay.
+    
+    Args:
+        item: Dictionary containing item details
+        is_webhook: If True, enables retry mechanism for webhook calls
     """
-    try:
-        if not item.get('filled_by_title') or not item.get('filled_by_file'):
-            return False
-            
-        original_path = get_setting('Debug', 'original_files_path', '/mnt/zurg/__all__')
-        
-        # Construct the complete source path using both title and file
-        source_file = os.path.join(original_path, item['filled_by_title'], item['filled_by_file'])
-        logging.debug(f"Constructed source file path: {source_file}")
-        
-        if not os.path.exists(source_file):
-            logging.warning(f"Original file not found: {source_file}")
-            return False
-            
-        # Get destination path based on settings
-        dest_file = get_symlink_path(item, source_file)
-        if not dest_file:
-            return False
-        
-        success = False
-        
-        # Check if this is a potential upgrade based on release date
-        release_date = datetime.strptime(item.get('release_date', '1970-01-01'), '%Y-%m-%d').date()
-        days_since_release = (datetime.now().date() - release_date).days
-        
-        # If release is within last 7 days and upgrading is enabled, treat as potential upgrade
-        is_upgrade_candidate = days_since_release <= 7 and get_setting("Scraping", "enable_upgrading", default=False)
-        
-        # Log upgrade status
-        item_identifier = f"{item.get('title')} ({item.get('year', '')})"
-        if item.get('type') == 'episode':
-            item_identifier += f" S{item.get('season_number', '00'):02d}E{item.get('episode_number', '00'):02d}"
-        
-        logging.debug(f"[UPGRADE] Processing item: {item_identifier}")
-        logging.debug(f"[UPGRADE] Days since release: {days_since_release}")
-        logging.debug(f"[UPGRADE] Is upgrade candidate: {is_upgrade_candidate}")
-        logging.debug(f"[UPGRADE] Current file: {item.get('filled_by_file')}")
-        logging.debug(f"[UPGRADE] Upgrading from: {item.get('upgrading_from')}")
-        logging.debug(f"[UPGRADE] Torrent ID: {item.get('filled_by_torrent_id')}")
-        
-        # Only handle cleanup if we have a confirmed upgrade (upgrading_from is set)
-        if item.get('upgrading_from'):
-            logging.info(f"[UPGRADE] Processing confirmed upgrade for {item_identifier}")
-            # Remove old torrent from debrid service if we have the ID
-            if item.get('filled_by_torrent_id'):
-                try:
-                    from debrid import get_debrid_provider
-                    debrid_provider = get_debrid_provider()
-                    debrid_provider.remove_torrent(item['filled_by_torrent_id'])
-                    logging.info(f"[UPGRADE] Removed old torrent {item['filled_by_torrent_id']} from debrid service")
-                except Exception as e:
-                    logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
-            
-            # Remove old symlink if it exists
-            old_source = os.path.join(original_path, item.get('filled_by_title'), item['upgrading_from'])
-            old_dest = get_symlink_path(item, old_source)
-            if old_dest and os.path.lexists(old_dest):
-                try:
-                    os.unlink(old_dest)
-                    logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
-                except Exception as e:
-                    logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
-            else:
-                logging.debug(f"[UPGRADE] No old symlink found at {old_dest}")
-
-        if not os.path.exists(dest_file):
-            success = create_symlink(source_file, dest_file)
-            logging.debug(f"[UPGRADE] Created new symlink: {success}")
-        else:
-            # Verify existing symlink points to correct source
-            if os.path.islink(dest_file):
-                real_source = os.path.realpath(dest_file)
-                if real_source == source_file:
-                    success = True
-                    logging.debug(f"[UPGRADE] Existing symlink is correct")
-                else:
-                    # Recreate symlink if pointing to wrong source
-                    os.unlink(dest_file)
-                    success = create_symlink(source_file, dest_file)
-                    logging.debug(f"[UPGRADE] Recreated symlink with correct source: {success}")
-            else:
-                logging.warning(f"[UPGRADE] Destination exists but is not a symlink: {dest_file}")
+    max_retries = 5 if is_webhook else 1
+    retry_delay = 5  # second
+    
+    for attempt in range(max_retries):
+        try:
+            if not item.get('filled_by_title') or not item.get('filled_by_file'):
                 return False
-
-        if success:
-            logging.info(f"[UPGRADE] Successfully processed symlink at: {dest_file}")
-            from database.database_writing import update_media_item
+                
+            original_path = get_setting('Debug', 'original_files_path', '/mnt/zurg/__all__')
             
-            # Set state based on whether this is an upgrade candidate
-            new_state = 'Upgrading' if is_upgrade_candidate else 'Collected'
-            logging.info(f"[UPGRADE] Setting item state to: {new_state}")
+            # Construct the complete source path using both title and file
+            source_file = os.path.join(original_path, item['filled_by_title'], item['filled_by_file'])
+            logging.debug(f"Constructed source file path: {source_file}")
             
-            current_time = datetime.now()
+            if not os.path.exists(source_file):
+                if is_webhook and attempt < max_retries - 1:
+                    logging.info(f"File not found, attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay} second...")
+                    time.sleep(retry_delay)
+                    continue
+                logging.warning(f"Original file not found: {source_file}")
+                return False
+                
+            # Get destination path based on settings
+            dest_file = get_symlink_path(item, source_file)
+            if not dest_file:
+                return False
             
-            # Prepare update values
-            update_values = {
-                'location_on_disk': dest_file,
-                'collected_at': current_time,
-                'original_collected_at': current_time,
-                'original_path_for_symlink': source_file,
-                'state': new_state,
-                'filled_by_title': item.get('filled_by_title'),
-                'filled_by_file': item.get('filled_by_file'),
-                'filled_by_magnet': item.get('filled_by_magnet'),
-                'filled_by_torrent_id': item.get('filled_by_torrent_id')
-            }
+            success = False
             
-            # Only set upgrading_from if this is a confirmed upgrade
+            # Check if this is a potential upgrade based on release date
+            release_date = datetime.strptime(item.get('release_date', '1970-01-01'), '%Y-%m-%d').date()
+            days_since_release = (datetime.now().date() - release_date).days
+            
+            # If release is within last 7 days and upgrading is enabled, treat as potential upgrade
+            is_upgrade_candidate = days_since_release <= 7 and get_setting("Scraping", "enable_upgrading", default=False)
+            
+            # Log upgrade status
+            item_identifier = f"{item.get('title')} ({item.get('year', '')})"
+            if item.get('type') == 'episode':
+                item_identifier += f" S{item.get('season_number', '00'):02d}E{item.get('episode_number', '00'):02d}"
+            
+            logging.debug(f"[UPGRADE] Processing item: {item_identifier}")
+            logging.debug(f"[UPGRADE] Days since release: {days_since_release}")
+            logging.debug(f"[UPGRADE] Is upgrade candidate: {is_upgrade_candidate}")
+            logging.debug(f"[UPGRADE] Current file: {item.get('filled_by_file')}")
+            logging.debug(f"[UPGRADE] Upgrading from: {item.get('upgrading_from')}")
+            logging.debug(f"[UPGRADE] Torrent ID: {item.get('filled_by_torrent_id')}")
+            
+            # Only handle cleanup if we have a confirmed upgrade (upgrading_from is set)
             if item.get('upgrading_from'):
-                update_values['upgrading_from'] = item['upgrading_from']
-            
-            logging.debug(f"[UPGRADE] Updating item with values: {update_values}")
-            update_media_item(item['id'], **update_values)
+                logging.info(f"[UPGRADE] Processing confirmed upgrade for {item_identifier}")
+                # Remove old torrent from debrid service if we have the ID
+                if item.get('filled_by_torrent_id'):
+                    try:
+                        from debrid import get_debrid_provider
+                        debrid_provider = get_debrid_provider()
+                        debrid_provider.remove_torrent(item['upgrading_from_torrent_id'])
+                        logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
+                    except Exception as e:
+                        logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
+                
+                # Remove old symlink if it exists
+                # Use the old file's name to get the old symlink path
+                old_source = os.path.join(original_path, item.get('filled_by_title'), item['upgrading_from'])
+                # Save current values
+                current_filled_by_file = item.get('filled_by_file')
+                current_version = item.get('version')
+                # Temporarily set the filled_by_file to the old file to get correct old path
+                item['filled_by_file'] = item['upgrading_from']
 
-        return success
-        
-    except Exception as e:
-        logging.error(f"[UPGRADE] Error checking local file for item: {str(e)}")
-        return False
+                old_dest = get_symlink_path(item, old_source)
+                # Restore current values
+                item['filled_by_file'] = current_filled_by_file
+                item['version'] = current_version
+                
+                if old_dest and os.path.lexists(old_dest):
+                    try:
+                        os.unlink(old_dest)
+                        logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+                    except Exception as e:
+                        logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
+                else:
+                    logging.debug(f"[UPGRADE] No old symlink found at {old_dest}")
+
+            if not os.path.exists(dest_file):
+                success = create_symlink(source_file, dest_file)
+                logging.debug(f"[UPGRADE] Created new symlink: {success}")
+            else:
+                # Verify existing symlink points to correct source
+                if os.path.islink(dest_file):
+                    real_source = os.path.realpath(dest_file)
+                    if real_source == source_file:
+                        success = True
+                        logging.debug(f"[UPGRADE] Existing symlink is correct")
+                    else:
+                        # Recreate symlink if pointing to wrong source
+                        os.unlink(dest_file)
+                        success = create_symlink(source_file, dest_file)
+                        logging.debug(f"[UPGRADE] Recreated symlink with correct source: {success}")
+                else:
+                    logging.warning(f"[UPGRADE] Destination exists but is not a symlink: {dest_file}")
+                    return False
+
+            if success:
+                logging.info(f"[UPGRADE] Successfully processed symlink at: {dest_file}")
+                from database.database_writing import update_media_item
+                
+                # Set state based on whether this is an upgrade candidate
+                new_state = 'Upgrading' if is_upgrade_candidate else 'Collected'
+                logging.info(f"[UPGRADE] Setting item state to: {new_state}")
+                
+                current_time = datetime.now()
+                
+                # Prepare update values
+                update_values = {
+                    'location_on_disk': dest_file,
+                    'collected_at': current_time,
+                    'original_collected_at': current_time,
+                    'original_path_for_symlink': source_file,
+                    'state': new_state,
+                    'filled_by_title': item.get('filled_by_title'),
+                    'filled_by_file': item.get('filled_by_file'),
+                    'filled_by_magnet': item.get('filled_by_magnet'),
+                    'filled_by_torrent_id': item.get('filled_by_torrent_id')
+                }
+                
+                # Only set upgrading_from if this is a confirmed upgrade
+                if item.get('upgrading_from'):
+                    update_values['upgrading_from'] = item['upgrading_from']
+                
+                logging.debug(f"[UPGRADE] Updating item with values: {update_values}")
+                update_media_item(item['id'], **update_values)
+
+                # Add notification for new collections (not upgrades)
+                if not item.get('upgrading_from') and not item.get('collected_at'):
+                    from database.database_writing import add_to_collected_notifications
+                    notification_item = item.copy()
+                    notification_item.update(update_values)
+                    notification_item['is_upgrade'] = False
+                    add_to_collected_notifications(notification_item)
+                    logging.info(f"Added collection notification for new item: {item_identifier}")
+
+            return success
+            
+        except Exception as e:
+            if is_webhook and attempt < max_retries - 1:
+                logging.warning(f"[UPGRADE] Attempt {attempt + 1}/{max_retries} failed: {str(e)}. Retrying in {retry_delay} second...")
+                time.sleep(retry_delay)
+                continue
+            logging.error(f"[UPGRADE] Error checking local file for item: {str(e)}")
+            return False
+            
+    return False
 
 def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
