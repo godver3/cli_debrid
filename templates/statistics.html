@@ -111,7 +111,9 @@
                     <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
                 </div>
                 <div class="stat-item">
-                    <p data-label="Active Downloads"><span id="active_downloads">{{ stats.active_downloads_data.count }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit }}</span></p>
+                    <p data-label="Active Downloads" class="{{ stats.active_downloads_data.status }}">
+                        <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
+                    </p>
                 </div>
                 <div class="stat-item">
                     <p data-label="Daily Usage"><span id="daily_usage">{{ stats.usage_stats_data.used }}</span> / <span id="daily_limit">{{ stats.usage_stats_data.limit }}</span></p>
@@ -262,9 +264,9 @@
         const limitElement = document.getElementById('download_limit');
         const statusElement = downloadsElement.parentElement;
         
-        // Update the display values
-        downloadsElement.textContent = data.count;
-        limitElement.textContent = data.limit;
+        // Update the display values with fallbacks
+        downloadsElement.textContent = data.count || 0;
+        limitElement.textContent = data.limit || 25;  // Fallback to default max downloads
         
         // Update styling based on status
         statusElement.classList.remove('warning', 'critical');

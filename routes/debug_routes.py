@@ -1,7 +1,7 @@
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask.json import jsonify
 from initialization import get_all_wanted_from_enabled_sources
-from run_program import get_and_add_recent_collected_from_plex, get_and_add_all_collected_from_plex, ProgramRunner
+from run_program import get_and_add_recent_collected_from_plex, get_and_add_all_collected_from_plex, ProgramRunner, run_local_library_scan, run_recent_local_library_scan
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
 from settings import get_all_settings, get_setting, set_setting
 from config_manager import load_config
@@ -46,11 +46,17 @@ def async_get_wanted_content(source):
 def async_get_collected_from_plex(collection_type):
     try:
         if collection_type == 'all':
-            get_and_add_all_collected_from_plex()
-            message = 'Successfully retrieved and added all collected items from Plex'
+            if get_setting('Debug', 'symlink_collected_files'):
+                run_local_library_scan()
+            else:
+                get_and_add_all_collected_from_plex()
+            message = 'Successfully retrieved and added all collected items from Library'
         elif collection_type == 'recent':
-            get_and_add_recent_collected_from_plex()
-            message = 'Successfully retrieved and added recent collected items from Plex'
+            if get_setting('Debug', 'symlink_collected_files'):
+                run_recent_local_library_scan()
+            else:
+                get_and_add_recent_collected_from_plex()
+            message = 'Successfully retrieved and added recent collected items from Library'
         else:
             raise ValueError('Invalid collection type')
         
