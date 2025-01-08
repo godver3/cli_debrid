@@ -52,6 +52,9 @@ def migrate_schema():
         if 'original_scraped_torrent_title' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN original_scraped_torrent_title TEXT')
             logging.info("Successfully added original_scraped_torrent_title column to media_items table.")
+        if 'upgrading_from_torrent_id' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN upgrading_from_torrent_id TEXT')
+            logging.info("Successfully added upgrading_from_torrent_id column to media_items table.")
 
         # logging.info("Successfully added new columns to media_items table.")
 
@@ -133,7 +136,8 @@ def create_tables():
                 location_on_disk TEXT,
                 early_release BOOLEAN DEFAULT FALSE,
                 original_path_for_symlink TEXT,
-                original_scraped_torrent_title TEXT
+                original_scraped_torrent_title TEXT,
+                upgrading_from_torrent_id TEXT
             )
         ''')
 

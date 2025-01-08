@@ -1,7 +1,8 @@
 import logging
 from typing import Dict, Any
 from datetime import datetime, timedelta
-from database import get_all_media_items, update_media_item_state, get_media_item_by_id, add_to_collected_notifications
+from database import get_all_media_items, update_media_item_state, get_media_item_by_id
+from database.database_writing import add_to_collected_notifications
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
 from settings import get_setting
@@ -222,9 +223,15 @@ class UpgradingQueue:
                 uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
                 adding_queue.add_item(updated_item)
                 adding_queue.process(queue_manager)
-                success = len(adding_queue.items) == 0  # If item was processed successfully, it will be removed
 
-                if success:
+                # Check if the item was successfully moved to Checking queue
+                from database.core import get_db_connection
+                conn = get_db_connection()
+                cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
+                current_state = cursor.fetchone()['state']
+                conn.close()
+
+                if current_state == 'Checking':
                     logging.info(f"Successfully initiated upgrade for item {item_identifier}")
                     
                     # Ensure the upgrades_data entry is initialized
@@ -247,9 +254,9 @@ class UpgradingQueue:
                     # Remove the item from the Upgrading queue
                     self.remove_item(item)
 
-                    logging.info(f"Maintained item {item_identifier} in Upgrading state after successful upgrade.")
+                    logging.info(f"Successfully upgraded item {item_identifier} to Checking state")
                 else:
-                    logging.info(f"Failed to upgrade item {item_identifier}")
+                    logging.info(f"Failed to upgrade item {item_identifier} - current state: {current_state}")
             else:
                 logging.info(f"No better results found for {item_identifier}")
         else:
@@ -271,7 +278,7 @@ class UpgradingQueue:
                 # Update the item in the database with new values
                 conn.execute('''
                     UPDATE media_items
-                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?
+                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?, upgrading_from_torrent_id = ?
                     WHERE id = ?
                 ''', (
                     upgrading_from,
@@ -280,6 +287,7 @@ class UpgradingQueue:
                     new_values['version'],
                     datetime.now(),
                     'Checking',
+                    item['filled_by_torrent_id'],
                     item['id']
                 ))
 
@@ -290,12 +298,13 @@ class UpgradingQueue:
                 item['upgrading_from'] = upgrading_from
                 item['filled_by_file'] = new_values['filled_by_file']
                 item['filled_by_magnet'] = new_values['filled_by_magnet']
+                item['upgrading_from_torrent_id'] = item['filled_by_torrent_id']
                 item['version'] = new_values['version']
                 item['last_updated'] = datetime.now()
                 item['state'] = 'Checking'
 
                 # Optionally, add to collected notifications
-                add_to_collected_notifications(item)
+                # add_to_collected_notifications(item)
             except Exception as e:
                 conn.rollback()
                 logging.error(f"Error updating item {self.generate_identifier(item)}: {str(e)}", exc_info=True)

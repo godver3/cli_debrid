@@ -445,6 +445,10 @@ def move_item_to_wanted(item_id):
                 filled_by_torrent_id = NULL, 
                 collected_at = NULL,
                 last_updated = ?,
+                location_on_disk = NULL,
+                original_path_for_symlink = NULL,
+                original_scraped_torrent_title = NULL,
+                upgrading_from = NULL,
                 version = TRIM(version, '*')
             WHERE id = ?
         ''', (datetime.now(), item_id))
