@@ -23,6 +23,7 @@ class AddingQueue:
         self.torrent_processor = TorrentProcessor(self.debrid_provider)
         self.media_matcher = MediaMatcher()
         self.items: List[Dict] = []
+        self.last_process_time = {}
         
     def reinitialize_provider(self):
         """Reinitialize the debrid provider and processors"""
@@ -315,3 +316,23 @@ class AddingQueue:
             
         except Exception as e:
             logging.error(f"Error handling failed item: {str(e)}", exc_info=True)
+    
+    def get_new_item_values(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        # Fetch the updated item from the database
+        from database import get_media_item_by_id
+        updated_item = get_media_item_by_id(item['id'])
+
+        if updated_item:
+            # Extract the new values that need to be updated
+            new_values = {
+                'filled_by_title': updated_item.get('filled_by_title'),
+                'filled_by_magnet': updated_item.get('filled_by_magnet'),
+                'filled_by_file': updated_item.get('filled_by_file'),
+                'filled_by_torrent_id': updated_item.get('filled_by_torrent_id'),
+                'version': updated_item.get('version'),
+                # Include any other fields that were updated
+            }
+            return new_values
+        else:
+            logging.warning(f"Could not retrieve updated item for ID {item['id']}")
+            return {}

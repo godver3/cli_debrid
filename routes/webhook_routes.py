@@ -50,7 +50,7 @@ def rclone_webhook():
 
         for item in matched_items:
             logging.info(f"Found matching item {item['id']} for file {file_path}")
-            if check_local_file_for_item(item):
+            if check_local_file_for_item(item, is_webhook=True):
                 logging.info(f"Local file found and symlinked for item {item['id']}")
 
                 if get_setting('File Management', 'plex_url_for_symlink', default=False):
@@ -67,7 +67,8 @@ def rclone_webhook():
                 if current_state == 'Upgrading':
                     logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
                 else:
-                    queue_manager.move_to_collected(item, "Checking")
+                    # Move to collected without creating another notification
+                    queue_manager.move_to_collected(item, "Checking", skip_notification=True)
 
         return jsonify({
             "status": "success",
