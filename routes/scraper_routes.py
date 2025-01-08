@@ -21,6 +21,7 @@ import tempfile
 import os
 import bencodepy
 from debrid.common.torrent import torrent_to_magnet
+import hashlib
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -136,25 +137,14 @@ def add_torrent_to_debrid():
         # If it's a URL rather than a magnet link
         if magnet_link.startswith('http'):
             try:
-                # For Jackett URLs, download to temp file and convert to magnet
-                if 'jackett' in magnet_link.lower():
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
-                        response = requests.get(magnet_link, timeout=30)
-                        response.raise_for_status()
-                        tmp.write(response.content)
-                        temp_file = tmp.name
-                        logging.info("Downloaded torrent file from Jackett")
-                        # Convert torrent file to magnet
-                        magnet_link = torrent_to_magnet(temp_file)
-                        if not magnet_link:
-                            raise Exception("Failed to convert torrent file to magnet")
-                        logging.info("Converted torrent file to magnet")
-                else:
-                    # For other URLs, convert to magnet
-                    torrent_hash = _download_and_get_hash(magnet_link)
-                    magnet_link = f"magnet:?xt=urn:btih:{torrent_hash}"
-                    logging.info("Converted URL to magnet link")
-                    logging.info(f"Generated magnet link: {magnet_link}")
+                # For Jackett URLs or any other torrent URLs, download to temp file
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
+                    response = requests.get(magnet_link, timeout=30)
+                    response.raise_for_status()
+                    tmp.write(response.content)
+                    tmp.flush()
+                    temp_file = tmp.name
+                    logging.info("Downloaded torrent file")
             except Exception as e:
                 error_message = str(e)
                 logging.error(f"Failed to process torrent URL: {error_message}")
@@ -165,22 +155,23 @@ def add_torrent_to_debrid():
                         logging.warning(f"Failed to delete temp file {temp_file}: {e}")
                 return jsonify({'error': error_message}), 400
 
-        # Add magnet to debrid provider
+        # Add magnet/torrent to debrid provider
         debrid_provider = get_debrid_provider()
-        torrent_id = debrid_provider.add_torrent(magnet_link)
-        logging.info(f"Torrent result: {torrent_id}")
-        
-        if not torrent_id:
-            error_message = "Failed to add torrent to debrid provider"
-            logging.error(error_message)
-            return jsonify({'error': error_message}), 500
-
-        # Clean up temp file if it exists
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.unlink(temp_file)
-            except Exception as e:
-                logging.warning(f"Failed to delete temp file {temp_file}: {e}")
+        try:
+            torrent_id = debrid_provider.add_torrent(magnet_link, temp_file)
+            logging.info(f"Torrent result: {torrent_id}")
+            
+            if not torrent_id:
+                error_message = "Failed to add torrent to debrid provider"
+                logging.error(error_message)
+                return jsonify({'error': error_message}), 500
+        finally:
+            # Clean up temp file if it exists
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.unlink(temp_file)
+                except Exception as e:
+                    logging.warning(f"Failed to delete temp file {temp_file}: {e}")
 
         # Get torrent info for processing
         if isinstance(debrid_provider, RealDebridProvider):
@@ -188,9 +179,15 @@ def add_torrent_to_debrid():
             torrent_info = debrid_provider.get_torrent_info(torrent_id)
         else:
             # For TorBox, extract and use the hash
-            hash_value = extract_hash_from_magnet(magnet_link)
+            hash_value = extract_hash_from_magnet(magnet_link) if magnet_link.startswith('magnet:') else None
+            if not hash_value and temp_file:
+                # If we have a torrent file, extract hash from it
+                with open(temp_file, 'rb') as f:
+                    torrent_data = bencodepy.decode(f.read())
+                    info = torrent_data[b'info']
+                    hash_value = hashlib.sha1(bencodepy.encode(info)).hexdigest()
             if not hash_value:
-                error_message = "Failed to extract hash from magnet link"
+                error_message = "Failed to extract hash from torrent"
                 logging.error(error_message)
                 return jsonify({'error': error_message}), 500
             torrent_info = debrid_provider.get_torrent_info(hash_value)

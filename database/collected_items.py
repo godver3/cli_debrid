@@ -8,6 +8,7 @@ from .database_writing import add_to_collected_notifications
 from reverse_parser import parser_approximation
 from settings import get_setting
 from typing import Dict, Any, List
+from .unmatched_helper import find_matching_item_in_db
 
 def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
@@ -35,18 +36,28 @@ def add_collected_items(media_items_batch, recent=False):
                     filenames_in_batch.add(filename)
         
         if filenames_in_batch:
-            # Fetch existing items that match filenames in the batch or in upgrading_from
-            placeholders = ', '.join(['?'] * len(filenames_in_batch))
-            query = f'''
-                SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
-                       filled_by_file, collected_at, release_date, upgrading_from
-                FROM media_items
-                WHERE filled_by_file IN ({placeholders})
-                   OR upgrading_from IN ({placeholders})
-            '''
-            params = list(filenames_in_batch) * 2  # Parameters for both placeholders
-            cursor = conn.execute(query, params)
-            for row in cursor:
+            # Process filenames in batches to avoid SQLite variable limit
+            batch_size = 450  # Will become 900 when doubled (under 999 limit)
+            filenames_list = list(filenames_in_batch)
+            existing_items = []
+            
+            for i in range(0, len(filenames_list), batch_size):
+                batch = filenames_list[i:i + batch_size]
+                placeholders = ', '.join(['?'] * len(batch))
+                query = f'''
+                    SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
+                           filled_by_file, collected_at, release_date, upgrading_from
+                    FROM media_items
+                    WHERE filled_by_file IN ({placeholders})
+                       OR upgrading_from IN ({placeholders})
+                '''
+                params = batch * 2  # Parameters for both placeholders
+                cursor = conn.execute(query, params)
+                existing_items.extend(cursor.fetchall())
+                cursor.close()
+            
+            # Process the results
+            for row in existing_items:
                 filled_by_file = row['filled_by_file']
                 upgrading_from = os.path.basename(row['upgrading_from'] or '')
                 state = row['state']
@@ -65,7 +76,6 @@ def add_collected_items(media_items_batch, recent=False):
                     existing_file_map[filled_by_file] = row_to_dict(row)
                 if upgrading_from:
                     existing_file_map[upgrading_from] = row_to_dict(row)
-            cursor.close()
 
         # Create a set to store filtered out filenames
         filtered_out_files = set()
@@ -121,8 +131,27 @@ def add_collected_items(media_items_batch, recent=False):
                 item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
                 if imdb_id is None and tmdb_id is None:
-                    logging.warning(f"Skipping item as neither imdb_id nor tmdb_id is provided: {item_identifier}. This item has likely not been matched correctly. See item title: {item.get('title', 'Unknown')}")
-                    continue
+                    # Try to find a match in the database
+                    locations = item.get('location', [])
+                    if isinstance(locations, str):
+                        locations = [locations]
+                    
+                    '''
+                    # TODO: This is a work in progress
+                    
+                    for location in locations:
+                        filename = os.path.basename(location)
+                        matching_item = find_matching_item_in_db(normalized_title, filename)
+                        if matching_item:
+                            imdb_id = matching_item.get('imdb_id')
+                            tmdb_id = matching_item.get('tmdb_id')
+                            logging.info(f"Found matching item in database for {normalized_title}. Using imdb_id: {imdb_id}, tmdb_id: {tmdb_id}")
+                            break
+                    '''
+                            
+                    if imdb_id is None and tmdb_id is None:
+                        logging.warning(f"Skipping item as neither imdb_id nor tmdb_id is provided: {item_identifier}. This item has likely not been matched correctly. See item title: {item.get('title', 'Unknown')}")
+                        continue
 
                 for location in locations:
                     filename = os.path.basename(location)

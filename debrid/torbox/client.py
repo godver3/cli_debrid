@@ -7,6 +7,8 @@ import tempfile
 import os
 import time
 from urllib.parse import unquote
+import hashlib
+import bencodepy
 
 from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from ..common import (
@@ -26,7 +28,10 @@ class TorBoxProvider(DebridProvider):
     
     API_BASE_URL = "https://api.torbox.app/v1"
     MAX_DOWNLOADS = 25  # This may vary based on plan
-
+    
+    def __init__(self):
+        super().__init__()
+        
     def _load_api_key(self) -> str:
         """Load API key from settings"""
         try:
@@ -34,28 +39,20 @@ class TorBoxProvider(DebridProvider):
             return get_api_key()
         except Exception as e:
             raise ProviderUnavailableError(f"Failed to load API key: {str(e)}")
-
-    @property
-    def supports_direct_cache_check(self) -> bool:
-        """Check if provider supports direct cache checking"""
-        return True
-
-    @property
-    def supports_bulk_cache_checking(self) -> bool:
-        """Check if provider supports checking multiple hashes in a single API call"""
-        return True
-
-    @property
-    def supports_uncached(self) -> bool:
-        """Check if provider supports downloading uncached torrents"""
-        return False
-
-    def is_cached(self, magnet_links: Union[str, List[str]]) -> Union[bool, Dict[str, bool]]:
+            
+    def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None) -> Union[bool, Dict[str, Optional[bool]]]:
         """
-        Check if one or more magnet links are cached on TorBox.
-        If a single magnet link is provided, returns a boolean.
-        If a list of magnet links is provided, returns a dict mapping hashes to booleans.
+        Check if one or more magnet links or torrent files are cached on TorBox.
+        If a single input is provided, returns a boolean or None (for error).
+        If a list of inputs is provided, returns a dict mapping hashes to booleans or None (for error).
+        
+        Returns:
+            - True: Torrent is cached
+            - False: Torrent is not cached
+            - None: Error occurred during check (invalid magnet, no video files, etc)
         """
+        logging.debug(f"Starting cache check for {len([magnet_links] if isinstance(magnet_links, str) else magnet_links)} magnet(s)")
+        
         # If single magnet link, convert to list
         if isinstance(magnet_links, str):
             magnet_links = [magnet_links]
@@ -65,68 +62,58 @@ class TorBoxProvider(DebridProvider):
 
         # Initialize results
         results = {}
-        hashes = []
-        hash_to_magnet = {}
         
         # Process each magnet link
         for magnet_link in magnet_links:
-            # For hashes, convert to magnet link format
-            if len(magnet_link) == 40 and all(c in '0123456789abcdefABCDEF' for c in magnet_link):
-                magnet_link = f"magnet:?xt=urn:btih:{magnet_link}"
+            logging.debug(f"Processing magnet/URL: {magnet_link[:60]}...")
             
-            # Extract hash at the beginning to ensure it's always available
-            hash_value = extract_hash_from_magnet(magnet_link)
+            # Extract hash
+            hash_value = None
+            if magnet_link.startswith('magnet:'):
+                hash_value = extract_hash_from_magnet(magnet_link)
+            elif temp_file_path:
+                try:
+                    with open(temp_file_path, 'rb') as f:
+                        torrent_data = bencodepy.decode(f.read())
+                        info = torrent_data[b'info']
+                        hash_value = hashlib.sha1(bencodepy.encode(info)).hexdigest()
+                except Exception as e:
+                    logging.error(f"Could not extract hash from torrent file: {str(e)}")
+                    results[magnet_link] = None
+                    continue
+            
             if not hash_value:
-                logging.error(f"Could not extract hash from magnet link: {magnet_link}")
-                results[magnet_link if return_single else magnet_link] = False
+                logging.error(f"Could not extract hash from input: {magnet_link}")
+                results[magnet_link] = None
                 continue
                 
-            hashes.append(hash_value)
-            hash_to_magnet[hash_value] = magnet_link
-
-        try:
-            # Use TorBox's cache check endpoint
-            # Convert hashes list to comma-separated query params
-            query_params = {
-                'hash': ','.join(hashes),
-                'format': 'object',  # Use object format for easier processing
-                'list_files': 'false'  # We don't need file listings
-            }
-            logging.debug(f"Checking cache status for hashes: {hashes}")
-            response = make_request('GET', '/api/torrents/checkcached', self.api_key, params=query_params)
+            logging.debug(f"Extracted hash: {hash_value}")
             
-            logging.info(f"Raw TorBox cache check response: {response}")
-            
-            if response is None or not isinstance(response, dict):
-                # Handle case where response is None or invalid
-                logging.warning("TorBox cache check returned invalid response")
-                for hash_value in hashes:
-                    if hash_value not in results:
-                        magnet_link = hash_to_magnet[hash_value]
-                        results[magnet_link if return_single else hash_value] = False
-                return results[magnet_links[0]] if return_single else results
-
-            # Extract the actual cache data from the response
-            cache_data = response.get('data', {}) if isinstance(response, dict) else {}
-            
-            # Process results - response should be a dict in the data field mapping hashes to info
-            for hash_value in hashes:
-                if hash_value not in results:
-                    magnet_link = hash_to_magnet[hash_value]
-                    # Check if the hash exists in the cache data
-                    is_cached = hash_value in cache_data
-                    logging.info(f"Interpreted cache status for {hash_value}: {is_cached}")
-                    results[magnet_link if return_single else hash_value] = is_cached
-
-        except TorBoxAPIError as e:
-            logging.error(f"Failed to check cache status: {str(e)}")
-            # Return False for all unchecked magnets
-            for hash_value in hashes:
-                if hash_value not in results:
-                    magnet_link = hash_to_magnet[hash_value]
-                    results[magnet_link if return_single else hash_value] = False
-
-        return results[magnet_links[0]] if return_single else results
+            try:
+                # Check cache status
+                response = make_request('GET', f'/torrents/{hash_value}/status', self.api_key)
+                if not response:
+                    logging.error("No response from TorBox API")
+                    results[hash_value] = None
+                    continue
+                    
+                status = response.get('status', '')
+                is_cached = status == 'completed'
+                
+                # Store torrent ID if cached
+                if is_cached:
+                    self._cached_torrent_ids[hash_value] = hash_value  # TorBox uses hash as ID
+                    logging.debug(f"Stored cached torrent hash {hash_value}")
+                
+                results[hash_value] = is_cached
+                
+            except Exception as e:
+                logging.error(f"Error checking cache: {str(e)}")
+                results[hash_value] = None
+                
+        logging.debug(f"Cache check complete. Results: {results}")
+        # Return single result if input was single magnet, otherwise return dict
+        return results[list(results.keys())[0]] if return_single else results
 
     def add_torrent(self, magnet_link: str) -> Optional[str]:
         """

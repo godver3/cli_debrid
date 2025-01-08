@@ -69,50 +69,66 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
         # Fetch existing movies from the database
         existing_movies = set()
-        if movie_imdb_ids:
-            placeholders = ', '.join(['?'] * len(movie_imdb_ids))
-            query = f'''
-                SELECT imdb_id FROM media_items
-                WHERE type = 'movie' AND imdb_id IN ({placeholders})
-            '''
-            rows = conn.execute(query, tuple(movie_imdb_ids)).fetchall()
-            existing_movies.update(str(row['imdb_id']) for row in rows)
+        batch_size = 450  # SQLite limit is 999, using 450 for safety
 
+        # Process movie IMDb IDs in batches
+        if movie_imdb_ids:
+            movie_imdb_list = list(movie_imdb_ids)
+            for i in range(0, len(movie_imdb_list), batch_size):
+                batch = movie_imdb_list[i:i + batch_size]
+                placeholders = ', '.join(['?'] * len(batch))
+                query = f'''
+                    SELECT imdb_id FROM media_items
+                    WHERE type = 'movie' AND imdb_id IN ({placeholders})
+                '''
+                rows = conn.execute(query, tuple(batch)).fetchall()
+                existing_movies.update(str(row['imdb_id']) for row in rows)
+
+        # Process movie TMDb IDs in batches
         if movie_tmdb_ids:
-            placeholders = ', '.join(['?'] * len(movie_tmdb_ids))
-            query = f'''
-                SELECT tmdb_id FROM media_items
-                WHERE type = 'movie' AND tmdb_id IN ({placeholders})
-            '''
-            rows = conn.execute(query, tuple(movie_tmdb_ids)).fetchall()
-            existing_movies.update(str(row['tmdb_id']) for row in rows)
+            movie_tmdb_list = list(movie_tmdb_ids)
+            for i in range(0, len(movie_tmdb_list), batch_size):
+                batch = movie_tmdb_list[i:i + batch_size]
+                placeholders = ', '.join(['?'] * len(batch))
+                query = f'''
+                    SELECT tmdb_id FROM media_items
+                    WHERE type = 'movie' AND tmdb_id IN ({placeholders})
+                '''
+                rows = conn.execute(query, tuple(batch)).fetchall()
+                existing_movies.update(str(row['tmdb_id']) for row in rows)
 
         # Fetch existing episodes from the database
         existing_episodes = set()
 
-        # For episodes with imdb_id
+        # Process episode IMDb IDs in batches
         if episode_imdb_ids:
-            placeholders = ', '.join(['?'] * len(episode_imdb_ids))
-            query = f'''
-                SELECT imdb_id, season_number, episode_number FROM media_items
-                WHERE type = 'episode' AND imdb_id IN ({placeholders})
-            '''
-            rows = conn.execute(query, tuple(episode_imdb_ids)).fetchall()
-            for row in rows:
-                key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
-                existing_episodes.add(key)
+            episode_imdb_list = list(episode_imdb_ids)
+            for i in range(0, len(episode_imdb_list), batch_size):
+                batch = episode_imdb_list[i:i + batch_size]
+                placeholders = ', '.join(['?'] * len(batch))
+                query = f'''
+                    SELECT imdb_id, season_number, episode_number FROM media_items
+                    WHERE type = 'episode' AND imdb_id IN ({placeholders})
+                '''
+                rows = conn.execute(query, tuple(batch)).fetchall()
+                for row in rows:
+                    key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
+                    existing_episodes.add(key)
 
-        # For episodes with tmdb_id
+        # Process episode TMDb IDs in batches
         if episode_tmdb_ids:
-            placeholders = ', '.join(['?'] * len(episode_tmdb_ids))
-            query = f'''
-                SELECT tmdb_id, season_number, episode_number FROM media_items
-                WHERE type = 'episode' AND tmdb_id IN ({placeholders})
-            '''
-            rows = conn.execute(query, tuple(episode_tmdb_ids)).fetchall()
-            for row in rows:
-                key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
-                existing_episodes.add(key)
+            episode_tmdb_list = list(episode_tmdb_ids)
+            for i in range(0, len(episode_tmdb_list), batch_size):
+                batch = episode_tmdb_list[i:i + batch_size]
+                placeholders = ', '.join(['?'] * len(batch))
+                query = f'''
+                    SELECT tmdb_id, season_number, episode_number FROM media_items
+                    WHERE type = 'episode' AND tmdb_id IN ({placeholders})
+                '''
+                rows = conn.execute(query, tuple(batch)).fetchall()
+                for row in rows:
+                    key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
+                    existing_episodes.add(key)
 
         # Filter out existing items from media_items_batch
         filtered_media_items_batch = []
