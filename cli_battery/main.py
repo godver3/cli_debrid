@@ -9,6 +9,7 @@ import threading
 from app.logger_config import logger
 import sys
 import atexit
+import os
 
 def initialize_database(app):
     max_retries = 5
@@ -61,9 +62,12 @@ def main():
         
         logger.info("Database initialized successfully")
         
+        # Get port from environment variable or use default
+        port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
+        
         # Run Flask server
-        logger.info("Starting Flask server")
-        app.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)
+        logger.info(f"Starting Flask server on port {port}")
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
         logger.error(f"Error during startup: {e}")
         sys.exit(1)

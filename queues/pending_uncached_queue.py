@@ -63,17 +63,23 @@ class PendingUncachedQueue:
                 continue
 
             # Process the magnet link first
-            processed_magnet = self.torrent_processor.process_magnet(link)
-            if not processed_magnet:
+            processed_magnet, temp_file = self.torrent_processor.process_torrent(link)
+            if not processed_magnet and not temp_file:
                 logging.error(f"Failed to process magnet link for {item_identifier}")
                 self._handle_failed_add(item, queue_manager)
                 continue
 
-            # Add to not wanted regardless of success
+            # Try to add the processed magnet first
+            add_result = self.debrid_provider.add_torrent(
+                magnet_link=processed_magnet if processed_magnet else None,
+                temp_file_path=temp_file if temp_file else None
+            )
+
+            # Add to not wanted after successful addition
             try:
                 if link.startswith('http'):
                     logging.debug(f"Adding HTTP link to not wanted: {link}")
-                    hash_value = download_and_extract_hash(link)
+                    hash_value = extract_hash_from_magnet(processed_magnet) if processed_magnet else download_and_extract_hash(link)
                     add_to_not_wanted(hash_value)
                     add_to_not_wanted_urls(link)
                     logging.info(f"Added magnet hash {hash_value} and URL to not wanted lists")
@@ -84,8 +90,13 @@ class PendingUncachedQueue:
             except Exception as e:
                 logging.error(f"Failed to add to not wanted lists: {str(e)}")
 
-            # Try to add the processed magnet
-            add_result = self.debrid_provider.add_torrent(processed_magnet)
+            # Clean up temp file if it exists
+            if temp_file:
+                try:
+                    os.unlink(temp_file)
+                except Exception as e:
+                    logging.error(f"Failed to clean up temp file: {str(e)}")
+
             if add_result:
                 self._handle_successful_add(item, queue_manager, add_result)
                 

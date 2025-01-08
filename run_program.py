@@ -24,7 +24,7 @@ import pickle
 from utilities.zurg_utilities import run_get_collected_from_zurg, run_get_recent_from_zurg
 import ntplib
 from content_checkers.trakt import check_trakt_early_releases
-from debrid.base import TooManyDownloadsError
+from debrid.base import TooManyDownloadsError, RateLimitError
 import tempfile
 
 queue_logger = logging.getLogger('queue_logger')
@@ -100,7 +100,6 @@ class ProgramRunner:
             'Blacklisted',
             'Pending Uncached',
             'Upgrading',
-            'task_plex_full_scan', 
             'task_refresh_release_dates',
             'task_generate_airtime_report',
             'task_check_service_connectivity',
@@ -110,6 +109,11 @@ class ProgramRunner:
             'task_reconcile_queues',
             'task_heartbeat'
         }
+
+        if not get_setting('Debug', 'symlink_collected_files'):
+            self.enabled_tasks.add('task_plex_full_scan')
+        else:
+            self.enabled_tasks.add('task_local_library_scan')
         
         # Add this line to store content sources
         self.content_sources = None
@@ -195,6 +199,7 @@ class ProgramRunner:
 
     def handle_connectivity_failure(self):
         from routes.program_operation_routes import stop_program, check_service_connectivity
+        from extensions import app  # Import the Flask app
 
         logging.warning("Pausing program queue due to connectivity failure")
         self.pause_queue()
@@ -214,8 +219,9 @@ class ProgramRunner:
             logging.warning(f"Service connectivity check failed. Retry {retry_count}/{max_retries}")
 
         logging.error("Service connectivity not restored after 5 minutes. Stopping the program.")
-        stop_result = stop_program()
-        logging.info(f"Program stop result: {stop_result}")
+        with app.app_context():
+            stop_result = stop_program()
+            logging.info(f"Program stop result: {stop_result}")
 
     def pause_queue(self):
         from queue_manager import QueueManager
@@ -287,7 +293,6 @@ class ProgramRunner:
 
     def safe_process_queue(self, queue_name: str):
         try:
-            # logging.info(f"Starting to process {queue_name} queue")
             start_time = time.time()
             
             if not hasattr(self, 'queue_manager') or not hasattr(self.queue_manager, 'queues'):
@@ -298,7 +303,8 @@ class ProgramRunner:
                 logging.error(f"Queue '{queue_name}' not found in queue manager!")
                 return None
             
-            method_name = f'process_{queue_name.lower()}'
+            # Convert queue name to method name, replacing spaces with underscores
+            method_name = f'process_{queue_name.lower().replace(" ", "_")}'
             if not hasattr(self.queue_manager, method_name):
                 logging.error(f"Process method '{method_name}' not found in queue manager!")
                 return None
@@ -306,8 +312,6 @@ class ProgramRunner:
             process_method = getattr(self.queue_manager, method_name)
             
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            # if queue_contents:
-                # logging.debug(f"{queue_name} queue contains {len(queue_contents)} items")
             
             if self.queue_manager.is_paused():
                 logging.warning(f"Queue processing is paused. Skipping {queue_name} queue.")
@@ -315,17 +319,18 @@ class ProgramRunner:
             
             try:
                 result = process_method()
-            except TooManyDownloadsError:
-                logging.warning("Pausing queue due to too many active downloads on Real-Debrid")
-                self.queue_manager.pause_queue()
+            #except TooManyDownloadsError:
+            #    logging.warning("Pausing queue due to too many active downloads on Debrid")
+            #    self.queue_manager.pause_queue()
+            #    return None
+            except RateLimitError:
+                logging.warning("Rate limit exceeded on Debrid API")
+                self.handle_rate_limit()
                 return None
             
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            # if queue_contents:
-                # logging.debug(f"{queue_name} queue contains {len(queue_contents)} items after processing")
             
             duration = time.time() - start_time
-            # logging.info(f"Finished processing {queue_name} queue in {duration:.2f} seconds")
             
             return result
         
@@ -661,6 +666,21 @@ class ProgramRunner:
         self.get_content_sources(force_refresh=True)
         logging.info("ProgramRunner reinitialized successfully")
 
+    def handle_rate_limit(self):
+        """Handle rate limit by pausing the queue for 30 minutes"""
+        logging.warning("Rate limit exceeded. Pausing queue for 30 minutes.")
+        self.pause_queue()
+        
+        # Schedule queue resume after 30 minutes
+        resume_time = datetime.now() + timedelta(minutes=30)
+        logging.info(f"Queue will resume at {resume_time}")
+        
+        # Sleep for 30 minutes
+        time.sleep(1800)  # 30 minutes in seconds
+        
+        logging.info("Rate limit pause period complete. Resuming queue.")
+        self.resume_queue()
+
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
 
@@ -823,6 +843,14 @@ def get_and_add_recent_collected_from_plex():
     
     logging.error("Failed to retrieve content")
     return None
+
+def run_local_library_scan():
+    from utilities.local_library_scan import local_library_scan
+    local_library_scan()
+
+def run_recent_local_library_scan():
+    from utilities.local_library_scan import recent_local_library_scan
+    recent_local_library_scan()
 
 def run_program():
     global program_runner

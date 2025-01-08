@@ -68,7 +68,7 @@ def get_script_path(script_name):
         base_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_dir, script_name)
 
-def run_script(script_name):
+def run_script(script_name, port=None, battery_port=None):
     script_path = get_script_path(script_name)
     logging.info(f"Running script: {script_path}")
     try:
@@ -79,6 +79,13 @@ def run_script(script_name):
         
         # Set up environment before running the script
         setup_environment()
+        
+        # Set environment variables for ports
+        if port:
+            os.environ['CLI_DEBRID_PORT'] = str(port)
+        if battery_port:
+            os.environ['CLI_DEBRID_BATTERY_PORT'] = str(battery_port)
+            
         runpy.run_path(script_path, run_name='__main__')
     except Exception as e:
         logging.error(f"Error running script {script_name}: {str(e)}")
@@ -86,15 +93,42 @@ def run_script(script_name):
 
 def run_main():
     logging.info("Starting run_main()")
+    
+    # Parse command line arguments
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port', type=int, help='Port for main web server')
+    parser.add_argument('--battery-port', type=int, help='Port for battery web server')
+    args = parser.parse_args()
+    
+    # Set the battery port in the environment before starting any processes
+    if args.battery_port:
+        os.environ['CLI_DEBRID_BATTERY_PORT'] = str(args.battery_port)
+    
     script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
     processes = []
 
-    # Start both processes in parallel
+    # Start both processes in parallel with appropriate ports
     for script_name in script_names:
-        process = multiprocessing.Process(target=run_script, args=(script_name,))
+        if 'cli_battery' in script_name:
+            # For battery process, pass the battery port
+            process = multiprocessing.Process(
+                target=run_script, 
+                args=(script_name,),
+                kwargs={'battery_port': args.battery_port}
+            )
+            logging.info(f"Starting battery process on port {args.battery_port}")
+        else:
+            # For main process, pass the main port
+            process = multiprocessing.Process(
+                target=run_script, 
+                args=(script_name,),
+                kwargs={'port': args.port}
+            )
+            logging.info(f"Starting main process on port {args.port}")
+        
         processes.append(process)
         process.start()
-        logging.info(f"Started {script_name}")
 
     try:
         # Wait for both processes to complete

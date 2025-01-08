@@ -626,6 +626,28 @@ function updateSettings() {
         console.warn("Torbox API Key input element not found!");
     }
 
+    const plexWatchlistRemoval = document.getElementById('scraping-plex_watchlist_removal');
+    console.log("Plex Watchlist Removal element:", plexWatchlistRemoval);
+    
+    if (plexWatchlistRemoval) {
+        settingsData['Scraping']['plex_watchlist_removal'] = plexWatchlistRemoval.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Plex Watchlist Removal checkbox element not found!");
+    }
+
+    const plexWatchlistKeepSeries = document.getElementById('scraping-plex_watchlist_keep_series');
+    console.log("Plex Watchlist Keep Series element:", plexWatchlistKeepSeries);
+    
+    if (plexWatchlistKeepSeries) {
+        settingsData['Scraping']['plex_watchlist_keep_series'] = plexWatchlistKeepSeries.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Plex Watchlist Keep Series checkbox element not found!");
+    }
+
     const debridProvider = document.getElementById('debrid provider-provider');
     console.log("Debrid Provider element:", debridProvider);
     
@@ -635,6 +657,39 @@ function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Debrid Provider select element not found!");
+    }
+
+    const symlinkCollectedFiles = document.getElementById('file management-symlink_collected_files');
+    console.log("Symlink Collected Files element:", symlinkCollectedFiles);
+    
+    if (symlinkCollectedFiles) {
+        settingsData['Debug']['symlink_collected_files'] = symlinkCollectedFiles.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Symlink Collected Files checkbox element not found!");
+    }
+
+    const originalFilesPath = document.getElementById('file management-original_files_path');
+    console.log("Original Files Path element:", originalFilesPath);
+    
+    if (originalFilesPath) {
+        settingsData['Debug']['original_files_path'] = originalFilesPath.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Original Files Path input element not found!");
+    }
+
+    const symlinkedFilesPath = document.getElementById('file management-symlinked_files_path');
+    console.log("Symlinked Files Path element:", symlinkedFilesPath);
+    
+    if (symlinkedFilesPath) {
+        settingsData['Debug']['symlinked_files_path'] = symlinkedFilesPath.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Symlinked Files Path input element not found!");
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));

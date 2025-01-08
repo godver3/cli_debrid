@@ -261,7 +261,7 @@ SETTINGS_SCHEMA = {
         },
         "content_source_check_period": {
             "type": "dict",
-            "description": "Override Content Source checking period (in minutes)",
+            "description": "Override Content Source checking period (in minutes) - note that a minimum of 5 minutes is recommended",
             "default": {},
             "schema": {
                 "*": {"type": "integer", "min": 1}
@@ -269,7 +269,7 @@ SETTINGS_SCHEMA = {
         },
         "checking_queue_period": {
             "type": "integer",
-            "description": "Checking queue max period (in minutes) before moving items back to Wanted queue",
+            "description": "Checking queue max period (in seconds) before moving items back to Wanted queue",
             "default": 3600
         },
         "rescrape_missing_files": {
@@ -286,6 +286,31 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Disable the not wanted check for items in the queue",
             "default": False
+        },
+        "plex_watchlist_removal": {
+            "type": "boolean",
+            "description": "Remove items from Plex Watchlist when they have been collected",
+            "default": False
+        },
+        "plex_watchlist_keep_series": {
+            "type": "boolean",
+            "description": "Keep series in Plex Watchlist when they have been collected, only delete movies",
+            "default": False
+        },
+        "symlink_collected_files": {
+            "type": "boolean",
+            "description": "Symlink collected files to the collected folder (Plex must be able to see original and symlinked path the exact same as cli_debrid does)",
+            "default": False
+        },
+        "original_files_path": {
+            "type": "string",
+            "description": "Path to the original files",
+            "default": "/mnt/zurg/__all__"
+        },
+        "symlinked_files_path": {
+            "type": "string",
+            "description": "Path to the destination folder",
+            "default": "/mnt/symlinked"
         }
     },
     "Scrapers": {
