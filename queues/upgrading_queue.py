@@ -12,6 +12,7 @@ import pickle
 from pathlib import Path
 from database.database_writing import update_media_item
 from database.core import get_db_connection
+from difflib import SequenceMatcher
 
 class UpgradingQueue:
     def __init__(self):
@@ -183,7 +184,6 @@ class UpgradingQueue:
         logging.info(f"Performing hourly scrape for {item_identifier}")
 
         is_multi_pack = self.check_multi_pack(item)
-
         is_multi_pack = False
 
         # Perform scraping
@@ -194,24 +194,37 @@ class UpgradingQueue:
             current_title = item.get('original_scraped_torrent_title')
             current_position = next((index for index, result in enumerate(results) if result.get('title') == current_title), None)
 
+            # Get similarity threshold from settings, default to 95%
+            similarity_threshold = 0.95 #float(get_setting('Scraping', 'upgrade_similarity_threshold', '0.95'))
+
             for index, result in enumerate(results):
-                logging.info(f"Result {index}: {result['title']}")
+                # Calculate similarity score
+                similarity = SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio()
+                logging.info(f"Result {index}: {result['title']} (Similarity: {similarity:.2%})")
 
             if current_position is None:
                 logging.info(f"Current item {item_identifier} not found in scrape results")
-                better_results = results  # Consider all results as potential upgrades
+                # Filter out results that are too similar to current title
+                better_results = [
+                    result for result in results 
+                    if SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold
+                ]
             else:
                 logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the scrape results")
                 logging.info(f"Current item title: {current_title}")
                 
-                # Only consider results that are in higher positions than the current item
-                better_results = results[:current_position]
+                # Only consider results that are in higher positions AND not too similar
+                better_results = [
+                    result for result in results[:current_position]
+                    if SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold
+                ]
             
             if better_results:
-                logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier}")
+                logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier} after similarity filtering")
                 logging.info("Better results to try:")
                 for i, result in enumerate(better_results):
-                    logging.info(f"  {i}: {result.get('title')}")
+                    similarity = SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio()
+                    logging.info(f"  {i}: {result['title']} (Similarity: {similarity:.2%})")
 
                 # Update item with scrape results in database first
                 best_result = better_results[0]

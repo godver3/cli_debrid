@@ -157,7 +157,6 @@ def format_notification_content(notifications, notification_type, notification_c
         else:
             # Handle other notification categories
             if notification_category == 'state_change':
-                content.append(f"**Queue Change Notification**\n")
                 for item in consolidated:
                     title = item.get('title', 'Unknown Title')
                     old_state = item.get('old_state', 'Unknown')
@@ -165,15 +164,15 @@ def format_notification_content(notifications, notification_type, notification_c
                     reason = item.get('reason', '')
                     
                     if item.get('type') == 'movie':
-                        content.append(f"{movie_emoji} **{title}** ({item.get('year', '')}) [{item.get('version', '')}]")
+                        entry = f"{movie_emoji} {title} ({item.get('year', '')}) [{item.get('version', '')}] → {new_state}"
                     else:
                         season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else ""
                         episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else ""
-                        content.append(f"{tv_emoji} **{title}** {season}{episode} [{item.get('version', '')}]")
+                        entry = f"{tv_emoji} {title} {season}{episode} [{item.get('version', '')}] → {new_state}"
                     
-                    content.append(f"    State entered → {new_state}")
                     if reason:
-                        content.append(f"    Reason: {reason}")
+                        entry += f" (Reason: {reason})"
+                    content.append(entry)
                     content.append("")  # Empty line for spacing
 
     elif notification_type == 'Email':
@@ -436,7 +435,6 @@ def format_notification_content(notifications, notification_type, notification_c
         else:
             # Handle other notification categories in plain text
             if notification_category == 'state_change':
-                content.append("Queue Notification Notification\n")
                 for item in consolidated:
                     title = item.get('title', 'Unknown Title')
                     old_state = item.get('old_state', 'Unknown')
@@ -444,15 +442,15 @@ def format_notification_content(notifications, notification_type, notification_c
                     reason = item.get('reason', '')
                     
                     if item.get('type') == 'movie':
-                        content.append(f"• {title} ({item.get('year', '')}) [{item.get('version', '')}]")
+                        entry = f"• {title} ({item.get('year', '')}) [{item.get('version', '')}] → {new_state}"
                     else:
                         season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else ""
                         episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else ""
-                        content.append(f"• {title} {season}{episode} [{item.get('version', '')}]")
+                        entry = f"• {title} {season}{episode} [{item.get('version', '')}] → {new_state}"
                     
-                    content.append(f"  State entered → {new_state}")
                     if reason:
-                        content.append(f"  Reason: {reason}")
+                        entry += f" (Reason: {reason})"
+                    content.append(entry)
                     content.append("")  # Empty line for spacing
 
     return "\n".join(content)
