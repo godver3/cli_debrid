@@ -199,7 +199,14 @@ class CheckingQueue:
             # First check all items for local files directly
             items_to_scan = []
             for item in self.items:
-                if check_local_file_for_item(item):
+                time_in_queue = current_time - self.checking_queue_times[item['id']]
+                if time_in_queue > 10:
+                    logging.info(f"Checking for local file for item {item['id']} with extended search")
+                    file_found = check_local_file_for_item(item, extended_search=True)
+                else:
+                    logging.info(f"Checking for local file for item {item['id']} without extended search")
+                    file_found = check_local_file_for_item(item)
+                if file_found:
                     logging.info(f"Local file found and symlinked for item {item['id']}")
 
                     if get_setting('File Management', 'plex_url_for_symlink', default=False):

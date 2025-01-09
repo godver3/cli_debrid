@@ -182,7 +182,7 @@ def find_file(filename: str, search_path: str) -> Optional[str]:
         logging.error(f"Error using find command: {str(e)}")
         return None
 
-def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False) -> bool:
+def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
     When called from webhook endpoint, will retry up to 5 times with 1 second delay.
@@ -190,9 +190,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False) ->
     Args:
         item: Dictionary containing item details
         is_webhook: If True, enables retry mechanism for webhook calls
+        extended_search: If True, will perform an extended search for the file
     """
-    max_retries = 5 if is_webhook else 1
-    retry_delay = 5  # second
+    max_retries = 10 if is_webhook else 1
+    retry_delay = 1  # second
     
     for attempt in range(max_retries):
         try:
@@ -205,10 +206,11 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False) ->
             source_file = os.path.join(original_path, item.get('filled_by_title', ''), item['filled_by_file'])
             logging.debug(f"Trying original source file path: {source_file}")
             
-            # If file doesn't exist at the original path, search for it using find command
-            if not os.path.exists(source_file):
-                logging.debug(f"File not found at original path, searching in {original_path}")
-                found_path = find_file(item['filled_by_file'], original_path)
+            if extended_search:
+                # If file doesn't exist at the original path, search for it using find command
+                if not os.path.exists(source_file):
+                    logging.debug(f"File not found at original path, searching in {original_path}")
+                    found_path = find_file(item['filled_by_file'], original_path)
                 if found_path:
                     source_file = found_path
                     # Update the filled_by_title to match the actual folder structure
