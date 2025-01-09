@@ -194,46 +194,6 @@ class CheckingQueue:
         logging.debug(f"Starting to process checking queue with {len(self.items)} items")
         current_time = time.time()
 
-        # Process collected content based on symlink setting
-        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-            # First check all items for local files directly
-            items_to_scan = []
-            for item in self.items:
-                time_in_queue = current_time - self.checking_queue_times[item['id']]
-                if time_in_queue > 10:
-                    logging.info(f"Checking for local file for item {item['id']} with extended search")
-                    file_found = check_local_file_for_item(item, extended_search=True)
-                else:
-                    logging.info(f"Checking for local file for item {item['id']} without extended search")
-                    file_found = check_local_file_for_item(item)
-                if file_found:
-                    logging.info(f"Local file found and symlinked for item {item['id']}")
-
-                    if get_setting('File Management', 'plex_url_for_symlink', default=False):
-                        # Call Plex update for the item if we have a Plex URL
-                        plex_update_item(item)
-
-                    # Check if the item was marked for upgrading by check_local_file_for_item
-                    from database.core import get_db_connection
-                    conn = get_db_connection()
-                    cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
-                    current_state = cursor.fetchone()['state']
-                    conn.close()
-
-                    if current_state == 'Upgrading':
-                        logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
-                    else:
-                        queue_manager.move_to_collected(item, "Checking")
-                else:
-                    items_to_scan.append(item)
-            
-            # If we have items that weren't found directly, do a full scan
-            if items_to_scan:
-                logging.info("Full library scan disabled for now")
-
-        else:
-            get_and_add_recent_collected_from_plex()
-
         adding_queue = AddingQueue()
 
         # Group items by torrent ID
@@ -273,7 +233,48 @@ class CheckingQueue:
                 last_check = self.progress_checks[torrent_id]['last_check']
                 last_progress = self.progress_checks[torrent_id]['last_progress']
                 logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
-                
+                            
+                if current_progress == 100:
+                    # Process collected content based on symlink setting
+                    if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                        # First check all items for local files directly
+                        items_to_scan = []
+                        for item in self.items:
+                            time_in_queue = current_time - self.checking_queue_times[item['id']]
+                            if time_in_queue > 10:
+                                logging.info(f"Checking for local file for item {item['id']} with extended search")
+                                file_found = check_local_file_for_item(item, extended_search=True)
+                            else:
+                                logging.info(f"Checking for local file for item {item['id']} without extended search")
+                                file_found = check_local_file_for_item(item)
+                            if file_found:
+                                logging.info(f"Local file found and symlinked for item {item['id']}")
+
+                                if get_setting('File Management', 'plex_url_for_symlink', default=False):
+                                    # Call Plex update for the item if we have a Plex URL
+                                    plex_update_item(item)
+
+                                # Check if the item was marked for upgrading by check_local_file_for_item
+                                from database.core import get_db_connection
+                                conn = get_db_connection()
+                                cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
+                                current_state = cursor.fetchone()['state']
+                                conn.close()
+
+                                if current_state == 'Upgrading':
+                                    logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
+                                else:
+                                    queue_manager.move_to_collected(item, "Checking")
+                            else:
+                                items_to_scan.append(item)
+                        
+                        # If we have items that weren't found directly, do a full scan
+                        if items_to_scan:
+                            logging.info("Full library scan disabled for now")
+
+                    else:
+                        get_and_add_recent_collected_from_plex()
+
                 # Check if we've exceeded the checking queue period for non-actively-downloading items
                 if current_progress == 100:
                     oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
