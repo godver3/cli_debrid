@@ -81,7 +81,7 @@ class ProgramRunner:
             'task_purge_not_wanted_magnets_file': 604800,
             'task_generate_airtime_report': 3600,
             'task_check_service_connectivity': 60,
-            'task_send_notifications': 300,  # Run every 5 minutes (300 seconds)
+            'task_send_notifications': 15,  # Run every 0.25 minutes (15 seconds)
             'task_sync_time': 3600,  # Run every hour
             'task_check_trakt_early_releases': 3600,  # Run every hour
             'task_reconcile_queues': 300,  # Run every 5 minutes
@@ -557,8 +557,9 @@ class ProgramRunner:
                     notifications = pickle.load(f)
                 
                 if notifications:
-                    # Fetch enabled notifications
-                    response = requests.get('http://localhost:5000/settings/notifications/enabled')
+                    # Fetch enabled notifications using CLI_DEBRID_PORT
+                    port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+                    response = requests.get(f'http://localhost:{port}/settings/notifications/enabled')
                     if response.status_code == 200:
                         enabled_notifications = response.json().get('enabled_notifications', {})
                         

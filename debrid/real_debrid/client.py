@@ -340,11 +340,6 @@ class RealDebridProvider(DebridProvider):
                     continue
                 
                 if status == 'waiting_files_selection':
-                    # Cache the filename when we have it
-                    if hash_value and info.get('filename'):
-                        self._cached_torrent_titles[hash_value] = info.get('filename')
-                        logging.debug(f"Cached filename '{info.get('filename')}' for hash {hash_value}")
-                    
                     # Select only video files
                     files = info.get('files', [])
                     if files:
@@ -364,6 +359,12 @@ class RealDebridProvider(DebridProvider):
                                 try:
                                     make_request('POST', f'/torrents/selectFiles/{torrent_id}', self.api_key, data=data)
                                     logging.info(f"Selected video files: {video_file_ids}")
+                                    # Get updated info after file selection
+                                    updated_info = self.get_torrent_info(torrent_id)
+                                    if updated_info and hash_value:
+                                        # Cache the filename after file selection when we have the correct video filename
+                                        self._cached_torrent_titles[hash_value] = updated_info.get('filename', '')
+                                        logging.debug(f"Cached filename '{updated_info.get('filename')}' for hash {hash_value}")
                                     success = True
                                     break
                                 except Exception as e:

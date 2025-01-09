@@ -141,12 +141,24 @@ function updateSettings() {
                 notificationData.title = headerElement.textContent.split('_')[0].trim();
             }
 
+            // Initialize notify_on object
+            notificationData.notify_on = {};
+
+            // Process all inputs including checkboxes for notification categories
             section.querySelectorAll('input, select').forEach(input => {
-                const fieldName = input.name.split('.').pop();
-                if (input.type === 'checkbox') {
-                    notificationData[fieldName] = input.checked;
+                const nameParts = input.name.split('.');
+                if (nameParts.length === 4 && nameParts[2] === 'notify_on') {
+                    // This is a notification category checkbox
+                    const category = nameParts[3];
+                    notificationData.notify_on[category] = input.checked;
                 } else {
-                    notificationData[fieldName] = input.value;
+                    // This is a regular field
+                    const fieldName = nameParts[nameParts.length - 1];
+                    if (input.type === 'checkbox') {
+                        notificationData[fieldName] = input.checked;
+                    } else {
+                        notificationData[fieldName] = input.value;
+                    }
                 }
             });
 
