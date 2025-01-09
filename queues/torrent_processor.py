@@ -16,11 +16,13 @@ import hashlib
 from debrid.base import DebridProvider, TooManyDownloadsError
 from debrid.common import (
     extract_hash_from_magnet,
+    extract_hash_from_file,
     is_video_file,
     is_unwanted_file,
     download_and_extract_hash
 )
 from debrid.status import TorrentStatus
+from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 
 class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
@@ -242,10 +244,10 @@ class TorrentProcessor:
                 
                 # Check cache status
                 logging.debug(f"Result {idx}: Checking cache status")
-                # If we have a temp file, use that. Otherwise use magnet or original link
+                # If we have a temp file, use that. Otherwise use magnet if we have it
                 is_cached = self.debrid_provider.is_cached(
-                    temp_file if temp_file else (magnet if magnet else original_link),
-                    None  # Never pass temp_file parameter since we pass it as first arg if we have it
+                    magnet if not temp_file else "",  # Empty string instead of None when we have temp_file
+                    temp_file
                 )
                     
                 # Skip if there was an error checking cache
@@ -295,10 +297,8 @@ class TorrentProcessor:
                 if is_cached:
                     hash_value = None
                     if magnet:
-                        from debrid.common import extract_hash_from_magnet
                         hash_value = extract_hash_from_magnet(magnet)
                     elif temp_file:
-                        from debrid.common import extract_hash_from_file
                         hash_value = extract_hash_from_file(temp_file)
                         
                     if hash_value:
@@ -336,25 +336,23 @@ class TorrentProcessor:
                     # Only proceed if the torrent has files
                     if len(info.get('files', [])) > 0:
                         # Mark the successful magnet/URL as not wanted to prevent reuse
-                        if item:
-                            if 'magnet' in result:
-                                from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
-                                result_magnet = result['magnet']
-                                logging.debug(f"Result {idx}: Attempting to add magnet to not wanted: {result_magnet}")
-                                try:
-                                    # Check if magnet is actually an HTTP link
-                                    if result_magnet.startswith('http'):
-                                        logging.debug(f"Result {idx}: Magnet is HTTP link, downloading torrent first")
-                                        hash_value = download_and_extract_hash(result_magnet)
-                                        add_to_not_wanted(hash_value)
-                                        add_to_not_wanted_urls(result_magnet)
-                                        logging.info(f"Added successful magnet hash {hash_value} and URL to not wanted lists")
-                                    else:
-                                        hash_value = extract_hash_from_magnet(result_magnet)
-                                        add_to_not_wanted(hash_value)
-                                        logging.info(f"Added successful magnet hash {hash_value} to not wanted list")
-                                except Exception as e:
-                                    logging.error(f"Result {idx}: Failed to process magnet for not wanted: {str(e)}")
+                        if item and 'magnet' in result:
+                            result_magnet = result['magnet']
+                            logging.debug(f"Result {idx}: Attempting to add magnet to not wanted: {result_magnet}")
+                            try:
+                                # Check if magnet is actually an HTTP link
+                                if result_magnet.startswith('http'):
+                                    logging.debug(f"Result {idx}: Magnet is HTTP link, downloading torrent first")
+                                    hash_value = download_and_extract_hash(result_magnet)
+                                    add_to_not_wanted(hash_value)
+                                    add_to_not_wanted_urls(result_magnet)
+                                    logging.info(f"Added successful magnet hash {hash_value} and URL to not wanted lists")
+                                else:
+                                    hash_value = extract_hash_from_magnet(result_magnet)
+                                    add_to_not_wanted(hash_value)
+                                    logging.info(f"Added successful magnet hash {hash_value} to not wanted list")
+                            except Exception as e:
+                                logging.error(f"Result {idx}: Failed to process magnet for not wanted: {str(e)}")
                         return info, original_link
                     else:
                         logging.debug(f"Result {idx}: Torrent has no files, continuing to next result")

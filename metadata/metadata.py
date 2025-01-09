@@ -76,7 +76,8 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             'year': None,
             'genres': [],
             'runtime': None,
-            'airs': metadata.get('airs', {})
+            'airs': metadata.get('airs', {}),
+            'country': metadata.get('country', '').lower()  # Add country code, defaulting to empty string
         }
 
         # Handle the 'ids' field
@@ -202,7 +203,8 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'media_type': 'episode',
         'genres': ['anime'] if is_anime else show_item.get('genres', []),
         'runtime': episode_data.get('runtime') or show_item.get('runtime'),
-        'airtime': airtime
+        'airtime': airtime,
+        'country': show_item.get('country', '').lower()  # Add country code from show metadata
     }
 
 def _get_local_timezone():
@@ -650,6 +652,29 @@ def get_runtime(imdb_id: str, media_type: str) -> Optional[int]:
             logging.warning(f"Invalid runtime value for {imdb_id}: {runtime}")
     
     return None
+
+def get_media_country_code(imdb_id: str, media_type: str) -> Optional[str]:
+    """
+    Get the country code for a media item from metadata.
+    Args:
+        imdb_id: The IMDb ID of the media item
+        media_type: Either 'movie' or 'tv'
+    Returns:
+        The two-letter country code in lowercase, or None if not found
+    """
+    try:
+        if media_type == 'movie':
+            metadata, _ = DirectAPI.get_movie_metadata(imdb_id)
+        else:
+            metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+        
+        if metadata and isinstance(metadata, dict):
+            country = metadata.get('country', '').lower()
+            return country if country else None
+        return None
+    except Exception as e:
+        logging.error(f"Error retrieving country code for {imdb_id}: {str(e)}")
+        return None
 
 def get_episode_airtime(imdb_id: str) -> Optional[str]:
     metadata, _ = DirectAPI.get_show_metadata(imdb_id)

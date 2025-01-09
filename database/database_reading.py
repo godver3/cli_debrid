@@ -238,3 +238,19 @@ def get_video_by_id(video_id):
         return None
     finally:
         conn.close()
+
+def get_media_country_code(tmdb_id: str) -> str:
+    """
+    Get the country code for a media item by its TMDB ID.
+    Returns None if no country code is found.
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('SELECT country FROM media_items WHERE tmdb_id = ? LIMIT 1', (tmdb_id,))
+        result = cursor.fetchone()
+        return result['country'] if result and result['country'] else None
+    except Exception as e:
+        logging.error(f"Error retrieving country code (TMDB ID: {tmdb_id}): {str(e)}")
+        return None
+    finally:
+        conn.close()

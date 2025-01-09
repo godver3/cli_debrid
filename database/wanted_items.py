@@ -196,11 +196,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 if item_type == 'movie':
                     conn.execute('''
                         INSERT INTO media_items
-                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime')
+                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'), item.get('country', '').lower()
                     ))
                     logging.debug(f"Adding new movie as Wanted in DB: {normalized_title} (Version: {version})")
                     items_added += 1
@@ -226,13 +226,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
                     conn.execute('''
                         INSERT INTO media_items
-                        (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, runtime, airtime, genres)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, runtime, airtime, genres, country)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                         item.get('release_date'), 'Wanted', 'episode',
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                        datetime.now(), version, item.get('runtime'), airtime, genres
+                        datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower()
                     ))
                     logging.debug(f"Adding new episode as Wanted in DB: {normalized_title} S{item['season_number']}E{item['episode_number']} (Version: {version})")
                     items_added += 1

@@ -51,8 +51,9 @@ def start_server():
     return True
 
 def check_service_connectivity():
-    plex_url = get_setting('Plex', 'url')
-    plex_token = get_setting('Plex', 'token')
+    if get_setting('File Management', 'file_collection_management') == 'Plex':
+        plex_url = get_setting('Plex', 'url')
+        plex_token = get_setting('Plex', 'token')
     metadata_battery_url = get_setting('Metadata Battery', 'url')
     battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
     
@@ -63,12 +64,13 @@ def check_service_connectivity():
     services_reachable = True
 
     # Check Plex connectivity
-    try:
-        response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
-        response.raise_for_status()
-    except RequestException as e:
-        logging.error(f"Failed to connect to Plex server: {str(e)}")
-        services_reachable = False
+    if get_setting('File Management', 'file_collection_management') == 'Plex':
+        try:
+            response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
+            response.raise_for_status()
+        except RequestException as e:
+            logging.error(f"Failed to connect to Plex server: {str(e)}")
+            services_reachable = False
 
     # Check Debrid Provider connectivity
     if debrid_provider.lower() == 'realdebrid':

@@ -295,34 +295,67 @@
                 <div class="settings-form-group">
                     {% if value is boolean %}
                         <label class="settings-title">
-                            <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
+                            <input type="checkbox" id="scraping-{{ version }}-{{ key }}" 
+                                   name="Scraping.versions.{{ version }}.{{ key }}" 
+                                   data-section="Scraping" 
+                                   data-key="versions.{{ version }}.{{ key }}"
+                                   {% if value %}checked{% endif %}>
                             {{ key|replace('_', ' ')|title }}
                         </label>
                     {% elif key == 'max_resolution' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <select id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">
+                        <select id="scraping-{{ version }}-{{ key }}" 
+                                name="Scraping.versions.{{ version }}.{{ key }}" 
+                                class="settings-input"
+                                data-section="Scraping" 
+                                data-key="versions.{{ version }}.{{ key }}">
                             {% for option in ['2160p', '1080p', '720p', 'SD'] %}
                                 <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
                             {% endfor %}
                         </select>
                     {% elif key == 'resolution_wanted' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <select id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" class="settings-input">
+                        <select id="scraping-{{ version }}-{{ key }}" 
+                                name="Scraping.versions.{{ version }}.{{ key }}" 
+                                class="settings-input"
+                                data-section="Scraping" 
+                                data-key="versions.{{ version }}.{{ key }}">
                             {% for option in ['<=', '==', '>='] %}
                                 <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
                             {% endfor %}
                         </select>
                     {% elif key == 'max_size_gb' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <input type="number" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ '' if value|is_infinite else value }}" class="settings-input" step="0.01" min="0" placeholder="Infinite">
+                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ '' if value|is_infinite else value }}" 
+                               class="settings-input" 
+                               step="0.01" 
+                               min="0" 
+                               placeholder="Infinite"
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
                         <p class="settings-description">Maximum size per file in GB. Leave empty for no limit.</p>
                     {% elif key == 'min_size_gb' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <input type="number" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input" step="0.01" min="0">
+                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ value }}" 
+                               class="settings-input" 
+                               step="0.01" 
+                               min="0"
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
                         <p class="settings-description">Minimum size per file in GB.</p>
                     {% else %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <input type="{{ 'number' if value is number else 'text' }}" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" value="{{ value }}" class="settings-input">
+                        <input type="{{ 'number' if value is number else 'text' }}" 
+                               id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ value }}" 
+                               class="settings-input"
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
                     {% endif %}
                     {% if key == 'enable_upgrading' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
@@ -346,7 +379,9 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_in">
                 {% for filter in config.filter_in %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.filter_in.{{ loop.index0 }}">
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}
@@ -355,7 +390,9 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_out">
                 {% for filter in config.filter_out %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.filter_out.{{ loop.index0 }}">
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}
@@ -368,8 +405,12 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_in">
                 {% for filter, weight in config.preferred_filter_in %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}">
-                    <input type="number" class="filter-weight" min="1" value="{{ weight }}">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.term">
+                    <input type="number" class="filter-weight" min="1" value="{{ weight }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.weight">
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}
@@ -378,8 +419,12 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_out">
                 {% for filter, weight in config.preferred_filter_out %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}">
-                    <input type="number" class="filter-weight" min="1" value="{{ weight }}">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.term">
+                    <input type="number" class="filter-weight" min="1" value="{{ weight }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.weight">
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}
@@ -400,19 +445,21 @@
                     <div class="settings-form-group">
                         <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         {% if value.type == 'boolean' %}
-                            <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}" {% if settings.Scraping[key] %}checked{% endif %}>
+                            <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   {% if settings.get('Scraping', {}).get(key) %}checked{% endif %}>
                         {% elif value.choices %}
-                            <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input">
+                            <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input"
+                                    data-section="Scraping" data-key="{{ key }}">
                                 {% for choice in value.choices %}
-                                    <option value="{{ choice }}" {% if settings.Scraping[key] == choice %}selected{% endif %}>{{ choice }}</option>
+                                    <option value="{{ choice }}" {% if settings.get('Scraping', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
                                 {% endfor %}
                             </select>
                         {% else %}
-                            <input type="{{ 'number' if value.type == 'integer' or value.type == 'float' else 'text' }}" 
-                                   id="scraping-{{ key }}" 
-                                   name="Scraping.{{ key }}" 
-                                   value="{{ settings.Scraping[key] }}" 
-                                   class="settings-input">
+                            <input type="{{ value.type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{{ settings.get('Scraping', {}).get(key, '') }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   {% if value.sensitive %}type="password"{% endif %}>
                         {% endif %}
                         {% if value.description %}
                             {% if value.description is string %}
