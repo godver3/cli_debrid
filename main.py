@@ -798,6 +798,34 @@ def open_log_file():
     else:
         logging.error("Log file does not exist.")
 
+def fix_notification_settings():
+    """Check and fix notification settings during startup."""
+    try:
+        from settings import load_config, save_config
+        config = load_config()
+        needs_update = False
+
+        if 'Notifications' in config and config['Notifications']:
+            for notification_id, notification_config in config['Notifications'].items():
+                if notification_config is not None:
+                    if 'notify_on' not in notification_config or not notification_config['notify_on']:
+                        needs_update = True
+                        break
+
+        if needs_update:
+            logging.info("Found notifications with missing or empty notify_on settings, fixing...")
+            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+            try:
+                response = requests.post(f'http://localhost:{port}/notifications/update_defaults')
+                if response.status_code == 200:
+                    logging.info("Successfully updated notification defaults")
+                else:
+                    logging.error(f"Failed to update notification defaults: {response.text}")
+            except requests.RequestException as e:
+                logging.error(f"Error updating notification defaults: {e}")
+    except Exception as e:
+        logging.error(f"Error checking notification settings: {e}")
+
 # Update the main function to use a single thread for the metadata battery
 def main():
     global program_runner, metadata_process
@@ -830,6 +858,12 @@ def main():
 
     ensure_settings_file()
     verify_database()
+
+    # Add delay to ensure server is ready
+    time.sleep(2)
+
+    # Fix notification settings if needed
+    fix_notification_settings()
 
     # Add the update_media_locations call here
     # update_media_locations()

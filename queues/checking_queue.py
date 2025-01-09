@@ -150,6 +150,31 @@ class CheckingQueue:
         self.checking_queue_times[item['id']] = time.time()
         logging.debug(f"Added item {item['id']} to checking queue")
 
+        from notifications import send_notifications
+        from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
+        from extensions import app
+
+        # Send notification for the state change
+        try:
+            with app.app_context():
+                response = get_enabled_notifications_for_category('checking')
+                if response.json['success']:
+                    enabled_notifications = response.json['enabled_notifications']
+                    if enabled_notifications:
+                        notification_data = {
+                            'id': item['id'],
+                            'title': item.get('title', 'Unknown Title'),
+                            'type': item.get('type', 'unknown'),
+                            'year': item.get('year', ''),
+                            'version': item.get('version', ''),
+                            'season_number': item.get('season_number'),
+                            'episode_number': item.get('episode_number'),
+                            'new_state': 'Checking',
+                        }
+                        send_notifications([notification_data], enabled_notifications, notification_category='state_change')
+        except Exception as e:
+            logging.error(f"Failed to send state change notification: {str(e)}")
+
     def remove_item(self, item: Dict[str, Any]):
         torrent_id = item.get('filled_by_torrent_id')
         self.items = [i for i in self.items if i['id'] != item['id']]
