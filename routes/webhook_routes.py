@@ -8,6 +8,8 @@ from utilities.plex_functions import plex_update_item
 from settings import get_setting
 from urllib.parse import unquote
 import os.path
+from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
+from api_tracker import api
 
 webhook_bp = Blueprint('webhook', __name__)
 
@@ -16,6 +18,30 @@ def webhook():
     data = request.json
     logging.debug(f"Received webhook: {data}")
     try:
+        # If this is a TV show request, look for season information
+        if data.get('media', {}).get('media_type') == 'tv':
+            # Look for season information in the extra field
+            extra_items = data.get('extra', [])
+            for item in extra_items:
+                if item.get('name') == 'Requested Seasons':
+                    try:
+                        # The value could be a single season or a comma-separated list
+                        seasons_str = item.get('value', '')
+                        requested_seasons = [int(s.strip()) for s in seasons_str.split(',')]
+                        if requested_seasons:
+                            # Add to media section
+                            data['media']['requested_seasons'] = requested_seasons
+                            logging.info(f"Added season information to webhook data: {requested_seasons}")
+                    except ValueError as e:
+                        logging.error(f"Error parsing season information from webhook: {str(e)}")
+
+            # Only process if partial requests are allowed
+            if get_setting('debug', 'allow_partial_overseerr_requests', False):
+                logging.info("Partial requests are not allowed, clearing requested seasons")
+                if 'requested_seasons' in data['media']:
+                    del data['media']['requested_seasons']
+
+        logging.debug(f"Final webhook data before processing: {data}")
         process_overseerr_webhook(data)
         return jsonify({"status": "success"}), 200
     except Exception as e:

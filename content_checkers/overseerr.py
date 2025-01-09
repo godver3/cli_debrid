@@ -73,6 +73,7 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
 def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     content_sources = get_all_settings().get('Content Sources', {})
     overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
+    allow_partial = False #get_setting('debug', 'allow_partial_overseerr_requests', 'False')
     
     all_wanted_items = []
     
@@ -98,6 +99,16 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                         'tmdb_id': media.get('tmdbId'),
                         'media_type': media.get('mediaType'),
                     }
+
+                    # Handle season information for TV shows when partial requests are allowed
+                    if allow_partial and media.get('mediaType') == 'tv' and 'seasons' in item:
+                        requested_seasons = []
+                        for season in item.get('seasons', []):
+                            if season.get('seasonNumber') is not None:
+                                requested_seasons.append(season.get('seasonNumber'))
+                        if requested_seasons:
+                            wanted_item['requested_seasons'] = requested_seasons
+                            logging.info(f"TV show {media.get('tmdbId')} has specific season requests: {requested_seasons}")
 
                     wanted_items.append(wanted_item)
                     logging.debug(f"Added wanted item: {wanted_item}")

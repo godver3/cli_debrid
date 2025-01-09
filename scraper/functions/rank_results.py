@@ -123,8 +123,21 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Only apply season and episode matching for TV shows
     if content_type.lower() == 'episode':
-        season_match = 5 if query_season == torrent_season else 0
-        episode_match = 5 if query_episode == torrent_episode else 0
+        # Check if this is an anime
+        genres = result.get('genres', [])
+        if isinstance(genres, str):
+            genres = [genres]
+        is_anime = any('anime' in genre.lower() for genre in genres)
+        
+        if is_anime:
+            # For anime, only match episode numbers, ignore season mismatch
+            episode_match = 5 if query_episode == torrent_episode else 0
+            season_match = 5  # Always give full season match score for anime
+            logging.debug(f"Anime content - ignoring season mismatch. Episode match: {episode_match}")
+        else:
+            # Regular TV show matching
+            season_match = 5 if query_season == torrent_season else 0
+            episode_match = 5 if query_episode == torrent_episode else 0
     else:
         season_match = 0
         episode_match = 0
@@ -191,24 +204,31 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Content type matching score
     content_type_score = 0
-    if content_type.lower() == 'movie':
+    if content_type.lower() == 'movie' and not result.get('is_anime', False):
         if re.search(r'(s\d{2}|e\d{2}|season|episode)', torrent_title, re.IGNORECASE):
             content_type_score = -500
+            logging.debug(f"Applied penalty for movie with season/episode in title")
     elif content_type.lower() == 'episode':
-        # Check for clear TV show indicators
-        tv_indicators = re.search(r'(s\d{2}|e\d{2}|season|episode)', torrent_title, re.IGNORECASE)
-        year_range = re.search(r'\[(\d{4}).*?(\d{4})\]', torrent_title)
+        # Use is_anime flag directly from result
+        is_anime = result.get('is_anime', False)
         
-        if not tv_indicators:
-            # If no clear TV indicators, check for year ranges typical of TV collections
-            if year_range:
-                start_year, end_year = map(int, year_range.groups())
-                if end_year - start_year > 1:  # Spans multiple years, likely a TV show
-                    content_type_score = 0
+        if not is_anime:
+            # Regular TV show pattern matching
+            tv_indicators = re.search(r'(s\d{2}|e\d{2}|season|episode)', torrent_title, re.IGNORECASE)
+            year_range = re.search(r'\[(\d{4}).*?(\d{4})\]', torrent_title)
+            
+            if not tv_indicators:
+                # If no clear TV indicators, check for year ranges typical of TV collections
+                if year_range:
+                    start_year, end_year = map(int, year_range.groups())
+                    if end_year - start_year > 1:  # Spans multiple years, likely a TV show
+                        content_type_score = 0
+                    else:
+                        content_type_score = -500
+                        logging.debug(f"Applied penalty for TV show with year range in title")
                 else:
                     content_type_score = -500
-            else:
-                content_type_score = -500
+                    logging.debug(f"Applied penalty for TV show with no season/episode in title")
     else:
         logging.warning(f"Unknown content type: {content_type} for result: {torrent_title}")
 

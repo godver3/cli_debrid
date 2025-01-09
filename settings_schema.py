@@ -331,6 +331,11 @@ SETTINGS_SCHEMA = {
                 "Example: {title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} -{imdb_id} - {version} - ({original_filename})",
             ],
             "default": "{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} -{imdb_id} - {version} - ({original_filename})"
+        },
+        "allow_partial_overseerr_requests": {
+            "type": "boolean",
+            "description": "Allow partial show requests from Overseerr",
+            "default": False
         }
     },
     "Scrapers": {
