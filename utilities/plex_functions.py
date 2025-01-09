@@ -278,13 +278,30 @@ async def get_collected_from_plex(request='all'):
             libraries_url = f"{plex_url}/library/sections"
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
             
-            all_libraries = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
+            # Create two mappings - one for names and one for keys
+            all_libraries_by_name = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
+            all_libraries_by_key = {str(library['key']): library['key'] for library in libraries_data['MediaContainer']['Directory']}
             
             movie_library_names = get_setting('Plex', 'movie_libraries', '').split(',')
             show_library_names = get_setting('Plex', 'shows_libraries', '').split(',')
             
-            movie_libraries = [all_libraries[name.strip()] for name in movie_library_names if name.strip() in all_libraries]
-            show_libraries = [all_libraries[name.strip()] for name in show_library_names if name.strip() in all_libraries]
+            # Try to match by name first, then by key
+            movie_libraries = []
+            show_libraries = []
+            
+            for name in movie_library_names:
+                name = name.strip()
+                if name in all_libraries_by_name:
+                    movie_libraries.append(all_libraries_by_name[name])
+                elif name in all_libraries_by_key:
+                    movie_libraries.append(all_libraries_by_key[name])
+            
+            for name in show_library_names:
+                name = name.strip()
+                if name in all_libraries_by_name:
+                    show_libraries.append(all_libraries_by_name[name])
+                elif name in all_libraries_by_key:
+                    show_libraries.append(all_libraries_by_key[name])
             
             logger.info(f"TV Show libraries to process: {show_libraries}")
             logger.info(f"Movie libraries to process: {movie_libraries}")
