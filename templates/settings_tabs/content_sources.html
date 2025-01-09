@@ -194,6 +194,7 @@
                         {% for version in settings.Scraping.versions.keys() %}
                         <label>
                             <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version }}"
+                                data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version }}"
                                 {% if version in value %}checked{% endif %}>
                             {{ version }}
                         </label>
@@ -201,19 +202,32 @@
                     </div>
                 {% elif key == 'enabled' %}
                     <label class="settings-title">
-                        <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}" name="Content Sources.{{ source_id }}.{{ key }}" {% if value %}checked{% endif %}>
+                        <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}" 
+                               name="Content Sources.{{ source_id }}.{{ key }}" 
+                               data-section="Content Sources" 
+                               data-key="{{ source_id }}.{{ key }}"
+                               {% if value %}checked{% endif %}>
                         {{ key|replace('_', ' ')|title }}
                     </label>
                 {% else %}
                     <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value is iterable and (value is not string) %}
-                    <select id="content-sources-{{ source_id }}-{{ key }}" name="Content Sources.{{ source_id }}.{{ key }}" multiple class="settings-input">
+                    <select id="content-sources-{{ source_id }}-{{ key }}" 
+                            name="Content Sources.{{ source_id }}.{{ key }}" 
+                            multiple class="settings-input"
+                            data-section="Content Sources" 
+                            data-key="{{ source_id }}.{{ key }}">
                         {% for option in value %}
                         <option value="{{ option }}" selected>{{ option }}</option>
                         {% endfor %}
                     </select>
                     {% else %}
-                    <input type="text" id="content-sources-{{ source_id }}-{{ key }}" name="Content Sources.{{ source_id }}.{{ key }}" value="{{ value }}" class="settings-input">
+                    <input type="text" id="content-sources-{{ source_id }}-{{ key }}" 
+                           name="Content Sources.{{ source_id }}.{{ key }}" 
+                           value="{{ value }}" 
+                           class="settings-input"
+                           data-section="Content Sources" 
+                           data-key="{{ source_id }}.{{ key }}">
                     {% endif %}
                 {% endif %}
                 {% if settings_schema['Content Sources'] is defined and settings_schema['Content Sources'].schema is defined and settings_schema['Content Sources'].schema[config.type] is defined and settings_schema['Content Sources'].schema[config.type][key] is defined and settings_schema['Content Sources'].schema[config.type][key].description is defined %}

@@ -17,11 +17,78 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     similarity_weight = int(version_settings.get('similarity_weight', 3))
     size_weight = int(version_settings.get('size_weight', 3))
     bitrate_weight = int(version_settings.get('bitrate_weight', 3))
+    country_weight = int(version_settings.get('country_weight', 3))
 
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
     resolution_score = parsed_info.get('resolution_rank', 0)
     hdr_score = 1 if parsed_info.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
+
+    # Calculate country score
+    media_country = result.get('media_country_code')  # This should be passed from the scrape function
+    result_country = parsed_info.get('country')
+    
+    # Additional country code parsing for formats like "Title AU" or "Title NZ"
+    if not result_country:
+        # Common two-letter country codes that might appear after the title
+        country_codes = {'AU': 'au', 'NZ': 'nz', 'UK': 'gb', 'US': 'us', 'CA': 'ca'}
+        title_parts = torrent_title.split()
+        for i, part in enumerate(title_parts):
+            if part.upper() in country_codes and (i > 0 and not part.lower() in title_parts[i-1].lower()):  # Avoid matching part of a word
+                result_country = country_codes[part.upper()]
+                logging.info(f"Found country code in title: {part.upper()} -> {result_country}")
+                break
+    
+    country_score = 0
+    country_reason = "No country code matching applied"
+    
+    if media_country:
+        if media_country.lower() == 'us':
+            # For US content, treat missing country code as matching
+            if not result_country:
+                country_score = 10
+                country_reason = "US content - implicit match (no country code)"
+            elif result_country.lower() == 'us':
+                country_score = 10
+                country_reason = "US content - explicit match"
+            else:
+                country_score = -5
+                country_reason = f"US content - non-matching country ({result_country})"
+        else:
+            # For non-US content, require explicit country match
+            if result_country and media_country.lower() == result_country.lower():
+                country_score = 10
+                country_reason = f"Non-US content - explicit match ({media_country})"
+            elif result_country:
+                country_score = -5
+                country_reason = f"Non-US content - wrong country (wanted {media_country}, got {result_country})"
+            else:
+                country_reason = f"Non-US content - no country code in result (wanted {media_country})"
+
+    # Handle the case where torrent_year might be a list
+    if query_year is None:
+        year_match = 0  # No year match if query_year is None
+        year_reason = "No query year provided"
+    elif isinstance(torrent_year, list):
+        if query_year in torrent_year:
+            year_match = 25
+            year_reason = f"Exact year match found in list: {query_year} in {torrent_year}"
+        elif any(abs(query_year - y) <= 1 for y in torrent_year):
+            year_match = 5
+            year_reason = f"Year within 1 year difference in list: {query_year} near {torrent_year}"
+        else:
+            year_match = 0
+            year_reason = f"No matching year in list: {query_year} not near {torrent_year}"
+    else:
+        if query_year == torrent_year:
+            year_match = 25
+            year_reason = f"Exact year match: {query_year}"
+        elif torrent_year and abs(query_year - (torrent_year or 0)) <= 1:
+            year_match = 5
+            year_reason = f"Year within 1 year difference: {query_year} vs {torrent_year}"
+        else:
+            year_match = 0
+            year_reason = f"No year match: {query_year} vs {torrent_year}"
 
     scraper = result.get('scraper', '').lower()
 
@@ -44,6 +111,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     normalized_hdr = hdr_score * 10
     normalized_size = size_percentile * 10
     normalized_bitrate = bitrate_percentile * 10
+    normalized_country = country_score  # Already in 0-10 range
 
     # Apply weights
     weighted_similarity = normalized_similarity * similarity_weight
@@ -51,14 +119,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     weighted_hdr = normalized_hdr * hdr_weight
     weighted_size = normalized_size * size_weight
     weighted_bitrate = normalized_bitrate * bitrate_weight
-
-    # Handle the case where torrent_year might be a list
-    if query_year is None:
-        year_match = 0  # No year match if query_year is None
-    elif isinstance(torrent_year, list):
-        year_match = 5 if query_year in torrent_year else (1 if any(abs(query_year - y) <= 1 for y in torrent_year) else 0)
-    else:
-        year_match = 5 if query_year == torrent_year else (1 if torrent_year and abs(query_year - (torrent_year or 0)) <= 1 else 0)
+    weighted_country = normalized_country * country_weight
 
     # Only apply season and episode matching for TV shows
     if content_type.lower() == 'episode':
@@ -119,6 +180,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         weighted_hdr +
         weighted_size +
         weighted_bitrate +
+        weighted_country +
         (year_match * 5) +
         (season_match * 5) +
         (episode_match * 5) +
@@ -160,6 +222,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'hdr_score': round(weighted_hdr, 2) if version_settings.get('enable_hdr', True) else 0,
         'size_score': round(weighted_size, 2),
         'bitrate_score': round(weighted_bitrate, 2),
+        'country_score': round(weighted_country, 2),
         'year_match': year_match * 5,
         'season_match': season_match * 5,
         'episode_match': episode_match * 5,
@@ -186,7 +249,8 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
             'hdr': hdr_weight,
             'similarity': similarity_weight,
             'size': size_weight,
-            'bitrate': bitrate_weight
+            'bitrate': bitrate_weight,
+            'country': country_weight
         },
         'min_size_gb': version_settings.get('min_size_gb', 0.01)
     }

@@ -726,48 +726,54 @@ class MetadataManager:
 
     @staticmethod
     def get_show_metadata(imdb_id):
+        try:
+            with Session() as session:
+                item = session.query(Item).filter_by(imdb_id=imdb_id, type='show').first()
+                if item:
+                    # Ensure item.updated_at is timezone-aware
+                    if item.updated_at.tzinfo is None:
+                        item.updated_at = item.updated_at.replace(tzinfo=timezone.utc)
+                    
+                    if MetadataManager.is_metadata_stale(item.updated_at):
+                        trakt = TraktMetadata()
+                        show_data = trakt.get_show_metadata(imdb_id)
+                        if show_data:
+                            MetadataManager.update_show_metadata(item, show_data, session)
+                            return show_data, "trakt (refreshed)"
+                    else:
+                        metadata = session.query(Metadata).filter_by(item_id=item.id).all()
+                        metadata_dict = {}
+                        for m in metadata:
+                            try:
+                                metadata_dict[m.key] = json.loads(m.value) if isinstance(m.value, str) else m.value
+                            except json.JSONDecodeError:
+                                metadata_dict[m.key] = m.value
 
-        with Session() as session:
-            item = session.query(Item).filter_by(imdb_id=imdb_id, type='show').first()
-            if item:
-                # Ensure item.updated_at is timezone-aware
-                if item.updated_at.tzinfo is None:
-                    item.updated_at = item.updated_at.replace(tzinfo=timezone.utc)
-                
-                if MetadataManager.is_metadata_stale(item.updated_at):
-                    trakt = TraktMetadata()
-                    show_data = trakt.get_show_metadata(imdb_id)
-                    if show_data:
+                        return metadata_dict, "battery"
+
+                # Fetch from Trakt if not in database
+                trakt = TraktMetadata()
+                show_data = trakt.get_show_metadata(imdb_id)
+                if show_data:
+                    try:
+                        item = Item(imdb_id=imdb_id, title=show_data.get('title'), type='show', year=show_data.get('year'))
+                        session.add(item)
+                        session.flush()
                         MetadataManager.update_show_metadata(item, show_data, session)
-                        return show_data, "trakt (refreshed)"
-                else:
-                    metadata = session.query(Metadata).filter_by(item_id=item.id).all()
-                    metadata_dict = {}
-                    for m in metadata:
-                        try:
-                            metadata_dict[m.key] = json.loads(m.value) if isinstance(m.value, str) else m.value
-                        except json.JSONDecodeError:
-                            metadata_dict[m.key] = m.value
+                        return show_data, "trakt"
+                    except IntegrityError:
+                        session.rollback()
+                        logger.warning(f"IntegrityError occurred. Item may already exist for IMDB ID: {imdb_id}")
+                        # Try to get the existing item
+                        item = session.query(Item).filter_by(imdb_id=imdb_id, type='show').first()
+                        if item:
+                            MetadataManager.update_show_metadata(item, show_data, session)
+                            return show_data, "trakt"
 
-                    return metadata_dict, "battery"
-
-            # Fetch from Trakt if not in database
-            trakt = TraktMetadata()
-            show_data = trakt.get_show_metadata(imdb_id)
-            if show_data:
-                try:
-                    item = Item(imdb_id=imdb_id, title=show_data.get('title'), type='show', year=show_data.get('year'))
-                    session.add(item)
-                    session.flush()
-                    MetadataManager.update_show_metadata(item, show_data, session)
-                except IntegrityError:
-                    session.rollback()
-                    logger.warning(f"IntegrityError occurred. Item may already exist for IMDB ID: {imdb_id}")
-                    # Update existing item and metadata
-
-                return show_data, "trakt"
-
-            logger.warning(f"No show metadata found for IMDB ID: {imdb_id}")
+                logger.warning(f"No show metadata found for IMDB ID: {imdb_id}")
+                return None, None
+        except Exception as e:
+            logger.error(f"Error in get_show_metadata for IMDb ID {imdb_id}: {str(e)}")
             return None, None
 
     @staticmethod

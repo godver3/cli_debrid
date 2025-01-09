@@ -81,4 +81,56 @@
     font-family: inherit;
 }
 
+/* Delete button styles */
+.delete-scraper-btn,
+.delete-source-btn,
+.delete-version-btn {
+    background-color: #f44336;
+    color: white;
+    border: none !important;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    margin: 0 5px;
+}
+
+.delete-scraper-btn:hover:not(:disabled),
+.delete-source-btn:hover:not(:disabled),
+.delete-version-btn:hover:not(:disabled) {
+    background-color: #d32f2f;
+}
+
+/* Disabled delete button styles */
+.settings-section-header button.delete-scraper-btn[disabled],
+.settings-section-header button.delete-scraper-btn:disabled,
+button.delete-scraper-btn[disabled],
+button.delete-scraper-btn:disabled,
+.delete-scraper-btn[disabled],
+.delete-scraper-btn:disabled {
+    background-color: #666666 !important;
+    color: #999999 !important;
+    cursor: not-allowed !important;
+    opacity: 0.7 !important;
+    pointer-events: none !important;
+    border: none !important;
+    transition: none !important;
+    box-shadow: none !important;
+}
+
+/* Environment override icon in delete buttons */
+.delete-scraper-btn .env-override,
+.delete-source-btn .env-override,
+.delete-version-btn .env-override {
+    font-size: 0.9em;
+    margin-left: 5px;
+    color: #ffa500;
+    display: inline-flex;
+    align-items: center;
+}
+
 /* Rest of your existing styles... */ 
