@@ -135,10 +135,11 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     result_seasons = season_episode_info.get('seasons', [])
                     result_episodes = season_episode_info.get('episodes', [])
                     
-                    # Check if we have a matching season
-                    if not result_seasons or season not in result_seasons:
-                        result['filter_reason'] = f"Season mismatch: expected S{season}, got {result_seasons}"
-                        continue
+                    # Check if we have a matching season (skip for anime)
+                    if not is_anime:  # Only check season match for non-anime content
+                        if not result_seasons or season not in result_seasons:
+                            result['filter_reason'] = f"Season mismatch: expected S{season}, got {result_seasons}"
+                            continue
 
                     # For multi-episode packs, check if our episode is in the range
                     if season_episode_info.get('multi_episode', False):

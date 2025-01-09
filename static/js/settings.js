@@ -720,6 +720,17 @@ function updateSettings() {
         console.warn("Plex Watchlist Keep Series checkbox element not found!");
     }
 
+    const allowPartialOverseerrRequests = document.getElementById('scraping-allow_partial_overseerr_requests');
+    console.log("Allow Partial Overseerr Requests element:", allowPartialOverseerrRequests);
+    
+    if (allowPartialOverseerrRequests) {
+        settingsData['Scraping']['allow_partial_overseerr_requests'] = allowPartialOverseerrRequests.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Allow Partial Overseerr Requests checkbox element not found!");
+    }
+
     const debridProvider = document.getElementById('debrid provider-provider');
     console.log("Debrid Provider element:", debridProvider);
     

@@ -731,7 +731,15 @@ def process_overseerr_webhook(data):
         'media_type': media_type
     }
 
+    # Add requested_seasons if present in media data
+    if media_type == 'tv' and media.get('requested_seasons'):
+        wanted_item['requested_seasons'] = media['requested_seasons']
+        logging.info(f"Added requested seasons to wanted item: {media['requested_seasons']}")
+    else:
+        logging.debug(f"No requested seasons found in media data: {media}")
+
     wanted_content = [wanted_item]
+    logging.debug(f"Processing wanted content with item: {wanted_item}")
     wanted_content_processed = process_metadata(wanted_content)
     if wanted_content_processed:
         # Get the versions for Overseerr from settings

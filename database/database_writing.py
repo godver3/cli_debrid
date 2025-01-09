@@ -197,3 +197,51 @@ def update_blacklisted_date(item_id: int, blacklisted_date: datetime | None):
         raise
     finally:
         conn.close()
+
+@retry_on_db_lock()
+def update_anime_format(tmdb_id: str, format_type: str):
+    """Update the preferred anime format for all episodes of a show.
+    
+    Args:
+        tmdb_id: The TMDB ID of the show
+        format_type: The format type ('regular', 'absolute', or 'combined')
+    """
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET anime_format = ?, last_updated = ?
+            WHERE tmdb_id = ? AND type = 'episode'
+        ''', (format_type, datetime.now(), tmdb_id))
+        conn.commit()
+        logging.info(f"Updated anime_format to {format_type} for show with TMDB ID {tmdb_id}")
+    except Exception as e:
+        logging.error(f"Error updating anime_format for TMDB ID {tmdb_id}: {str(e)}")
+        raise
+    finally:
+        conn.close()
+
+def get_anime_format(tmdb_id: str) -> str | None:
+    """Get the preferred anime format for a show.
+    
+    Args:
+        tmdb_id: The TMDB ID of the show
+        
+    Returns:
+        str | None: The preferred format type or None if not set
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT anime_format
+            FROM media_items
+            WHERE tmdb_id = ? AND type = 'episode'
+            LIMIT 1
+        ''', (tmdb_id,))
+        result = cursor.fetchone()
+        return result['anime_format'] if result else None
+    except Exception as e:
+        logging.error(f"Error getting anime_format for TMDB ID {tmdb_id}: {str(e)}")
+        return None
+    finally:
+        conn.close()

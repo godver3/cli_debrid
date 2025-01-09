@@ -85,6 +85,9 @@ def migrate_schema():
         if 'trigger_country' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN trigger_country TEXT')
             logging.info("Successfully added trigger_country column to media_items table.")
+        if 'anime_format' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN anime_format TEXT')
+            logging.info("Successfully added anime_format column to media_items table.")
         # logging.info("Successfully added new columns to media_items table.")
 
         # Remove the existing index if it exists
@@ -176,7 +179,8 @@ def create_tables():
                 trigger_genres TEXT,
                 trigger_content_source TEXT,
                 trigger_version TEXT,
-                trigger_country TEXT
+                trigger_country TEXT,
+                anime_format TEXT
             )
         ''')
 

@@ -21,12 +21,60 @@ from PTT import parse_title
 from pathlib import Path
 from scraper.functions import *
 
+def convert_anime_episode_format(season: int, episode: int, total_episodes: int) -> Dict[str, str]:
+    """Convert anime episode numbers into different formats."""
+    logging.info(f"Converting anime episode format - Season: {season}, Episode: {episode}, Total Episodes: {total_episodes}")
+    
+    # Regular season/episode format (SXXEXX)
+    regular_format = f"S{season:02d}E{episode:02d}"
+    logging.info(f"Regular format: {regular_format}")
+    
+    # Absolute episode format with E (EXXX)
+    absolute_episode = ((season - 1) * total_episodes) + episode
+    absolute_format_with_e = f"E{absolute_episode:03d}"
+    logging.info(f"Absolute format with E: {absolute_format_with_e}")
+    
+    # Absolute episode format without E (XXX)
+    absolute_format = f"{absolute_episode:03d}"
+    logging.info(f"Absolute format without E: {absolute_format}")
+    
+    # Combined format (SXXEXXX)
+    combined_format = f"S{season:02d}E{absolute_episode:03d}"
+    logging.info(f"Combined format: {combined_format}")
+    
+    # No leading zeros format (x)
+    no_zeros_format = f"{episode}"
+    logging.info(f"No leading zeros format: {no_zeros_format}")
+    
+    return {
+        'regular': regular_format,
+        'absolute_with_e': absolute_format_with_e,
+        'absolute': absolute_format,
+        'combined': combined_format,
+        'no_zeros': no_zeros_format
+    }
+
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}")
 
     #logging.info(f"Pre-filter genres: {genres}")
     genres = filter_genres(genres)
     #logging.info(f"Post-filter genres: {genres}")
+
+    # Check if content is anime
+    is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+    logging.info(f"Is anime: {is_anime}")
+    episode_formats = None
+    if is_anime and content_type.lower() == 'episode' and season is not None and episode is not None:
+        logging.info(f"Detected anime content: {title}")
+        # Get total episodes for the season from season_episode_counts
+        season_episode_counts = get_all_season_episode_counts(tmdb_id)
+        total_episodes = season_episode_counts.get(season, 13)  # Default to 13 if unknown
+        logging.info(f"Total episodes for season {season}: {total_episodes}")
+        
+        # Convert episode format
+        episode_formats = convert_anime_episode_format(season, episode, total_episodes)
+        logging.info(f"Generated episode formats for anime: {episode_formats}")
 
     try:
         start_time = time.time()
@@ -92,7 +140,18 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Use ScraperManager to handle scraping
         task_start = time.time()
         scraper_manager = ScraperManager(load_config())
-        all_results = scraper_manager.scrape_all(imdb_id, title, year, content_type, season, episode, multi, genres)
+        all_results = scraper_manager.scrape_all(
+            imdb_id=imdb_id,
+            title=title,
+            year=year,
+            content_type=content_type,
+            season=season,
+            episode=episode,
+            multi=multi,
+            genres=genres,
+            episode_formats=episode_formats,
+            tmdb_id=tmdb_id
+        )
         task_timings['scraping'] = time.time() - task_start
 
         #logging.debug(f"Total results before filtering: {len(all_results)}")
@@ -165,6 +224,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             result['season_pack'] = season_pack
             # Add media country code to result for ranking
             result['media_country_code'] = media_country_code
+            # Add is_anime flag to result for ranking
+            result['is_anime'] = is_anime
 
         # Sort results
         task_start = time.time()
