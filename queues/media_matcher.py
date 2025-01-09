@@ -65,36 +65,68 @@ class MediaMatcher:
         """
         Match TV show files against an episode item.
         Returns all matching files with their season/episode info.
+        Special handling for anime which may not include season numbers.
         """
         matches = []
         series_title = item.get('series_title', '') or item.get('title', '')
         item_season = item.get('season') or item.get('season_number')
         item_episode = item.get('episode') or item.get('episode_number')
+        # Handle both string and list genres
+        genres = item.get('genres', [])
+        if isinstance(genres, str):
+            genres = [genres]
+        is_anime = any('anime' in genre.lower() for genre in genres)
         
-        if not all([series_title, item_season is not None, item_episode is not None]):
-            logging.debug(f"Missing required TV info: title='{series_title}', S{item_season}E{item_episode}")
+        if not all([series_title, item_episode is not None]):
+            logging.debug(f"Missing required TV info: title='{series_title}', E{item_episode}")
             return []
-            
-        logging.debug(f"Matching TV: '{series_title}' S{item_season}E{item_episode}")
+        
+        if is_anime:
+            logging.debug(f"Matching anime: '{series_title}' E{item_episode}")
+        else:
+            if item_season is None:
+                logging.debug(f"Missing season number for non-anime content")
+                return []
+            logging.debug(f"Matching TV: '{series_title}' S{item_season}E{item_episode}")
         
         for file in files:
             if not self.is_video_file(file['path']):
                 continue
-                
+            
             # Skip sample files
             if 'sample' in file['path'].lower():
                 continue
-                
-            parsed = parse_with_ptt(file['path'])
             
-            # Check if this file matches our season/episode
-            if (item_season in parsed.get('seasons', []) and 
-                item_episode in parsed.get('episodes', [])):
-                logging.debug(f"Matched: S{item_season}E{item_episode} in {os.path.basename(file['path'])}")
-                # Get just the filename using os.path.basename
-                file_path = os.path.basename(file['path'])
-                matches.append((file_path, item))
+            parsed = parse_with_ptt(file['path'])
+            logging.debug(f"Parsed file: {parsed}")
+            
+            # For anime, we only need to match the episode number
+            if is_anime:
+                episode_match = item_episode in parsed.get('episodes', [])
+                # Only check season if it's present in both the parsed result and the item
+                season_match = (not parsed.get('seasons') or  # If no season in filename, that's okay
+                              not item_season or  # If no season in item, that's okay
+                              item_season in parsed.get('seasons', []))  # If both have season, they should match
                 
+                if episode_match and season_match:
+                    logging.debug(f"Matched anime: E{item_episode} in {os.path.basename(file['path'])}")
+                    file_path = os.path.basename(file['path'])
+                    matches.append((file_path, item))
+                    logging.debug(f"Added match for anime: {file_path}")
+            else:
+                # Regular TV show matching requiring both season and episode
+                if (item_season in parsed.get('seasons', []) and 
+                    item_episode in parsed.get('episodes', [])):
+                    logging.debug(f"Matched: S{item_season}E{item_episode} in {os.path.basename(file['path'])}")
+                    file_path = os.path.basename(file['path'])
+                    matches.append((file_path, item))
+            
+        if not matches:
+            if is_anime:
+                logging.debug(f"No matches found for anime: {series_title} E{item_episode}")
+            else:
+                logging.debug(f"No matches found for TV: {series_title} S{item_season}E{item_episode}")
+        
         return matches
 
     def match_movie(self, parsed: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:

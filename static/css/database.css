@@ -296,3 +296,86 @@
     .mobile-tooltip-button {
         display: none;  /* This will hide any existing tooltip buttons */
     }
+
+    /* Bulk actions styles */
+    .bulk-actions {
+        margin-bottom: 20px;
+        padding: 10px;
+        background-color: #444;
+        border-radius: 4px;
+    }
+
+    .select-all-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .bulk-action-btn,
+    .select-all-btn {
+        color: white;
+        border: none;
+        padding: 8px 15px;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .bulk-action-btn {
+        background-color: #ff4d4d;
+    }
+
+    .select-all-btn {
+        background-color: #4c6baf;
+    }
+
+    .bulk-action-btn:hover {
+        background-color: #ff1a1a;
+    }
+
+    .bulk-action-btn:disabled {
+        background-color: #666;
+        cursor: not-allowed;
+    }
+
+    .bulk-action-select {
+        padding: 8px;
+        border-radius: 4px;
+        background-color: #555;
+        color: white;
+        border: 1px solid #666;
+    }
+
+    .bulk-action-select:disabled {
+        background-color: #444;
+        cursor: not-allowed;
+    }
+
+    /* Checkbox styles */
+    input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+
+    .item-select {
+        margin: 0;
+        padding: 0;
+    }
+
+    #select-all {
+        margin-right: 10px;
+    }
+
+    /* Mobile view adjustments for bulk actions */
+    @media screen and (max-width: 768px) {
+        .select-all-container {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .bulk-action-btn,
+        .bulk-action-select {
+            width: 100%;
+            margin: 5px 0;
+        }
+    }
