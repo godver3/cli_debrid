@@ -117,8 +117,8 @@ export function initializeProgramControls() {
 
         // Check required settings
         const requiredFields = [
-            'Plex.url',
-            'Plex.token',
+            //'Plex.url',
+            //'Plex.token',
             'Debrid Provider.provider',
             'Debrid Provider.api_key',
             'Metadata Battery.url'

@@ -18,17 +18,23 @@ def initialize_database(app):
     for attempt in range(max_retries):
         try:
             # Initialize the database
-            engine = init_db(app)
+            engine = init_db()
             
             # Test both read and write operations
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            with engine.connect() as connection:
+                # Ensure WAL mode and other PRAGMA settings are applied
+                connection.execute(text("PRAGMA journal_mode=WAL"))
+                connection.execute(text("PRAGMA busy_timeout=30000"))
+                connection.execute(text("PRAGMA synchronous=NORMAL"))
+                
                 # Test read
-                connection.exec_driver_sql("SELECT 1")
+                connection.execute(text("SELECT 1"))
                 
                 # Test write capability with a transaction
-                connection.exec_driver_sql("CREATE TABLE IF NOT EXISTS _write_test (test INTEGER)")
-                connection.exec_driver_sql("INSERT INTO _write_test VALUES (1)")
-                connection.exec_driver_sql("DROP TABLE IF EXISTS _write_test")
+                with connection.begin():
+                    connection.execute(text("CREATE TABLE IF NOT EXISTS _write_test (test INTEGER)"))
+                    connection.execute(text("INSERT INTO _write_test VALUES (1)"))
+                    connection.execute(text("DROP TABLE IF EXISTS _write_test"))
             
             # Verify tables
             inspector = inspect(engine)
@@ -48,6 +54,7 @@ def initialize_database(app):
             else:
                 raise
         except Exception as e:
+            logger.error(f"Failed to initialize database: {str(e)}")
             raise
 
     return None
@@ -64,29 +71,38 @@ def main():
                 logger.error("Failed to initialize database after multiple attempts")
                 sys.exit(1)
             
-            # Initialize and start background jobs with Flask app
-            background_jobs.init_app(app)
-            background_jobs.start()
-            
-            # Ensure background jobs are stopped and database connections are cleaned up on exit
-            def cleanup():
-                logger.info("Cleaning up resources...")
-                background_jobs.stop()
-                Session.remove()  # Clean up any lingering sessions
-                engine.dispose()  # Close all connections in the pool
-            
-            atexit.register(cleanup)
-            
-            logger.info("Database initialized successfully")
-            
-            # Get port from environment variable or use default
-            port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
-            
-            # Run Flask server
-            logger.info(f"Starting Flask server on port {port}")
-            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+            try:
+                # Initialize and start background jobs with Flask app
+                background_jobs.init_app(app)
+                background_jobs.start()
+                
+                # Ensure background jobs are stopped and database connections are cleaned up on exit
+                def cleanup():
+                    logger.info("Cleaning up resources...")
+                    try:
+                        background_jobs.stop()
+                    except Exception as e:
+                        logger.error(f"Error stopping background jobs: {str(e)}")
+                    finally:
+                        Session.remove()  # Clean up any lingering sessions
+                        engine.dispose()  # Close all connections in the pool
+                
+                atexit.register(cleanup)
+                
+                logger.info("Database initialized successfully")
+                
+                # Get port from environment variable or use default
+                port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
+                
+                # Run Flask server
+                logger.info(f"Starting Flask server on port {port}")
+                app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+            except Exception as e:
+                logger.error(f"Error initializing background jobs: {str(e)}")
+                engine.dispose()
+                sys.exit(1)
     except Exception as e:
-        logger.error(f"Error during startup: {e}")
+        logger.error(f"Error during startup: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -239,9 +239,11 @@ class CheckingQueue:
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
                         # First check all items for local files directly
                         items_to_scan = []
-                        for item in self.items:
+                        for item in items:
                             time_in_queue = current_time - self.checking_queue_times[item['id']]
-                            if time_in_queue > 10:
+                            # Run extended search after 15 minutes and every 15 minutes thereafter
+                            # Use a wider 5-minute window to ensure we don't miss checks due to queue timing
+                            if time_in_queue > 900 and (time_in_queue % 900) < 300:  # Check within a 5-minute window every 15 minutes
                                 logging.info(f"Checking for local file for item {item['id']} with extended search")
                                 file_found = check_local_file_for_item(item, extended_search=True)
                             else:

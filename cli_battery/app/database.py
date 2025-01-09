@@ -40,6 +40,51 @@ Base = declarative_base()
 # Create a scoped session
 Session = scoped_session(sessionmaker())
 
+def init_db():
+    # Get db_content directory from environment variable with fallback
+    db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    os.makedirs(db_directory, exist_ok=True)
+
+    db_path = os.path.join(db_directory, 'cli_battery.db')
+    connection_string = f'sqlite:///{db_path}'
+
+    try:
+        print(f"Attempting to connect to database: {connection_string}")
+        engine = create_engine(
+            connection_string,
+            echo=False,
+            connect_args={
+                'timeout': 30,  # Increase SQLite busy timeout
+                'check_same_thread': False,  # Allow multi-threaded access
+            }
+        )
+
+        # Set PRAGMA statements and test connection
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            # Set PRAGMA statements (these run outside of transaction control)
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+            conn.exec_driver_sql("PRAGMA busy_timeout=30000")
+            conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
+            
+            # Test connection
+            conn.exec_driver_sql("SELECT 1")
+
+        # Configure the session with the engine
+        Session.configure(bind=engine)
+
+        # Create tables
+        Base.metadata.create_all(engine)
+
+        print(f"Successfully connected to cli_battery database: {connection_string}")
+        return engine
+    except Exception as e:
+        print(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
+        print("Database connection failed.")
+        raise
+
+# Initialize the database engine
+engine = init_db()
+
 class Item(Base):
     __tablename__ = 'items'
 
@@ -246,49 +291,3 @@ class DatabaseManager:
                 logger.error(f"Error removing metadata for IMDB ID {imdb_id}: {str(e)}")
                 session.rollback()
                 return False
-
-def init_db(app):
-    # Get db_content directory from environment variable with fallback
-    db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-    os.makedirs(db_directory, exist_ok=True)
-
-    db_path = os.path.join(db_directory, 'cli_battery.db')
-    connection_string = f'sqlite:///{db_path}'
-
-    try:
-        print(f"Attempting to connect to database: {connection_string}")
-        engine = create_engine(
-            connection_string,
-            echo=False,
-            connect_args={
-                'timeout': 30,  # Increase SQLite busy timeout
-                'check_same_thread': False,  # Allow multi-threaded access
-            }
-        )
-
-        # Set PRAGMA statements and test connection
-        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            # Set PRAGMA statements (these run outside of transaction control)
-            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-            conn.exec_driver_sql("PRAGMA busy_timeout=30000")
-            conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
-            
-            # Test connection
-            conn.exec_driver_sql("SELECT 1")
-
-        # Create a new session factory
-        session_factory = sessionmaker(bind=engine)
-        
-        # Configure the scoped session with the new factory
-        Session.remove()  # Remove any existing sessions
-        Session.configure(bind=engine)
-
-        # Create tables in a separate connection
-        Base.metadata.create_all(engine)
-
-        logger.info(f"Successfully connected to cli_battery database: {connection_string}")
-        return engine
-    except Exception as e:
-        logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
-        logger.critical("Database connection failed.")
-        raise

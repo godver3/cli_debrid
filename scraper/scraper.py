@@ -7,7 +7,7 @@ from settings import get_setting
 import time
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
 from fuzzywuzzy import fuzz
-from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
+from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
 import os
 from utilities.plex_functions import filter_genres
 from guessit import guessit
@@ -28,11 +28,16 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
     genres = filter_genres(genres)
     #logging.info(f"Post-filter genres: {genres}")
 
-
     try:
         start_time = time.time()
         task_timings = {}  # Dictionary to store timing information
         all_results = []
+
+        # Get country code for media item from metadata
+        task_start = time.time()
+        media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
+        task_timings['country_code_lookup'] = time.time() - task_start
+        logging.info(f"Media country code from metadata: {media_country_code}")
 
         #logging.info(f"Starting scraping for: {title} ({year}), Version: {version}")
 
@@ -158,21 +163,17 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
             result['is_multi_pack'] = is_multi_pack
             result['season_pack'] = season_pack
+            # Add media country code to result for ranking
+            result['media_country_code'] = media_country_code
 
         # Sort results
         task_start = time.time()
         sorting_start = time.time()
 
         def stable_rank_key(x):
-            parsed_info = x.get('parsed_info', {})
-            primary_key = rank_result_key(x, filtered_results, title, year, season, episode, multi, content_type, version_settings)
-            secondary_keys = (
-                x.get('scraper', ''),
-                x.get('title', ''),
-                x.get('size', 0),
-                x.get('seeders', 0)
-            )
-            return (primary_key, secondary_keys)
+            # Get base ranking (which returns a tuple)
+            base_rank_tuple = rank_result_key(x, filtered_results, title, year, season, episode, multi, content_type, version_settings)
+            return base_rank_tuple
 
         
         # Apply ultimate sort order if present

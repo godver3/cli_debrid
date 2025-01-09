@@ -189,7 +189,7 @@ def initialize(skip_initial_plex_update=False):
     start_phase('reset', 'Reset Items', 'Starting item reset')
     reset_queued_item_status()
     complete_phase('reset')
-    
+       
     if get_setting('File Management ', 'file_collection_management') == 'Plex':
         # Plex Update Phase (2 minutes)
         start_phase('plex', 'Plex Update', 'Starting Plex scan')
@@ -207,6 +207,7 @@ def initialize(skip_initial_plex_update=False):
         start_phase('sources', 'Content Sources', 'Processing content sources')
         get_all_wanted_from_enabled_sources()
         complete_phase('sources')
+        plex_result = True
     
     # Release Dates Phase (30 seconds)
     start_phase('release', 'Release Dates', 'Updating metadata for all items')
