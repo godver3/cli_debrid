@@ -2,7 +2,7 @@ import logging
 import time
 from metadata.metadata import refresh_release_dates
 from database import update_media_item_state, get_all_media_items
-from settings import get_all_settings
+from settings import get_all_settings, get_setting
 
 # Progress ranges for each phase
 PROGRESS_RANGES = {
@@ -190,13 +190,20 @@ def initialize(skip_initial_plex_update=False):
     reset_queued_item_status()
     complete_phase('reset')
     
-    # Plex Update Phase (2 minutes)
-    start_phase('plex', 'Plex Update', 'Starting Plex scan')
-    plex_result = plex_collection_update(skip_initial_plex_update)
-    complete_phase('plex')
+    if get_setting('File Management ', 'file_collection_management') == 'Plex':
+        # Plex Update Phase (2 minutes)
+        start_phase('plex', 'Plex Update', 'Starting Plex scan')
+        plex_result = plex_collection_update(skip_initial_plex_update)
+        complete_phase('plex')
     
-    # Content Sources Phase (2 minutes)
-    if plex_result:
+        # Content Sources Phase (2 minutes)
+        if plex_result:
+            start_phase('sources', 'Content Sources', 'Processing content sources')
+            get_all_wanted_from_enabled_sources()
+            complete_phase('sources')
+
+    else:
+        # Content Sources Phase (2 minutes)
         start_phase('sources', 'Content Sources', 'Processing content sources')
         get_all_wanted_from_enabled_sources()
         complete_phase('sources')

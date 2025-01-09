@@ -155,6 +155,13 @@ SETTINGS_SCHEMA = {
             "default": "None",
             "choices": ["None", "Full"]
         },
+        "upgrade_similarity_threshold": {
+            "type": "float",
+            "description": "Threshold for title similarity when upgrading (0.0 to 1.0). Higher values mean titles must be more different to be considered an upgrade. Default 0.95 means 95% similar.",
+            "default": 0.95,
+            "min": 0.0,
+            "max": 1.0
+        },
         "hybrid_mode": {
             "type": "boolean",
             "description": "Enable hybrid mode to add best uncached result if no cached results found in 'None' mode",

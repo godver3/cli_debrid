@@ -242,7 +242,11 @@ class TorrentProcessor:
                 
                 # Check cache status
                 logging.debug(f"Result {idx}: Checking cache status")
-                is_cached = self.debrid_provider.is_cached(magnet if magnet else original_link, temp_file)
+                # If we have a temp file, use that. Otherwise use magnet or original link
+                is_cached = self.debrid_provider.is_cached(
+                    temp_file if temp_file else (magnet if magnet else original_link),
+                    None  # Never pass temp_file parameter since we pass it as first arg if we have it
+                )
                     
                 # Skip if there was an error checking cache
                 if is_cached is None:

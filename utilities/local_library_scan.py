@@ -362,6 +362,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     notification_item['is_upgrade'] = False
                     add_to_collected_notifications(notification_item)
                     logging.info(f"Added collection notification for new item: {item_identifier}")
+                # Add notification for upgrades
+                elif item.get('upgrading_from'):
+                    from database.database_writing import add_to_collected_notifications
+                    notification_item = item.copy()
+                    notification_item.update(update_values)
+                    notification_item['is_upgrade'] = True
+                    add_to_collected_notifications(notification_item)
+                    logging.info(f"Added upgrade notification for item: {item_identifier}")
 
             return success
             
