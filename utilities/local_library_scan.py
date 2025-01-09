@@ -166,6 +166,22 @@ def create_symlink(source_path: str, dest_path: str) -> bool:
         logging.error(f"Failed to create symlink {source_path} -> {dest_path}: {str(e)}")
         return False
 
+def find_file(filename: str, search_path: str) -> Optional[str]:
+    """Find a file by name using the find command."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['find', search_path, '-name', filename, '-type', 'f', '-print', '-quit'],
+            capture_output=True, text=True
+        )
+        if result.stdout:
+            found_path = result.stdout.strip()
+            return found_path if found_path else None
+        return None
+    except Exception as e:
+        logging.error(f"Error using find command: {str(e)}")
+        return None
+
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
@@ -180,14 +196,24 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False) ->
     
     for attempt in range(max_retries):
         try:
-            if not item.get('filled_by_title') or not item.get('filled_by_file'):
+            if not item.get('filled_by_file'):
                 return False
                 
             original_path = get_setting('Debug', 'original_files_path', '/mnt/zurg/__all__')
             
-            # Construct the complete source path using both title and file
-            source_file = os.path.join(original_path, item['filled_by_title'], item['filled_by_file'])
-            logging.debug(f"Constructed source file path: {source_file}")
+            # First try the original path construction
+            source_file = os.path.join(original_path, item.get('filled_by_title', ''), item['filled_by_file'])
+            logging.debug(f"Trying original source file path: {source_file}")
+            
+            # If file doesn't exist at the original path, search for it using find command
+            if not os.path.exists(source_file):
+                logging.debug(f"File not found at original path, searching in {original_path}")
+                found_path = find_file(item['filled_by_file'], original_path)
+                if found_path:
+                    source_file = found_path
+                    # Update the filled_by_title to match the actual folder structure
+                    item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
+                    logging.info(f"Found file at alternate location: {source_file}")
             
             if not os.path.exists(source_file):
                 if is_webhook and attempt < max_retries - 1:

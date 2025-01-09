@@ -17,20 +17,44 @@
             <div class="settings-section-content" style="display: none;">
                 {% for key, value in config.items() %}
                     {% if key not in ['type', 'title'] %}
-                    <div class="settings-form-group">
-                        {% if key == 'enabled' %}
-                            <label class="settings-title">
-                                <input type="checkbox" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" {% if value %}checked{% endif %}>
-                                {{ key|replace('_', ' ')|title }}
-                            </label>
+                        {% if key == 'notify_on' %}
+                            <div class="settings-form-group">
+                                <label class="settings-title">Notify On:</label>
+                                <div class="notification-categories">
+                                    {% set allowed_categories = ['checking', 'sleeping', 'collected'] %}
+                                    {% for category, enabled in value.items() %}
+                                        {% if category.lower() in allowed_categories %}
+                                            <div class="notification-category">
+                                                <label>
+                                                    <input type="checkbox" 
+                                                           name="Notifications.{{ notification_id }}.notify_on.{{ category }}" 
+                                                           {% if enabled %}checked{% endif %}>
+                                                    {{ category|replace('_', ' ')|title }}
+                                                </label>
+                                            </div>
+                                        {% endif %}
+                                    {% endfor %}
+                                </div>
+                                {% if settings_schema['Notifications'] is defined and settings_schema['Notifications'].schema is defined and settings_schema['Notifications'].schema[config.type] is defined and settings_schema['Notifications'].schema[config.type][key] is defined and settings_schema['Notifications'].schema[config.type][key].description is defined %}
+                                <p class="settings-description">{{ settings_schema['Notifications'].schema[config.type][key].description }}</p>
+                                {% endif %}
+                            </div>
                         {% else %}
-                            <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                            <input type="{% if 'password' in key %}password{% else %}text{% endif %}" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" value="{{ value }}" class="settings-input">
+                            <div class="settings-form-group">
+                                {% if key == 'enabled' %}
+                                    <label class="settings-title">
+                                        <input type="checkbox" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" {% if value %}checked{% endif %}>
+                                        {{ key|replace('_', ' ')|title }}
+                                    </label>
+                                {% else %}
+                                    <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                                    <input type="{% if 'password' in key %}password{% else %}text{% endif %}" id="notifications-{{ notification_id }}-{{ key }}" name="Notifications.{{ notification_id }}.{{ key }}" value="{{ value }}" class="settings-input">
+                                {% endif %}
+                                {% if settings_schema['Notifications'] is defined and settings_schema['Notifications'].schema is defined and settings_schema['Notifications'].schema[config.type] is defined and settings_schema['Notifications'].schema[config.type][key] is defined and settings_schema['Notifications'].schema[config.type][key].description is defined %}
+                                <p class="settings-description">{{ settings_schema['Notifications'].schema[config.type][key].description }}</p>
+                                {% endif %}
+                            </div>
                         {% endif %}
-                        {% if settings_schema['Notifications'] is defined and settings_schema['Notifications'].schema is defined and settings_schema['Notifications'].schema[config.type] is defined and settings_schema['Notifications'].schema[config.type][key] is defined and settings_schema['Notifications'].schema[config.type][key].description is defined %}
-                        <p class="settings-description">{{ settings_schema['Notifications'].schema[config.type][key].description }}</p>
-                        {% endif %}
-                    </div>
                     {% endif %}
                 {% endfor %}
             </div>
@@ -40,6 +64,33 @@
 {% else %}
     <p>No Notifications configured.</p>
 {% endif %}
+
+<style>
+.notification-categories {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+    margin: 10px 0;
+    padding: 10px;
+    background: #333;
+    border-radius: 4px;
+}
+
+.notification-category {
+    padding: 5px;
+}
+
+.notification-category label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.notification-category input[type="checkbox"] {
+    margin: 0;
+}
+</style>
 
 <script>
 function initializeNotificationsFunctionality() {

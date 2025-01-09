@@ -407,18 +407,66 @@ SETTINGS_SCHEMA = {
             "Telegram": {
                 "enabled": {"type": "boolean", "default": False},
                 "bot_token": {"type": "string", "default": "", "sensitive": True},
-                "chat_id": {"type": "string", "default": ""}
+                "chat_id": {"type": "string", "default": ""},
+                "notify_on": {
+                    "type": "dict",
+                    "default": {
+                        "collected": True,
+                        "wanted": False,
+                        "scraping": False,
+                        "adding": False,
+                        "checking": False,
+                        "sleeping": False,
+                        "unreleased": False,
+                        "blacklisted": False,
+                        "pending_uncached": False,
+                        "upgrading": False
+                    },
+                    "description": "Configure which queue state changes trigger notifications"
+                }
             },
             "Discord": {
                 "enabled": {"type": "boolean", "default": False},
-                "webhook_url": {"type": "string", "default": "", "sensitive": True}
+                "webhook_url": {"type": "string", "default": "", "sensitive": True},
+                "notify_on": {
+                    "type": "dict",
+                    "default": {
+                        "collected": True,
+                        "wanted": False,
+                        "scraping": False,
+                        "adding": False,
+                        "checking": False,
+                        "sleeping": False,
+                        "unreleased": False,
+                        "blacklisted": False,
+                        "pending_uncached": False,
+                        "upgrading": False
+                    },
+                    "description": "Configure which queue state changes trigger notifications"
+                }
             },
             "NTFY": {
                 "enabled": {"type": "boolean", "default": False},
                 "host": {"type": "string", "default": "", "sensitive": True},
                 "topic": {"type": "string", "default": "", "sensitive": True},
                 "api_key": {"type": "string", "default": ""},
-                "priority": {"type": "string", "default": ""}
+                "priority": {"type": "string", "default": ""},
+                "notify_on": {
+                    "type": "dict",
+                    "default": {
+                        "collected": True,
+                        "wanted": False,
+                        "scraping": False,
+                        "adding": False,
+                        "checking": False,
+                        "sleeping": False,
+                        "unreleased": False,
+                        "blacklisted": False,
+                        "pending_uncached": False,
+                        "upgrading": False
+                    },
+                    "description": "Configure which queue state changes trigger notifications"
+                }
             },
             "Email": {
                 "enabled": {"type": "boolean", "default": False},
@@ -427,7 +475,23 @@ SETTINGS_SCHEMA = {
                 "smtp_username": {"type": "string", "default": ""},
                 "smtp_password": {"type": "string", "default": "", "sensitive": True},
                 "from_address": {"type": "string", "default": ""},
-                "to_address": {"type": "string", "default": ""}
+                "to_address": {"type": "string", "default": ""},
+                "notify_on": {
+                    "type": "dict",
+                    "default": {
+                        "collected": True,
+                        "wanted": False,
+                        "scraping": False,
+                        "adding": False,
+                        "checking": False,
+                        "sleeping": False,
+                        "unreleased": False,
+                        "blacklisted": False,
+                        "pending_uncached": False,
+                        "upgrading": False
+                    },
+                    "description": "Configure which queue state changes trigger notifications"
+                }
             }
         }
     },
