@@ -574,7 +574,8 @@ class ProgramRunner:
                     else:
                         logging.error(f"Failed to fetch enabled notifications: {response.text}")
                 else:
-                    logging.debug("No notifications to send")
+                    # logging.debug("No notifications to send")
+                    pass
             except Exception as e:
                 logging.error(f"Error processing notifications: {str(e)}")
         else:

@@ -207,15 +207,33 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             logging.debug(f"Trying original source file path: {source_file}")
             
             if extended_search:
-                # If file doesn't exist at the original path, search for it using find command
-                if not os.path.exists(source_file):
-                    logging.debug(f"File not found at original path, searching in {original_path}")
-                    found_path = find_file(item['filled_by_file'], original_path)
-                if found_path:
-                    source_file = found_path
-                    # Update the filled_by_title to match the actual folder structure
-                    item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
-                    logging.info(f"Found file at alternate location: {source_file}")
+                # Only do extended search if item is not in a downloading state
+                torrent_id = item.get('filled_by_torrent_id')
+                is_downloading = False
+                
+                if torrent_id:
+                    try:
+                        from debrid import get_debrid_provider
+                        debrid_provider = get_debrid_provider()
+                        torrent_info = debrid_provider.get_torrent_info(torrent_id)
+                        if torrent_info:
+                            progress = torrent_info.get('progress', 0)
+                            is_downloading = progress > 0 and progress < 100
+                    except Exception as e:
+                        logging.debug(f"Failed to check torrent status: {str(e)}")
+
+                # Only perform extended search if not downloading
+                if not is_downloading:
+                    # If file doesn't exist at the original path, search for it using find command
+                    found_path = None
+                    if not os.path.exists(source_file):
+                        logging.debug(f"File not found at original path, searching in {original_path}")
+                        found_path = find_file(item['filled_by_file'], original_path)
+                        if found_path:
+                            source_file = found_path
+                            # Update the filled_by_title to match the actual folder structure
+                            item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
+                            logging.info(f"Found file at alternate location: {source_file}")
             
             if not os.path.exists(source_file):
                 if is_webhook and attempt < max_retries - 1:
