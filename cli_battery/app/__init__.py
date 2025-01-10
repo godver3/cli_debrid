@@ -15,7 +15,7 @@ def create_app():
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
     with app.app_context():
-        init_db(app)
+        init_db()
         init_limiter(app)  # Initialize the rate limiter
 
     # Import and register blueprints
