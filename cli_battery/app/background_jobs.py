@@ -23,7 +23,7 @@ class BackgroundJobManager:
         """Initialize with Flask app context"""
         self.app = app
         # Initialize database engine and session factory
-        engine = init_db(app)
+        engine = init_db()
         self.Session = sessionmaker(bind=engine)
 
     def start(self):

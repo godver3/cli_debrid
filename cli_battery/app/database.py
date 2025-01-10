@@ -40,7 +40,13 @@ Base = declarative_base()
 # Create a scoped session
 Session = scoped_session(sessionmaker())
 
+_engine = None
+
 def init_db():
+    global _engine
+    if _engine is not None:
+        return _engine
+
     # Get db_content directory from environment variable with fallback
     db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     os.makedirs(db_directory, exist_ok=True)
@@ -50,7 +56,7 @@ def init_db():
 
     try:
         print(f"Attempting to connect to database: {connection_string}")
-        engine = create_engine(
+        _engine = create_engine(
             connection_string,
             echo=False,
             connect_args={
@@ -60,7 +66,7 @@ def init_db():
         )
 
         # Set PRAGMA statements and test connection
-        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        with _engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             # Set PRAGMA statements (these run outside of transaction control)
             conn.exec_driver_sql("PRAGMA journal_mode=WAL")
             conn.exec_driver_sql("PRAGMA busy_timeout=30000")
@@ -70,20 +76,17 @@ def init_db():
             conn.exec_driver_sql("SELECT 1")
 
         # Configure the session with the engine
-        Session.configure(bind=engine)
+        Session.configure(bind=_engine)
 
         # Create tables
-        Base.metadata.create_all(engine)
+        Base.metadata.create_all(_engine)
 
         print(f"Successfully connected to cli_battery database: {connection_string}")
-        return engine
+        return _engine
     except Exception as e:
         print(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
         print("Database connection failed.")
         raise
-
-# Initialize the database engine
-engine = init_db()
 
 class Item(Base):
     __tablename__ = 'items'
