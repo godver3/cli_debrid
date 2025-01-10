@@ -73,7 +73,8 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
 def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     content_sources = get_all_settings().get('Content Sources', {})
     overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
-    allow_partial = False #get_setting('debug', 'allow_partial_overseerr_requests', 'False')
+    allow_partial = get_setting('Debug', 'allow_partial_overseerr_requests', 'False')
+    logging.info(f"allow_partial: {allow_partial}")
     
     all_wanted_items = []
     

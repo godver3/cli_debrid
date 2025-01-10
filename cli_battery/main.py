@@ -11,7 +11,7 @@ import sys
 import atexit
 import os
 
-def initialize_database():
+def initialize_database(app):
     max_retries = 5
     retry_delay = 5  # seconds
 
@@ -20,22 +20,11 @@ def initialize_database():
             # Initialize the database
             engine = init_db()
             
-            # Test both read and write operations
-            with engine.begin() as connection:
-                # Ensure WAL mode and other PRAGMA settings are applied
-                connection.execute(text("PRAGMA journal_mode=WAL"))
-                connection.execute(text("PRAGMA busy_timeout=30000"))
-                connection.execute(text("PRAGMA synchronous=NORMAL"))
-                
-                # Test read
-                connection.execute(text("SELECT 1"))
-                
-                # Test write capability
-                connection.execute(text("CREATE TABLE IF NOT EXISTS _write_test (test INTEGER)"))
-                connection.execute(text("INSERT INTO _write_test VALUES (1)"))
-                connection.execute(text("DROP TABLE IF EXISTS _write_test"))
+            # Test database functionality with a simple read query
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1")).fetchone()
             
-            # Verify tables
+            # Verify tables exist
             inspector = inspect(engine)
             tables = inspector.get_table_names()
             
@@ -65,7 +54,7 @@ def main():
         app = create_app()
         
         with app.app_context():
-            engine = initialize_database()
+            engine = initialize_database(app)
             if engine is None:
                 logger.error("Failed to initialize database after multiple attempts")
                 sys.exit(1)

@@ -8,12 +8,12 @@ import logging
 import asyncio
 import aiohttp
 import os
-from settings import get_setting
+from settings import get_setting, set_setting
 from .models import user_required, onboarding_required 
 from extensions import app_start_time
 from database import get_recently_added_items, get_poster_url, get_collected_counts, get_recently_upgraded_items
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
-from metadata.metadata import get_show_airtime_by_imdb_id
+from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
 import json
 import math
 from functools import wraps
@@ -259,20 +259,10 @@ def set_compact_preference():
     data = request.json
     compact_view = data.get('compactView', False)
     
-    # Save the preference to the user's session
-    session['compact_view'] = compact_view
+    # Save the preference using settings system
+    set_setting('UI Settings', 'compact_view', compact_view)
     
-    # Create a response
-    response = make_response(jsonify({'success': True, 'compactView': compact_view}))
-    
-    # Set a cookie to persist the preference
-    response.set_cookie('compact_view', 
-                        str(compact_view).lower(), 
-                        max_age=31536000,  # 1 year
-                        path='/',  # Ensure cookie is available for entire site
-                        httponly=False)  # Allow JavaScript access
-    
-    return response
+    return jsonify({'success': True, 'compactView': compact_view})
 
 @root_bp.route('/')
 @user_required
@@ -280,15 +270,9 @@ def set_compact_preference():
 def root():
     start_time = time.perf_counter()
     
-    # Initialize session if not already set
-    if 'use_24hour_format' not in session:
-        session['use_24hour_format'] = True  # Default to 24-hour format
-    if 'compact_view' not in session:
-        session['compact_view'] = False  # Default to non-compact view
-    
-    # Get view preferences from session
-    use_24hour_format = session.get('use_24hour_format', True)
-    compact_view = session.get('compact_view', False)
+    # Get view preferences from settings
+    use_24hour_format = get_setting('UI Settings', 'use_24hour_format', True)
+    compact_view = get_setting('UI Settings', 'compact_view', False)
     
     # Check if user is on mobile using User-Agent
     user_agent = request.headers.get('User-Agent', '').lower()
@@ -303,14 +287,17 @@ def root():
         if toggle_compact is not None:
             # Convert string value to boolean
             new_compact_view = toggle_compact.lower() == 'true'
-            session['compact_view'] = new_compact_view
+            set_setting('UI Settings', 'compact_view', new_compact_view)
             compact_view = new_compact_view
             if request.headers.get('Accept') == 'application/json':
                 return jsonify({'success': True, 'compact_view': compact_view})
     
     # Get all statistics data
     stats = {}
-    stats['timezone'] = time.tzname[0]
+    
+    # Get timezone from system or override
+    local_tz = _get_local_timezone()
+    stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)
     
     # Get collection counts
@@ -409,7 +396,7 @@ def root():
         release['formatted_date'] = format_date(release['release_date'])
     logging.info(f"Upcoming releases took {(time.perf_counter() - releases_start)*1000:.2f}ms")
     
-    # Set up async event loop for recently added and upgraded items
+    # Get recently added items and upgraded items
     recent_start = time.perf_counter()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -440,8 +427,10 @@ def root():
                 )
                 recently_added['shows'].append(show)
         
-        # Get recently upgraded items
+        # Get recently upgraded items with logging
+        logging.info("Fetching recently upgraded items...")
         recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
+        logging.info(f"Raw recently upgraded items: {recently_upgraded}")
         
         # Format dates for upgraded items
         for item in recently_upgraded:
@@ -449,6 +438,7 @@ def root():
                 item['last_updated'], 
                 use_24hour_format
             )
+            logging.info(f"Formatted upgraded item: {item}")
     
     finally:
         loop.close()
@@ -524,8 +514,8 @@ def set_time_preference():
     data = request.json
     use_24hour_format = data.get('use24HourFormat', True)
     
-    # Save to session
-    session['use_24hour_format'] = use_24hour_format
+    # Save to settings
+    set_setting('UI Settings', 'use_24hour_format', use_24hour_format)
     
     # Format times with the new preference
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
@@ -543,7 +533,16 @@ def set_time_preference():
     recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
     for item in recently_added['movies'] + recently_added['shows']:
         if 'collected_at' in item and item['collected_at'] is not None:
-            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+            try:
+                # Try parsing with microseconds
+                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
+            except ValueError:
+                try:
+                    # Try parsing without microseconds
+                    collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    item['formatted_collected_at'] = 'Unknown'
+                    continue
             item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
         else:
             item['formatted_collected_at'] = 'Unknown'
@@ -563,7 +562,7 @@ def set_time_preference():
         upgrading_enabled = False
         recently_upgraded = []
         
-    response = make_response(jsonify({
+    return jsonify({
         'status': 'OK', 
         'use24HourFormat': use_24hour_format,
         'recently_aired': recently_aired,
@@ -572,13 +571,7 @@ def set_time_preference():
         'recently_upgraded': recently_upgraded,
         'upgrading_enabled': upgrading_enabled,
         'recently_added': recently_added
-    }))
-    response.set_cookie('use24HourFormat', 
-                        str(use_24hour_format).lower(), 
-                        max_age=31536000,  # 1 year
-                        path='/',  # Ensure cookie is available for entire site
-                        httponly=False)  # Allow JavaScript access
-    return response
+    })
 
 @statistics_bp.route('/active_downloads', methods=['GET'])
 @user_required
@@ -682,7 +675,16 @@ def recently_added():
     # Format times for recently added items
     for item in recently_added['movies'] + recently_added['shows']:
         if 'collected_at' in item and item['collected_at'] is not None:
-            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+            try:
+                # Try parsing with microseconds
+                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
+            except ValueError:
+                try:
+                    # Try parsing without microseconds
+                    collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    item['formatted_collected_at'] = 'Unknown'
+                    continue
             item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
         else:
             item['formatted_collected_at'] = 'Unknown'

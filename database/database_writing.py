@@ -245,3 +245,72 @@ def get_anime_format(tmdb_id: str) -> str | None:
         return None
     finally:
         conn.close()
+
+@retry_on_db_lock()
+def update_preferred_alias(tmdb_id: str, imdb_id: str, alias: str, media_type: str):
+    """Update the preferred alias for a movie or show.
+    
+    Args:
+        tmdb_id: The TMDB ID of the media
+        imdb_id: The IMDB ID of the media
+        alias: The preferred alias to use
+        media_type: The type of media ('movie' or 'episode')
+    """
+    conn = get_db_connection()
+    try:
+        if media_type == 'episode':
+            # For TV shows, update all episodes
+            conn.execute('''
+                UPDATE media_items
+                SET preferred_alias = ?, last_updated = ?
+                WHERE tmdb_id = ? AND type = 'episode'
+            ''', (alias, datetime.now(), tmdb_id))
+        else:
+            # For movies, update the specific movie
+            conn.execute('''
+                UPDATE media_items
+                SET preferred_alias = ?, last_updated = ?
+                WHERE tmdb_id = ? AND imdb_id = ? AND type = 'movie'
+            ''', (alias, datetime.now(), tmdb_id, imdb_id))
+        conn.commit()
+        logging.info(f"Updated preferred_alias to '{alias}' for {'show' if media_type == 'episode' else 'movie'} with TMDB ID {tmdb_id}")
+    except Exception as e:
+        logging.error(f"Error updating preferred_alias for TMDB ID {tmdb_id}: {str(e)}")
+        raise
+    finally:
+        conn.close()
+
+def get_preferred_alias(tmdb_id: str, imdb_id: str = None, media_type: str = None) -> str | None:
+    """Get the preferred alias for a movie or show.
+    
+    Args:
+        tmdb_id: The TMDB ID of the media
+        imdb_id: The IMDB ID of the media (required for movies)
+        media_type: The type of media ('movie' or 'episode')
+        
+    Returns:
+        str | None: The preferred alias or None if not set
+    """
+    conn = get_db_connection()
+    try:
+        if media_type == 'episode':
+            cursor = conn.execute('''
+                SELECT preferred_alias
+                FROM media_items
+                WHERE tmdb_id = ? AND type = 'episode'
+                LIMIT 1
+            ''', (tmdb_id,))
+        else:
+            cursor = conn.execute('''
+                SELECT preferred_alias
+                FROM media_items
+                WHERE tmdb_id = ? AND imdb_id = ? AND type = 'movie'
+                LIMIT 1
+            ''', (tmdb_id, imdb_id))
+        result = cursor.fetchone()
+        return result['preferred_alias'] if result else None
+    except Exception as e:
+        logging.error(f"Error getting preferred_alias for TMDB ID {tmdb_id}: {str(e)}")
+        return None
+    finally:
+        conn.close()

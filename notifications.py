@@ -6,6 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from settings_schema import SETTINGS_SCHEMA
 from collections import defaultdict
 from datetime import datetime
+import time
 
 def safe_format_date(date_value):
     if not date_value:
@@ -510,12 +511,32 @@ def send_notifications(notifications, enabled_notifications, notification_catego
 
 def send_discord_notification(webhook_url, content):
     MAX_LENGTH = 1900  # Leave some room for formatting
+    MAX_RETRIES = 3
+    BASE_DELAY = 0.5  # Base delay in seconds
 
-    def send_chunk(chunk):
-        payload = {"content": chunk}
-        response = requests.post(webhook_url, json=payload)
-        response.raise_for_status()
-        logging.info(f"Discord notification chunk sent successfully")
+    def send_chunk(chunk, attempt=1):
+        try:
+            payload = {"content": chunk}
+            response = requests.post(webhook_url, json=payload)
+            
+            if response.status_code == 429:  # Rate limit hit
+                retry_after = float(response.json().get('retry_after', BASE_DELAY))
+                if attempt < MAX_RETRIES:
+                    logging.warning(f"Discord rate limit hit, waiting {retry_after} seconds before retry {attempt}/{MAX_RETRIES}")
+                    time.sleep(retry_after)
+                    return send_chunk(chunk, attempt + 1)
+                else:
+                    raise Exception("Max retries reached for rate limit")
+            
+            response.raise_for_status()
+            logging.info(f"Discord notification chunk sent successfully")
+        except requests.exceptions.RequestException as e:
+            if attempt < MAX_RETRIES:
+                delay = BASE_DELAY * (2 ** (attempt - 1))  # Exponential backoff
+                logging.warning(f"Discord request failed, retrying in {delay} seconds (attempt {attempt}/{MAX_RETRIES})")
+                time.sleep(delay)
+                return send_chunk(chunk, attempt + 1)
+            raise
 
     try:
         if len(content) <= MAX_LENGTH:
@@ -535,6 +556,9 @@ def send_discord_notification(webhook_url, content):
             for i, chunk in enumerate(chunks, 1):
                 chunk_content = f"Message part {i}/{len(chunks)}:\n\n{chunk}"
                 send_chunk(chunk_content)
+                # Add a small delay between chunks to help avoid rate limits
+                if i < len(chunks):
+                    time.sleep(BASE_DELAY)
 
         logging.info(f"Discord notification sent successfully")
     except Exception as e:

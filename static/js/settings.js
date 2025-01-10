@@ -319,6 +319,7 @@ function updateSettings() {
         const versionId = section.getAttribute('data-version-id');
         const versionData = {};
 
+        // Handle regular inputs
         section.querySelectorAll('input, select').forEach(input => {
             if (input.name && input.name.split('.').pop() !== 'display_name') {
                 const key = input.name.split('.').pop();
@@ -336,27 +337,29 @@ function updateSettings() {
             }
         });
 
+        // Handle filter lists
+        ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
+            const filterList = section.querySelector(`.filter-list[data-version="${versionId}"][data-filter-type="${filterType}"]`);
+            if (filterList) {
+                versionData[filterType] = [];
+                filterList.querySelectorAll('.filter-item').forEach(item => {
+                    const term = item.querySelector('.filter-term')?.value?.trim();
+                    if (term) {  // Only add non-empty terms
+                        if (filterType.startsWith('preferred_')) {
+                            const weight = parseInt(item.querySelector('.filter-weight')?.value) || 1;
+                            versionData[filterType].push([term, weight]);
+                        } else {
+                            versionData[filterType].push(term);
+                        }
+                    }
+                });
+            }
+        });
+
         // Add max_size_gb with default Infinity if it doesn't exist
         if (!('max_size_gb' in versionData)) {
             versionData['max_size_gb'] = Infinity;
         }
-
-        // Handle filter lists
-        ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
-            const filterList = section.querySelector(`.filter-list[data-version="${versionId}"][data-filter-type="${filterType}"]`);
-            versionData[filterType] = [];
-            filterList.querySelectorAll('.filter-item').forEach(item => {
-                const term = item.querySelector('.filter-term').value.trim();
-                if (term) {  // Only add non-empty terms
-                    if (filterType.startsWith('preferred_')) {
-                        const weight = parseInt(item.querySelector('.filter-weight').value) || 1;
-                        versionData[filterType].push([term, weight]);
-                    } else {
-                        versionData[filterType].push(term);
-                    }
-                }
-            });
-        });
 
         // Add display_name separately to ensure it's always included
         const displayNameInput = section.querySelector('input[name$=".display_name"]');
@@ -367,7 +370,10 @@ function updateSettings() {
         versions[versionId] = versionData;
     });
 
-    settingsData['Scraping'] = { versions: versions };
+    settingsData['Scraping'] = { 
+        ...settingsData['Scraping'],
+        versions: versions 
+    };
     
     // Ensure TMDB section exists
     if (!settingsData['TMDB']) {
@@ -729,6 +735,17 @@ function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Allow Partial Overseerr Requests checkbox element not found!");
+    }
+
+    const timezoneOverride = document.getElementById('debug-timezone_override');
+    console.log("Timezone Override element:", timezoneOverride);
+    
+    if (timezoneOverride) {
+        settingsData['Debug']['timezone_override'] = timezoneOverride.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Timezone Override input element not found!");
     }
 
     const debridProvider = document.getElementById('debrid provider-provider');

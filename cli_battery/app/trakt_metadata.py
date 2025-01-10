@@ -153,7 +153,14 @@ class TraktMetadata:
         url = f"{self.base_url}/movies/{slug}?extended=full"
         response = self._make_request(url)
         if response and response.status_code == 200:
-            return response.json()
+            movie_data = response.json()
+            
+            # Get aliases and add them to the movie data
+            aliases = self._get_movie_aliases(slug)
+            if aliases:
+                movie_data['aliases'] = aliases
+                
+            return movie_data
         return None
 
     def get_show_seasons_and_episodes(self, imdb_id):
@@ -181,11 +188,34 @@ class TraktMetadata:
             return processed_seasons, 'trakt'
         return None, None
 
+    def _get_show_aliases(self, slug):
+        """Get all aliases for a show using its Trakt slug"""
+        url = f"{self.base_url}/shows/{slug}/aliases"
+        response = self._make_request(url)
+        if response and response.status_code == 200:
+            aliases_data = response.json()
+            # Process aliases into a more usable format
+            aliases = defaultdict(list)
+            for alias in aliases_data:
+                country = alias.get('country', 'unknown')
+                title = alias.get('title')
+                if title:
+                    aliases[country].append(title)
+            return dict(aliases)
+        return None
+
     def get_show_metadata(self, imdb_id):
         url = f"{self.base_url}/shows/{imdb_id}?extended=full"
         response = self._make_request(url)
         if response and response.status_code == 200:
             show_data = response.json()
+            
+            # Get the show's slug and fetch aliases
+            slug = show_data['ids']['slug']
+            aliases = self._get_show_aliases(slug)
+            if aliases:
+                show_data['aliases'] = aliases
+            
             seasons_data, _ = self.get_show_seasons_and_episodes(imdb_id)
             show_data['seasons'] = seasons_data
             return show_data
@@ -343,6 +373,22 @@ class TraktMetadata:
         
         return None, None
     
+    def _get_movie_aliases(self, slug):
+        """Get all aliases for a movie using its Trakt slug"""
+        url = f"{self.base_url}/movies/{slug}/aliases"
+        response = self._make_request(url)
+        if response and response.status_code == 200:
+            aliases_data = response.json()
+            # Process aliases into a more usable format
+            aliases = defaultdict(list)
+            for alias in aliases_data:
+                country = alias.get('country', 'unknown')
+                title = alias.get('title')
+                if title:
+                    aliases[country].append(title)
+            return dict(aliases)
+        return None
+
 # Add this to your MetadataManager class
 def refresh_trakt_metadata(self, imdb_id: str) -> None:
     trakt = TraktMetadata()

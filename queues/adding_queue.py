@@ -263,6 +263,39 @@ class AddingQueue:
                 queue_manager.move_to_wanted(item, "Adding")
                 return
 
+            fall_back_to_single_scraper = get_media_item_by_id(item['id']).get('fall_back_to_single_scraper')
+            if not fall_back_to_single_scraper:
+                logging.info(f"Fall back to single scraper for {item.get('title')}")
+                update_media_item(item['id'], fall_back_to_single_scraper=True)
+                
+                # If this is an episode, update other episodes from same season in scraping queue
+                if item.get('type') == 'episode':
+                    series_title = item.get('series_title', '') or item.get('title', '')
+                    season = item.get('season') or item.get('season_number')
+                    current_episode = item.get('episode') or item.get('episode_number')
+                    version = item.get('version')
+                    
+                    if series_title and season is not None and current_episode is not None:
+                        scraping_items = [dict(row) for row in get_all_media_items(state="Scraping")]
+                        # Find matching episodes from same show and season with higher episode numbers
+                        matching_items = [
+                            i for i in scraping_items
+                            if ((i.get('series_title', '') or i.get('title', '')) == series_title and
+                                (i.get('season') or i.get('season_number')) == season and
+                                (i.get('episode') or i.get('episode_number', 0)) > current_episode and
+                                i.get('version') == version)
+                        ]
+                        
+                        # Update matching items
+                        for match in matching_items:
+                            update_media_item(match['id'], fall_back_to_single_scraper=True)
+                            logging.info(f"Updated fall_back_to_single_scraper for related episode: {match.get('title')}")
+                
+                queue_manager.move_to_scraping(item, "Adding")
+                return
+            else:
+                logging.info(f"Fall back to single scraper for {item.get('title')} failed, handling failure")
+
             # For other failures, check if item is old (>7 days from release date)
             release_date_str = item.get('release_date')
             if release_date_str:

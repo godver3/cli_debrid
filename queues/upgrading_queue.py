@@ -192,6 +192,13 @@ class UpgradingQueue:
         if results:
             # Find the position of the current item's 'filled_by_magnet' in the results
             current_title = item.get('original_scraped_torrent_title')
+            if current_title is None:
+                logging.warning(f"No original_scraped_torrent_title found for item {item_identifier}, using filled_by_title as fallback")
+                current_title = item.get('filled_by_title')
+                if current_title is None:
+                    logging.error(f"No title information found for item {item_identifier}, skipping upgrade check")
+                    return
+
             current_position = next((index for index, result in enumerate(results) if result.get('title') == current_title), None)
 
             # Get similarity threshold from settings, default to 95%
@@ -270,6 +277,9 @@ class UpgradingQueue:
                     logging.info(f"Successfully upgraded item {item_identifier} to Checking state")
                 else:
                     logging.info(f"Failed to upgrade item {item_identifier} - current state: {current_state}")
+                    # Return the item to Upgrading state since the upgrade attempt failed
+                    update_media_item_state(item['id'], 'Upgrading')
+                    logging.info(f"Returned item {item_identifier} to Upgrading state after failed upgrade attempt")
             else:
                 logging.info(f"No better results found for {item_identifier}")
         else:
@@ -291,7 +301,7 @@ class UpgradingQueue:
                 # Update the item in the database with new values
                 conn.execute('''
                     UPDATE media_items
-                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?, upgrading_from_torrent_id = ?
+                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?, upgrading_from_torrent_id = ?, upgraded = 1
                     WHERE id = ?
                 ''', (
                     upgrading_from,

@@ -71,21 +71,24 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         year_reason = "No query year provided"
     elif isinstance(torrent_year, list):
         if query_year in torrent_year:
-            year_match = 25
+            year_match = 50
             year_reason = f"Exact year match found in list: {query_year} in {torrent_year}"
         elif any(abs(query_year - y) <= 1 for y in torrent_year):
-            year_match = 5
+            year_match = 25
             year_reason = f"Year within 1 year difference in list: {query_year} near {torrent_year}"
         else:
-            year_match = 0
-            year_reason = f"No matching year in list: {query_year} not near {torrent_year}"
+            year_match = -25
+            year_reason = f"Year mismatch penalty: {query_year} not near {torrent_year}"
     else:
         if query_year == torrent_year:
-            year_match = 25
+            year_match = 50
             year_reason = f"Exact year match: {query_year}"
         elif torrent_year and abs(query_year - (torrent_year or 0)) <= 1:
-            year_match = 5
+            year_match = 25
             year_reason = f"Year within 1 year difference: {query_year} vs {torrent_year}"
+        elif torrent_year:
+            year_match = -25
+            year_reason = f"Year mismatch penalty: {query_year} vs {torrent_year}"
         else:
             year_match = 0
             year_reason = f"No year match: {query_year} vs {torrent_year}"

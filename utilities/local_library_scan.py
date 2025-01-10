@@ -354,14 +354,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 logging.debug(f"[UPGRADE] Updating item with values: {update_values}")
                 update_media_item(item['id'], **update_values)
 
-                # Add notification for new collections (not upgrades)
-                if not item.get('upgrading_from') and not item.get('collected_at'):
+                # Add notification for all collections (including previously collected)
+                if not item.get('upgrading_from'):
                     from database.database_writing import add_to_collected_notifications
                     notification_item = item.copy()
                     notification_item.update(update_values)
                     notification_item['is_upgrade'] = False
                     add_to_collected_notifications(notification_item)
-                    logging.info(f"Added collection notification for new item: {item_identifier}")
+                    logging.info(f"Added collection notification for item: {item_identifier}")
                 # Add notification for upgrades
                 elif item.get('upgrading_from'):
                     from database.database_writing import add_to_collected_notifications

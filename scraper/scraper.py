@@ -6,6 +6,7 @@ from difflib import SequenceMatcher
 from settings import get_setting
 import time
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
+from database.database_writing import update_anime_format, update_preferred_alias, get_preferred_alias
 from fuzzywuzzy import fuzz
 from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
 import os
@@ -20,11 +21,19 @@ import sys
 from PTT import parse_title
 from pathlib import Path
 from scraper.functions import *
+from cli_battery.app.direct_api import DirectAPI
+
+# Initialize DirectAPI at module level
+direct_api = DirectAPI()
 
 def convert_anime_episode_format(season: int, episode: int, total_episodes: int) -> Dict[str, str]:
     """Convert anime episode numbers into different formats."""
     logging.info(f"Converting anime episode format - Season: {season}, Episode: {episode}, Total Episodes: {total_episodes}")
     
+    # No leading zeros format (x)
+    no_zeros_format = f"{episode}"
+    logging.info(f"No leading zeros format: {no_zeros_format}")
+
     # Regular season/episode format (SXXEXX)
     regular_format = f"S{season:02d}E{episode:02d}"
     logging.info(f"Regular format: {regular_format}")
@@ -41,266 +50,258 @@ def convert_anime_episode_format(season: int, episode: int, total_episodes: int)
     # Combined format (SXXEXXX)
     combined_format = f"S{season:02d}E{absolute_episode:03d}"
     logging.info(f"Combined format: {combined_format}")
-    
-    # No leading zeros format (x)
-    no_zeros_format = f"{episode}"
-    logging.info(f"No leading zeros format: {no_zeros_format}")
+
     
     return {
+        'no_zeros': no_zeros_format,
         'regular': regular_format,
         'absolute_with_e': absolute_format_with_e,
         'absolute': absolute_format,
-        'combined': combined_format,
-        'no_zeros': no_zeros_format
+        'combined': combined_format
     }
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}")
 
-    #logging.info(f"Pre-filter genres: {genres}")
-    genres = filter_genres(genres)
-    #logging.info(f"Post-filter genres: {genres}")
-
-    # Check if content is anime
-    is_anime = genres and 'anime' in [genre.lower() for genre in genres]
-    logging.info(f"Is anime: {is_anime}")
-    episode_formats = None
-    if is_anime and content_type.lower() == 'episode' and season is not None and episode is not None:
-        logging.info(f"Detected anime content: {title}")
-        # Get total episodes for the season from season_episode_counts
-        season_episode_counts = get_all_season_episode_counts(tmdb_id)
-        total_episodes = season_episode_counts.get(season, 13)  # Default to 13 if unknown
-        logging.info(f"Total episodes for season {season}: {total_episodes}")
-        
-        # Convert episode format
-        episode_formats = convert_anime_episode_format(season, episode, total_episodes)
-        logging.info(f"Generated episode formats for anime: {episode_formats}")
-
     try:
         start_time = time.time()
-        task_timings = {}  # Dictionary to store timing information
-        all_results = []
+        
+        # Check for preferred alias first
+        preferred_alias = get_preferred_alias(tmdb_id, imdb_id, content_type)
+        if preferred_alias:
+            logging.info(f"Found preferred alias: {preferred_alias}")
+            title = preferred_alias
 
-        # Get country code for media item from metadata
-        task_start = time.time()
-        media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
-        task_timings['country_code_lookup'] = time.time() - task_start
-        logging.info(f"Media country code from metadata: {media_country_code}")
-
-        #logging.info(f"Starting scraping for: {title} ({year}), Version: {version}")
-
-        # Ensure content_type is correctly set
-        task_start = time.time()
-        if content_type.lower() not in ['movie', 'episode']:
-            logging.warning(f"Invalid content_type: {content_type}. Defaulting to 'movie'.")
-            content_type = 'movie'
-        task_timings['content_type_check'] = time.time() - task_start
-
-        # Get media info for bitrate calculation
-        task_start = time.time()
-        media_item = {
-            'title': title,
-            'media_type': 'movie' if content_type.lower() == 'movie' else 'episode',
-            'tmdb_id': tmdb_id
-        }
-        enhanced_media_items = get_media_info_for_bitrate([media_item])
-        if enhanced_media_items:
-            episode_count = enhanced_media_items[0]['episode_count']
-            runtime = enhanced_media_items[0]['runtime']
+        # Get aliases if no preferred alias exists
+        item_aliases = {}
+        if content_type.lower() == 'movie':
+            item_aliases, _ = direct_api.get_movie_aliases(imdb_id)
         else:
-            episode_count = 1
-            runtime = 100 if content_type.lower() == 'movie' else 30
-        task_timings['media_info'] = time.time() - task_start
+            item_aliases, _ = direct_api.get_show_aliases(imdb_id)
+        logging.info(f"Alias list: {item_aliases}")
 
-        # Pre-calculate episode counts for TV shows
-        task_start = time.time()
-        season_episode_counts = {}
-        if content_type.lower() == 'episode':
+        media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
+        logging.info(f"Media country code (aliases): {media_country_code}")
+        
+        matching_aliases = []
+        if item_aliases and media_country_code in item_aliases:
+            matching_aliases = [alias for alias in item_aliases[media_country_code] if alias.lower() != title.lower()]
+            logging.info(f"Matching aliases: {matching_aliases}")
+        
+        # Initialize anime-specific variables
+        genres = filter_genres(genres)
+        is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+        episode_formats = None
+        if is_anime and content_type.lower() == 'episode' and season is not None and episode is not None:
+            logging.info(f"Detected anime content: {title}")
             season_episode_counts = get_all_season_episode_counts(tmdb_id)
-        task_timings['episode_counts'] = time.time() - task_start
+            total_episodes = season_episode_counts.get(season, 13)  # Default to 13 if unknown
+            logging.info(f"Total episodes for season {season}: {total_episodes}")
+            episode_formats = convert_anime_episode_format(season, episode, total_episodes)
+            logging.info(f"Generated episode formats for anime: {episode_formats}")
 
-        #logging.debug(f"Retrieved runtime for {title}: {runtime} minutes, Episode count: {episode_count}")
+        def _do_scrape(
+            search_title: str,
+            content_type: str,
+            version: str,
+            season: int,
+            episode: int,
+            multi: bool,
+            genres: List[str],
+            episode_formats: Dict[str, str],
+            is_anime: bool,
+            is_alias: bool = False,
+            alias_country: str = None
+        ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
+            start_time = time.time()
+            task_timings = {}
 
-        # Parse scraping settings based on version
-        scraping_versions = get_setting('Scraping', 'versions', {})
-        version_settings = scraping_versions.get(version, None)
-        if version_settings is None:
-            logging.warning(f"Version {version} not found in settings. Using default settings.")
-            version_settings = {}
-        #logging.debug(f"Using version settings: {version_settings}")
+            # Get country code for media item from metadata
+            task_start = time.time()
+            media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
+            task_timings['country_code_lookup'] = time.time() - task_start
+            logging.info(f"Media country code from metadata: {media_country_code}")
 
-        task_start = time.time()
-        original_title = title
-        title = normalize_title(title)
-        task_timings['title_normalization'] = time.time() - task_start
+            # Ensure content_type is correctly set
+            task_start = time.time()
+            if content_type.lower() not in ['movie', 'episode']:
+                logging.warning(f"Invalid content_type: {content_type}. Defaulting to 'movie'.")
+                content_type = 'movie'
+            task_timings['content_type_check'] = time.time() - task_start
 
-        #logging.info(f"Normalized title: {title}")
-        #logging.info(f"Original title: {original_title}")
+            # Get media info for bitrate calculation
+            task_start = time.time()
+            media_item = {
+                'title': search_title,
+                'media_type': 'movie' if content_type.lower() == 'movie' else 'episode',
+                'tmdb_id': tmdb_id
+            }
+            enhanced_media_items = get_media_info_for_bitrate([media_item])
+            if enhanced_media_items:
+                episode_count = enhanced_media_items[0]['episode_count']
+                runtime = enhanced_media_items[0]['runtime']
+            else:
+                episode_count = 1
+                runtime = 100 if content_type.lower() == 'movie' else 30
+            task_timings['media_info'] = time.time() - task_start
 
-        # Use ScraperManager to handle scraping
-        task_start = time.time()
-        scraper_manager = ScraperManager(load_config())
-        all_results = scraper_manager.scrape_all(
-            imdb_id=imdb_id,
-            title=title,
-            year=year,
+            # Pre-calculate episode counts for TV shows
+            task_start = time.time()
+            season_episode_counts = {}
+            if content_type.lower() == 'episode':
+                season_episode_counts = get_all_season_episode_counts(tmdb_id)
+            task_timings['episode_counts'] = time.time() - task_start
+
+            # Parse scraping settings based on version
+            scraping_versions = get_setting('Scraping', 'versions', {})
+            version_settings = scraping_versions.get(version, None)
+            if version_settings is None:
+                logging.warning(f"Version {version} not found in settings. Using default settings.")
+                version_settings = {}
+
+            task_start = time.time()
+            normalized_title = normalize_title(search_title)
+            task_timings['title_normalization'] = time.time() - task_start
+
+            # Use ScraperManager to handle scraping
+            task_start = time.time()
+            scraper_manager = ScraperManager(load_config())
+            all_results = scraper_manager.scrape_all(
+                imdb_id=imdb_id,
+                title=normalized_title,
+                year=year,
+                content_type=content_type,
+                season=season,
+                episode=episode,
+                multi=multi,
+                genres=genres,
+                episode_formats=episode_formats,
+                tmdb_id=tmdb_id
+            )
+            task_timings['scraping'] = time.time() - task_start
+
+            # Deduplicate results before filtering
+            task_start = time.time()
+            all_results = deduplicate_results(all_results)
+            task_timings['deduplication'] = time.time() - task_start
+            logging.debug(f"Total results after deduplication and before filtering: {len(all_results)}")
+
+            task_start = time.time()
+            
+            # Extract titles and sizes for batch processing
+            titles = [result.get('title', '') for result in all_results]
+            sizes = [result.get('size', None) for result in all_results]
+            
+            # Batch process all titles
+            parsed_results = batch_parse_torrent_info(titles, sizes)
+            
+            # Create normalized results
+            normalized_results = []
+            for result, parsed_info in zip(all_results, parsed_results):
+                if 'parsing_error' in parsed_info or 'invalid_parse' in parsed_info:
+                    logging.error(f"Error parsing title '{result.get('title', '')}'")
+                    continue
+                    
+                normalized_result = result.copy()
+                original_title = result.get('title', '')
+                normalized_result['original_title'] = original_title
+                normalized_result['title'] = parsed_info.get('title', original_title)
+                normalized_result['parsed_info'] = parsed_info
+                if is_alias:
+                    normalized_result['alias_country'] = alias_country
+                normalized_results.append(normalized_result)
+                
+            task_timings['normalization'] = time.time() - task_start
+
+            # Filter results
+            task_start = time.time()
+            filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, normalized_title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
+            filtered_out_results = [result for result in normalized_results if result not in filtered_results]
+            task_timings['filtering'] = time.time() - task_start
+
+            # Process results
+            for result in filtered_results:
+                result['is_anime'] = is_anime
+                result['media_country_code'] = media_country_code
+                
+                # Add multi-pack information
+                original_title = result.get('original_title', result.get('title', ''))
+                result['title'] = original_title  # Preserve the original title
+                preprocessed_title = preprocess_title(original_title)
+                preprocessed_title = normalize_title(preprocessed_title)
+                season_episode_info = detect_season_episode_info(preprocessed_title)
+                season_pack = season_episode_info['season_pack']
+                is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
+                result['is_multi_pack'] = is_multi_pack
+                result['season_pack'] = season_pack
+
+            # Sort results
+            task_start = time.time()
+            def stable_rank_key(x):
+                return rank_result_key(x, filtered_results, normalized_title, year, season, episode, multi, content_type, version_settings)
+
+            # Apply ultimate sort order if present
+            if get_setting('Scraping', 'ultimate_sort_order')=='Size: large to small':
+                filtered_results = sorted(filtered_results, key=stable_rank_key)
+                filtered_results = sorted(filtered_results, key=lambda x: x.get('size', 0), reverse=True)
+            elif get_setting('Scraping', 'ultimate_sort_order')=='Size: small to large':
+                filtered_results = sorted(filtered_results, key=stable_rank_key)
+                filtered_results = sorted(filtered_results, key=lambda x: x.get('size', 0))
+            else:
+                filtered_results = sorted(filtered_results, key=stable_rank_key)
+
+            task_timings['sorting'] = time.time() - task_start
+
+            return filtered_results, filtered_out_results, task_timings
+
+        # First pass with original title or preferred alias
+        filtered_results, filtered_out_results, task_timings = _do_scrape(
+            search_title=title,
             content_type=content_type,
+            version=version,
             season=season,
             episode=episode,
             multi=multi,
             genres=genres,
             episode_formats=episode_formats,
-            tmdb_id=tmdb_id
+            is_anime=is_anime,
+            is_alias=preferred_alias is not None,
+            alias_country=media_country_code if preferred_alias else None
         )
-        task_timings['scraping'] = time.time() - task_start
 
-        #logging.debug(f"Total results before filtering: {len(all_results)}")
-
-        # Deduplicate results before filtering
-        task_start = time.time()
-        all_results = deduplicate_results(all_results)
-        task_timings['deduplication'] = time.time() - task_start
-        logging.debug(f"Total results after deduplication and before filtering: {len(all_results)}")
-
-        #logging.info(f"Starting normalization of {len(all_results)} results")
-        task_start = time.time()
-        
-        # Extract titles and sizes for batch processing
-        titles = [result.get('title', '') for result in all_results]
-        sizes = [result.get('size', None) for result in all_results]
-        
-        # Batch process all titles
-        parsed_results = batch_parse_torrent_info(titles, sizes)
-        
-        # Create normalized results
-        normalized_results = []
-        for result, parsed_info in zip(all_results, parsed_results):
-            if 'parsing_error' in parsed_info or 'invalid_parse' in parsed_info:
-                logging.error(f"Error parsing title '{result.get('title', '')}'")
-                continue
-                
-            normalized_result = result.copy()
-            original_title = result.get('title', '')
-            normalized_result['original_title'] = original_title  # Store original title
-            normalized_result['title'] = parsed_info.get('title', original_title)
-            normalized_result['parsed_info'] = parsed_info
-            normalized_results.append(normalized_result)
+        # If no results and we're not already using a preferred alias, try aliases
+        if not filtered_results and not preferred_alias:
+            logging.info(f"No valid results found with original title. Attempting to use aliases.")
             
-        task_timings['normalization'] = time.time() - task_start
-        #logging.info(f"Normalization complete. Processed {len(normalized_results)}/{len(all_results)} results")
-        
-        # Continue with the rest of the function...
+            if matching_aliases:
+                logging.info(f"Found {len(matching_aliases)} aliases to try: {matching_aliases}")
+                for alias in matching_aliases:
+                    logging.info(f"Trying alias: {alias}")
+                    alias_results, alias_filtered_out, alias_timings = _do_scrape(
+                        search_title=alias,
+                        content_type=content_type,
+                        version=version,
+                        season=season,
+                        episode=episode,
+                        multi=multi,
+                        genres=genres,
+                        episode_formats=episode_formats,
+                        is_anime=is_anime,
+                        is_alias=True,
+                        alias_country=media_country_code
+                    )
+                    if alias_results:
+                        logging.info(f"Found {len(alias_results)} valid results using alias: {alias}")
+                        # Store this successful alias as preferred for future use
+                        update_preferred_alias(tmdb_id, imdb_id, alias, content_type)
+                        filtered_results.extend(alias_results)
+                        if alias_filtered_out:
+                            filtered_out_results.extend(alias_filtered_out)
+                        break
+                    else:
+                        logging.info(f"No valid results found with alias: {alias}")
 
-        #logging.info(f"Filtering {len(normalized_results)} results")
-
-        # Filter results
-        task_start = time.time()
-        filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
-        filtered_out_results = [result for result in normalized_results if result not in filtered_results]
-        task_timings['filtering'] = time.time() - task_start
-
-        #logging.debug(f"Filtering took {time.time() - task_start:.2f} seconds")
-        #logging.info(f"Total results after filtering: {len(filtered_results)}")
-        logging.info(f"Total filtered out results: {len(filtered_out_results)}")
-
-        for result in filtered_out_results:
-            logging.info(f"-- Filtered out result: {result.get('original_title')} --- {result.get('filter_reason', 'Unknown')}")
-
-        # Add is_multi_pack information to each result
-        for result in filtered_results:
-            original_title = result.get('original_title', result.get('title', ''))
-            result['title'] = original_title
-            size = result.get('size', 0)
-            parsed_info = parse_torrent_info(original_title, size)
-            parsed_info['original_title'] = original_title  # Ensure original title is preserved
-            result['parsed_info'] = parsed_info
-            result['original_title'] = original_title  # Store at top level too
-            preprocessed_title = preprocess_title(original_title)
-            preprocessed_title = normalize_title(preprocessed_title)
-            season_episode_info = detect_season_episode_info(preprocessed_title)
-            season_pack = season_episode_info['season_pack']
-            is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
-            result['is_multi_pack'] = is_multi_pack
-            result['season_pack'] = season_pack
-            # Add media country code to result for ranking
-            result['media_country_code'] = media_country_code
-            # Add is_anime flag to result for ranking
-            result['is_anime'] = is_anime
-
-        # Sort results
-        task_start = time.time()
-        sorting_start = time.time()
-
-        def stable_rank_key(x):
-            # Get base ranking (which returns a tuple)
-            base_rank_tuple = rank_result_key(x, filtered_results, title, year, season, episode, multi, content_type, version_settings)
-            return base_rank_tuple
-
-        
-        # Apply ultimate sort order if present
-        if get_setting('Scraping', 'ultimate_sort_order')=='Size: large to small':
-            logging.info(f"Applying ultimate sort order: Size: large to small")
-            final_results = sorted(filtered_results, key=stable_rank_key)
-            final_results = sorted(final_results, key=lambda x: x.get('size', 0), reverse=True)
-        elif get_setting('Scraping', 'ultimate_sort_order')=='Size: small to large':
-            logging.info(f"Applying ultimate sort order: Size: small to large")
-            final_results = sorted(filtered_results, key=stable_rank_key)
-            final_results = sorted(final_results, key=lambda x: x.get('size', 0))
-        else:
-            #logging.info(f"Applying default sort order: None")
-            final_results = sorted(filtered_results, key=stable_rank_key)
-
-        # Apply soft max size if present
-        if not final_results and get_setting('Scraping', 'soft_max_size_gb'):
-            logging.info(f"No results within size limits. Applying soft_max_size logic.")
-            final_results = sorted(pre_size_filtered_results, key=stable_rank_key)
-
-            final_results = sorted(final_results, key=lambda x: x.get('size', float('inf')))
-
-            if final_results:
-                logging.info(f"Found {len(final_results)} soft max size results.")
-            else:
-                logging.warning("No results found even with soft max size applied")
-
-        task_timings['sorting'] = time.time() - task_start
-
-        #logging.debug(f"Sorting took {time.time() - sorting_start:.2f} seconds")
-
-        logging.debug(f"Total scrape results: {len(final_results)}")
-        
-        for result in final_results:
-            logging.info(f"-- Final result: {result.get('original_title')}")
-        #logging.debug(f"Total scraping process took {time.time() - start_time:.2f} seconds")
-
-
-        # Log to scraper.log
-        if content_type.lower() == 'episode':
-            scraper_logger.info(f"Scraping results for: {title} ({year}) Season: {season} Episode: {episode} Multi: {multi} Version: {version}")
-        else:
-            scraper_logger.info(f"Scraping results for: {title} ({year}) Multi: {multi} Version: {version}")
-
-        scraper_logger.info("All result titles:")
-        for result in all_results:
-            scraper_logger.info(f"- {result.get('title', '')}")
-
-        scraper_logger.info("Filtered out results:")
-        for result in filtered_out_results:
-            filter_reason = result.get('filter_reason', 'Unknown reason')
-            scraper_logger.info(f"- {result.get('title', '')}: {filter_reason}")
-
-        scraper_logger.info("Final results:")
-        for result in final_results:
-            result_info = (
-                f"- {result.get('title', '')}: "
-                f"Size: {result.get('size', 'N/A')} GB, "
-                f"Length: {result.get('runtime', 'N/A')} minutes, "
-                f"Bitrate: {result.get('bitrate', 'N/A')} Mbps, "
-                f"Multi-pack: {'Yes' if result.get('is_multi_pack', False) else 'No'}, "
-                f"Season pack: {result.get('season_pack', 'N/A')}, "
-                f"Source: {result.get('source', 'N/A')}"
-            )
-            scraper_logger.info(result_info)
-
+        # Sanitize results for return
         def sanitize_result(result):
             def sanitize_value(value):
                 if isinstance(value, (str, int, float, bool, type(None))):
@@ -312,26 +313,19 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 return str(value)
 
             sanitized = {key: sanitize_value(value) for key, value in result.items()}
-            
-            # Ensure score_breakdown is preserved
             if 'score_breakdown' in result:
                 sanitized['score_breakdown'] = result['score_breakdown']
-            
             return sanitized
 
-        final_results = [sanitize_result(result) for result in final_results]
+        filtered_results = [sanitize_result(result) for result in filtered_results]
         filtered_out_results = [sanitize_result(result) for result in filtered_out_results] if filtered_out_results else None
 
-        # Generate timing report at the end
-        total_time = time.time() - start_time
-        #logging.info("\n=== Scraping Performance Report ===")
-        for task, duration in task_timings.items():
-            percentage = (duration / total_time) * 100
-            #logging.info(f"{task.replace('_', ' ').title()}: {duration:.2f}s ({percentage:.1f}%)")
-        #logging.info(f"Total Scraping Time: {total_time:.2f}s")
-        #logging.info("===============================\n")
+        # Log final results
+        logging.debug(f"Total scrape results: {len(filtered_results)}")
+        for result in filtered_results:
+            logging.info(f"-- Final result: {result.get('original_title')}")
 
-        return final_results, filtered_out_results
+        return filtered_results, filtered_out_results
 
     except Exception as e:
         logging.error(f"Unexpected error in scrape function for {title} ({year}): {str(e)}", exc_info=True)
