@@ -458,7 +458,7 @@ async def get_recent_from_plex():
 
 def is_anime(item):
     if 'Genre' in item:
-        return any(genre.get('tag') == 'Anime' for genre in item['Genre'])
+        return any(genre.get('tag').lower() == 'anime' for genre in item['Genre'])
     return False
 
 def filter_genres(genres):

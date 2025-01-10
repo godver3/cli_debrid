@@ -3,7 +3,7 @@ from .core import get_db_connection, normalize_string, get_existing_airtime
 from manual_blacklist import is_blacklisted
 from typing import List, Dict, Any
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from metadata.metadata import get_tmdb_id_and_media_type
 import random
 
@@ -205,36 +205,32 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     logging.debug(f"Adding new movie as Wanted in DB: {normalized_title} (Version: {version})")
                     items_added += 1
                 else:
-                    '''
-                    # For episodes, get the airtime
-                    show_id = item.get('imdb_id') or item.get('tmdb_id')
-                    if show_id not in airtime_cache:
-                        airtime_cache[show_id] = get_existing_airtime(conn, show_id)
-                        if airtime_cache[show_id] is None:
-                            logging.debug(f"No existing airtime found for show {show_id}, fetching from metadata")
-                            airtime_cache[show_id] = get_show_airtime_by_imdb_id(show_id)
-
-                        # Ensure we always have a default airtime
-                        if not airtime_cache[show_id]:
-                            airtime_cache[show_id] = '19:00'
-                            logging.debug(f"No airtime found, defaulting to 19:00 for show {show_id}")
-
-                        logging.debug(f"Airtime for show {show_id} set to {airtime_cache[show_id]}")
-                    '''
-
                     airtime = item.get('airtime') or '19:00'
+                    
+                    from settings import get_setting
+
+                    logging.info(f"allow_partial_overseerr_requests: {get_setting('Debug', 'allow_partial_overseerr_requests')}")
+
+                    # Determine initial state based on is_requested_season flag
+                    if get_setting('Debug', 'allow_partial_overseerr_requests'):
+                        initial_state = 'Wanted' if item.get('is_requested_season', True) else 'Blacklisted'
+                    else:
+                        initial_state = 'Wanted'
+                    blacklisted_date = datetime.now(timezone.utc) if initial_state == 'Blacklisted' else None
 
                     conn.execute('''
                         INSERT INTO media_items
-                        (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, version, runtime, airtime, genres, country)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, 
+                         episode_title, last_updated, version, runtime, airtime, genres, country, blacklisted_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date'), 'Wanted', 'episode',
+                        item.get('release_date'), initial_state, 'episode',
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                        datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower()
+                        datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower(),
+                        blacklisted_date
                     ))
-                    logging.debug(f"Adding new episode as Wanted in DB: {normalized_title} S{item['season_number']}E{item['episode_number']} (Version: {version})")
+                    logging.debug(f"Adding new episode as {initial_state} in DB: {normalized_title} S{item['season_number']}E{item['episode_number']} (Version: {version})")
                     items_added += 1
 
         conn.commit()

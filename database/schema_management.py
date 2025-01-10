@@ -88,6 +88,12 @@ def migrate_schema():
         if 'anime_format' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN anime_format TEXT')
             logging.info("Successfully added anime_format column to media_items table.")
+        if 'fall_back_to_single_scraper' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN fall_back_to_single_scraper BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added fall_back_to_single_scraper column to media_items table.")
+        if 'preferred_alias' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN preferred_alias TEXT')
+            logging.info("Successfully added preferred_alias column to media_items table.")
         # logging.info("Successfully added new columns to media_items table.")
 
         # Remove the existing index if it exists
@@ -180,7 +186,21 @@ def create_tables():
                 trigger_content_source TEXT,
                 trigger_version TEXT,
                 trigger_country TEXT,
-                anime_format TEXT
+                anime_format TEXT,
+                fall_back_to_single_scraper BOOLEAN DEFAULT FALSE,
+                preferred_alias TEXT
+            )
+        ''')
+
+        # Add new table for tracking requested seasons
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS show_requested_seasons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                imdb_id TEXT NOT NULL,
+                tmdb_id TEXT,
+                season_number INTEGER NOT NULL,
+                requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(imdb_id, season_number)
             )
         ''')
 

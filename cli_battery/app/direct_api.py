@@ -1,8 +1,13 @@
 from .metadata_manager import MetadataManager
 from typing import Dict, Any, Tuple, Optional
 from .logger_config import logger
+from .database import init_db, Session as DbSession
 
 class DirectAPI:
+    def __init__(self):
+        # Initialize database engine and configure session
+        engine = init_db()
+        DbSession.configure(bind=engine)
 
     @staticmethod
     def get_movie_metadata(imdb_id: str) -> Tuple[Dict[str, Any], str]:
@@ -39,3 +44,15 @@ class DirectAPI:
         """
         imdb_id, source = MetadataManager.tmdb_to_imdb(tmdb_id, media_type=media_type)
         return imdb_id, source
+
+    @staticmethod
+    def get_show_aliases(imdb_id: str):
+        """Get all aliases for a show by IMDb ID"""
+        aliases, source = MetadataManager.get_show_aliases(imdb_id)
+        return aliases, source
+
+    @staticmethod
+    def get_movie_aliases(imdb_id: str):
+        """Get all aliases for a movie by IMDb ID"""
+        aliases, source = MetadataManager.get_movie_aliases(imdb_id)
+        return aliases, source

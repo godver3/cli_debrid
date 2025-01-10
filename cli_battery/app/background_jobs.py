@@ -5,7 +5,7 @@ import logging
 from sqlalchemy.orm import Session, sessionmaker
 from flask import current_app
 
-from .database import DatabaseManager, Item, init_db
+from .database import DatabaseManager, Item, init_db, Session as DbSession
 from .metadata_manager import MetadataManager
 from .settings import Settings
 
@@ -17,14 +17,15 @@ class BackgroundJobManager:
         self.settings = Settings()
         self.metadata_manager = MetadataManager()
         self.app = None
-        self.Session = None
+        self.engine = None
 
     def init_app(self, app):
         """Initialize with Flask app context"""
         self.app = app
-        # Initialize database engine and session factory
-        engine = init_db()
-        self.Session = sessionmaker(bind=engine)
+        # Initialize database engine
+        self.engine = init_db()
+        # Configure the global session
+        DbSession.configure(bind=self.engine)
 
     def start(self):
         """Start all background jobs"""
@@ -32,8 +33,8 @@ class BackgroundJobManager:
             logger.error("Cannot start background jobs: Flask app not initialized")
             return
             
-        if not self.Session:
-            logger.error("Cannot start background jobs: Database session not initialized")
+        if not self.engine:
+            logger.error("Cannot start background jobs: Database engine not initialized")
             return
 
         # Add jobs here
@@ -71,8 +72,7 @@ class BackgroundJobManager:
     def refresh_stale_metadata(self):
         """Check and refresh stale metadata for all items"""
         try:
-            session = self.Session()
-            try:
+            with DbSession() as session:
                 items = session.query(Item).all()
                 total_items = len(items)
                 refreshed_count = 0
@@ -84,20 +84,24 @@ class BackgroundJobManager:
                     if i % 100 == 0:  # Log progress every 100 items
                         logger.info(f"Progress: {i}/{total_items} items checked")
                     
+                    # Ensure item is attached to the current session
+                    session.add(item)
+                    
                     if MetadataManager.is_metadata_stale(item.updated_at):
                         stale_count += 1
                         try:
                             MetadataManager.refresh_metadata(item.imdb_id)
                             refreshed_count += 1
+                            # Commit after each successful refresh to ensure changes are saved
+                            session.commit()
                         except Exception as e:
                             logger.error(f"Failed to refresh metadata for {item.title} ({item.imdb_id}): {e}")
+                            session.rollback()
                 
                 logger.info(
                     f"Metadata refresh complete: {refreshed_count}/{stale_count} stale items refreshed "
                     f"({total_items} total items checked)"
                 )
-            finally:
-                session.close()
         except Exception as e:
             logger.error(f"Error in refresh_stale_metadata job: {e}")
 
