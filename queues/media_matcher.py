@@ -61,6 +61,35 @@ class MediaMatcher:
         
         return [(file_path, item)]
 
+    def _extract_episode_from_filename(self, filename: str) -> Optional[int]:
+        """
+        Fallback method to extract episode numbers from filenames when PTT fails.
+        Handles cases like '999 1.mp4' or 'ep1.mp4'
+        """
+        import re
+        
+        # Remove the file extension
+        basename = os.path.splitext(os.path.basename(filename))[0]
+        
+        # Try various patterns
+        patterns = [
+            r'(?:^|\D)(\d{1,4})(?:\D|$)',  # Matches standalone numbers like "1" or "001"
+            r'(?:ep|episode)[.\s-]*(\d{1,4})',  # Matches "ep1" or "episode 1"
+            r'[eE](\d{1,4})',  # Matches "E1" or "e01"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, basename)
+            if match:
+                try:
+                    episode_num = int(match.group(1))
+                    if 0 < episode_num < 2000:  # Sanity check for reasonable episode numbers
+                        return episode_num
+                except ValueError:
+                    continue
+        
+        return None
+
     def _match_tv_content(self, files: List[Dict[str, Any]], item: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
         """
         Match TV show files against an episode item.
@@ -96,13 +125,28 @@ class MediaMatcher:
             # Skip sample files
             if 'sample' in file['path'].lower():
                 continue
+
+            if 'specials' in file['path'].lower():
+                continue
             
             parsed = parse_with_ptt(file['path'])
             logging.debug(f"Parsed file: {parsed}")
             
             # For anime, we only need to match the episode number
             if is_anime:
-                episode_match = item_episode in parsed.get('episodes', [])
+                episode_match = False
+                
+                # First try PTT parsed episodes
+                if item_episode in parsed.get('episodes', []):
+                    episode_match = True
+                
+                # If PTT failed to find episodes, try our fallback method
+                if not episode_match and not parsed.get('episodes'):
+                    fallback_episode = self._extract_episode_from_filename(file['path'])
+                    if fallback_episode == item_episode:
+                        episode_match = True
+                        logging.debug(f"Matched episode {item_episode} using fallback parser for {file['path']}")
+                
                 # Only check season if it's present in both the parsed result and the item
                 season_match = (not parsed.get('seasons') or  # If no season in filename, that's okay
                               not item_season or  # If no season in item, that's okay

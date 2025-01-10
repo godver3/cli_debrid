@@ -686,6 +686,8 @@ class ProgramRunner:
 
     def task_local_library_scan(self):
         """Run local library scan for symlinked files."""
+        logging.info("Disabled for now")
+        return
         if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
             from database import get_all_media_items
             from utilities.local_library_scan import local_library_scan
@@ -747,6 +749,8 @@ def process_overseerr_webhook(data):
         overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
         versions = overseerr_settings.get('versions', {})
         
+        logging.info(f"Versions: {versions}")
+
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
         add_wanted_items(all_items, versions)
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")

@@ -1,4 +1,4 @@
-from .database import DatabaseManager, Session, Item, Metadata, Season, Episode, TMDBToIMDBMapping
+from .database import DatabaseManager, Session as DbSession, Item, Metadata, Season, Episode, TMDBToIMDBMapping
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, cast, String, or_
 from sqlalchemy.orm import joinedload
@@ -17,6 +17,7 @@ from collections import defaultdict
 from .settings import Settings
 from datetime import datetime, timezone
 import random
+from typing import Optional
 
 class MetadataManager:
 
@@ -29,7 +30,7 @@ class MetadataManager:
 
     @staticmethod
     def add_or_update_metadata(imdb_id, metadata_dict, provider):
-        with Session() as session:
+        with DbSession() as session:
             item = session.query(Item).filter_by(imdb_id=imdb_id).first()
             if not item:
                 logger.error(f"Item with IMDB ID {imdb_id} not found when adding metadata.")
@@ -98,7 +99,7 @@ class MetadataManager:
 
     @staticmethod
     def debug_find_item(imdb_id):
-        with Session() as session:
+        with DbSession() as session:
             items = session.query(Item).filter(
                 or_(
                     Item.imdb_id == imdb_id,
@@ -149,7 +150,7 @@ class MetadataManager:
 
     @staticmethod
     def get_stats():
-        with Session() as session:
+        with DbSession() as session:
             total_items = session.query(func.count(Item.id)).scalar()
             total_metadata = session.query(func.count(Metadata.id)).scalar()
             providers = session.query(Metadata.provider, func.count(Metadata.id)).group_by(Metadata.provider).all()
@@ -164,7 +165,7 @@ class MetadataManager:
             
     @staticmethod
     def get_seasons(imdb_id):
-        with Session() as session:
+        with DbSession() as session:
             item = session.query(Item).filter_by(imdb_id=imdb_id, type='show').first()
             if item:
                 seasons = session.query(Season).filter_by(item_id=item.id).options(selectinload(Season.episodes)).all()
@@ -209,7 +210,7 @@ class MetadataManager:
 
     @staticmethod
     def add_or_update_seasons_and_episodes(imdb_id, seasons_data):
-        with Session() as session:
+        with DbSession() as session:
             item = session.query(Item).filter_by(imdb_id=imdb_id).first()
             if not item:
                 logger.error(f"Item with IMDB ID {imdb_id} not found when adding seasons and episodes.")
@@ -274,7 +275,7 @@ class MetadataManager:
 
     @staticmethod
     def get_episodes(imdb_id, season_number):
-        with Session() as session:
+        with DbSession() as session:
             item = session.query(Item).filter_by(imdb_id=imdb_id).first()
             if not item:
                 return {}
@@ -294,7 +295,7 @@ class MetadataManager:
                 
     @staticmethod
     def add_or_update_seasons(imdb_id, seasons_data, provider):
-        with Session() as session:
+        with DbSession() as session:
             try:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
                 if not item:
@@ -344,7 +345,7 @@ class MetadataManager:
 
     @staticmethod
     def get_specific_metadata(imdb_id, key):
-        with Session() as session:
+        with DbSession() as session:
             item = session.query(Item).filter_by(imdb_id=imdb_id).first()
             if not item:
                 return None
@@ -367,7 +368,7 @@ class MetadataManager:
         new_metadata = trakt.refresh_metadata(imdb_id)
         if new_metadata:
             logger.debug(f"Got new metadata for {imdb_id}")
-            with Session() as session:
+            with DbSession() as session:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
                 if item:
                     logger.debug(f"Before update: {item.title} last_updated={item.updated_at}")
@@ -451,7 +452,7 @@ class MetadataManager:
     
     @staticmethod
     def add_or_update_episodes(imdb_id, episodes_data, provider):
-        with Session() as session:
+        with DbSession() as session:
             try:
                 # If episodes_data is a string, try to parse it as JSON
                 if isinstance(episodes_data, str):
@@ -532,7 +533,7 @@ class MetadataManager:
 
     @staticmethod
     def get_release_dates(imdb_id):
-        with Session() as session:
+        with DbSession() as session:
             item = session.query(Item).filter_by(imdb_id=imdb_id).first()
             if item:
                 metadata = session.query(Metadata).filter_by(item_id=item.id, key='release_dates').first()
@@ -577,8 +578,8 @@ class MetadataManager:
 
 
     @staticmethod
-    def tmdb_to_imdb(tmdb_id, media_type=None):
-        with Session() as session:
+    def tmdb_to_imdb(tmdb_id: str, media_type: str = None) -> Optional[str]:
+        with DbSession() as session:
             cached_mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
             if cached_mapping:
                 return cached_mapping.imdb_id, 'battery'
@@ -597,7 +598,7 @@ class MetadataManager:
                 
     @staticmethod
     def get_metadata_by_episode_imdb(episode_imdb_id):
-        with Session() as session:
+        with DbSession() as session:
             # Find the episode by IMDb ID
             episode = session.query(Episode).join(Season).join(Item).filter(
                 Episode.imdb_id == episode_imdb_id
@@ -633,7 +634,7 @@ class MetadataManager:
             episode_data = trakt_data['episode']
 
             # Save episode and show metadata
-            with Session() as session:
+            with DbSession() as session:
                 item = session.query(Item).filter_by(imdb_id=show_imdb_id).first()
                 if not item:
                     item = Item(imdb_id=show_imdb_id)
@@ -665,7 +666,7 @@ class MetadataManager:
 
     @staticmethod
     def get_movie_metadata(imdb_id):
-        with Session() as session:
+        with DbSession() as session:
             item = session.query(Item).options(joinedload(Item.item_metadata)).filter_by(imdb_id=imdb_id, type='movie').first()
             if not item:
                 return MetadataManager.refresh_movie_metadata(imdb_id)
@@ -684,7 +685,7 @@ class MetadataManager:
             
     @staticmethod
     def refresh_movie_metadata(imdb_id):
-        with Session() as session:
+        with DbSession() as session:
             trakt = TraktMetadata()
             new_metadata = trakt.get_movie_metadata(imdb_id)
             if new_metadata:
@@ -705,6 +706,16 @@ class MetadataManager:
                         value = str(value)
                     metadata = Metadata(item_id=item.id, key=key, value=value, provider='Trakt')
                     session.add(metadata)
+                
+                # Get and save aliases if not already included
+                if 'aliases' not in new_metadata:
+                    search_result = trakt._search_by_imdb(imdb_id)
+                    if search_result and search_result['type'] == 'movie':
+                        slug = search_result['movie']['ids']['slug']
+                        aliases = trakt._get_movie_aliases(slug)
+                        if aliases:
+                            metadata = Metadata(item_id=item.id, key='aliases', value=json.dumps(aliases), provider='Trakt')
+                            session.add(metadata)
                 
                 item.updated_at = datetime.now(timezone.utc)
                 session.commit()
@@ -727,7 +738,7 @@ class MetadataManager:
     @staticmethod
     def get_show_metadata(imdb_id):
         try:
-            with Session() as session:
+            with DbSession() as session:
                 item = session.query(Item).filter_by(imdb_id=imdb_id, type='show').first()
                 if item:
                     # Ensure item.updated_at is timezone-aware
@@ -786,3 +797,118 @@ class MetadataManager:
             metadata = Metadata(item_id=item.id, key=key, value=str(value), provider='trakt')
             session.add(metadata)
         session.commit()
+
+    @staticmethod
+    def get_show_aliases(imdb_id):
+        """Get all aliases for a show"""
+        with DbSession() as session:
+            item = session.query(Item).filter_by(imdb_id=imdb_id, type='show').first()
+            if item:
+                metadata = session.query(Metadata).filter_by(item_id=item.id, key='aliases').first()
+                if metadata:
+                    if MetadataManager.is_metadata_stale(metadata.last_updated):
+                        return MetadataManager.refresh_show_metadata(imdb_id)[0].get('aliases'), "trakt"
+                    try:
+                        return json.loads(metadata.value), "battery"
+                    except json.JSONDecodeError:
+                        logger.error(f"Error decoding JSON for aliases of IMDB ID: {imdb_id}")
+                        return MetadataManager.refresh_show_metadata(imdb_id)[0].get('aliases'), "trakt"
+
+            # If not in database or if metadata is missing, fetch from Trakt
+            trakt = TraktMetadata()
+            show_data = trakt.get_show_metadata(imdb_id)
+            if show_data and 'aliases' in show_data:
+                # Save to database
+                if not item:
+                    item = Item(imdb_id=imdb_id, title=show_data.get('title'), type='show', year=show_data.get('year'))
+                    session.add(item)
+                    session.flush()
+                
+                # Add or update the aliases metadata
+                metadata = session.query(Metadata).filter_by(item_id=item.id, key='aliases').first()
+                if not metadata:
+                    metadata = Metadata(item_id=item.id, key='aliases')
+                    session.add(metadata)
+                
+                metadata.value = json.dumps(show_data['aliases'])
+                metadata.provider = 'trakt'
+                metadata.last_updated = datetime.now(timezone.utc)
+                session.commit()
+                
+                return show_data['aliases'], "trakt"
+            
+            return None, None
+
+    @staticmethod
+    def get_movie_aliases(imdb_id):
+        """Get all aliases for a movie"""
+        with DbSession() as session:
+            item = session.query(Item).filter_by(imdb_id=imdb_id, type='movie').first()
+            if item:
+                metadata = session.query(Metadata).filter_by(item_id=item.id, key='aliases').first()
+                if metadata:
+                    if MetadataManager.is_metadata_stale(metadata.last_updated):
+                        return MetadataManager.refresh_movie_metadata(imdb_id)[0].get('aliases'), "trakt"
+                    try:
+                        return json.loads(metadata.value), "battery"
+                    except json.JSONDecodeError:
+                        logger.error(f"Error decoding JSON for aliases of IMDB ID: {imdb_id}")
+                        return MetadataManager.refresh_movie_metadata(imdb_id)[0].get('aliases'), "trakt"
+
+            # If not in database or if metadata is missing, fetch from Trakt
+            trakt = TraktMetadata()
+            movie_data = trakt.get_movie_metadata(imdb_id)
+            if movie_data and 'aliases' in movie_data:
+                # Save to database
+                if not item:
+                    item = Item(imdb_id=imdb_id, title=movie_data.get('title'), type='movie', year=movie_data.get('year'))
+                    session.add(item)
+                    session.flush()
+                
+                # Add or update the aliases metadata
+                metadata = session.query(Metadata).filter_by(item_id=item.id, key='aliases').first()
+                if not metadata:
+                    metadata = Metadata(item_id=item.id, key='aliases')
+                    session.add(metadata)
+                
+                metadata.value = json.dumps(movie_data['aliases'])
+                metadata.provider = 'trakt'
+                metadata.last_updated = datetime.now(timezone.utc)
+                session.commit()
+                
+                return movie_data['aliases'], "trakt"
+            
+            return None, None
+
+    @staticmethod
+    def refresh_show_metadata(imdb_id):
+        try:
+            with DbSession() as session:
+                trakt = TraktMetadata()
+                show_data = trakt.get_show_metadata(imdb_id)
+                if show_data:
+                    item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                    if not item:
+                        item = Item(imdb_id=imdb_id, title=show_data.get('title'), type='show', year=show_data.get('year'))
+                        session.add(item)
+                        session.flush()
+                    
+                    # Clear existing metadata
+                    session.query(Metadata).filter_by(item_id=item.id).delete()
+                    
+                    # Add all metadata including aliases
+                    for key, value in show_data.items():
+                        if isinstance(value, (list, dict)):
+                            value = json.dumps(value)
+                        metadata = Metadata(item_id=item.id, key=key, value=str(value), provider='trakt')
+                        session.add(metadata)
+                    
+                    item.updated_at = datetime.now(timezone.utc)
+                    session.commit()
+                    return show_data, "trakt"
+                
+                logger.warning(f"No show metadata found for IMDB ID: {imdb_id}")
+                return None, None
+        except Exception as e:
+            logger.error(f"Error in refresh_show_metadata for IMDb ID {imdb_id}: {str(e)}")
+            return None, None

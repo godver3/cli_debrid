@@ -67,15 +67,17 @@ class ScraperManager:
             tmdb_id: TMDB ID of the content
         """
         all_results = []
+        #logging.info(f"Scraping all for: {imdb_id}, {title}, {year}, {content_type}, {season}, {episode}, {multi}, {genres}, {episode_formats}, {tmdb_id}")
         is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+        is_episode = content_type.lower() == 'episode'
         
-        # For anime content, try Nyaa first if enabled
-        if is_anime:
+        # For anime episodes, use ONLY Nyaa if enabled
+        if is_anime and is_episode:
             nyaa_settings = self.get_scraper_settings('Nyaa')
             nyaa_enabled = nyaa_settings.get('enabled', False) if nyaa_settings else False
             
             if nyaa_enabled:
-                logging.info(f"Using Nyaa for anime content: {title}")
+                logging.info(f"Using Nyaa exclusively for anime episode: {title}")
                 try:
                     results = self.scrapers['Nyaa'](
                         title=title,
@@ -83,7 +85,7 @@ class ScraperManager:
                         content_type=content_type,
                         season=season,
                         episode=episode,
-                        episode_formats=episode_formats if content_type.lower() == 'episode' else None,
+                        episode_formats=episode_formats,
                         tmdb_id=tmdb_id
                     )
                     if results:
@@ -91,10 +93,10 @@ class ScraperManager:
                         all_results.extend(results)
                 except Exception as e:
                     logging.error(f"Error scraping with Nyaa: {str(e)}")
+            return all_results
 
-        # Proceed with all enabled scrapers
+        # For all other cases (anime movies or non-anime content), proceed with appropriate scrapers
         for instance, settings in self.config.get('Scrapers', {}).items():
-            # Get the latest settings for this instance
             current_settings = self.get_scraper_settings(instance)
             
             if not current_settings.get('enabled', False):

@@ -8,6 +8,16 @@ SETTINGS_SCHEMA = {
             "description": "Enable user account system",
             "default": True
         },
+        "use_24hour_format": {
+            "type": "boolean",
+            "description": "Use 24-hour time format instead of 12-hour",
+            "default": True
+        },
+        "compact_view": {
+            "type": "boolean",
+            "description": "Use compact view for statistics page",
+            "default": False
+        }
     },
     "Plex": {
         "tab": "Required Settings",
@@ -336,6 +346,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Allow partial show requests from Overseerr",
             "default": False
+        },
+        "timezone_override": {
+            "type": "string",
+            "description": "Override system timezone (e.g. 'America/New_York', 'Europe/London'). Leave empty to use system timezone.",
+            "default": ""
         }
     },
     "Scrapers": {

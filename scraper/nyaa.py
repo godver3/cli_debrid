@@ -228,6 +228,7 @@ def scrape_nyaa_anime_episode(title: str, year: int, season: int, episode: int, 
             logging.info(f"Found {len(results)} results using preferred format {preferred_format}")
             return results
         logging.info(f"No results found with preferred format {preferred_format}, trying other formats")
+        return results
     
     # Try all formats if no preferred format or no results with preferred format
     for format_type, format_pattern in episode_formats.items():

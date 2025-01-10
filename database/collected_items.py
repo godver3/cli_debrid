@@ -184,7 +184,7 @@ def add_collected_items(media_items_batch, recent=False):
 
                             # Determine if this is an upgrade or initial collection
                             is_upgrade = existing_item.get('collected_at') is not None
-                                                                            
+
                             if is_upgrade and get_setting("Scraping", "enable_upgrading_cleanup", default=False):
                                 # Create a new dictionary with all the necessary information
                                 upgrade_item = {
@@ -201,6 +201,13 @@ def add_collected_items(media_items_batch, recent=False):
                                 
                                 # Check if it's not a "pseudo-upgrade" (different release name, same filename)
                                 if upgrade_item['filled_by_file'] != upgrade_item['upgrading_from']:
+                                    # Set the upgraded flag to 1
+                                    conn.execute('''
+                                        UPDATE media_items
+                                        SET upgraded = 1
+                                        WHERE id = ?
+                                    ''', (item_id,))
+                                    
                                     remove_original_item_from_plex(upgrade_item)
                                     remove_original_item_from_account(upgrade_item)
                                     remove_original_item_from_results(upgrade_item, media_items_batch)

@@ -4,61 +4,105 @@ from urllib.parse import urlparse
 import json
 import ast
 from settings_schema import SETTINGS_SCHEMA
+import fcntl
+import time
 
 # Get config directory from environment variable with fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
 
 # Update the path to use the environment variable
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
+LOCK_FILE = os.path.join(CONFIG_DIR, '.config.lock')
+
+class FileLock:
+    def __init__(self, lock_file):
+        self.lock_file = lock_file
+        self.fd = None
+
+    def __enter__(self):
+        self.fd = os.open(self.lock_file, os.O_WRONLY | os.O_CREAT)
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except IOError as e:
+                # Failed to acquire lock, wait a bit and retry
+                time.sleep(0.1)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.fd:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            os.close(self.fd)
 
 def load_config():
-    #logging.debug("Starting load_config()")
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as config_file:
+    with FileLock(LOCK_FILE):
+        if os.path.exists(CONFIG_FILE):
             try:
-                config = json.load(config_file)
-                #logging.debug(f"Raw loaded config: {json.dumps(config, indent=2)}")
-                
-                # Parse string representations in Content Sources
-                if 'Content Sources' in config:
-                    #logging.debug("Content Sources before parsing: %s", json.dumps(config['Content Sources'], indent=2))
-                    for key, value in config['Content Sources'].items():
-                        if isinstance(value, str):
-                            try:
-                                parsed_value = json.loads(value)
-                                config['Content Sources'][key] = parsed_value
-                                #logging.debug(f"Parsed value for {key}: {parsed_value}")
-                            except json.JSONDecodeError:
-                                # If it's not valid JSON, keep it as is
-                                logging.debug(f"Keeping original string value for {key}: {value}")
-                    #logging.debug("Content Sources after parsing: %s", json.dumps(config['Content Sources'], indent=2))
-                
-                #logging.debug(f"Final loaded config: {json.dumps(config, indent=2)}")
-                return config
+                with open(CONFIG_FILE, 'r') as config_file:
+                    config = json.load(config_file)
+                    
+                    # Parse string representations in Content Sources
+                    if 'Content Sources' in config:
+                        for key, value in config['Content Sources'].items():
+                            if isinstance(value, str):
+                                try:
+                                    parsed_value = json.loads(value)
+                                    config['Content Sources'][key] = parsed_value
+                                except json.JSONDecodeError:
+                                    logging.debug(f"Keeping original string value for {key}: {value}")
+                    
+                    return config
             except json.JSONDecodeError as e:
                 logging.error(f"Error decoding JSON from {CONFIG_FILE}: {str(e)}. Using empty config.")
-    logging.debug("Config file not found or empty, returning empty dict")
-    return {}
+                # Try to load from backup
+                backup_file = CONFIG_FILE + '.backup'
+                if os.path.exists(backup_file):
+                    try:
+                        with open(backup_file, 'r') as backup:
+                            return json.load(backup)
+                    except Exception as e:
+                        logging.error(f"Failed to load backup: {str(e)}")
+        return {}
 
 def save_config(config):
-    # logging.debug("Starting save_config()")
-    #logging.debug(f"Config before saving: {json.dumps(config, indent=2)}")
+    # Create lock file directory if it doesn't exist
+    os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
     
-    # Ensure Content Sources are saved as proper JSON
-    if 'Content Sources' in config:
-        for key, value in config['Content Sources'].items():
-            if isinstance(value, str):
+    with FileLock(LOCK_FILE):
+        # Ensure Content Sources are saved as proper JSON
+        if 'Content Sources' in config:
+            for key, value in config['Content Sources'].items():
+                if isinstance(value, str):
+                    try:
+                        # Try to parse it as JSON
+                        json.loads(value)
+                    except json.JSONDecodeError:
+                        # If it's not valid JSON, convert it to a JSON string
+                        config['Content Sources'][key] = json.dumps(value)
+        
+        # Create a backup before saving
+        if os.path.exists(CONFIG_FILE):
+            backup_file = CONFIG_FILE + '.backup'
+            try:
+                with open(CONFIG_FILE, 'r') as src, open(backup_file, 'w') as dst:
+                    dst.write(src.read())
+            except Exception as e:
+                logging.error(f"Failed to create backup: {str(e)}")
+        
+        # Save the new config
+        try:
+            with open(CONFIG_FILE, 'w') as config_file:
+                json.dump(config, config_file, indent=2)
+        except Exception as e:
+            logging.error(f"Failed to save config: {str(e)}")
+            # If save failed and we have a backup, restore it
+            if os.path.exists(backup_file):
                 try:
-                    # Try to parse it as JSON
-                    json.loads(value)
-                except json.JSONDecodeError:
-                    # If it's not valid JSON, convert it to a JSON string
-                    config['Content Sources'][key] = json.dumps(value)
-    
-    with open(CONFIG_FILE, 'w') as config_file:
-        json.dump(config, config_file, indent=2)
-    
-    #logging.debug(f"Final saved config: {json.dumps(config, indent=2)}")
+                    with open(backup_file, 'r') as src, open(CONFIG_FILE, 'w') as dst:
+                        dst.write(src.read())
+                except Exception as e:
+                    logging.error(f"Failed to restore backup: {str(e)}")
 
 # Helper function to safely parse boolean values
 def parse_bool(value):
@@ -96,15 +140,29 @@ def get_setting(section, key=None, default=None):
 # Update the set_setting function to handle boolean values correctly
 def set_setting(section, key, value):
     config = load_config()
+    
+    # Ensure we preserve existing settings
     if section not in config:
         config[section] = {}
+        # If this is a new section, initialize it with defaults from schema if available
+        if section in SETTINGS_SCHEMA:
+            for schema_key, schema_value in SETTINGS_SCHEMA[section].items():
+                if schema_key != 'tab' and schema_key not in config[section]:
+                    config[section][schema_key] = schema_value.get('default', '')
+    
     if key.lower().endswith('url'):
         value = validate_url(value)
     # Convert boolean strings to actual booleans
     if isinstance(value, str) and value.lower() in ('true', 'false'):
         value = parse_bool(value)
+    
+    # Update just the specific setting
     config[section][key] = value
-
+    
+    # Ensure we don't lose any existing settings
+    ensure_settings_file()
+    
+    # Now save the updated config
     save_config(config)
 
 def parse_string_dicts(obj):

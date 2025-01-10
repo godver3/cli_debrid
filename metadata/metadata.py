@@ -18,6 +18,9 @@ from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app.trakt_metadata import TraktMetadata
 from cli_battery.app.database import DatabaseManager
 
+# Initialize DirectAPI at module level
+direct_api = DirectAPI()
+
 def parse_json_string(s):
     try:
         return json.loads(s)
@@ -114,10 +117,11 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
 
         #logging.info(f"Processed metadata: {processed_metadata}")
 
-        #logging.info(f"Genres: {processed_metadata['genres']}")
-        #logging.info("Checking for anime genre")
+        logging.info(f"Genres: {processed_metadata['genres']}")
+        logging.info("Checking for anime genre")
         is_anime = 'anime' in [genre.lower() for genre in processed_metadata['genres']]
         processed_metadata['genres'] = ['anime'] if is_anime else processed_metadata['genres']
+        logging.info(f"Processed metadata: {processed_metadata}")
 
         if media_type == 'movie':
             processed_metadata['release_date'] = get_release_date(metadata, imdb_id)
@@ -208,11 +212,75 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
     }
 
 def _get_local_timezone():
-    """Get the local timezone in a cross-platform way."""
+    """Get the local timezone in a cross-platform way with fallback to settings."""
     from tzlocal import get_localzone
+    from settings import get_setting
+    
+    # Check for override in settings
+    timezone_override = get_setting('Debug', 'timezone_override', '')
+    if timezone_override:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(timezone_override)
+        except ZoneInfoNotFoundError:
+            logging.error(f"Invalid timezone override: {timezone_override}, falling back to system timezone")
+    
     return get_localzone()
 
+def update_existing_episodes_states(conn, tmdb_id: str, all_requested_seasons: set):
+    """Update states of existing episodes based on requested seasons."""
+    try:
+        # Get all existing episodes for this show in one query
+        cursor = conn.execute('''
+            SELECT id, season_number, state 
+            FROM media_items 
+            WHERE tmdb_id = ? AND type = 'episode'
+        ''', (tmdb_id,))
+        existing_episodes = cursor.fetchall()
+
+        # Create lists for bulk updates
+        to_unblacklist = []  # Episodes to change from Blacklisted to Wanted
+        to_blacklist = []    # Episodes to change from Wanted to Blacklisted
+
+        for db_episode in existing_episodes:
+            season_number = db_episode['season_number']
+            if season_number in all_requested_seasons:
+                if db_episode['state'] == 'Blacklisted':
+                    to_unblacklist.append(db_episode['id'])
+            else:
+                if db_episode['state'] == 'Wanted':
+                    to_blacklist.append(db_episode['id'])
+
+        # Perform bulk updates
+        if to_unblacklist:
+            placeholders = ','.join('?' * len(to_unblacklist))
+            conn.execute(f'''
+                UPDATE media_items 
+                SET state = 'Wanted', blacklisted_date = NULL 
+                WHERE id IN ({placeholders})
+            ''', to_unblacklist)
+            logging.info(f"De-blacklisted {len(to_unblacklist)} existing episodes")
+
+        if to_blacklist:
+            placeholders = ','.join('?' * len(to_blacklist))
+            conn.execute(f'''
+                UPDATE media_items 
+                SET state = 'Blacklisted', blacklisted_date = ? 
+                WHERE id IN ({placeholders})
+            ''', [datetime.now(timezone.utc)] + to_blacklist)
+            logging.info(f"Blacklisted {len(to_blacklist)} existing episodes")
+
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Error updating existing episodes states: {str(e)}")
+        conn.rollback()
+
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    from database.database_writing import update_blacklisted_date, update_media_item
+    from database.core import get_db_connection
+    from database.wanted_items import add_wanted_items
+    from run_program import program_runner
+
     processed_items = {'movies': [], 'episodes': []}
     trakt_metadata = TraktMetadata()
 
@@ -245,17 +313,45 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                         metadata, _ = DirectAPI.get_show_metadata(item['imdb_id'])
                     continue
 
-                logging.info(f"requested_seasons: {item.get('requested_seasons', [])}")
-
                 # Get the requested seasons if they exist
                 requested_seasons = item.get('requested_seasons', [])
                 if requested_seasons:
-                    logging.info(f"Processing only requested seasons {requested_seasons} for show {item.get('title', 'Unknown')}")
+                    logging.info(f"Processing requested seasons {requested_seasons} for show {item.get('title', 'Unknown')}")
 
-                from database.database_writing import update_blacklisted_date, update_media_item
-                from database.core import get_db_connection
-                from database.wanted_items import add_wanted_items
+                    # Update show_requested_seasons table
+                    conn = get_db_connection()
+                    try:
+                        # Add new requested seasons in bulk
+                        conn.executemany('''
+                            INSERT OR IGNORE INTO show_requested_seasons
+                            (imdb_id, tmdb_id, season_number)
+                            VALUES (?, ?, ?)
+                        ''', [(metadata['imdb_id'], metadata.get('tmdb_id'), season) for season in requested_seasons])
+                        conn.commit()
+                    finally:
+                        conn.close()
 
+                # Get all requested seasons for this show from the database
+                conn = get_db_connection()
+                try:
+                    cursor = conn.execute('''
+                        SELECT season_number FROM show_requested_seasons
+                        WHERE imdb_id = ? OR tmdb_id = ?
+                    ''', (metadata['imdb_id'], metadata.get('tmdb_id')))
+                    all_requested_seasons = {row['season_number'] for row in cursor.fetchall()}
+                finally:
+                    conn.close()
+                    
+                if get_setting('Debug', 'allow_partial_overseerr_requests'):
+                    # Update states of existing episodes
+                    conn = get_db_connection()
+                    try:
+                        update_existing_episodes_states(conn, metadata.get('tmdb_id'), all_requested_seasons)
+                    finally:
+                        conn.close()
+
+                # Process all episodes
+                all_episodes = []
                 for season_number, season_data in seasons.items():
                     season_number = int(season_number)
                     episodes = season_data.get('episodes', {})
@@ -273,53 +369,21 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                             episode_data,
                             is_anime
                         )
-                        
-                        processed_items['episodes'].append(episode_item)
+                        # Add requested_seasons info to each episode
+                        episode_item['is_requested_season'] = season_number in all_requested_seasons
+                        all_episodes.append(episode_item)
 
-                # After processing all episodes, handle blacklisting if there are requested seasons
-                if requested_seasons:
-                    logging.info(f"Starting blacklisting process for {len(processed_items['episodes'])} episodes with requested seasons: {requested_seasons}")
-                    
-                    # First, add all episodes as wanted items
-                    logging.info("Adding all episodes as wanted items")
-                    add_wanted_items(processed_items['episodes'], {'default': True})
-                    
-                    # Then do a pass to blacklist unwanted episodes
-                    conn = get_db_connection()
-                    try:
-                        for episode in processed_items['episodes']:
-                            season_number = episode['season_number']
-                            episode_number = episode['episode_number']
-                            
-                            cursor = conn.execute('''
-                                SELECT * FROM media_items 
-                                WHERE tmdb_id = ? AND type = 'episode' 
-                                AND season_number = ? AND episode_number = ?
-                            ''', (metadata['tmdb_id'], season_number, episode_number))
-                            db_items = cursor.fetchall()
-                            
-                            logging.info(f"Checking S{season_number:02d}E{episode_number:02d} - Found {len(db_items)} matching items in database")
-                            
-                            for db_item in db_items:
-                                logging.info(f"Processing S{season_number:02d}E{episode_number:02d} - Current state: {db_item['state']}")
-                                
-                                if season_number not in requested_seasons and db_item['state'] == 'Wanted':
-                                    logging.info(f"S{season_number:02d}E{episode_number:02d} is not in requested seasons and state is Wanted - blacklisting")
-                                    update_blacklisted_date(db_item['id'], datetime.now(timezone.utc))
-                                    update_media_item(db_item['id'], state='Blacklisted')
-                                    logging.info(f"Marked S{season_number:02d}E{episode_number:02d} as blacklisted (not in requested seasons)")
-                                elif db_item['state'] == 'Blacklisted' and season_number in requested_seasons:
-                                    logging.info(f"S{season_number:02d}E{episode_number:02d} is in requested seasons and currently blacklisted - de-blacklisting")
-                                    # De-blacklist if it was blacklisted but is now in requested seasons
-                                    update_blacklisted_date(db_item['id'], None)
-                                    update_media_item(db_item['id'], state='Wanted')
-                                    logging.info(f"De-blacklisted S{season_number:02d}E{episode_number:02d} (now in requested seasons)")
-                                else:
-                                    logging.info(f"S{season_number:02d}E{episode_number:02d} - No action needed (season: {season_number}, state: {db_item['state']})")
-                    except Exception as e:
-                        logging.error(f"Error managing blacklist for show {metadata.get('title', 'Unknown')}: {str(e)}")
-                    finally:
-                        conn.close()
+                # Add all episodes to processed_items
+                processed_items['episodes'].extend(all_episodes)
+
+                # Get versions from settings
+                from settings import get_all_settings
+                content_sources = get_all_settings().get('Content Sources', {})
+                overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
+                versions = overseerr_settings.get('versions', {})
+                
+                # Add all episodes, letting add_wanted_items handle the state based on is_requested_season
+                add_wanted_items(all_episodes, versions)
 
         except Exception as e:
             logging.error(f"Error processing item {item}: {str(e)}", exc_info=True)
@@ -728,9 +792,9 @@ def get_media_country_code(imdb_id: str, media_type: str) -> Optional[str]:
     """
     try:
         if media_type == 'movie':
-            metadata, _ = DirectAPI.get_movie_metadata(imdb_id)
+            metadata, _ = direct_api.get_movie_metadata(imdb_id)
         else:
-            metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+            metadata, _ = direct_api.get_show_metadata(imdb_id)
         
         if metadata and isinstance(metadata, dict):
             country = metadata.get('country', '').lower()

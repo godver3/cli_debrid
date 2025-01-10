@@ -208,7 +208,9 @@ class CheckingQueue:
                 items_by_torrent[torrent_id] = []
             items_by_torrent[torrent_id].append(item)
             logging.debug(f"Grouped item {item['id']} under torrent ID {torrent_id}")
+            # Ensure checking_queue_times is initialized for this item
             if item['id'] not in self.checking_queue_times:
+                logging.warning(f"Item {item['id']} missing from checking_queue_times. Initializing with current time.")
                 self.checking_queue_times[item['id']] = current_time
 
         # Process items by torrent ID
@@ -240,7 +242,13 @@ class CheckingQueue:
                         # First check all items for local files directly
                         items_to_scan = []
                         for item in items:
-                            time_in_queue = current_time - self.checking_queue_times[item['id']]
+                            try:
+                                time_in_queue = current_time - self.checking_queue_times[item['id']]
+                            except KeyError:
+                                logging.warning(f"Item {item['id']} missing from checking_queue_times. Initializing with current time.")
+                                self.checking_queue_times[item['id']] = current_time
+                                time_in_queue = 0
+                            
                             # Run extended search after 15 minutes and every 15 minutes thereafter
                             # Use a wider 5-minute window to ensure we don't miss checks due to queue timing
                             if time_in_queue > 900 and (time_in_queue % 900) < 300:  # Check within a 5-minute window every 15 minutes
@@ -266,7 +274,7 @@ class CheckingQueue:
                                 if current_state == 'Upgrading':
                                     logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
                                 else:
-                                    queue_manager.move_to_collected(item, "Checking")
+                                    queue_manager.move_to_collected(item, "Checking", skip_notification=True)
                             else:
                                 items_to_scan.append(item)
                         

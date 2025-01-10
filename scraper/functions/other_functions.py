@@ -11,6 +11,22 @@ def romanize_japanese(text):
     result = kks.convert(text)
     return ' '.join([item['hepburn'] for item in result])
 
+def validate_regex(pattern: str) -> Tuple[bool, Optional[str]]:
+    """
+    Validates if a pattern is a valid regex and returns any error message.
+    
+    Args:
+        pattern (str): The regex pattern to validate.
+    
+    Returns:
+        Tuple[bool, Optional[str]]: (is_valid, error_message)
+    """
+    try:
+        re.compile(pattern)
+        return True, None
+    except re.error as e:
+        return False, str(e)
+
 def is_regex(pattern):
     """Check if a pattern is likely to be a regex."""
     return any(char in pattern for char in r'.*?+^$()[]{}|\\') and not (pattern.startswith('"') and pattern.endswith('"'))
@@ -21,13 +37,44 @@ def smart_search(pattern, text):
         # Remove quotes and perform case-insensitive substring search
         return pattern[1:-1].lower() in text.lower()
     elif is_regex(pattern):
+        is_valid, error = validate_regex(pattern)
+        if not is_valid:
+            logging.error(f"Invalid regex pattern '{pattern}': {error}")
+            # Fall back to simple string matching
+            return pattern.lower() in text.lower()
         try:
             return re.search(pattern, text, re.IGNORECASE) is not None
-        except re.error:
-            # If regex is invalid, fall back to simple string matching
+        except re.error as e:
+            logging.error(f"Error applying regex pattern '{pattern}': {str(e)}")
+            # Fall back to simple string matching
             return pattern.lower() in text.lower()
     else:
         return pattern.lower() in text.lower()
+
+def test_regex_patterns():
+    """Test function to demonstrate valid and invalid regex patterns."""
+    # Valid pattern examples
+    valid_pattern = r"S\d{2}E\d{2}"  # Matches patterns like S01E01
+    test_text = "Show.S01E02.1080p"
+    result = smart_search(valid_pattern, test_text)
+    logging.info(f"Valid pattern '{valid_pattern}' on text '{test_text}': {result}")
+    
+    # Invalid pattern example (unmatched parenthesis)
+    invalid_pattern = r"S\d{2}E\d{2})"  # Missing opening parenthesis
+    result = smart_search(invalid_pattern, test_text)
+    logging.info(f"Invalid pattern '{invalid_pattern}' on text '{test_text}': {result}")
+
+    # Test TS patterns
+    # Invalid TS pattern (bad escape at end)
+    bad_ts_pattern = r"\.TS.\\"  # This is the problematic pattern
+    test_ts_text = "Movie.TS.1080p"
+    result = smart_search(bad_ts_pattern, test_ts_text)
+    logging.info(f"Bad TS pattern '{bad_ts_pattern}' on text '{test_ts_text}': {result}")
+    
+    # Correct TS pattern
+    good_ts_pattern = r"\.TS\."  # Properly escaped dots
+    result = smart_search(good_ts_pattern, test_ts_text)
+    logging.info(f"Good TS pattern '{good_ts_pattern}' on text '{test_ts_text}': {result}")
 
 def get_tmdb_season_info(tmdb_id: int, season_number: int, api_key: str) -> Optional[Dict[str, Any]]:
     url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}"

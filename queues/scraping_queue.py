@@ -158,6 +158,11 @@ class ScrapingQueue:
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Scraping for {item_identifier} with is_multi_pack={is_multi_pack}, skip_filter={skip_filter}")
 
+        # Add check for fall_back_to_single_scraper flag
+        if get_media_item_by_id(item['id']).get('fall_back_to_single_scraper'):
+            logging.info(f"Forcing single scrape for {item_identifier} due to fall_back_to_single_scraper flag")
+            is_multi_pack = False
+
         results, filtered_out = scrape(
             item['imdb_id'],
             item['tmdb_id'],
@@ -167,7 +172,7 @@ class ScrapingQueue:
             item['version'],
             item.get('season_number'),
             item.get('episode_number'),
-            is_multi_pack,
+            is_multi_pack,  # This will now be False if fall_back_to_single_scraper is True
             item.get('genres')
         )
 
@@ -186,14 +191,19 @@ class ScrapingQueue:
                 logging.info(f"Filtered out {len(results) - len(filtered_results)} results due to not wanted magnets/URLs")
             results = filtered_results
 
+        is_anime = True if 'anime' in item['genres'] else False
+        
         # For episodes, filter by exact season/episode match
-        if item['type'] == 'episode' and not is_multi_pack:
-            season = item.get('season_number')
-            episode = item.get('episode_number')
+        if not is_anime:
+            season = None
+            episode = None
+            if item['type'] == 'episode' and not is_multi_pack:
+                season = item.get('season_number')
+                episode = item.get('episode_number')
             filtered_results = [
                 r for r in results 
-                if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
-                and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
+                if (season is None or r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season])
+                and (episode is None or r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode])
             ]
             if len(filtered_results) < len(results):
                 logging.info(f"Filtered out {len(results) - len(filtered_results)} results due to season/episode mismatch")

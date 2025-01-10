@@ -798,7 +798,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     # Fetch alternate title for anime
     alternate_title = None
     original_title = None
-    is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+    is_anime = genres and 'anime' or 'donghua' in [genre.lower() for genre in genres]
     if is_anime:
         # TODO: Add metadata battery cache for aliases from Trakt
         logging.info(f"Anime detected for {title}. Using current title until this function is built.")

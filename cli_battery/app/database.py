@@ -40,12 +40,10 @@ Base = declarative_base()
 # Create a scoped session
 Session = scoped_session(sessionmaker())
 
-_engine = None
-
 def init_db():
-    global _engine
-    if _engine is not None:
-        return _engine
+    global engine
+    if engine is not None:
+        return engine
 
     # Get db_content directory from environment variable with fallback
     db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -55,8 +53,8 @@ def init_db():
     connection_string = f'sqlite:///{db_path}'
 
     try:
-        print(f"Attempting to connect to database: {connection_string}")
-        _engine = create_engine(
+        logger.info(f"Attempting to connect to database: {connection_string}")
+        engine = create_engine(
             connection_string,
             echo=False,
             connect_args={
@@ -65,28 +63,29 @@ def init_db():
             }
         )
 
-        # Set PRAGMA statements and test connection
-        with _engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            # Set PRAGMA statements (these run outside of transaction control)
-            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-            conn.exec_driver_sql("PRAGMA busy_timeout=30000")
-            conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
-            
-            # Test connection
-            conn.exec_driver_sql("SELECT 1")
+        # Configure PRAGMA settings once during initialization
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA busy_timeout=30000"))
+            conn.execute(text("PRAGMA synchronous=NORMAL"))
+            conn.commit()
 
         # Configure the session with the engine
-        Session.configure(bind=_engine)
+        Session.remove()  # Clear any existing sessions
+        Session.configure(bind=engine)
 
         # Create tables
-        Base.metadata.create_all(_engine)
+        Base.metadata.create_all(engine)
 
-        print(f"Successfully connected to cli_battery database: {connection_string}")
-        return _engine
+        logger.info(f"Successfully connected to cli_battery database: {connection_string}")
+        return engine
     except Exception as e:
-        print(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
-        print("Database connection failed.")
+        logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
+        engine = None  # Reset engine on failure
         raise
+
+# Initialize the database engine
+engine = None
 
 class Item(Base):
     __tablename__ = 'items'
