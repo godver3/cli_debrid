@@ -170,6 +170,7 @@ class CheckingQueue:
                             'season_number': item.get('season_number'),
                             'episode_number': item.get('episode_number'),
                             'new_state': 'Checking',
+                            'upgrading': True if item.get('upgrading_from') else False
                         }
                         send_notifications([notification_data], enabled_notifications, notification_category='state_change')
         except Exception as e:

@@ -1004,6 +1004,94 @@
             gap: 0px;  /* More spacing between buttons on mobile */
         }
     }
+
+    /* Release Notes Popup Styles */
+    .release-notes-popup {
+        display: none;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background-color: #2c2c2c;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        z-index: 1100;
+        max-width: 600px;
+        width: 90%;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+
+    .release-notes-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.7);
+        z-index: 1099;
+    }
+
+    .release-notes-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #444;
+    }
+
+    .release-notes-title {
+        font-size: 1.2em;
+        color: #fff;
+        margin: 0;
+    }
+
+    .release-notes-close {
+        background: none;
+        border: none;
+        color: #fff;
+        font-size: 1.5em;
+        cursor: pointer;
+        padding: 5px;
+    }
+
+    .release-notes-content {
+        color: #f4f4f4;
+        line-height: 1.6;
+    }
+
+    .release-notes-date {
+        color: #888;
+        font-size: 0.9em;
+        margin-top: 10px;
+    }
+
+    .release-notes-button {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-left: 10px;
+    }
+
+    .release-notes-button:hover {
+        background-color: #0056b3;
+    }
+
+    @media (max-width: 768px) {
+        .release-notes-popup {
+            width: 95%;
+            max-height: 90vh;
+        }
+    }
 </style>
 <!-- Add this near the top of the <body> tag -->
 <script>
@@ -1133,6 +1221,10 @@
                     </button>
                 </div>
             {% endif %}
+            <button class="release-notes-button" id="releaseNotesButton">
+                <i class="fas fa-clipboard-list"></i>
+                <span class="button-text">Release Notes</span>
+            </button>
         </div>
         {% endif %}
     </header>
@@ -1268,6 +1360,20 @@
     </script>
     {% block scripts %}{% endblock %}
 
+    <!-- Add the release notes popup HTML -->
+    <div class="release-notes-overlay" id="releaseNotesOverlay"></div>
+    <div class="release-notes-popup" id="releaseNotesPopup">
+        <div class="release-notes-header">
+            <h3 class="release-notes-title">Release Notes</h3>
+            <button class="release-notes-close" id="releaseNotesClose">&times;</button>
+        </div>
+        <div class="release-notes-content" id="releaseNotesContent">
+            <div class="loading">Loading release notes...</div>
+        </div>
+    </div>
+
+    <!-- Add marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </body>
 </html>
 
@@ -1281,6 +1387,58 @@
             // Hide nav menu and program control button
             if (navMenu) navMenu.style.display = 'none';
             if (programControlButton) programControlButton.style.display = 'none';
+        }
+    });
+</script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const releaseNotesButton = document.getElementById('releaseNotesButton');
+        const releaseNotesPopup = document.getElementById('releaseNotesPopup');
+        const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
+        const releaseNotesClose = document.getElementById('releaseNotesClose');
+        const releaseNotesContent = document.getElementById('releaseNotesContent');
+
+        function showReleaseNotes() {
+            releaseNotesPopup.style.display = 'block';
+            releaseNotesOverlay.style.display = 'block';
+            fetchReleaseNotes();
+        }
+
+        function hideReleaseNotes() {
+            releaseNotesPopup.style.display = 'none';
+            releaseNotesOverlay.style.display = 'none';
+        }
+
+        async function fetchReleaseNotes() {
+            try {
+                const response = await fetch('/base/api/release-notes');
+                const data = await response.json();
+
+                if (data.success) {
+                    const date = new Date(data.published_at).toLocaleDateString();
+                    releaseNotesContent.innerHTML = `
+                        <h4>${data.name || data.version}</h4>
+                        <div class="release-notes-body">${marked.parse(data.body || 'No release notes available.')}</div>
+                        <div class="release-notes-date">Released: ${date}</div>
+                    `;
+                } else {
+                    releaseNotesContent.innerHTML = '<p>Failed to load release notes.</p>';
+                }
+            } catch (error) {
+                releaseNotesContent.innerHTML = '<p>Error loading release notes.</p>';
+                console.error('Error:', error);
+            }
+        }
+
+        if (releaseNotesButton) {
+            releaseNotesButton.addEventListener('click', showReleaseNotes);
+        }
+        if (releaseNotesClose) {
+            releaseNotesClose.addEventListener('click', hideReleaseNotes);
+        }
+        if (releaseNotesOverlay) {
+            releaseNotesOverlay.addEventListener('click', hideReleaseNotes);
         }
     });
 </script>

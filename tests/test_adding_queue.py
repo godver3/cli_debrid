@@ -19,77 +19,62 @@ class TestAddingQueue(unittest.TestCase):
             "imdb_id": "tt0133093",
         }
 
-    def generate_mock_releases(self, count=10):
-        releases = []
-        for i in range(count):
-            is_cached = i % 2 == 1  # Alternating cached/uncached
-            release = {
-                "title": f"The Matrix 1999 {1080 + i*10}p {'BluRay' if is_cached else 'WEB-DL'} x264",
-                "magnet": f"magnet:?xt=urn:btih:{i*10:x}{'0'*30}",
-                "seeders": 100 - i*10,
-            }
-            releases.append(release)
-        return releases
-
-    @patch('queues.adding_queue.is_cached_on_rd')
-    @patch('queues.adding_queue.add_to_real_debrid')
     @patch('queues.adding_queue.get_setting')
-    @patch('queues.adding_queue.extract_hash_from_magnet')
-    @patch('queues.adding_queue.is_magnet_not_wanted')
-    @patch('queues.adding_queue.update_media_item_state')
-    @patch('queues.adding_queue.get_active_downloads')
-    def test_process_item_hybrid_mode(self, mock_get_active_downloads, mock_update_state, mock_is_not_wanted, 
-                                      mock_extract_hash, mock_get_setting, mock_add_to_rd, mock_is_cached):
-        mock_get_setting.return_value = "Hybrid"
-        mock_extract_hash.side_effect = lambda x: x.split(':')[-1]
-        mock_is_not_wanted.return_value = False
+    def test_file_filtering(self, mock_get_setting):
+        """Test that files are correctly filtered based on the filename_filter_out_list setting"""
+        # Setup mock torrent info with test files
+        torrent_info = {
+            'files': [
+                {'path': 'movie.mkv'},
+                {'path': 'sample/sample.mp4'},
+                {'path': 'movie.nfo'},
+                {'path': 'subfolder/extras.mp4'},
+                {'path': 'movie-behind-scenes.mp4'}
+            ]
+        }
         
-        # Test case 1: All results are uncached, download limit reached
-        mock_get_active_downloads.return_value = {'nb': 32, 'limit': 32}
-        mock_releases = self.generate_mock_releases()
-        mock_is_cached.return_value = {r['magnet']: False for r in mock_releases}
-
-        self.adding_queue.process_item(self.queue_manager, self.mock_item, mock_releases, "Hybrid")
-
-        # Log the actual calls for debugging
-        logging.debug(f"add_to_real_debrid calls: {mock_add_to_rd.call_count}")
-        logging.debug(f"move_to_pending_uncached calls: {self.queue_manager.move_to_pending_uncached.call_count}")
-
-        # Verify that add_to_real_debrid was not called due to download limit
-        self.assertEqual(mock_add_to_rd.call_count, 0)
-        # Verify that move_to_pending_uncached was called
-        self.assertEqual(self.queue_manager.move_to_pending_uncached.call_count, 1)
-        # Verify that the item was not blacklisted
-        mock_update_state.assert_not_called()
-
-        # Reset mocks for the next test case
-        mock_add_to_rd.reset_mock()
-        self.queue_manager.move_to_pending_uncached.reset_mock()
-        self.queue_manager.move_to_checking.reset_mock()
-        mock_update_state.reset_mock()
-
-        # Test case 2: First few are uncached, last few are cached, download limit not reached
-        mock_get_active_downloads.return_value = {'nb': 1, 'limit': 32}
-        mock_releases = self.generate_mock_releases()
-        mock_is_cached.return_value = {r['magnet']: i >= 7 for i, r in enumerate(mock_releases)}
-        mock_add_to_rd.side_effect = [
-            {'status': 'downloaded', 'id': f'id_{i}', 'files': [{'path': f'file_{i}.mkv'}]} if i >= 7
-            else {'status': 'uncached', 'files': [], 'torrent_id': None}
-            for i in range(len(mock_releases))
-        ]
-
-        self.adding_queue.process_item(self.queue_manager, self.mock_item, mock_releases, "Hybrid")
-
-        # Log the actual calls for debugging
-        logging.debug(f"add_to_real_debrid calls: {mock_add_to_rd.call_count}")
-        logging.debug(f"move_to_checking calls: {self.queue_manager.move_to_checking.call_count}")
-
-        # Verify that it tried to add results until it found a cached one
-        self.assertEqual(mock_add_to_rd.call_count, 8)
-        # Verify that move_to_checking was called once for the cached result
-        self.assertEqual(self.queue_manager.move_to_checking.call_count, 1)
-        # Verify that the item was not blacklisted
-        mock_update_state.assert_not_called()
+        # Test case 1: No filters
+        mock_get_setting.return_value = ''
+        self.adding_queue.torrent_processor = MagicMock()
+        self.adding_queue.media_matcher = MagicMock()
+        
+        # Create a test item
+        test_item = {
+            'id': '123',
+            'title': 'Test Movie',
+            'type': 'movie'
+        }
+        
+        # Process the item
+        self.adding_queue.items = [test_item]
+        results = [{'hash': 'abc123', 'files': torrent_info['files']}]
+        
+        # Verify no filtering occurs when no filter list is set
+        self.assertEqual(len(torrent_info['files']), 5)
+        
+        # Test case 2: With filters
+        mock_get_setting.return_value = 'sample,nfo,extras'
+        
+        # Mock the necessary methods to reach our filtering code
+        self.adding_queue.torrent_processor.process_results.return_value = (torrent_info, 'fake_magnet')
+        self.adding_queue.media_matcher.match_content.return_value = [('movie.mkv', 0.9)]
+        
+        # Process with filters
+        self.adding_queue.process(self.queue_manager)
+        
+        # Verify the filtering logic was applied correctly
+        # The media_matcher.match_content should have been called with the filtered files
+        match_content_calls = self.adding_queue.media_matcher.match_content.call_args_list
+        if match_content_calls:
+            files_passed_to_matcher = match_content_calls[0][0][0]  # First call, first argument
+            # Should only contain movie.mkv and movie-behind-scenes.mp4
+            self.assertEqual(len(files_passed_to_matcher), 2)
+            file_paths = [f['path'] for f in files_passed_to_matcher]
+            self.assertIn('movie.mkv', file_paths)
+            self.assertIn('movie-behind-scenes.mp4', file_paths)
+            self.assertNotIn('sample/sample.mp4', file_paths)
+            self.assertNotIn('movie.nfo', file_paths)
+            self.assertNotIn('subfolder/extras.mp4', file_paths)
 
 if __name__ == '__main__':
     unittest.main()

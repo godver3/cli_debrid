@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 import json
 import ast
 from settings_schema import SETTINGS_SCHEMA
-import fcntl
+from utilities.file_lock import FileLock
 import time
 
 # Get config directory from environment variable with fallback
@@ -14,29 +14,24 @@ CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 LOCK_FILE = os.path.join(CONFIG_DIR, '.config.lock')
 
-class FileLock:
-    def __init__(self, lock_file):
-        self.lock_file = lock_file
+class Settings:
+    def __init__(self, filename):
+        self.filename = filename
         self.fd = None
-
+        
     def __enter__(self):
-        self.fd = os.open(self.lock_file, os.O_WRONLY | os.O_CREAT)
-        while True:
-            try:
-                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except IOError as e:
-                # Failed to acquire lock, wait a bit and retry
-                time.sleep(0.1)
+        self.fd = open(self.filename, 'r+')
+        self.lock = FileLock(self.fd)
+        self.lock.acquire()
         return self
-
+        
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.fd:
-            fcntl.flock(self.fd, fcntl.LOCK_UN)
-            os.close(self.fd)
+            self.lock.release()
+            self.fd.close()
 
 def load_config():
-    with FileLock(LOCK_FILE):
+    with Settings(LOCK_FILE):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r') as config_file:
@@ -69,7 +64,7 @@ def save_config(config):
     # Create lock file directory if it doesn't exist
     os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
     
-    with FileLock(LOCK_FILE):
+    with Settings(LOCK_FILE):
         # Ensure Content Sources are saved as proper JSON
         if 'Content Sources' in config:
             for key, value in config['Content Sources'].items():
