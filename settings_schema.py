@@ -326,6 +326,16 @@ SETTINGS_SCHEMA = {
             "description": "Keep series in Plex Watchlist when they have been collected, only delete movies",
             "default": False
         },
+        "trakt_watchlist_removal": {
+            "type": "boolean",
+            "description": "Remove items from Trakt Watchlist when they have been collected",
+            "default": False
+        },
+        "trakt_watchlist_keep_series": {
+            "type": "boolean",
+            "description": "Keep series in Trakt Watchlist when they have been collected, only delete movies",
+            "default": False
+        },
         "symlink_movie_template": {
             "type": "string",
             "description": [
@@ -350,6 +360,11 @@ SETTINGS_SCHEMA = {
         "timezone_override": {
             "type": "string",
             "description": "Override system timezone (e.g. 'America/New_York', 'Europe/London'). Leave empty to use system timezone.",
+            "default": ""
+        },
+        "filename_filter_out_list": {
+            "type": "string",
+            "description": "List of filenames to filter out from the queue, comma separated",
             "default": ""
         }
     },

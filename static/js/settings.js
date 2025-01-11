@@ -682,6 +682,39 @@ function updateSettings() {
         console.warn("Disable Not Wanted Check checkbox element not found!");
     }
 
+    const filenameFilterOutList = document.getElementById('queue-filename_filter_out_list');
+    console.log("Filename Filter Out List element:", filenameFilterOutList);
+    
+    if (filenameFilterOutList) {
+        settingsData['Queue']['filename_filter_out_list'] = filenameFilterOutList.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Filename Filter Out List input element not found!");
+    }
+
+    const traktWatchlistRemoval = document.getElementById('scraping-trakt_watchlist_removal');
+    console.log("Trakt Watchlist Removal element:", traktWatchlistRemoval);
+    
+    if (traktWatchlistRemoval) {
+        settingsData['Scraping']['trakt_watchlist_removal'] = traktWatchlistRemoval.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Trakt Watchlist Removal checkbox element not found!");
+    }
+
+    const traktWatchlistKeepSeries = document.getElementById('scraping-trakt_watchlist_keep_series');
+    console.log("Trakt Watchlist Keep Series element:", traktWatchlistKeepSeries);
+    
+    if (traktWatchlistKeepSeries) {
+        settingsData['Scraping']['trakt_watchlist_keep_series'] = traktWatchlistKeepSeries.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Trakt Watchlist Keep Series checkbox element not found!");
+    }
+
     const blacklistDuration = document.getElementById('queue-blacklist_duration');
     console.log("Blacklist Duration element:", blacklistDuration);
     

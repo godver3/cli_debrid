@@ -9,13 +9,18 @@ import trakt.core
 import time
 import pickle
 import os
-from database.database_reading import get_all_media_items
+from database.database_reading import get_all_media_items, get_media_item_presence
 from database.database_writing import update_media_item
 from datetime import datetime, date
 from settings import get_setting
+import random
+from time import sleep
 
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
+# Add default delays for rate limiting
+DEFAULT_REMOVAL_DELAY = 2  # seconds between watchlist removals
+DEFAULT_INITIAL_RETRY_DELAY = 3  # seconds for rate limit retry
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -89,39 +94,63 @@ def parse_trakt_list_url(url: str) -> Dict[str, str]:
         'list_id': path_parts[3] if len(path_parts) > 3 else 'watchlist'
     }
 
-def fetch_items_from_trakt(endpoint: str) -> List[Dict[str, Any]]:
+def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay=DEFAULT_INITIAL_RETRY_DELAY):
+    """
+    Make a request to Trakt API with rate limiting and exponential backoff.
+    
+    Args:
+        method: HTTP method ('get' or 'post')
+        endpoint: API endpoint
+        data: JSON data for POST requests
+        max_retries: Maximum number of retry attempts
+        initial_delay: Initial delay between retries in seconds
+    """
+    url = f"{TRAKT_API_URL}{endpoint}"
     headers = get_trakt_headers()
     if not headers:
-        return []
-
-    full_url = f"{TRAKT_API_URL}{endpoint}"
-    logging.debug(f"Fetching items from Trakt URL: {full_url}")
-
-    max_retries = 3
-    retry_delay = 5  # seconds
+        return None
 
     for attempt in range(max_retries):
         try:
-            response = api.get(full_url, headers=headers, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
-            return response.json()
-        except api.exceptions.RequestException as e:
-            logging.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                if e.response.status_code == 502:
-                    logging.warning("Received 502 Bad Gateway error. Retrying...")
-                else:
-                    logging.error(f"Response status code: {e.response.status_code}")
-                    logging.error(f"Response text: {e.response.text}")
+            if method.lower() == 'get':
+                response = api.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+            else:  # post
+                response = api.post(url, headers=headers, json=data, timeout=REQUEST_TIMEOUT)
             
-            if attempt < max_retries - 1:
-                logging.info(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-            else:
-                logging.error(f"Failed to fetch items from Trakt after {max_retries} attempts.")
-                return []
+            response.raise_for_status()
+            return response
+            
+        except api.exceptions.RequestException as e:
+            if hasattr(e, 'response'):
+                if e.response.status_code == 429:  # Too Many Requests
+                    # Get retry-after header or use exponential backoff
+                    retry_after = int(e.response.headers.get('Retry-After', 0))
+                    delay = retry_after if retry_after > 0 else initial_delay * (2 ** attempt) + random.uniform(0, 1)
+                    
+                    logging.warning(f"Rate limit hit. Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}")
+                    sleep(delay)
+                    continue
+                    
+            if attempt == max_retries - 1:
+                raise
+            
+            delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
+            logging.warning(f"Request failed. Retrying in {delay:.2f} seconds. Attempt {attempt + 1}/{max_retries}")
+            sleep(delay)
+            
+    return None
 
-    return []  # This line should never be reached, but it's here for completeness
+def fetch_items_from_trakt(endpoint: str) -> List[Dict[str, Any]]:
+    logging.debug(f"Fetching items from Trakt URL: {endpoint}")
+    
+    try:
+        response = make_trakt_request('get', endpoint)
+        if response:
+            return response.json()
+    except Exception as e:
+        logging.error(f"Failed to fetch items from Trakt: {str(e)}")
+    
+    return []
 
 def assign_media_type(item: Dict[str, Any]) -> str:
     if 'movie' in item:
@@ -252,9 +281,10 @@ def check_for_updates(list_url: str = None) -> bool:
     return False
 
 def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
-    if not check_for_updates():
-        logging.info("Watchlist is up to date, skipping fetch")
-        return []
+    # Disabled activity check as without it collected items would never be removed
+    #if not check_for_updates():
+        #logging.info("Watchlist is up to date, skipping fetch")
+        #return []
 
     logging.info("Preparing to make Trakt API call for watchlist")
     access_token = ensure_trakt_auth()
@@ -266,6 +296,15 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
     all_wanted_items = []
     trakt_sources = get_trakt_sources()
 
+    # Check if watchlist removal is enabled
+    should_remove = get_setting('Debug', 'trakt_watchlist_removal', False)
+    keep_series = get_setting('Debug', 'trakt_watchlist_keep_series', False)
+
+    if should_remove:
+        logging.debug("Trakt watchlist removal is enabled")
+    if keep_series:
+        logging.debug("Trakt watchlist keep series is enabled, remove only movies")
+
     # Process Trakt Watchlist
     for watchlist_source in trakt_sources['watchlist']:
         if watchlist_source.get('enabled', False):
@@ -273,7 +312,84 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
             logging.info("Fetching user's watchlist")
             watchlist_items = fetch_items_from_trakt("/sync/watchlist")
             logging.debug(f"Watchlist items fetched: {len(watchlist_items)}")
-            processed_items = process_trakt_items(watchlist_items)
+            
+            processed_items = []
+            movies_to_remove = []
+            shows_to_remove = []
+            
+            for item in watchlist_items:
+                media_type = assign_media_type(item)
+                if not media_type:
+                    continue
+                
+                imdb_id = get_imdb_id(item, media_type)
+                if not imdb_id:
+                    logging.warning(f"Skipping item due to missing ID: {item.get(media_type, {}).get('title', 'Unknown Title')}")
+                    continue
+
+                # Check if the item is already collected
+                item_state = get_media_item_presence(imdb_id=imdb_id)
+                if item_state == "Collected" and should_remove:
+                    # If it's a TV show and we want to keep series, skip removal
+                    if media_type == 'tv' and keep_series:
+                        logging.info(f"Keeping collected TV series in watchlist: {item.get(media_type, {}).get('title')} ({imdb_id})")
+                        processed_items.append({
+                            'imdb_id': imdb_id,
+                            'media_type': media_type
+                        })
+                    else:
+                        # Add to removal list
+                        item_type = 'show' if media_type == 'tv' else media_type
+                        removal_item = {"ids": item[item_type]['ids']}
+                        if media_type == 'tv':
+                            shows_to_remove.append(removal_item)
+                        else:
+                            movies_to_remove.append(removal_item)
+                else:
+                    processed_items.append({
+                        'imdb_id': imdb_id,
+                        'media_type': media_type
+                    })
+
+            # Perform bulk removals if there are items to remove
+            if movies_to_remove or shows_to_remove:
+                removal_data = {}
+                if movies_to_remove:
+                    removal_data['movies'] = movies_to_remove
+                if shows_to_remove:
+                    removal_data['shows'] = shows_to_remove
+
+                try:
+                    response = make_trakt_request(
+                        'post',
+                        "/sync/watchlist/remove",
+                        data=removal_data
+                    )
+                    
+                    if response and response.status_code == 200:
+                        result = response.json()
+                        logging.info(f"Bulk removal from watchlist successful - Removed {result.get('deleted', {}).get('movies', 0)} movies and {result.get('deleted', {}).get('shows', 0)} shows")
+                    else:
+                        logging.error("Bulk removal from watchlist failed")
+                        # Add back all items that failed to be removed
+                        for item in movies_to_remove + shows_to_remove:
+                            imdb_id = item['ids'].get('imdb') or item['ids'].get('tmdb') or item['ids'].get('tvdb')
+                            if imdb_id:
+                                processed_items.append({
+                                    'imdb_id': imdb_id,
+                                    'media_type': 'movie' if item in movies_to_remove else 'tv'
+                                })
+                except Exception as e:
+                    logging.error(f"Failed to perform bulk removal from watchlist: {str(e)}")
+                    # Add back all items that failed to be removed
+                    for item in movies_to_remove + shows_to_remove:
+                        imdb_id = item['ids'].get('imdb') or item['ids'].get('tmdb') or item['ids'].get('tvdb')
+                        if imdb_id:
+                            processed_items.append({
+                                'imdb_id': imdb_id,
+                                'media_type': 'movie' if item in movies_to_remove else 'tv'
+                            })
+
             all_wanted_items.append((processed_items, versions))
 
     logging.info(f"Retrieved watchlist items from Trakt")

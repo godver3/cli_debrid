@@ -138,6 +138,31 @@ class AddingQueue:
                 
                 # Match content
                 files = torrent_info.get('files', [])
+
+                # Filter out files based on settings
+                filename_filter_out_list = get_setting('Debug', 'filename_filter_out_list', '')
+                if filename_filter_out_list:
+                    # Split and clean the filter list
+                    filters = [f.strip().lower() for f in filename_filter_out_list.split(',') if f.strip()]
+                    
+                    # Keep files that don't match any filter
+                    filtered_files = []
+                    for file in files:
+                        file_path = file['path'].lower()
+                        should_keep = True
+                        
+                        for filter_term in filters:
+                            if filter_term in file_path:
+                                logging.debug(f"Filtered out file: {file['path']} (matched filter: {filter_term})")
+                                should_keep = False
+                                break
+                                
+                        if should_keep:
+                            filtered_files.append(file)
+                            
+                    logging.debug(f"Filtered out {len(files) - len(filtered_files)} files based on settings")
+                    files = filtered_files
+
                 torrent_title = self.debrid_provider.get_cached_torrent_title(torrent_info.get('hash'))
                 logging.debug(f"Cached torrent title: {torrent_title}")
                 logging.debug(f"Found {len(files)} files in torrent for {item_identifier}")
