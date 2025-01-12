@@ -781,6 +781,17 @@ function updateSettings() {
         console.warn("Timezone Override input element not found!");
     }
 
+    const animeRenamingUsingAnidb = document.getElementById('scraping-anime_renaming_using_anidb');
+    console.log("Anime Renaming Using AniDB element:", animeRenamingUsingAnidb);
+    
+    if (animeRenamingUsingAnidb) {
+        settingsData['Scraping']['anime_renaming_using_anidb'] = animeRenamingUsingAnidb.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Anime Renaming Using AniDB checkbox element not found!");
+    }
+
     const debridProvider = document.getElementById('debrid provider-provider');
     console.log("Debrid Provider element:", debridProvider);
     

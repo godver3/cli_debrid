@@ -140,6 +140,7 @@
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+import { initializeDatabaseTooltips } from '/static/js/tooltips.js';
 
 document.addEventListener('DOMContentLoaded', function() {
     // Add tap handlers for mobile devices
@@ -334,10 +335,18 @@ document.addEventListener('DOMContentLoaded', function() {
         currentLetter = 'A';
 
         // Update the content with default values
-        updateContent('{{ url_for('database.index') }}', {
+        updateContent("{{ url_for('database.index') }}", {
             content_type: currentContentType,
             letter: currentLetter
         });
+    }
+
+    function setUpdatingContent(isUpdating) {
+        if (isUpdating) {
+            Loading.show();
+        } else {
+            Loading.hide();
+        }
     }
 
     function renderTable(items, selectedColumns) {
@@ -423,6 +432,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 attachEventListeners();
                 attachDeleteListeners();
                 attachRescrapeListeners();
+
+                // Reinitialize tooltips for the updated content
+                initializeDatabaseTooltips();
             })
             .catch(error => {
                 console.error('Error updating content:', error);

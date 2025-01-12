@@ -3,9 +3,9 @@ let tooltipElement = null;
 let tooltipTimeout = null;
 let hideTooltipTimeout = null;
 let lastMousePosition = { x: 0, y: 0 };
-const TOOLTIP_DELAY = 1500; // Delay in milliseconds (1.5 seconds)
-const TOOLTIP_FADE_IN = 600; // Fade in duration in milliseconds
-const TOOLTIP_FADE_OUT = 300; // Fade out duration in milliseconds
+const TOOLTIP_DELAY = 500; // Delay in milliseconds (0.5 seconds)
+const TOOLTIP_FADE_IN = 250; // Fade in duration in milliseconds
+const TOOLTIP_FADE_OUT = 600; // Fade out duration in milliseconds
 const TOOLTIP_PADDING = 10; // Padding from screen edges
 
 let activeTooltipElement = null;

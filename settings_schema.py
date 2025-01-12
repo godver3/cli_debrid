@@ -366,6 +366,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "List of filenames to filter out from the queue, comma separated",
             "default": ""
+        },
+        "anime_renaming_using_anidb": {
+            "type": "boolean",
+            "description": "Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)",
+            "default": False
         }
     },
     "Scrapers": {

@@ -7,59 +7,13 @@ from pathlib import Path
 import re
 from datetime import datetime
 import time
+from utilities.anidb_functions import format_filename_with_anidb
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
     # Only replace characters that are truly problematic for symlinks
     filename = re.sub(r'[<>|?*]', '_', filename)  # Removed :"/\ from the list as they're valid in paths
     return filename.strip()  # Just trim whitespace, don't mess with dots
-
-def format_symlink_name(item: Dict[str, Any], original_extension: str) -> str:
-    """Format symlink name based on item metadata and settings."""
-    try:
-        media_type = item.get('type', 'movie')
-        template = get_setting('Debug', 
-                             'symlink_movie_template' if media_type == 'movie' else 'symlink_episode_template',
-                             '{title} ({year}) - {imdb_id}' if media_type == 'movie' else 
-                             '{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {imdb_id}')
-        
-        # Prepare template variables
-        template_vars = {
-            'title': item.get('title', 'Unknown'),
-            'year': item.get('year', ''),
-            'imdb_id': item.get('imdb_id', ''),
-            'tmdb_id': item.get('tmdb_id', ''),
-            'version': item.get('version', '').strip('*'),  # Remove all asterisks from start/end
-            'quality': item.get('quality', ''),
-            'original_filename': item.get('filled_by_file', '')
-        }
-        
-        # Add episode-specific variables if needed
-        if media_type == 'episode':
-            template_vars.update({
-                'season_number': int(item.get('season_number', 0)),
-                'episode_number': int(item.get('episode_number', 0)),
-                'episode_title': item.get('episode_title', '')
-            })
-        
-        # Format the filename
-        filename = template.format(**template_vars)
-        filename = sanitize_filename(filename)
-        
-        # Add extension if configured
-        if get_setting('Debug', 'symlink_preserve_extension', True):
-            # Extract extension from original file if no extension provided
-            if not original_extension and item.get('filled_by_file'):
-                _, original_extension = os.path.splitext(item['filled_by_file'])
-            if original_extension and not original_extension.startswith('.'):
-                original_extension = f".{original_extension}"
-            filename = f"{filename}{original_extension}"
-            
-        return filename
-        
-    except Exception as e:
-        logging.error(f"Error formatting symlink name: {str(e)}")
-        return None
 
 def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
     """Get the full path for the symlink based on settings and metadata."""
@@ -95,11 +49,36 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
                                 '{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})')
         else:
             # Add episode-specific variables
-            template_vars.update({
+            episode_vars = {
                 'season_number': int(item.get('season_number', 0)),
                 'episode_number': int(item.get('episode_number', 0)),
                 'episode_title': item.get('episode_title', '')
-            })
+            }
+            
+            logging.debug(f'anime_renaming_using_anidb: {get_setting("Debug", "anime_renaming_using_anidb", False)}')
+            logging.debug(f'item.get("genres", ""): {item.get("genres", "")}')
+
+            # Try to get anime metadata if enabled and item is anime
+            if get_setting('Debug', 'anime_renaming_using_anidb', False) and 'anime' in item.get('genres', '').lower():
+                logging.debug(f"Checking for anime metadata for {item.get('title')}")
+                from utilities.anidb_functions import get_anidb_metadata_for_item
+                anime_metadata = get_anidb_metadata_for_item(item)
+                if anime_metadata:
+                    logging.debug(f"Using anime metadata for formatting: {anime_metadata}")
+                    # Update only the episode-specific variables with anime metadata
+                    episode_vars.update({
+                        'season_number': int(anime_metadata.get('season_number', episode_vars['season_number'])),
+                        'episode_number': int(anime_metadata.get('episode_number', episode_vars['episode_number'])),
+                        'episode_title': anime_metadata.get('episode_title', episode_vars['episode_title'])
+                    })
+                    # Update main variables only if we have better data
+                    if anime_metadata.get('title'):
+                        template_vars['title'] = anime_metadata['title']
+                    if anime_metadata.get('year'):
+                        template_vars['year'] = anime_metadata['year']
+            
+            template_vars.update(episode_vars)
+            
             # Get the template for episodes
             template = get_setting('Debug', 'symlink_episode_template',
                                 '{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})')
@@ -150,6 +129,20 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
 def create_symlink(source_path: str, dest_path: str) -> bool:
     """Create a symlink from source to destination path."""
     try:
+        dest_dir = os.path.dirname(dest_path)
+        
+        # Check if a folder with same name but different case exists and use it
+        if os.path.exists(os.path.dirname(dest_dir)):
+            existing_items = os.listdir(os.path.dirname(dest_dir))
+            folder_name = os.path.basename(dest_dir)
+            for item in existing_items:
+                if item.lower() == folder_name.lower() and item != folder_name:
+                    logging.info(f"Using existing folder with different case: {item} instead of {folder_name}")
+                    # Reconstruct the destination path using the existing folder name
+                    dest_dir = os.path.join(os.path.dirname(dest_dir), item)
+                    dest_path = os.path.join(dest_dir, os.path.basename(dest_path))
+                    break
+        
         # Ensure the destination directory exists
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         

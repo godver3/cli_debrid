@@ -79,13 +79,27 @@ def get_release_notes():
             
             # Format the commit messages into markdown
             commit_notes = []
+            seen_versions = set()
+            
             for commit in commits:
-                date = datetime.strptime(commit['commit']['author']['date'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d %H:%M:%S')
                 message = commit['commit']['message']
+                # Only process commits that start with version numbers (e.g., "0.5.35 -")
+                if not message.strip().startswith(('0.', '1.', '2.')):
+                    continue
+                    
+                # Extract version from message (assuming format "X.Y.Z - description")
+                version = message.split(' - ')[0].strip()
+                
+                # Skip if we've already seen this version
+                if version in seen_versions:
+                    continue
+                    
+                seen_versions.add(version)
+                date = datetime.strptime(commit['commit']['author']['date'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d %H:%M:%S')
                 sha = commit['sha'][:7]  # Short SHA
                 commit_notes.append(f"### {date} - {sha}\n{message}\n")
             
-            body = "\n".join(commit_notes)
+            body = "\n".join(commit_notes) if commit_notes else "No version commits available."
             
             return jsonify({
                 'success': True,

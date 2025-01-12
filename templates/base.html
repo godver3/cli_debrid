@@ -1043,14 +1043,14 @@
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        background-color: #2c2c2c;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        background-color: #1a1a1a;
+        padding: 30px;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
         z-index: 1100;
-        max-width: 600px;
+        max-width: 800px;
         width: 90%;
-        max-height: 80vh;
+        max-height: 85vh;
         overflow-y: auto;
     }
 
@@ -1061,67 +1061,108 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background-color: rgba(0, 0, 0, 0.7);
+        background-color: rgba(0, 0, 0, 0.8);
         z-index: 1099;
+        backdrop-filter: blur(3px);
     }
 
     .release-notes-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 15px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid #444;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid #333;
     }
 
     .release-notes-title {
-        font-size: 1.2em;
+        font-size: 1.5em;
         color: #fff;
         margin: 0;
+        font-weight: 600;
     }
 
     .release-notes-close {
         background: none;
         border: none;
-        color: #fff;
-        font-size: 1.5em;
+        color: #888;
+        font-size: 1.8em;
         cursor: pointer;
         padding: 5px;
+        transition: color 0.2s ease;
+    }
+
+    .release-notes-close:hover {
+        color: #fff;
     }
 
     .release-notes-content {
         color: #f4f4f4;
-        line-height: 1.6;
+        line-height: 1.8;
+    }
+
+    .release-notes-content h4 {
+        color: #4CAF50;
+        font-size: 1.2em;
+        margin-bottom: 15px;
+    }
+
+    .release-notes-content h3 {
+        color: #888;
+        font-size: 1em;
+        font-weight: normal;
+        margin: 5px 0 0 0;
+        padding-bottom: 5px;
+        border-bottom: 1px solid #333;
+    }
+
+    .release-notes-body {
+        padding: 0 0 10px 0;
+        white-space: pre-line;
     }
 
     .release-notes-date {
-        color: #888;
+        color: #666;
         font-size: 0.9em;
-        margin-top: 10px;
-    }
-
-    .release-notes-button {
-        background-color: #007bff;
-        color: white;
-        border: none;
-        padding: 8px 12px;
-        border-radius: 4px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        margin-left: 10px;
-    }
-
-    .release-notes-button:hover {
-        background-color: #0056b3;
+        margin-top: 20px;
+        text-align: right;
+        font-style: italic;
     }
 
     @media (max-width: 768px) {
         .release-notes-popup {
             width: 95%;
+            padding: 20px;
             max-height: 90vh;
         }
+
+        .release-notes-title {
+            font-size: 1.3em;
+        }
+
+        .release-notes-content {
+            font-size: 0.95em;
+        }
+    }
+
+    /* Custom scrollbar for release notes */
+    .release-notes-popup::-webkit-scrollbar {
+        width: 10px;
+    }
+
+    .release-notes-popup::-webkit-scrollbar-track {
+        background: #1a1a1a;
+        border-radius: 6px;
+    }
+
+    .release-notes-popup::-webkit-scrollbar-thumb {
+        background: #444;
+        border-radius: 6px;
+        border: 2px solid #1a1a1a;
+    }
+
+    .release-notes-popup::-webkit-scrollbar-thumb:hover {
+        background: #555;
     }
 </style>
 <!-- Add this near the top of the <body> tag -->
@@ -1252,9 +1293,13 @@
                     </button>
                 </div>
             {% endif %}
-            <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
-                <i class="fas fa-clipboard-list"></i>
-            </button>
+            {% if is_user_system_enabled() %}
+                {% if current_user.is_authenticated %}
+                <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
+                    <i class="fas fa-clipboard-list"></i>
+                </button>
+                {% endif %}
+            {% endif %}
         </div>
         {% endif %}
     </header>

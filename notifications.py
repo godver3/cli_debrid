@@ -23,6 +23,10 @@ def safe_format_date(date_value):
         logging.warning(f"Error formatting date {date_value}: {str(e)}")
         return "Unknown"
 
+def escape_discord_formatting(text):
+    """Escape Discord's Markdown formatting characters in text."""
+    return text.replace('*', '\\*')
+
 def consolidate_items(notifications):
     consolidated = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     
@@ -101,7 +105,7 @@ def format_notification_content(notifications, notification_type, notification_c
                 #content.append(f"\n{movie_emoji} **Movies collected/upgraded:**\n")
                 for movie, items in consolidated['movie'].items():
                     for item in items['items']:
-                        versions = ', '.join(sorted(item['versions']))
+                        versions = ', '.join(escape_discord_formatting(v) for v in sorted(item['versions']))
                         status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
                         collected_date = safe_format_date(item['original_collected_at'])
                         if item['is_upgrade']:
@@ -120,7 +124,7 @@ def format_notification_content(notifications, notification_type, notification_c
                             status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
                             collected_date = safe_format_date(item['original_collected_at'])
                             status = f"Upgraded" if item['is_upgrade'] else "Collected"
-                            content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})")
+                            content.append(f"    {status_emoji} {item['season']} [{escape_discord_formatting(item['version'])}] ({status})")
                     
                     # Handle individual episodes
                     for season, episodes in seasons.items():
@@ -145,7 +149,7 @@ def format_notification_content(notifications, notification_type, notification_c
                                     int(x.split('E')[1])       # Episode number
                                 ))
                                 episodes_str = ', '.join(eps)
-                                content.append(f"    {status_emoji} {episodes_str} [{version}] ({status})")
+                                content.append(f"    {status_emoji} {episodes_str} [{escape_discord_formatting(version)}] ({status})")
                     
                     # Add versions summary
                     all_versions = set()
@@ -156,20 +160,21 @@ def format_notification_content(notifications, notification_type, notification_c
                     #if all_versions:
                         #content.append(f"    Versions: [{', '.join(sorted(all_versions))}]\n")
         else:
-            # Handle other notification categories
+            # Handle state change notifications
             if notification_category == 'state_change':
                 for item in consolidated:
                     title = item.get('title', 'Unknown Title')
                     old_state = item.get('old_state', 'Unknown')
                     new_state = item.get('new_state', 'Unknown')
                     reason = item.get('reason', '')
+                    version = escape_discord_formatting(item.get('version', ''))
                     
                     if item.get('type') == 'movie':
-                        entry = f"{movie_emoji} {title} ({item.get('year', '')}) [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
+                        entry = f"{movie_emoji} {title} ({item.get('year', '')}) [{version}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     else:
                         season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else ""
                         episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else ""
-                        entry = f"{tv_emoji} {title} {season}{episode} [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
+                        entry = f"{tv_emoji} {title} {season}{episode} [{version}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     
                     if reason:
                         entry += f" (Reason: {reason})"

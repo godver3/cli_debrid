@@ -14,11 +14,21 @@ from pathlib import Path
 import os
 
 class CheckingQueue:
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(CheckingQueue, cls).__new__(cls)
+            # Initialize instance attributes
+            cls._instance.items = []
+            cls._instance.checking_queue_times = {}
+            cls._instance.progress_checks = {}
+            cls._instance.debrid_provider = get_debrid_provider()
+        return cls._instance
+
     def __init__(self):
-        self.items = []
-        self.checking_queue_times = {}
-        self.progress_checks = {}
-        self.debrid_provider = get_debrid_provider()
+        # __init__ will be called every time, but instance is already created
+        pass
 
     def update(self):
         db_items = get_all_media_items(state="Checking")
