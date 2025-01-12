@@ -33,6 +33,7 @@ for directory in directories:
 # Add individual files
 individual_files = [
     ('version.txt', '.'),
+    ('branch_id', '.'),
     ('tooltip_schema.json', '.'),
     ('main.py', '.'),
     ('cli_battery/main.py', 'cli_battery')
