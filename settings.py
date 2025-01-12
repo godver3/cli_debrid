@@ -18,6 +18,12 @@ class Settings:
     def __init__(self, filename):
         self.filename = filename
         self.fd = None
+
+        # Create lock file directory if it doesn't exist
+        os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+        # Create empty lock file if it doesn't exist
+        if not os.path.exists(LOCK_FILE):
+            open(LOCK_FILE, 'w').close()
         
     def __enter__(self):
         self.fd = open(self.filename, 'r+')
@@ -61,8 +67,6 @@ def load_config():
         return {}
 
 def save_config(config):
-    # Create lock file directory if it doesn't exist
-    os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
     
     with Settings(LOCK_FILE):
         # Ensure Content Sources are saved as proper JSON

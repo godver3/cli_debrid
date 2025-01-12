@@ -3,9 +3,9 @@ let tooltipElement = null;
 let tooltipTimeout = null;
 let hideTooltipTimeout = null;
 let lastMousePosition = { x: 0, y: 0 };
-const TOOLTIP_DELAY = 1500; // Delay in milliseconds (0.5 seconds)
-const TOOLTIP_FADE_IN = 300; // Fade in duration in milliseconds
-const TOOLTIP_FADE_OUT = 150; // Fade out duration in milliseconds
+const TOOLTIP_DELAY = 1500; // Delay in milliseconds (1.5 seconds)
+const TOOLTIP_FADE_IN = 600; // Fade in duration in milliseconds
+const TOOLTIP_FADE_OUT = 300; // Fade out duration in milliseconds
 const TOOLTIP_PADDING = 10; // Padding from screen edges
 
 let activeTooltipElement = null;
@@ -61,6 +61,7 @@ function showTooltip(event) {
     }
     if (hideTooltipTimeout) {
         clearTimeout(hideTooltipTimeout);
+        hideTooltipTimeout = null;
     }
 
     // Create tooltip element immediately if it doesn't exist
@@ -73,72 +74,125 @@ function showTooltip(event) {
     // Position the tooltip immediately, but keep it invisible
     tooltipElement.style.opacity = '0';
     tooltipElement.style.display = 'block';
-    updateTooltipPosition(event);
-
-    // Start updating position immediately
-    const updatePosition = (e) => updateTooltipPosition(e);
-    document.addEventListener('mousemove', updatePosition);
+    tooltipElement.style.visibility = 'visible';
 
     activeTooltipElement = element;
 
-    tooltipTimeout = setTimeout(() => {
-        if (activeTooltipElement !== element) return; // Don't show if we've moved to another element
+    let finalPosition = { x: event.pageX, y: event.pageY };
+    let isMoving = false;
+    let moveTimer = null;
+
+    const showTooltipContent = () => {
+        if (!activeTooltipElement || activeTooltipElement !== element) return;
 
         let tooltipText;
-
         if (tooltipKey) {
-            const [section, key] = tooltipKey.split('.');
-            tooltipText = tooltips[section][key];
-            console.log(`Showing tooltip for ${section}.${key}: "${tooltipText}"`);
+            if (tooltipKey.startsWith('database|||')) {
+                // For database tooltips, everything after the delimiter is the content
+                tooltipText = tooltipKey.split('|||')[1];
+                tooltipElement.className = 'tooltip database-tooltip';
+            } else {
+                // For regular tooltips, split on period
+                const [section, key] = tooltipKey.split('.');
+                tooltipText = tooltips[section][key];
+                tooltipElement.className = 'tooltip';
+            }
+            console.log(`Showing tooltip for ${tooltipKey}: "${tooltipText}"`);
         } else {
             console.log('No tooltip content found');
             tooltipElement.style.display = 'none';
-            document.removeEventListener('mousemove', updatePosition);
             return;
         }
         
         tooltipElement.textContent = tooltipText;
-        tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
         
-        // Force a reflow before changing the opacity
-        tooltipElement.offsetHeight;
+        // Force layout recalculation to get accurate dimensions
+        tooltipElement.style.visibility = 'hidden';
+        tooltipElement.style.display = 'block';
+        
+        // Position tooltip at the final mouse position
+        positionTooltipAtPoint(finalPosition.x, finalPosition.y);
+        
+        // Make visible with transition
+        tooltipElement.style.visibility = 'visible';
+        tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
         tooltipElement.style.opacity = '1';
         
         console.log('Tooltip displayed:', tooltipText);
-    }, TOOLTIP_DELAY);
+    };
 
-    // Update hideTooltip to remove the mousemove listener
-    element.hideTooltip = function() {
-        document.removeEventListener('mousemove', updatePosition);
+    // Track mouse movement
+    const handleMouseMove = (e) => {
+        finalPosition = { x: e.pageX, y: e.pageY };
+        
+        if (!isMoving) {
+            isMoving = true;
+            if (tooltipTimeout) {
+                clearTimeout(tooltipTimeout);
+            }
+        }
+
+        // Clear existing move timer
+        if (moveTimer) {
+            clearTimeout(moveTimer);
+        }
+
+        // Set new move timer
+        moveTimer = setTimeout(() => {
+            isMoving = false;
+            tooltipTimeout = setTimeout(showTooltipContent, TOOLTIP_DELAY);
+        }, 100); // Wait for 100ms of no movement before starting tooltip timer
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+
+    // Set up cleanup on mouse leave
+    element.hideTooltip = () => {
+        if (moveTimer) {
+            clearTimeout(moveTimer);
+        }
+        if (tooltipTimeout) {
+            clearTimeout(tooltipTimeout);
+        }
+        document.removeEventListener('mousemove', handleMouseMove);
         hideTooltip();
     };
     element.addEventListener('mouseleave', element.hideTooltip);
+
+    // Start initial timer
+    tooltipTimeout = setTimeout(showTooltipContent, TOOLTIP_DELAY);
 }
 
-function updateTooltipPosition(event) {
+function positionTooltipAtPoint(x, y) {
     if (!tooltipElement) return;
 
     const offset = 10; // Distance from the cursor
-    let x = event.pageX + offset;
-    let y = event.pageY + offset;
+    let tooltipX = x + offset;
+    let tooltipY = y + offset;
 
     // Ensure the tooltip doesn't go off-screen
     const tooltipRect = tooltipElement.getBoundingClientRect();
     const maxX = window.innerWidth + window.pageXOffset - tooltipRect.width - TOOLTIP_PADDING;
     const maxY = window.innerHeight + window.pageYOffset - tooltipRect.height - TOOLTIP_PADDING;
+    const minY = window.pageYOffset + TOOLTIP_PADDING;
 
     // If tooltip would go off the right side, position it to the left of the cursor
-    if (x > maxX) {
-        x = event.pageX - tooltipRect.width - offset;
+    if (tooltipX > maxX) {
+        tooltipX = x - tooltipRect.width - offset;
     }
 
-    x = Math.max(window.pageXOffset + TOOLTIP_PADDING, Math.min(x, maxX));
-    y = Math.max(window.pageYOffset + TOOLTIP_PADDING, Math.min(y, maxY));
+    // If tooltip would go off the top, position it below the cursor
+    if (tooltipY < minY) {
+        tooltipY = y + tooltipRect.height + offset;
+    }
+
+    tooltipX = Math.max(window.pageXOffset + TOOLTIP_PADDING, Math.min(tooltipX, maxX));
+    tooltipY = Math.max(window.pageYOffset + TOOLTIP_PADDING, Math.min(tooltipY, maxY));
 
     // Position relative to the document
     tooltipElement.style.position = 'absolute';
-    tooltipElement.style.left = `${x}px`;
-    tooltipElement.style.top = `${y}px`;
+    tooltipElement.style.left = `${tooltipX}px`;
+    tooltipElement.style.top = `${tooltipY}px`;
 }
 
 function hideTooltip() {
@@ -148,19 +202,25 @@ function hideTooltip() {
         clearTimeout(tooltipTimeout);
         tooltipTimeout = null;
     }
+    
+    // If there's already a hide operation in progress, don't queue another one
     if (hideTooltipTimeout) {
-        clearTimeout(hideTooltipTimeout);
+        return;
     }
+    
     hideTooltipTimeout = setTimeout(() => {
         if (tooltipElement) {
             tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_OUT}ms ease-out`;
             tooltipElement.style.opacity = '0';
             setTimeout(() => {
-                tooltipElement.style.display = 'none';
-                activeTooltipElement = null;
+                if (hideTooltipTimeout) {  // Only hide if we haven't started showing again
+                    tooltipElement.style.display = 'none';
+                    activeTooltipElement = null;
+                }
             }, TOOLTIP_FADE_OUT);
             console.log('Tooltip hidden');
         }
+        hideTooltipTimeout = null;  // Clear the timeout reference
     }, 50); // Reduced delay before hiding
 }
 
@@ -282,51 +342,31 @@ function initializeDatabaseTooltips() {
     const cells = document.querySelectorAll('.truncate');
     console.log(`Found ${cells.length} database cells`);
     cells.forEach(cell => {
-        const fullContent = cell.textContent.trim();
-        cell.setAttribute('data-full-content', fullContent);
-        
         if (isMobileDevice()) {
             addMobileTooltipButton(cell);
         } else {
-            // Add desktop event listeners
-            cell.addEventListener('mouseenter', showDatabaseTooltip);
+            // Add desktop event listeners - use the same showTooltip function
+            cell.addEventListener('mouseenter', (event) => {
+                // Create a temporary tooltip element if it doesn't exist
+                if (!tooltipElement) {
+                    tooltipElement = document.createElement('div');
+                    tooltipElement.className = 'tooltip database-tooltip';
+                    document.body.appendChild(tooltipElement);
+                }
+
+                // Use the cell's data-full-content attribute directly with a different delimiter
+                cell.dataset.tooltip = `database|||${cell.getAttribute('data-full-content')}`;
+                
+                // Use the main tooltip show function
+                showTooltip(event);
+                
+                // Clean up the temporary dataset entry
+                delete cell.dataset.tooltip;
+            });
             cell.addEventListener('mouseleave', hideTooltip);
         }
     });
     console.log('Database tooltips initialized');
-}
-
-function showDatabaseTooltip(event) {
-    console.log('Showing database tooltip');
-    const cell = event.currentTarget;
-    const fullContent = cell.getAttribute('data-full-content');
-
-    if (!tooltipElement) {
-        tooltipElement = document.createElement('div');
-        tooltipElement.className = 'tooltip database-tooltip';
-        document.body.appendChild(tooltipElement);
-    }
-
-    tooltipElement.textContent = fullContent;
-    tooltipElement.style.display = 'block';
-    tooltipElement.style.opacity = '0';
-
-    updateTooltipPosition(event);
-
-    // Force a reflow before changing the opacity
-    tooltipElement.offsetHeight;
-    tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
-    tooltipElement.style.opacity = '1';
-
-    // Remove existing mousemove event listener
-    document.removeEventListener('mousemove', updateTooltipPosition);
-    // Add new mousemove event listener
-    document.addEventListener('mousemove', updateTooltipPosition);
-
-    // Clear any existing hide tooltip timeout
-    if (hideTooltipTimeout) {
-        clearTimeout(hideTooltipTimeout);
-    }
 }
 
 function addMobileTooltipButton(cell) {
@@ -343,31 +383,7 @@ function addMobileTooltipButton(cell) {
 
 function showMobileDatabaseTooltip(cell, button) {
     const fullContent = cell.getAttribute('data-full-content');
-
-    if (mobileTooltipContent) {
-        hideMobileTooltip(false);
-    }
-
-    mobileTooltipContent = document.createElement('div');
-    mobileTooltipContent.className = 'mobile-tooltip-content database-tooltip';
-    mobileTooltipContent.innerHTML = `<p>${fullContent}</p>`;
-
-    button.parentNode.insertBefore(mobileTooltipContent, button.nextSibling);
-
-    mobileTooltipContent.style.opacity = '0';
-    mobileTooltipContent.style.display = 'block';
-
-    positionTooltip(button, mobileTooltipContent);
-
-    requestAnimationFrame(() => {
-        mobileTooltipContent.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
-        mobileTooltipContent.style.opacity = '0.75';
-    });
-
-    if (scrollTimeout) {
-        clearTimeout(scrollTimeout);
-        scrollTimeout = null;
-    }
+    showMobileTooltip(`database|||${fullContent}`, button);
 }
 
 function initializeTooltips() {

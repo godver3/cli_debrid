@@ -28,9 +28,13 @@ def setup_environment():
         app_name = "cli_debrid"
         app_author = "cli_debrid"
         base_path = appdirs.user_data_dir(app_name, app_author)
-        os.environ['USER_CONFIG'] = os.path.join(base_path, 'config')
-        os.environ['USER_LOGS'] = os.path.join(base_path, 'logs')
-        os.environ['USER_DB_CONTENT'] = os.path.join(base_path, 'db_content')
+        config_dir = os.path.join(base_path, 'config')
+        logs_dir = os.path.join(base_path, 'logs')
+        db_content_dir = os.path.join(base_path, 'db_content')
+        
+        os.environ['USER_CONFIG'] = config_dir
+        os.environ['USER_LOGS'] = logs_dir
+        os.environ['USER_DB_CONTENT'] = db_content_dir
     else:
         os.environ.setdefault('USER_CONFIG', '/user/config')
         os.environ.setdefault('USER_LOGS', '/user/logs')
@@ -39,6 +43,11 @@ def setup_environment():
     # Ensure directories exist
     for dir_path in [os.environ['USER_CONFIG'], os.environ['USER_LOGS'], os.environ['USER_DB_CONTENT']]:
         os.makedirs(dir_path, exist_ok=True)
+        
+    # Create empty lock file if it doesn't exist
+    lock_file = os.path.join(os.environ['USER_CONFIG'], '.config.lock')
+    if not os.path.exists(lock_file):
+        open(lock_file, 'w').close()
 
 def adjust_sys_path():
     if getattr(sys, 'frozen', False):

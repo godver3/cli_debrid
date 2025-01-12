@@ -26,6 +26,7 @@ import ntplib
 from content_checkers.trakt import check_trakt_early_releases
 from debrid.base import TooManyDownloadsError, RateLimitError
 import tempfile
+from api_tracker import api  # Add this import for the api module
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -359,12 +360,22 @@ class ProgramRunner:
                     mdblist_url = mdblist_url.strip()
                     wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
             elif source_type == 'Trakt Watchlist':
-                wanted_content = get_wanted_from_trakt_watchlist()
+                try:
+                    wanted_content = get_wanted_from_trakt_watchlist()
+                except (ValueError, api.exceptions.RequestException) as e:
+                    logging.error(f"Failed to fetch Trakt watchlist: {str(e)}")
+                    # Don't raise here - allow other content sources to be processed
+                    return
             elif source_type == 'Trakt Lists':
                 trakt_lists = data.get('trakt_lists', '').split(',')
                 for trakt_list in trakt_lists:
                     trakt_list = trakt_list.strip()
-                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+                    try:
+                        wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+                    except (ValueError, api.exceptions.RequestException) as e:
+                        logging.error(f"Failed to fetch Trakt list {trakt_list}: {str(e)}")
+                        # Continue to next list instead of failing completely
+                        continue
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected()
             elif source_type == 'Plex Watchlist':
@@ -388,6 +399,7 @@ class ProgramRunner:
                                 total_items += len(all_items)
                         except Exception as e:
                             logging.error(f"Error processing items from {source}: {str(e)}")
+                            logging.error(traceback.format_exc())
                 else:
                     # Handle single list of items
                     try:
@@ -398,6 +410,7 @@ class ProgramRunner:
                             total_items += len(all_items)
                     except Exception as e:
                         logging.error(f"Error processing items from {source}: {str(e)}")
+                        logging.error(traceback.format_exc())
                 
                 logging.info(f"Added {total_items} wanted items from {source}")
             else:
@@ -406,6 +419,7 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error processing content source {source}: {str(e)}")
             logging.error(traceback.format_exc())
+            # Don't re-raise - allow other content sources to continue processing
 
     def task_refresh_release_dates(self):
         refresh_release_dates()

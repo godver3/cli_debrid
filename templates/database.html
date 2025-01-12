@@ -139,11 +139,64 @@
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
-
-import { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips } from '/static/js/tooltips.js';
-
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Add tap handlers for mobile devices
+    function isMobileDevice() {
+        const hasTouchScreen = (
+            'ontouchstart' in window ||
+            navigator.maxTouchPoints > 0 ||
+            navigator.msMaxTouchPoints > 0
+        );
+        const isMobileViewport = window.innerWidth <= 768;
+        return hasTouchScreen && isMobileViewport;
+    }
+
+    function copyToClipboard(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                message: 'Content copied to clipboard!',
+                title: 'Success',
+                autoClose: 2000
+            });
+        } catch (err) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Failed to copy content',
+                title: 'Error'
+            });
+        }
+        document.body.removeChild(textarea);
+    }
+
+    // Only add mobile functionality if on a mobile device
+    if (isMobileDevice()) {
+        // Add pointer cursor to all truncated cells
+        document.querySelectorAll('.truncate').forEach(cell => {
+            cell.style.cursor = 'pointer';
+        });
+
+        // Use event delegation for cell clicks
+        document.querySelector('.table-container').addEventListener('click', function(e) {
+            const cell = e.target.closest('.truncate');
+            if (cell && !e.target.closest('button')) {
+                const content = cell.getAttribute('data-full-content');
+                    showPopup({
+                        type: POPUP_TYPES.INFO,
+                        title: 'Cell Content',
+                        message: `<div style="word-break: break-word;">${content}</div>`,
+                    });
+                }
+            });
+    }
+
     let currentContentType = '{{ content_type }}';
     let currentLetter = '{{ current_letter }}';
 
@@ -303,10 +356,9 @@ document.addEventListener('DOMContentLoaded', function() {
             tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
             tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
             selectedColumns.forEach(column => {
-                let cellContent = item[column];
-                if (cellContent === null || cellContent === undefined || cellContent === '') {
-                    cellContent = 'None';
-                }
+                const cellContent = item[column] === null || item[column] === undefined || item[column] === '' 
+                    ? 'None' 
+                    : String(item[column]).replace(/"/g, '&quot;');
                 tableHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
             });
             tableHTML += '</tr>';
@@ -360,9 +412,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     contentTypeFilterElement.innerHTML = renderContentTypeFilter(data);
                 }
 
-                document.querySelector('.pagination').innerHTML = renderPagination(data);
-                document.querySelector('.content-type-filter').innerHTML = renderContentTypeFilter(data);
-                
                 // Update current states
                 currentContentType = data.content_type;
                 currentLetter = data.current_letter;
@@ -374,19 +423,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 attachEventListeners();
                 attachDeleteListeners();
                 attachRescrapeListeners();
-
-                // Clean up existing tooltips
-                // cleanupExistingTooltips();
-
-                // Reinitialize tooltips
-                initializeTooltips();
             })
             .catch(error => {
                 console.error('Error updating content:', error);
                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     title: 'Error',
-                    message: 'Failed to update database content: ' + error.message
+                    message: 'Failed to update database content: ' + error.message,
                 });
             })
             .finally(() => {
@@ -754,14 +797,6 @@ document.addEventListener('DOMContentLoaded', function() {
     attachEventListeners();
     attachDeleteListeners();
     attachRescrapeListeners();
-
-    // Initialize tooltips
-    initializeTooltips();
-
-    document.addEventListener('DOMContentLoaded', function() {
-        initializeTooltips();
-        initializeDatabaseTooltips();
-    });
 });
 
 Loading.init();

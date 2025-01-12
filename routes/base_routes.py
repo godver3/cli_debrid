@@ -1,25 +1,53 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, current_app
 import requests
 import logging
 from datetime import datetime
+import os
 
 base_bp = Blueprint('base', __name__)
+
+def get_current_branch():
+    try:
+        with open('branch_id', 'r') as f:
+            return f.read().strip()
+    except Exception as e:
+        logging.error(f"Error reading branch_id file: {str(e)}")
+        return 'main'  # Default to main if there's an error
+
+def get_branch_suffix():
+    branch = get_current_branch()
+    return 'm' if branch == 'main' else 'd'
+
+# Register the function to be available in templates
+@base_bp.app_template_global()
+def get_version_with_branch():
+    try:
+        with open('version.txt', 'r') as f:
+            version = f.read().strip()
+        return f"{version}{get_branch_suffix()}"
+    except Exception as e:
+        logging.error(f"Error reading version: {str(e)}")
+        return f"0.0.0{get_branch_suffix()}"
 
 @base_bp.route('/api/release-notes', methods=['GET'])
 def get_release_notes():
     try:
+        # Get current branch from branch_id file
+        current_branch = get_current_branch()
+        
         # GitHub API endpoint for commits (using public API)
-        api_url = "https://api.github.com/repos/godver3/cli_debrid/commits"
+        api_url = f"https://api.github.com/repos/godver3/cli_debrid/commits"
         
         # Make request to GitHub API with a user agent (required by GitHub)
         headers = {
             'User-Agent': 'cli-debrid-app'
         }
         
-        # Get the latest 10 commits
+        # Get the latest 10 commits for the current branch
         params = {
             'per_page': 10,
-            'page': 1
+            'page': 1,
+            'sha': current_branch  # Specify the branch to fetch commits from
         }
         
         response = requests.get(api_url, headers=headers, params=params)
@@ -29,7 +57,7 @@ def get_release_notes():
                 return jsonify({
                     'success': True,
                     'version': 'No Commits',
-                    'name': 'No Commits Available',
+                    'name': f'No Commits Available ({current_branch} branch)',
                     'body': 'No commit history is available.',
                     'published_at': ''
                 })
@@ -46,16 +74,16 @@ def get_release_notes():
             
             return jsonify({
                 'success': True,
-                'version': f"Latest Commit: {commits[0]['sha'][:7]}",
-                'name': 'Recent Changes',
+                'version': f"Latest Commit: {commits[0]['sha'][:7]} ({current_branch} branch)",
+                'name': f'Recent Changes - {current_branch} branch',
                 'body': body,
                 'published_at': commits[0]['commit']['author']['date']
             })
         else:
-            logging.error(f"Failed to fetch commit history. Status code: {response.status_code}")
+            logging.error(f"Failed to fetch commit history for branch {current_branch}. Status code: {response.status_code}")
             return jsonify({
                 'success': False,
-                'error': 'Failed to fetch commit history'
+                'error': f'Failed to fetch commit history for branch {current_branch}'
             }), 500
             
     except Exception as e:
