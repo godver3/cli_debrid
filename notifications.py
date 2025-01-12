@@ -165,11 +165,11 @@ def format_notification_content(notifications, notification_type, notification_c
                     reason = item.get('reason', '')
                     
                     if item.get('type') == 'movie':
-                        entry = f"{movie_emoji} {title} ({item.get('year', '')}) [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"{movie_emoji} {title} ({item.get('year', '')}) [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     else:
                         season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else ""
                         episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else ""
-                        entry = f"{tv_emoji} {title} {season}{episode} [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"{tv_emoji} {title} {season}{episode} [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     
                     if reason:
                         entry += f" (Reason: {reason})"
@@ -250,11 +250,11 @@ def format_notification_content(notifications, notification_type, notification_c
                     reason = item.get('reason', '')
                     
                     if item.get('type') == 'movie':
-                        entry = f"{movie_emoji} <b>{title} ({item.get('year', '')})</b> [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"{movie_emoji} <b>{title} ({item.get('year', '')})</b> [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     else:
                         season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else ""
                         episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else ""
-                        entry = f"{tv_emoji} <b>{title} {season}{episode}</b> [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"{tv_emoji} <b>{title} {season}{episode}</b> [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     
                     if reason:
                         entry += f" (Reason: {reason})"
@@ -335,11 +335,11 @@ def format_notification_content(notifications, notification_type, notification_c
                     reason = item.get('reason', '')
                     
                     if item.get('type') == 'movie':
-                        entry = f"{movie_emoji} <i>{title} ({item.get('year', '')})</i> [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"{movie_emoji} <i>{title} ({item.get('year', '')})</i> [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     else:
                         season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else ""
                         episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else ""
-                        entry = f"{tv_emoji} <i>{title} {season}{episode}</i> [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"{tv_emoji} <i>{title} {season}{episode}</i> [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     
                     if reason:
                         entry += f" (Reason: {reason})"
@@ -420,11 +420,11 @@ def format_notification_content(notifications, notification_type, notification_c
                     reason = item.get('reason', '')
                     
                     if item.get('type') == 'movie':
-                        entry = f"{movie_emoji} {title} ({item.get('year', '')}) [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"{movie_emoji} {title} ({item.get('year', '')}) [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     else:
                         season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else ""
                         episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else ""
-                        entry = f"{tv_emoji} {title} {season}{episode} [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"{tv_emoji} {title} {season}{episode} [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     
                     if reason:
                         entry += f" (Reason: {reason})"
@@ -499,11 +499,11 @@ def format_notification_content(notifications, notification_type, notification_c
                     reason = item.get('reason', '')
                     
                     if item.get('type') == 'movie':
-                        entry = f"• {title} ({item.get('year', '')}) [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"• {title} ({item.get('year', '')}) [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     else:
                         season = f"S{item.get('season_number', 0):02d}" if item.get('season_number') is not None else ""
                         episode = f"E{item.get('episode_number', 0):02d}" if item.get('episode_number') is not None else ""
-                        entry = f"• {title} {season}{episode} [{item.get('version', '')}] → {"Upgrading" if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state}"
+                        entry = f"• {title} {season}{episode} [{item.get('version', '')}] → {('Upgrading' if item.get('upgrading') and item.get('new_state') == 'Checking' else new_state)}"
                     
                     if reason:
                         entry += f" (Reason: {reason})"

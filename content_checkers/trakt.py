@@ -117,12 +117,25 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
             else:  # post
                 response = api.post(url, headers=headers, json=data, timeout=REQUEST_TIMEOUT)
             
+            # Check if response is HTML instead of JSON
+            content_type = response.headers.get('content-type', '')
+            if 'html' in content_type.lower():
+                logging.error(f"Received HTML response instead of JSON from Trakt API (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
+                    logging.info(f"Waiting {delay:.2f} seconds before retry")
+                    sleep(delay)
+                    continue
+                else:
+                    raise ValueError("Received HTML response from Trakt API after all retries")
+            
             response.raise_for_status()
             return response
             
         except api.exceptions.RequestException as e:
             if hasattr(e, 'response'):
-                if e.response.status_code == 429:  # Too Many Requests
+                status_code = e.response.status_code if hasattr(e.response, 'status_code') else 'unknown'
+                if status_code == 429:  # Too Many Requests
                     # Get retry-after header or use exponential backoff
                     retry_after = int(e.response.headers.get('Retry-After', 0))
                     delay = retry_after if retry_after > 0 else initial_delay * (2 ** attempt) + random.uniform(0, 1)
@@ -130,8 +143,15 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
                     logging.warning(f"Rate limit hit. Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}")
                     sleep(delay)
                     continue
-                    
+                elif status_code == 502:  # Bad Gateway
+                    logging.warning(f"Trakt API Bad Gateway error (attempt {attempt + 1}/{max_retries})")
+                elif status_code == 504:  # Gateway Timeout
+                    logging.warning(f"Trakt API Gateway Timeout error (attempt {attempt + 1}/{max_retries})")
+                else:
+                    logging.error(f"Trakt API error: {status_code} - {str(e)}")
+            
             if attempt == max_retries - 1:
+                logging.error(f"Failed to make Trakt API request after {max_retries} attempts: {str(e)}")
                 raise
             
             delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)

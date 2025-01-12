@@ -602,6 +602,25 @@
             color: white;
         }
 
+        /* Exception for release notes button */
+        .action-controls .icon-button#releaseNotesButton,
+        #releaseNotesButton {
+            min-width: 40px;
+            width: 36px;
+            height: 36px;
+            padding: 8px;
+            background-color: #ffffff00;
+            border-radius: 3px;
+            border: none;
+            margin-left: 6px;
+            color: #ffffff;
+            cursor: pointer;
+        }
+
+        #releaseNotesButton:hover {
+            color: #f0f0f0;
+        }
+
         /* Logout button hover state */
         #logout_button {
             background-color: #dc3545;
@@ -633,6 +652,11 @@
             font-size: 14px;
             white-space: nowrap;
             color: white;
+        }
+
+        /* Hide button text for release notes button */
+        #releaseNotesButton .button-text {
+            display: none;
         }
 
         .action-controls .icon-button i, 
@@ -833,6 +857,13 @@
             display: flex;
             justify-content: center;
         }
+
+        /* Exception for release notes button */
+        .action-controls .icon-button#releaseNotesButton,
+        #releaseNotesButton {
+            display: none;
+        }
+
     }
 
     body[data-is-onboarding="true"] .navMenu {
@@ -1114,7 +1145,7 @@
             <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
             <div class="title-version">
                 <h1>cli_debrid</h1>
-                <span class="version-info">v{{ version }}</span>
+                <span class="version-info">v{{ get_version_with_branch() }}</span>
             </div>
             {% if current_user.is_authenticated and not is_onboarding %}
             <div class="user-info">
@@ -1221,9 +1252,8 @@
                     </button>
                 </div>
             {% endif %}
-            <button class="release-notes-button" id="releaseNotesButton">
+            <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
                 <i class="fas fa-clipboard-list"></i>
-                <span class="button-text">Release Notes</span>
             </button>
         </div>
         {% endif %}
