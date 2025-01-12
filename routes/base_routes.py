@@ -3,12 +3,20 @@ import requests
 import logging
 from datetime import datetime
 import os
+import sys
 
 base_bp = Blueprint('base', __name__)
 
 def get_current_branch():
     try:
-        with open('branch_id', 'r') as f:
+        if getattr(sys, 'frozen', False):
+            application_path = sys._MEIPASS
+        else:
+            application_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        branch_path = os.path.join(application_path, 'branch_id')
+        
+        with open(branch_path, 'r') as f:
             return f.read().strip()
     except Exception as e:
         logging.error(f"Error reading branch_id file: {str(e)}")
@@ -22,7 +30,14 @@ def get_branch_suffix():
 @base_bp.app_template_global()
 def get_version_with_branch():
     try:
-        with open('version.txt', 'r') as f:
+        if getattr(sys, 'frozen', False):
+            application_path = sys._MEIPASS
+        else:
+            application_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        version_path = os.path.join(application_path, 'version.txt')
+        
+        with open(version_path, 'r') as f:
             version = f.read().strip()
         return f"{version}{get_branch_suffix()}"
     except Exception as e:
