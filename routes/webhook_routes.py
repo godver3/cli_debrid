@@ -41,6 +41,10 @@ def webhook():
                 if 'requested_seasons' in data['media']:
                     del data['media']['requested_seasons']
 
+        # Mark this request as coming from Overseerr
+        if data.get('media'):
+            data['media']['from_overseerr'] = True
+
         logging.debug(f"Final webhook data before processing: {data}")
         process_overseerr_webhook(data)
         return jsonify({"status": "success"}), 200

@@ -54,8 +54,13 @@ def request_content():
 
         tmdb_id = str(data.get('id'))
         media_type = data.get('mediaType', '').lower()
-        versions = data.get('versions', [])  # Get selected versions
+        selected_versions = data.get('versions', [])  # Get selected versions as a list
+        
+        # Convert selected versions to dictionary format
+        versions = {version: True for version in selected_versions}
                   
+        logging.info(f"Received versions: {versions}")
+
         # Convert TMDB ID to IMDB ID with media type hint
         imdb_id, source = DirectAPI.tmdb_to_imdb(tmdb_id, media_type=media_type)
         
@@ -83,7 +88,7 @@ def request_content():
         if not all_items:
             return jsonify({'error': 'No valid items after processing'}), 400
             
-        # Add items to wanted items database
+        # Pass versions dictionary to add_wanted_items
         add_wanted_items(all_items, versions)
         
         logging.info(f"Content request processed: TMDB ID {tmdb_id} -> IMDB ID {imdb_id} ({media_type}) with versions {versions}")

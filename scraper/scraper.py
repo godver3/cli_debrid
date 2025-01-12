@@ -67,7 +67,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         start_time = time.time()
         
         # Check for preferred alias first
-        preferred_alias = get_preferred_alias(tmdb_id, imdb_id, content_type)
+        preferred_alias = get_preferred_alias(tmdb_id, imdb_id, content_type, season)
         if preferred_alias:
             logging.info(f"Found preferred alias: {preferred_alias}")
             title = preferred_alias
@@ -275,6 +275,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             
             if matching_aliases:
                 logging.info(f"Found {len(matching_aliases)} aliases to try: {matching_aliases}")
+                best_alias = None
+                best_results = []
+                best_filtered_out = None
+                
+                # Try all aliases and keep track of which one produces the most results
                 for alias in matching_aliases:
                     logging.info(f"Trying alias: {alias}")
                     alias_results, alias_filtered_out, alias_timings = _do_scrape(
@@ -290,16 +295,21 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         is_alias=True,
                         alias_country=media_country_code
                     )
-                    if alias_results:
-                        logging.info(f"Found {len(alias_results)} valid results using alias: {alias}")
-                        # Store this successful alias as preferred for future use
-                        update_preferred_alias(tmdb_id, imdb_id, alias, content_type)
-                        filtered_results.extend(alias_results)
-                        if alias_filtered_out:
-                            filtered_out_results.extend(alias_filtered_out)
-                        break
-                    else:
-                        logging.info(f"No valid results found with alias: {alias}")
+                    
+                    if alias_results and len(alias_results) > len(best_results):
+                        logging.info(f"New best alias found: {alias} with {len(alias_results)} results")
+                        best_alias = alias
+                        best_results = alias_results
+                        best_filtered_out = alias_filtered_out
+                
+                # If we found any results, use the best alias
+                if best_alias:
+                    logging.info(f"Using best alias: {best_alias} with {len(best_results)} results")
+                    # Store this most successful alias as preferred for future use
+                    update_preferred_alias(tmdb_id, imdb_id, best_alias, content_type, season)
+                    filtered_results = best_results
+                    if best_filtered_out:
+                        filtered_out_results = best_filtered_out
 
         # Sanitize results for return
         def sanitize_result(result):

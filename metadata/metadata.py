@@ -376,14 +376,13 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                 # Add all episodes to processed_items
                 processed_items['episodes'].extend(all_episodes)
 
-                # Get versions from settings
-                from settings import get_all_settings
-                content_sources = get_all_settings().get('Content Sources', {})
-                overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
-                versions = overseerr_settings.get('versions', {})
-                
-                # Add all episodes, letting add_wanted_items handle the state based on is_requested_season
-                add_wanted_items(all_episodes, versions)
+                # Only add items with Overseerr versions if this is from an Overseerr webhook
+                if item.get('from_overseerr'):
+                    from settings import get_all_settings
+                    content_sources = get_all_settings().get('Content Sources', {})
+                    overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
+                    versions = overseerr_settings.get('versions', {})
+                    add_wanted_items(all_episodes, versions)
 
         except Exception as e:
             logging.error(f"Error processing item {item}: {str(e)}", exc_info=True)

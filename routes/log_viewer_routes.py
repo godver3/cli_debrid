@@ -81,7 +81,6 @@ def share_logs():
         # Try multiple file sharing services in case one fails
         services = [
             ('https://0x0.st', upload_to_0x0),  # Primary service
-            ('https://transfer.sh/', upload_to_transfer_sh)  # Fallback
         ]
         
         last_error = None
@@ -110,27 +109,6 @@ def share_logs():
         logging.error(f"Error during log sharing: {str(e)}")
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
 
-def upload_to_transfer_sh(data):
-    """Upload to transfer.sh with timeout and proper headers"""
-    files = {
-        'file': ('debug.log.gz', data, 'application/gzip')
-    }
-    
-    response = requests.post(
-        'https://transfer.sh/',
-        files=files,
-        timeout=30,  # 30 second timeout
-        headers={
-            'Max-Days': '14',  # Keep for 14 days
-            'User-Agent': 'CLI-Debrid Log Uploader'
-        }
-    )
-    
-    if response.status_code != 200:
-        raise Exception(f'transfer.sh returned status code {response.status_code}')
-    
-    return response.text.strip()
-
 def upload_to_0x0(data):
     """Upload to 0x0.st as fallback"""
     files = {
@@ -140,7 +118,7 @@ def upload_to_0x0(data):
     response = requests.post(
         'https://0x0.st',
         files=files,
-        timeout=30  # 30 second timeout
+        timeout=120  # 30 second timeout
     )
     
     if response.status_code != 200:
@@ -282,36 +260,57 @@ def stream_logs():
     def generate():
         last_timestamp = request.args.get('since', '')
         level = request.args.get('level', 'all').lower()
+        # Get client requested interval with bounds, default to 100ms instead of 200ms
+        # interval = max(0.05, min(2.0, float(request.args.get('interval', '0.1'))))
+        # Hard code to 50ms
+        interval = 0.05
         first_batch = True
+        #logging.debug(f"Starting log stream with interval {interval}s, level {level}")
 
+        # Pre-initialize json encoder for performance
+        json_encoder = json.JSONEncoder()
+        
         while True:
             try:
+                start_time = time.time()
+                
                 # On first connection, get all logs up to MAX_LOGS
                 if first_batch:
                     logs = get_recent_logs(1000, level=level)
                     first_batch = False
+                    #logging.debug(f"First batch: Found {len(logs)} logs")
                 else:
                     # After first batch, only get new logs since last timestamp
                     logs = get_recent_logs(1000, since=last_timestamp, level=level)
 
                 # Always send data, even if empty, to keep connection alive
-                data = json.dumps(logs if logs else [])
+                data = json_encoder.encode({
+                    'logs': logs if logs else [],
+                    'serverTime': start_time  # Use start time for more accurate latency
+                })
                 yield f"data: {data}\n\n"
                 
                 if logs:
                     last_timestamp = logs[-1]['timestamp']
                 
-                time.sleep(0.2)  # Check every 200ms
+                # Calculate how long we should sleep
+                elapsed = time.time() - start_time
+                sleep_time = max(0, interval - elapsed)  # Don't sleep if we've already taken longer than interval
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                    
             except Exception as e:
                 logging.error(f"Error in stream_logs: {str(e)}")
                 # Send an empty array on error to keep connection alive
-                yield "data: []\n\n"
-                time.sleep(0.2)
+                yield f"data: {json_encoder.encode({'logs': [], 'serverTime': time.time()})}\n\n"
+                time.sleep(interval)
 
-    return Response(stream_with_context(generate()), 
-                   mimetype='text/event-stream',
-                   headers={
-                       'Cache-Control': 'no-cache',
-                       'Connection': 'keep-alive',
-                       'X-Accel-Buffering': 'no'  # Disable proxy buffering
-                   })
+    return Response(
+        stream_with_context(generate()), 
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'  # Disable proxy buffering
+        }
+    )

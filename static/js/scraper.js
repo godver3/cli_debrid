@@ -250,7 +250,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     .then(response => response.json())
     .then(data => {
         hideLoadingState();
-        displayTorrentResults(data.torrent_results, title, year, version);
+        displayTorrentResults(data.torrent_results, title, year, version, mediaId, mediaType, season, episode);
     })
     .catch(error => {
         hideLoadingState();
@@ -259,8 +259,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     });
 }
 
-function addToRealDebrid(magnetLink) {
-    
+function addToRealDebrid(magnetLink, torrent) {
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Confirm Action',
@@ -270,12 +269,19 @@ function addToRealDebrid(magnetLink) {
         onConfirm: () => {
             showLoadingState();
 
+            const formData = new FormData();
+            formData.append('magnet_link', magnetLink);
+            formData.append('title', torrent.title);
+            formData.append('year', torrent.year);
+            formData.append('media_type', torrent.media_type);
+            formData.append('season', torrent.season || '');
+            formData.append('episode', torrent.episode || '');
+            formData.append('version', torrent.version || '');
+            formData.append('tmdb_id', torrent.tmdb_id || '');
+
             fetch('/scraper/add_to_debrid', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: `magnet_link=${encodeURIComponent(magnetLink)}`
+                body: formData
             })
             .then(response => {
                 if (!response.ok) {
@@ -285,7 +291,6 @@ function addToRealDebrid(magnetLink) {
                 }
                 return response.json();
             })
-
             .then(data => {
                 hideLoadingState();
 
@@ -309,7 +314,6 @@ function addToRealDebrid(magnetLink) {
                 });
             })
         },
-
     });
 }
 
@@ -453,7 +457,7 @@ function toggleResultsVisibility(section) {
     }
 }
 
-function displayTorrentResults(data, title, year, version) {
+function displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode) {
     hideLoadingState();
     const overlay = document.getElementById('overlay');
 
@@ -491,7 +495,17 @@ function displayTorrentResults(data, title, year, version) {
                     </button>             
                 `;
                 torResDiv.onclick = function() {
-                    addToRealDebrid(torrent.magnet)
+                    // Add metadata to torrent object
+                    const torrentData = {
+                        title: title,
+                        year: year,
+                        version: version,
+                        media_type: mediaType,
+                        season: season || null,
+                        episode: episode || null,
+                        tmdb_id: mediaId
+                    };
+                    addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                 };
                 gridContainer.appendChild(torResDiv);
             });
@@ -542,7 +556,16 @@ function displayTorrentResults(data, title, year, version) {
                         <span class="cache-status ${cacheStatusClass}">${cacheStatus}</span>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                        <button onclick="addToRealDebrid('${torrent.magnet}')">Add to Debrid</button>
+                        <button onclick='addToRealDebrid("${torrent.magnet}", ${JSON.stringify({
+                            ...torrent,
+                            year,
+                            version: torrent.version || version,
+                            title,
+                            media_type: mediaType,
+                            season: season || null,
+                            episode: episode || null,
+                            tmdb_id: torrent.tmdb_id || mediaId
+                        }).replace(/'/g, "\\'")})'>Add to Debrid</button>
                     </td>
                 `;
                 tbody.appendChild(row);
