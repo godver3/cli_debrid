@@ -164,6 +164,8 @@ class CheckingQueue:
         from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
         from extensions import app
 
+        logging.debug(f"Sending notification for item {item['id']} - upgrading: {item.get('upgrading_from')}")
+
         # Send notification for the state change
         try:
             with app.app_context():
@@ -180,9 +182,11 @@ class CheckingQueue:
                             'season_number': item.get('season_number'),
                             'episode_number': item.get('episode_number'),
                             'new_state': 'Checking',
-                            'upgrading': True if item.get('upgrading_from') else False
+                            'upgrading': True if item.get('upgrading_from') else False,
+                            'upgrading_from': item.get('upgrading_from')  # Pass the upgrading_from value to help with notification formatting
                         }
                         send_notifications([notification_data], enabled_notifications, notification_category='state_change')
+                        logging.debug(f"Sent notification for item {item['id']} - upgrading: {item.get('upgrading_from')}")
         except Exception as e:
             logging.error(f"Failed to send state change notification: {str(e)}")
 
