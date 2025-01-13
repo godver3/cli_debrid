@@ -18,7 +18,7 @@ def sanitize_filename(filename: str) -> str:
 def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
     """Get the full path for the symlink based on settings and metadata."""
     try:
-        symlinked_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
+        symlinked_path = get_setting('File Management', 'symlinked_files_path')
         organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)
         
         # Get the original extension
@@ -193,7 +193,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             if not item.get('filled_by_file'):
                 return False
                 
-            original_path = get_setting('Debug', 'original_files_path', '/mnt/zurg/__all__')
+            original_path = get_setting('File Management', 'original_files_path')
             
             # First try the original path construction
             source_file = os.path.join(original_path, item.get('filled_by_title', ''), item['filled_by_file'])
@@ -289,6 +289,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 item['filled_by_file'] = current_filled_by_file
                 item['version'] = current_version
                 
+                # Remove the old file from Plex
+                from utilities.plex_functions import remove_symlink_from_plex
+                remove_symlink_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
+
                 if old_dest and os.path.lexists(old_dest):
                     try:
                         os.unlink(old_dest)
@@ -388,7 +392,7 @@ def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
         Dict mapping item IDs to their found file information
     """
     try:
-        original_path = get_setting('Debug', 'original_files_path', '/mnt/zurg/__all__')
+        original_path = get_setting('File Management', 'original_files_path')
         
         if not os.path.exists(original_path):
             logging.error(f"Original files path does not exist: {original_path}")
@@ -483,8 +487,8 @@ def recent_local_library_scan(items: List[Dict[str, Any]], max_files: int = 500)
         Dict mapping item IDs to their found file information
     """
     try:
-        original_path = get_setting('Debug', 'original_files_path', '/mnt/zurg/__all__')
-        symlinked_path = get_setting('Debug', 'symlinked_files_path', '/mnt/symlinked')
+        original_path = get_setting('File Management', 'original_files_path')
+        symlinked_path = get_setting('File Management', 'symlinked_files_path')
         
         if not os.path.exists(original_path):
             logging.error(f"Original files path does not exist: {original_path}")

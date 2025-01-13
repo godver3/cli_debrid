@@ -12,6 +12,7 @@ import os
 from cli_battery.app.direct_api import DirectAPI
 from plexapi.server import PlexServer
 from database.database_reading import get_media_item_by_id
+import requests
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -618,84 +619,90 @@ def sync_run_get_recent_from_plex():
     return asyncio.run(run_get_recent_from_plex())
 
 def remove_file_from_plex(item_title, item_path, episode_title=None):
-    if not get_setting('File Management','file_collection_management') == 'Symlinked/Local':
-        try:
+    try:
+        if get_setting('File Management', 'file_collection_management') == 'Plex':
             plex_url = get_setting('Plex', 'url').rstrip('/')
             plex_token = get_setting('Plex', 'token')
+        elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+            plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+        else:
+            logger.error("No Plex URL or token found in settings")
+            return False
             
-            plex = plexapi.server.PlexServer(plex_url, plex_token)
-            
-            logger.info(f"Searching for item with title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
-            
-            sections = plex.library.sections()
-            file_deleted = False
-            
-            for section in sections:
-                try:
-                    if section.type == 'show':
-                        # Extract show title from item_title (assuming format "Show Title_...")
-                        show_title = item_title.split('_')[0]
+        plex = plexapi.server.PlexServer(plex_url, plex_token)
+        
+        logger.info(f"Searching for item with title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
+        
+        sections = plex.library.sections()
+        file_deleted = False
+        
+        for section in sections:
+            try:
+                if section.type == 'show':
+                    # Extract show title from item_title (assuming format "Show Title_...")
+                    show_title = item_title.split('_')[0]
+                    
+                    # Search for the show
+                    shows = section.search(title=show_title)
+                    
+                    for show in shows:
+                        # Get all episodes for the show
+                        try:
+                            episodes = show.episodes()
+                        except Exception as e:
+                            logger.error(f"Error getting episodes for show {show.title}: {str(e)}")
+                            continue
                         
-                        # Search for the show
-                        shows = section.search(title=show_title)
-                        
-                        for show in shows:
-                            # Get all episodes for the show
-                            try:
-                                episodes = show.episodes()
-                            except Exception as e:
-                                logger.error(f"Error getting episodes for show {show.title}: {str(e)}")
-                                continue
-                            
-                            for episode in episodes:
-                                if hasattr(episode, 'media'):
-                                    for media in episode.media:
-                                        for part in media.parts:
-                                            if os.path.basename(part.file) == os.path.basename(item_path):
-                                                logger.info(f"Found matching file in episode: {episode.title}")
-                                                media.delete()
-                                                logger.info(f"Successfully deleted media containing file: {part.file}")
-                                                file_deleted = True
-                                                return True
-                                else:
-                                    logger.warning(f"No media found for episode: {episode.title}")
-                    else:
-                        # For movies and other types, use the existing search method
-                        items = section.search(title=item_title)
-                        
-                        for item in items:
-                            logger.info(f"Checking item: {item.title}")
-                            if hasattr(item, 'media'):
-                                for media in item.media:
+                        for episode in episodes:
+                            if hasattr(episode, 'media'):
+                                for media in episode.media:
                                     for part in media.parts:
-                                        logger.info(f"Checking file: {part.file}")
                                         if os.path.basename(part.file) == os.path.basename(item_path):
-                                            logger.info(f"Found matching file in item: {item.title}")
+                                            logger.info(f"Found matching file in episode: {episode.title}")
                                             media.delete()
-                                            logger.info(f"Successfully deleted media containing file: {part.file} from item: {item.title}")
+                                            logger.info(f"Successfully deleted media containing file: {part.file}")
                                             file_deleted = True
                                             return True
                             else:
-                                logger.warning(f"No media found for item: {item.title}")
+                                logger.warning(f"No media found for episode: {episode.title}")
+                else:
+                    # For movies and other types, use the existing search method
+                    items = section.search(title=item_title)
                     
-                    if not file_deleted:
-                        logger.warning(f"No matching files found in section {section.title} for title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
-                except Exception as e:
-                    logger.error(f"Unexpected error in section {section.title}: {str(e)}", exc_info=True)
-            
-            if not file_deleted:
-                logger.warning(f"No matching files found in any Plex library section for title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
-                return False
-            
-        except plexapi.exceptions.Unauthorized:
-            logger.error("Unauthorized: Please check your Plex token")
+                    for item in items:
+                        logger.info(f"Checking item: {item.title}")
+                        if hasattr(item, 'media'):
+                            for media in item.media:
+                                for part in media.parts:
+                                    logger.info(f"Checking file: {part.file}")
+                                    if os.path.basename(part.file) == os.path.basename(item_path):
+                                        logger.info(f"Found matching file in item: {item.title}")
+                                        media.delete()
+                                        logger.info(f"Successfully deleted media containing file: {part.file} from item: {item.title}")
+                                        file_deleted = True
+                                        return True
+                        else:
+                            logger.warning(f"No media found for item: {item.title}")
+                
+                if not file_deleted:
+                    logger.warning(f"No matching files found in section {section.title} for title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
+            except Exception as e:
+                logger.error(f"Unexpected error in section {section.title}: {str(e)}", exc_info=True)
+        
+        if not file_deleted:
+            logger.warning(f"No matching files found in any Plex library section for title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
             return False
-        except plexapi.exceptions.NotFound:
-            logger.error(f"Plex server not found at {plex_url}")
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected error removing file from Plex: {str(e)}", exc_info=True)
-            return False
+        
+    except plexapi.exceptions.Unauthorized:
+        logger.error("Unauthorized: Please check your Plex token")
+        return False
+    except plexapi.exceptions.NotFound:
+        logger.error(f"Plex server not found at {plex_url}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error removing file from Plex: {str(e)}", exc_info=True)
+        return False
 
 def force_match_with_tmdb(title: str, tmdb_id: str) -> bool:
     """
@@ -805,3 +812,19 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
     except Exception as e:
         logger.error(f"Error updating item in Plex: {str(e)}")
         return False
+
+def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str = None) -> bool:
+    """
+    Remove a symlinked file from Plex without touching the symlink itself.
+    This function assumes the symlink has already been or will be handled elsewhere.
+    
+    Args:
+        item_title (str): The title of the show or movie
+        item_path (str): The full path to the symlinked file
+        episode_title (str, optional): The episode title for TV shows
+        
+    Returns:
+        bool: True if successfully removed from Plex, False otherwise
+    """
+    logging.info("remove_symlink_from_plex to be developed")
+    return True
