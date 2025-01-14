@@ -163,10 +163,12 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     result_episodes = season_episode_info.get('episodes', [])
                     
                     if not is_anime:
-                        if not result_seasons or season not in result_seasons:
+                        if result_seasons and season not in result_seasons:
                             result['filter_reason'] = f"Season mismatch: expected S{season}, got {result_seasons}"
-                            logging.debug(f"❌ Failed: Season mismatch {result_seasons}")
+                            logging.debug(f"❌ Failed: Season mismatch - found {result_seasons} but needed {season}")
                             continue
+                        elif not result_seasons:
+                            logging.debug(f"⚠️ No season information found, will de-rank later")
 
                     if season_episode_info.get('multi_episode', False):
                         episode_range = result_episodes
@@ -178,7 +180,48 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                                 logging.debug(f"❌ Failed: Episode {episode} outside range {min_episode}-{max_episode}")
                                 continue
                     else:
-                        if not result_episodes or episode not in result_episodes:
+                        if not result_episodes:
+                            # Check for date-based release
+                            result_date = parsed_info.get('date')
+                            if result_date:
+                                try:
+                                    # Get episode metadata for release date comparison
+                                    from web_scraper import get_tmdb_data
+                                    episode_data = get_tmdb_data(int(tmdb_id), 'tv', season, episode)
+                                    
+                                    if episode_data:
+                                        air_date = episode_data.get('air_date')
+                                        if air_date:
+                                            if result_date == air_date:
+                                                logging.debug(f"✓ Date match: {result_date} matches episode air date")
+                                            else:
+                                                # Try parsing both dates to compare
+                                                from datetime import datetime
+                                                try:
+                                                    result_dt = datetime.strptime(result_date, '%Y-%m-%d').date()
+                                                    episode_dt = datetime.strptime(air_date, '%Y-%m-%d').date()
+                                                    if result_dt == episode_dt:
+                                                        logging.debug(f"✓ Date match after parsing: {result_date} matches episode air date")
+                                                    else:
+                                                        result['filter_reason'] = f"Date mismatch: {result_date} != {air_date}"
+                                                        logging.debug(f"❌ Failed: Date mismatch - found {result_date} but needed {air_date}")
+                                                        continue
+                                                except ValueError:
+                                                    logging.error(f"Error parsing dates: result_date={result_date}, air_date={air_date}")
+                                                    continue
+                                        else:
+                                            logging.warning(f"⚠️ No air date found in episode data, will include result but may affect ranking")
+                                    else:
+                                        logging.warning(f"⚠️ Could not fetch episode data, will include result but may affect ranking")
+                                except Exception as e:
+                                    logging.error(f"Error comparing dates: {str(e)}")
+                                    # If we can't get the metadata, we'll keep the result but log a warning
+                                    logging.warning(f"⚠️ Could not verify date {result_date}, will include result but may affect ranking")
+                            else:
+                                result['filter_reason'] = f"No episode number or valid date found"
+                                logging.debug("❌ Failed: No episode number or valid date")
+                                continue
+                        elif episode not in result_episodes:
                             result['filter_reason'] = f"Episode mismatch: expected E{episode}, got {result_episodes}"
                             logging.debug(f"❌ Failed: Episode mismatch {result_episodes}")
                             continue

@@ -240,12 +240,26 @@ class ScrapingQueue:
             season = item.get('season_number')
             episode = item.get('episode_number')
             if season is not None and episode is not None:
-                individual_results = [
-                    r for r in individual_results 
+                # First, mark any results that are date-based
+                for result in individual_results:
+                    if result.get('parsed_info', {}).get('date'):
+                        result['is_date_based'] = True
+                        logging.debug(f"Marked result as date-based: {result['title']}")
+
+                # Filter only non-date-based results by season/episode
+                date_based_results = [r for r in individual_results if r.get('is_date_based', False)]
+                regular_results = [r for r in individual_results if not r.get('is_date_based', False)]
+                
+                filtered_regular_results = [
+                    r for r in regular_results 
                     if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
                     and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
                 ]
-                logging.info(f"After filtering individual results for specific episode S{season}E{episode}: {len(individual_results)} results remain for {item_identifier}")
+
+                # Combine date-based and filtered regular results
+                individual_results = date_based_results + filtered_regular_results
+                
+                logging.info(f"After filtering: {len(date_based_results)} date-based results and {len(filtered_regular_results)} regular results for {item_identifier}")
 
         if individual_results:
             logging.info(f"Found results for individual episode scraping of {item_identifier}.")
