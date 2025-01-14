@@ -48,6 +48,8 @@ class SleepingQueue:
                             'season_number': item.get('season_number'),
                             'episode_number': item.get('episode_number'),
                             'new_state': 'Sleeping',
+                            'is_upgrade': False,
+                            'upgrading_from': None
                         }
                         send_notifications([notification_data], enabled_notifications, notification_category='state_change')
         except Exception as e:

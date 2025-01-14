@@ -449,7 +449,8 @@ def move_item_to_wanted(item_id):
                 original_path_for_symlink = NULL,
                 original_scraped_torrent_title = NULL,
                 upgrading_from = NULL,
-                version = TRIM(version, '*')
+                version = TRIM(version, '*'),
+                upgrading = NULL
             WHERE id = ?
         ''', (datetime.now(), item_id))
         conn.commit()
@@ -467,7 +468,9 @@ def send_test_notification():
     try:
         # Create test notification items
         now = datetime.now()
-        test_notifications = [
+        
+        # Collection test notifications
+        collection_notifications = [
             {
                 'type': 'movie',
                 'title': 'Test Movie 1',
@@ -475,26 +478,9 @@ def send_test_notification():
                 'tmdb_id': '123456',
                 'original_collected_at': now.isoformat(),
                 'version': '1080p',
-                'is_upgrade': False
-            },
-            {
-                'type': 'movie',
-                'title': 'Test Movie 1',
-                'year': 2023,
-                'tmdb_id': '123456',
-                'original_collected_at': now.isoformat(),
-                'version': '2160p',
-                'is_upgrade': False
-            },
-            {
-                'type': 'movie',
-                'title': 'Test Movie 2',
-                'year': 2023,
-                'tmdb_id': '234567',
-                'original_collected_at': (now + timedelta(hours=1)).isoformat(),
-                'version': '1080p',
-                'is_upgrade': True,
-                'original_collected_at': (now - timedelta(days=7)).isoformat()
+                'is_upgrade': False,
+                'media_type': 'movie',
+                'new_state': 'Collected'  # Adding new_state for NEW indicator
             },
             {
                 'type': 'movie',
@@ -504,7 +490,9 @@ def send_test_notification():
                 'original_collected_at': (now + timedelta(hours=1)).isoformat(),
                 'version': '2160p',
                 'is_upgrade': True,
-                'original_collected_at': (now - timedelta(days=7)).isoformat()
+                'upgrading_from': 'Test Movie 2 1080p.mkv',
+                'media_type': 'movie',
+                'new_state': 'Collected'  # Adding new_state for upgrade indicator
             },
             {
                 'type': 'episode',
@@ -515,17 +503,75 @@ def send_test_notification():
                 'episode_number': 1,
                 'original_collected_at': (now + timedelta(hours=2)).isoformat(),
                 'version': 'Default',
-                'is_upgrade': False
+                'is_upgrade': False,
+                'media_type': 'tv',
+                'new_state': 'Collected'
+            },
+            {
+                'type': 'episode',
+                'title': 'Test TV Show 3',
+                'year': 2023,
+                'tmdb_id': '789012',
+                'season_number': 1,
+                'episode_number': 3,
+                'original_collected_at': (now + timedelta(hours=3)).isoformat(),
+                'version': '2160p',
+                'is_upgrade': True,
+                'upgrading_from': 'Test TV Show 3 S01E03 1080p.mkv',
+                'media_type': 'tv',
+                'new_state': 'Collected'  # This indicates it's a completed upgrade
+            }
+        ]
+
+        # State change test notifications
+        state_change_notifications = [
+            {
+                'type': 'movie',
+                'title': 'Test Movie 3',
+                'year': 2023,
+                'tmdb_id': '456789',
+                'version': '1080p',
+                'new_state': 'Checking',
+                'is_upgrade': False,
+                'upgrading_from': None,
+                'media_type': 'movie'
+            },
+            {
+                'type': 'movie',
+                'title': 'Test Movie 4',
+                'year': 2023,
+                'tmdb_id': '567890',
+                'version': '2160p',
+                'new_state': 'Sleeping',
+                'is_upgrade': False,
+                'upgrading_from': None,
+                'media_type': 'movie'
+            },
+            {
+                'type': 'episode',
+                'title': 'Test TV Show 2',
+                'year': 2023,
+                'tmdb_id': '678901',
+                'season_number': 1,
+                'episode_number': 2,
+                'version': '1080p',
+                'new_state': 'Upgrading',
+                'is_upgrade': True,
+                'upgrading_from': 'Test TV Show 2 S01E02 720p.mkv',
+                'media_type': 'tv'
             }
         ]
 
         # Fetch enabled notifications
         enabled_notifications = get_all_settings().get('Notifications', {})
         
-        # Send test notifications
-        send_notifications(test_notifications, enabled_notifications)
+        # Send collection notifications
+        send_notifications(collection_notifications, enabled_notifications, notification_category='collected')
         
-        return jsonify({'success': True, 'message': 'Test notification sent successfully'}), 200
+        # Send state change notifications
+        send_notifications(state_change_notifications, enabled_notifications, notification_category='state_change')
+        
+        return jsonify({'success': True, 'message': 'Test notifications sent successfully'}), 200
 
     except Exception as e:
         current_app.logger.error(f"Error sending test notification: {str(e)}", exc_info=True)

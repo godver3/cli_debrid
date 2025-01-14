@@ -94,6 +94,9 @@ def migrate_schema():
         if 'preferred_alias' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN preferred_alias TEXT')
             logging.info("Successfully added preferred_alias column to media_items table.")
+        if 'upgrading' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN upgrading BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added upgrading column to media_items table.")
         # logging.info("Successfully added new columns to media_items table.")
 
         # Remove the existing index if it exists
@@ -188,7 +191,8 @@ def create_tables():
                 trigger_country TEXT,
                 anime_format TEXT,
                 fall_back_to_single_scraper BOOLEAN DEFAULT FALSE,
-                preferred_alias TEXT
+                preferred_alias TEXT,
+                upgrading BOOLEAN DEFAULT FALSE
             )
         ''')
 
