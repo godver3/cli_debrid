@@ -129,13 +129,7 @@ def get_current_task():
     try:
         # Get program runner using the getter function
         program_runner = get_program_runner()
-        
-        # Add debug logging
-        logging.debug(f"Program runner exists: {program_runner is not None}")
-        if program_runner is not None:
-            logging.debug(f"Program is running: {program_runner.is_running()}")
-            logging.debug(f"Program is initializing: {program_runner.is_initializing()}")
-        
+                
         if program_runner is not None and program_runner.is_running():
             # Get the last run times and intervals
             last_run_times = program_runner.last_run_times

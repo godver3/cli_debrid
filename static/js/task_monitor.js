@@ -26,10 +26,8 @@ function updateCurrentTaskDisplay(tasks) {
 
 async function updateTasks(taskList) {
     try {
-        console.debug('Fetching current tasks...');
         const response = await fetch('/base/api/current-task');
         const data = await response.json();
-        console.debug('Task data:', data);
 
         if (data.success) {
             if (data.running && data.tasks && data.tasks.length > 0) {
@@ -46,14 +44,12 @@ async function updateTasks(taskList) {
                     `)
                     .join('');
                 taskList.innerHTML = tasksHtml;
-                console.debug(`Rendered ${data.tasks.length} tasks`);
                 
                 // Update the current task display
                 updateCurrentTaskDisplay(data.tasks);
             } else {
                 const status = data.running ? 'No active tasks' : 'Program not running';
                 taskList.innerHTML = `<div class="no-tasks">${status}</div>`;
-                console.debug('Task status:', status);
                 
                 // Update current task display for no tasks
                 updateCurrentTaskDisplay(null);
@@ -71,7 +67,6 @@ async function updateTasks(taskList) {
 }
 
 export function initializeTaskMonitor() {
-    console.debug('Initializing task monitor...');
     const taskMonitorContainer = document.getElementById('taskMonitorContainer');
     const currentTaskDisplay = document.getElementById('currentTaskDisplay');
     const taskMonitorDropdown = document.getElementById('taskMonitorDropdown');
@@ -105,7 +100,6 @@ export function initializeTaskMonitor() {
 
     currentTaskDisplay.addEventListener('click', toggleTaskMonitor);
     refreshTasksButton.addEventListener('click', () => {
-        console.debug('Manual refresh requested');
         updateTasks(taskList);
     });
     taskMonitorToggle.addEventListener('click', toggleTaskMonitorVisibility);
@@ -123,5 +117,4 @@ export function initializeTaskMonitor() {
     updateTasks(taskList);
     updateInterval = setInterval(() => updateTasks(taskList), 1000);
 
-    console.debug('Task monitor initialized');
 } 

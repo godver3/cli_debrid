@@ -13,6 +13,10 @@ import uuid
 from datetime import timedelta
 import os
 
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
 db = SQLAlchemy()
 app = Flask(__name__)
 
@@ -24,16 +28,24 @@ app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
 app.secret_key = os.urandom(24)  # Generate a secure secret key
 
-# Configure CORS
-CORS(app, resources={r"/*": {
-    "origins": "*",
-    "methods": ["GET", "HEAD", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization", "Accept", "Accept-Language", "Content-Language", "Range"],
-    "supports_credentials": True
-}})
+# Configure session cookie settings
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # More compatible than None
+app.config['SESSION_COOKIE_SECURE'] = True  # Require HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevent XSS
+app.config['SESSION_COOKIE_PATH'] = '/'
+app.config['SESSION_COOKIE_DOMAIN'] = None  # Will be set dynamically
 
-# app.config['PREFERRED_URL_SCHEME'] = 'https'
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Add this line
+# Configure CORS with specific origins
+CORS(app, resources={r"/*": {
+    "origins": ["*"],
+    "methods": ["GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE"],
+    "allow_headers": ["Content-Type", "Authorization", "Accept", "Accept-Language", 
+                     "Content-Language", "Range", "X-Requested-With", "Cookie", 
+                     "X-CSRF-Token", "Upgrade-Insecure-Requests"],
+    "supports_credentials": True,
+    "expose_headers": ["Set-Cookie", "Content-Range"],
+    "max_age": 3600
+}})
 
 from flask_login import LoginManager
 from flask import redirect, url_for
@@ -90,12 +102,9 @@ def handle_https():
     if request.path.startswith('/webhook'):
         return
         
-    if is_behind_proxy():
-        if request.headers.get('X-Forwarded-Proto') == 'http':
-            url = request.url.replace('http://', 'https://', 1)
-            print(f"Redirecting to: {url}")
-            return redirect(url, code=301)
-    # Remove any forced HTTPS redirect for non-proxy requests
+    if request.headers.get('X-Forwarded-Proto') == 'http':
+        url = request.url.replace('http://', 'https://', 1)
+        return redirect(url, code=301)
 
 @app.before_request
 def check_user_system():
@@ -108,13 +117,16 @@ def check_user_system():
 
 @app.after_request
 def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
-    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range'
-    response.headers['Access-Control-Allow-Credentials'] = 'true'
-    
-    if request.method == 'OPTIONS':
-        response.headers['Access-Control-Max-Age'] = '3600'
+    origin = request.headers.get('Origin')
+    if origin:  # Only add CORS headers if there's an Origin header
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range, X-Requested-With, Cookie'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
+        
+        if request.method == 'OPTIONS':
+            response.headers['Access-Control-Max-Age'] = '3600'
     
     return response
 
@@ -155,3 +167,79 @@ class SimpleTaskQueue:
         return self.tasks.get(task_id, {'status': 'NOT_FOUND'})
 
 task_queue = SimpleTaskQueue()
+
+@app.after_request
+def after_request(response):
+    # Get the origin from the request
+    origin = request.headers.get('Origin')
+    forwarded_proto = request.headers.get('X-Forwarded-Proto', 'http')
+    
+    # Always set security headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    
+    # Handle cookies
+    if 'Set-Cookie' in response.headers or response.status_code in [301, 302]:
+        cookies = response.headers.getlist('Set-Cookie')
+        response.headers.remove('Set-Cookie')
+        
+        # Get the domain from the request host
+        host = request.host.split(':')[0]  # Remove port if present
+        domain_parts = host.split('.')
+        if len(domain_parts) > 2:
+            domain = '.' + '.'.join(domain_parts[-2:])  # e.g., .godver3.xyz
+        else:
+            domain = '.' + host  # e.g., .localhost
+            
+        #logger.debug(f"Setting cookie domain to: {domain}")
+        
+        # If no cookies but we're redirecting, ensure session cookie is set
+        if not cookies and response.status_code in [301, 302]:
+            session_cookie = f"session={request.cookies.get('session', '')}; Path=/; Domain={domain}; Secure; SameSite=Lax"
+            cookies.append(session_cookie)
+        
+        for cookie in cookies:
+            if 'SameSite=' not in cookie:
+                cookie += '; SameSite=Lax'
+            if 'Domain=' not in cookie:
+                cookie += f'; Domain={domain}'
+            if 'Secure' not in cookie:
+                cookie += '; Secure'
+            response.headers.add('Set-Cookie', cookie)
+            #logger.debug(f"Modified cookie: {cookie}")
+    
+    # Set CORS headers for all requests
+    if origin:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
+        #logger.debug(f"Set CORS headers for origin: {origin}")
+    
+    return response
+
+@app.after_request
+def debug_cors_headers(response):
+    """Debug middleware to log CORS headers and cookies"""
+    #logger.debug("\n=== Request Debug Info ===")
+    #logger.debug(f"Request URL: {request.url}")
+    #logger.debug(f"Request Origin: {request.headers.get('Origin')}")
+    #logger.debug(f"Request Method: {request.method}")
+    #logger.debug("\nRequest Headers:")
+    #for header, value in request.headers.items():
+    #    logger.debug(f"{header}: {value}")
+    
+    #logger.debug("\nRequest Cookies:")
+    #logger.debug(request.cookies)
+    
+    #logger.debug("\n=== Response Debug Info ===")
+    #logger.debug("Response Headers:")
+    #for header, value in response.headers.items():
+    #    logger.debug(f"{header}: {value}")
+    
+    #logger.debug("\nResponse Cookies:")
+    #if 'Set-Cookie' in response.headers:
+    #    logger.debug(response.headers.getlist('Set-Cookie'))
+    #else:
+    #    logger.debug("No cookies set in response")
+    
+    return response
