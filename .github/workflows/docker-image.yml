@@ -98,6 +98,7 @@ jobs:
           files: "windows-executable/cli_debrid-${{ env.VERSION }}.exe"
           name: "Release ${{ env.VERSION }}"
           tag_name: "v${{ env.VERSION }}"
+          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: ${{ github.ref_name == 'dev' }}
           body: |

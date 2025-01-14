@@ -4,6 +4,8 @@ import logging
 from datetime import datetime
 import os
 import sys
+import traceback
+from .program_operation_routes import get_program_runner
 
 base_bp = Blueprint('base', __name__)
 
@@ -117,6 +119,64 @@ def get_release_notes():
             
     except Exception as e:
         logging.error(f"Error fetching commit history: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@base_bp.route('/api/current-task', methods=['GET'])
+def get_current_task():
+    try:
+        # Get program runner using the getter function
+        program_runner = get_program_runner()
+        
+        # Add debug logging
+        logging.debug(f"Program runner exists: {program_runner is not None}")
+        if program_runner is not None:
+            logging.debug(f"Program is running: {program_runner.is_running()}")
+            logging.debug(f"Program is initializing: {program_runner.is_initializing()}")
+        
+        if program_runner is not None and program_runner.is_running():
+            # Get the last run times and intervals
+            last_run_times = program_runner.last_run_times
+            task_intervals = program_runner.task_intervals
+            current_time = datetime.now().timestamp()
+            
+            tasks_info = []
+            for task, last_run in last_run_times.items():
+                interval = task_intervals.get(task, 0)
+                time_since_last_run = current_time - last_run
+                next_run = max(0, interval - time_since_last_run)
+                
+                # Only include tasks that are in the enabled_tasks set
+                if task in program_runner.enabled_tasks:
+                    tasks_info.append({
+                        'name': task,
+                        'last_run': last_run,
+                        'next_run': next_run,
+                        'interval': interval,
+                        'enabled': True
+                    })
+            
+            # Sort tasks by name for consistent ordering
+            tasks_info.sort(key=lambda x: x['name'])
+            
+            logging.debug(f"Found {len(tasks_info)} active tasks")
+            return jsonify({
+                'success': True,
+                'running': True,
+                'tasks': tasks_info
+            })
+        else:
+            logging.debug("Program not running or not initialized")
+            return jsonify({
+                'success': True,
+                'running': False,
+                'tasks': []
+            })
+    except Exception as e:
+        logging.error(f"Error getting current task info: {str(e)}")
+        logging.error(traceback.format_exc())
         return jsonify({
             'success': False,
             'error': str(e)
