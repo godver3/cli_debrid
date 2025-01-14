@@ -78,7 +78,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             item_aliases, _ = direct_api.get_movie_aliases(imdb_id)
         else:
             item_aliases, _ = direct_api.get_show_aliases(imdb_id)
-        logging.info(f"Alias list: {item_aliases}")
+        # logging.info(f"Alias list: {item_aliases}")
 
         media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
         logging.info(f"Media country code (aliases): {media_country_code}")
@@ -86,7 +86,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         matching_aliases = []
         if item_aliases and media_country_code in item_aliases:
             matching_aliases = [alias for alias in item_aliases[media_country_code] if alias.lower() != title.lower()]
-            logging.info(f"Matching aliases: {matching_aliases}")
+            #logging.info(f"Matching aliases: {matching_aliases}")
         
         # Initialize anime-specific variables
         genres = filter_genres(genres)
@@ -274,7 +274,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             logging.info(f"No valid results found with original title. Attempting to use aliases.")
             
             if matching_aliases:
-                logging.info(f"Found {len(matching_aliases)} aliases to try: {matching_aliases}")
+                # Remove duplicates while preserving order
+                logging.info(f"Found {len(matching_aliases)} total aliases - consolidating duplicates")
+                matching_aliases = list(dict.fromkeys(matching_aliases))
+                logging.info(f"Found {len(matching_aliases)} remaining aliases to try: {matching_aliases}")
                 best_alias = None
                 best_results = []
                 best_filtered_out = None

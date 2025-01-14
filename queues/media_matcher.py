@@ -6,8 +6,8 @@ Separates the media matching concerns from queue management.
 import logging
 import os
 from typing import Dict, Any, List, Tuple, Optional
-from scraper.functions.ptt_parser import parse_with_ptt
 from fuzzywuzzy import fuzz
+from PTT import parse_title
 
 class MediaMatcher:
     """Handles media content matching and validation"""
@@ -129,28 +129,48 @@ class MediaMatcher:
             if 'specials' in file['path'].lower():
                 continue
             
-            parsed = parse_with_ptt(file['path'])
-            logging.debug(f"Parsed file: {parsed}")
+            # Get the raw PTT parse result
+            ptt_result = parse_title(file['path'])
+            logging.debug(f"PTT parsed result: {ptt_result}")
+            
+            # Create our result info, preserving all PTT fields
+            result_info = {
+                'title': ptt_result.get('title'),
+                'original_title': file['path'],
+                'type': 'movie',
+                'year': None,
+                'resolution': ptt_result.get('resolution'),
+                'source': ptt_result.get('quality'),
+                'audio': None,
+                'codec': ptt_result.get('codec'),
+                'group': ptt_result.get('group'),
+                'seasons': ptt_result.get('seasons', []),
+                'episodes': ptt_result.get('episodes', []),
+                'date': ptt_result.get('date'),  # Explicitly include the date field
+                'bit_depth': ptt_result.get('bit_depth'),  # Include other useful fields
+                'container': ptt_result.get('container')
+            }
+            logging.debug(f"Combined result info: {result_info}")
             
             # For anime, we only need to match the episode number
             if is_anime:
                 episode_match = False
                 
                 # First try PTT parsed episodes
-                if item_episode in parsed.get('episodes', []):
+                if item_episode in result_info.get('episodes', []):
                     episode_match = True
                 
                 # If PTT failed to find episodes, try our fallback method
-                if not episode_match and not parsed.get('episodes'):
+                if not episode_match and not result_info.get('episodes'):
                     fallback_episode = self._extract_episode_from_filename(file['path'])
                     if fallback_episode == item_episode:
                         episode_match = True
                         logging.debug(f"Matched episode {item_episode} using fallback parser for {file['path']}")
                 
                 # Only check season if it's present in both the parsed result and the item
-                season_match = (not parsed.get('seasons') or  # If no season in filename, that's okay
+                season_match = (not result_info.get('seasons') or  # If no season in filename, that's okay
                               not item_season or  # If no season in item, that's okay
-                              item_season in parsed.get('seasons', []))  # If both have season, they should match
+                              item_season in result_info.get('seasons', []))  # If both have season, they should match
                 
                 if episode_match and season_match:
                     logging.debug(f"Matched anime: E{item_episode} in {os.path.basename(file['path'])}")
@@ -158,10 +178,63 @@ class MediaMatcher:
                     matches.append((file_path, item))
                     logging.debug(f"Added match for anime: {file_path}")
             else:
-                # Regular TV show matching requiring both season and episode
-                if (item_season in parsed.get('seasons', []) and 
-                    item_episode in parsed.get('episodes', [])):
-                    logging.debug(f"Matched: S{item_season}E{item_episode} in {os.path.basename(file['path'])}")
+                # Check if this is a date-based episode first
+                date_match = False
+                has_date = 'date' in result_info and result_info['date'] is not None
+                has_seasons = bool(result_info.get('seasons'))
+                has_episodes = bool(result_info.get('episodes'))
+                logging.debug(f"Checking if date-based episode - Has date: {has_date}, Has seasons: {has_seasons}, Has episodes: {has_episodes}")
+                
+                if has_date and not has_seasons and not has_episodes:
+                    try:
+                        logging.debug(f"Attempting date match for date-based episode")
+
+                        from web_scraper import get_tmdb_data
+                        episode_data = get_tmdb_data(int(item.get('tmdb_id')), 'tv', item.get('season_number'), item.get('episode_number'))
+                        
+                        if episode_data:
+                            expected_air_date = episode_data.get('air_date')
+                            logging.debug(f"Date comparison - File date: {result_info['date']}, Expected air date: {expected_air_date}")
+                            
+                            if expected_air_date and result_info['date'] == expected_air_date:
+                                date_match = True
+                                logging.debug(f"Matched date-based episode by air date: {expected_air_date} == {result_info['date']}")
+                            else:
+                                logging.debug(f"Date match failed - Missing air_date: {not expected_air_date}, Dates don't match: {expected_air_date != result_info.get('date')}")
+                    except Exception as e:
+                        logging.error(f"Error checking air date: {str(e)}")
+                
+                # Only try season/episode matching if date matching failed
+                season_episode_match = False
+                if not date_match:
+                    logging.debug("Date match failed or not applicable, trying season/episode matching")
+                    season_episode_match = (item_season in result_info.get('seasons', []) and 
+                                          item_episode in result_info.get('episodes', []))
+                    
+                    # Try TMDB date lookup as last resort for season/episode files
+                    if not season_episode_match and result_info.get('date'):
+                        try:
+                            if item_season is not None and item_episode is not None:
+                                logging.debug(f"Attempting TMDB lookup for S{item_season}E{item_episode}")
+
+                                from web_scraper import get_tmdb_data
+                                episode_data = get_tmdb_data(int(item.get('tmdb_id')), 'tv', item_season, item_episode)
+                                
+                                if episode_data:
+                                    air_date = episode_data.get('air_date')
+                                    logging.debug(f"TMDB lookup - File date: {result_info.get('date')}, TMDB air date: {air_date}")
+                                    if air_date and result_info['date'] == air_date:
+                                        date_match = True
+                                        logging.debug(f"Matched by air date: {air_date} == {result_info['date']}")
+                                    else:
+                                        logging.debug(f"TMDB date match failed - Missing air_date: {not air_date}, Dates don't match: {air_date != result_info.get('date')}")
+                                else:
+                                    logging.debug("Failed to get episode data from TMDB")
+                        except Exception as e:
+                            logging.error(f"Error checking air date: {str(e)}")
+
+                if season_episode_match or date_match:
+                    logging.debug(f"Matched: {'by date' if date_match else f'S{item_season}E{item_episode}'} in {os.path.basename(file['path'])}")
                     file_path = os.path.basename(file['path'])
                     matches.append((file_path, item))
             

@@ -127,9 +127,10 @@ class ScraperManager:
                 else:
                     # Other scrapers use the original signature
                     results = scrape_func(instance, current_settings, imdb_id, title, year, content_type, season, episode, multi)
-                
+                    
+                logging.info(f"Found {len(results)} results from {instance}")
+
                 if results:
-                    logging.info(f"Found {len(results)} results from {instance}")
                     all_results.extend(results)
             except Exception as e:
                 logging.error(f"Error scraping {scraper_type} instance '{instance}': {str(e)}")

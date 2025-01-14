@@ -6,6 +6,35 @@ import os
 import sys
 import traceback
 from .program_operation_routes import get_program_runner
+from functools import wraps
+import time
+
+def cache_for_seconds(seconds):
+    """Cache the result of a function for the specified number of seconds."""
+    def decorator(func):
+        cache = {}
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            
+            # Create a cache key from the function name and arguments
+            key = (func.__name__, args, frozenset(kwargs.items()))
+            
+            # Check if we have a cached value and it's still valid
+            if key in cache:
+                result, timestamp = cache[key]
+                if now - timestamp < seconds:
+                    #logging.debug(f"Cache hit for {func.__name__}")
+                    return result
+            
+            # If no valid cached value, call the function
+            result = func(*args, **kwargs)
+            cache[key] = (result, now)
+            return result
+            
+        return wrapper
+    return decorator
 
 base_bp = Blueprint('base', __name__)
 
@@ -125,6 +154,7 @@ def get_release_notes():
         }), 500
 
 @base_bp.route('/api/current-task', methods=['GET'])
+@cache_for_seconds(5)
 def get_current_task():
     try:
         # Get program runner using the getter function
@@ -155,7 +185,7 @@ def get_current_task():
             # Sort tasks by name for consistent ordering
             tasks_info.sort(key=lambda x: x['name'])
             
-            logging.debug(f"Found {len(tasks_info)} active tasks")
+            # logging.debug(f"Found {len(tasks_info)} active tasks")
             return jsonify({
                 'success': True,
                 'running': True,

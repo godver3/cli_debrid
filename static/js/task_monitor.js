@@ -149,5 +149,5 @@ export function initializeTaskMonitor() {
 
     // Start updating tasks
     updateTasks(taskList);
-    updateInterval = setInterval(() => updateTasks(taskList), 1000);
+    updateInterval = setInterval(() => updateTasks(taskList), 2000);
 } 

@@ -109,6 +109,7 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
                     'episodes': parsed_info.get('episodes'),
                     'type': parsed_info.get('type'),
                     'country': parsed_info.get('country'),
+                    'date': parsed_info.get('date'),
                 }
                 
                 # Handle size if provided
