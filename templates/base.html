@@ -1193,7 +1193,7 @@
         cursor: pointer;
         transition: all 0.2s ease;
         z-index: 1000;
-        width: 20px;
+        width: 28px;
         display: flex;
         justify-content: center;
         align-items: center;
@@ -1274,6 +1274,7 @@
     }
 
     .task-monitor-refresh {
+        display: none;
         background: none;
         border: none;
         color: #888;
@@ -1542,27 +1543,32 @@
         </div>
         {% endif %}
     </header>
-    <!-- Add task monitor container -->
-    <div class="task-monitor-container" id="taskMonitorContainer">
-        <div class="current-task-display" id="currentTaskDisplay">
-            <span class="current-task-name">Loading...</span>
-            <span class="current-task-time"></span>
-        </div>
-        <div class="task-monitor-dropdown" id="taskMonitorDropdown">
-            <div class="task-monitor-header">
-                <span class="task-monitor-title">Task Monitor</span>
-                <button class="task-monitor-refresh" id="refreshTasksButton">
-                    <i class="fas fa-sync-alt"></i>
-                </button>
+    {% if is_user_system_enabled() %}
+        {% if current_user.is_authenticated %}
+            <!-- Add task monitor container -->
+            <div class="task-monitor-container" id="taskMonitorContainer">
+                <div class="current-task-display" id="currentTaskDisplay">
+                    <span class="current-task-name">Loading...</span>
+                    <span class="current-task-time"></span>
+                </div>
+                <div class="task-monitor-dropdown" id="taskMonitorDropdown">
+                    <div class="task-monitor-header">
+                        <span class="task-monitor-title">Task Monitor</span>
+                        <button class="task-monitor-refresh" id="refreshTasksButton">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+                    <div class="task-list" id="taskList">
+                        <div class="loading">Loading tasks...</div>
+                    </div>
+                </div>
             </div>
-            <div class="task-list" id="taskList">
-                <div class="loading">Loading tasks...</div>
-            </div>
-        </div>
-    </div>
-    <button class="task-monitor-toggle" id="taskMonitorToggle">
-        <i class="fas fa-chevron-up"></i>
-    </button>
+            <button class="task-monitor-toggle" id="taskMonitorToggle">
+                <i class="fas fa-chevron-up"></i>
+            </button>
+        {% endif %}
+    {% endif %}
+
     <main>
         {% block content %}{% endblock %}
     </main>
@@ -1709,6 +1715,62 @@
 
     <!-- Add marked.js for Markdown parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Add release notes functionality -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const releaseNotesButton = document.getElementById('releaseNotesButton');
+            const releaseNotesPopup = document.getElementById('releaseNotesPopup');
+            const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
+            const releaseNotesClose = document.getElementById('releaseNotesClose');
+            const releaseNotesContent = document.getElementById('releaseNotesContent');
+
+            function showReleaseNotes() {
+                releaseNotesPopup.style.display = 'block';
+                releaseNotesOverlay.style.display = 'block';
+                
+                // Fetch release notes
+                fetch('/base/api/release-notes')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            // Use marked to parse markdown
+                            releaseNotesContent.innerHTML = marked.parse(data.body);
+                        } else {
+                            releaseNotesContent.innerHTML = '<div class="error">Failed to load release notes</div>';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching release notes:', error);
+                        releaseNotesContent.innerHTML = '<div class="error">Error loading release notes</div>';
+                    });
+            }
+
+            function hideReleaseNotes() {
+                releaseNotesPopup.style.display = 'none';
+                releaseNotesOverlay.style.display = 'none';
+            }
+
+            if (releaseNotesButton) {
+                releaseNotesButton.addEventListener('click', showReleaseNotes);
+            }
+
+            if (releaseNotesClose) {
+                releaseNotesClose.addEventListener('click', hideReleaseNotes);
+            }
+
+            if (releaseNotesOverlay) {
+                releaseNotesOverlay.addEventListener('click', hideReleaseNotes);
+            }
+
+            // Close on escape key
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape' && releaseNotesPopup.style.display === 'block') {
+                    hideReleaseNotes();
+                }
+            });
+        });
+    </script>
 
     <!-- Add task monitor script import -->
     <script type="module">

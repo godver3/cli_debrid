@@ -93,8 +93,8 @@ def format_notification_content(notifications, notification_type, notification_c
 
     def format_state_suffix(state, is_upgrade=False):
         """Return the appropriate suffix based on state"""
-        if state in ['Collected', 'Upgraded']:
-            return f"({'Upgraded' if is_upgrade else 'Collected'})"
+        if state == 'Collected' and is_upgrade:
+            return f"→ Upgraded"
         else:
             return f"→ {state}"
 
@@ -104,16 +104,18 @@ def format_notification_content(notifications, notification_type, notification_c
         year = item.get('year', '')
         version = item.get('version', '').strip('*')
         is_upgrade = item.get('is_upgrade', False)
-        media_type = item.get('media_type', 'movie')
+        media_type = item.get('type', 'movie')
         new_state = item.get('new_state', '')
         
-        # For both movies and TV shows, use NEW, arrow, or default icon
-        if is_upgrade and new_state == 'Collected':
-            prefix = '⬆️'
+        # Choose prefix based on state, upgrade status, and media type
+        if new_state in ['Checking', 'Sleeping', 'Upgrading']:
+            prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
+        elif is_upgrade and new_state == 'Collected':
+            prefix = EMOJIS['upgrade']  # Use upgrade symbol for upgrades
         elif new_state == 'Collected':
-            prefix = '🆕'
+            prefix = EMOJIS['new']  # Use NEW symbol for collected items
         else:
-            prefix = '🎬'
+            prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
         
         # Add version info for movies
         if media_type == 'movie':
@@ -128,7 +130,21 @@ def format_notification_content(notifications, notification_type, notification_c
         if season is not None and episode is not None:
             version = item.get('version', '')
             version_str = f" [{version}]" if version else ""
-            return f"    S{season:02d}E{episode:02d}{version_str}"
+            
+            # Add prefix based on state
+            new_state = item.get('new_state', '')
+            is_upgrade = item.get('is_upgrade', False)
+            
+            if new_state in ['Checking', 'Sleeping', 'Upgrading']:
+                prefix = EMOJIS['show']
+            elif is_upgrade and new_state == 'Collected':
+                prefix = EMOJIS['upgrade']
+            elif new_state == 'Collected':
+                prefix = EMOJIS['new']
+            else:
+                prefix = EMOJIS['show']
+                
+            return f"    {prefix} S{season:02d}E{episode:02d}{version_str}"
         return None
 
     # Group items by show/movie

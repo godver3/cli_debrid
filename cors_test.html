@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Test</title>
+    <link rel="icon" href="data:,">  <!-- Empty favicon to prevent 404 errors -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .success {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .debug-info {
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        .cookie-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CORS Test Page</h1>
+        <p>This page tests CORS access to the task_timings endpoint.</p>
+        <div class="important-notice" style="background-color: #ffebee; color: #c62828; padding: 15px; margin: 15px 0; border-radius: 4px;">
+            <strong>Important:</strong> You must first log in through the main application at:
+            <a href="" id="loginLink" target="_blank">Loading...</a>
+            <br>
+            <small>Default credentials: username <strong>admin</strong>, password <strong>admin</strong></small>
+        </div>
+        <p class="debug-info">Testing against server: <span id="serverUrl"></span></p>
+        <div class="cookie-info">
+            <strong>Current Cookies:</strong>
+            <pre id="cookieInfo">None</pre>
+        </div>
+        
+        <button onclick="checkLoginStatus()">1. Check Login Status</button>
+        <button onclick="testTaskTimings()">2. Test Task Timings Access</button>
+        <button onclick="testTaskTimingsAPI()">3. Test Task Timings API</button>
+        
+        <div id="status" class="status"></div>
+        <pre id="response"></pre>
+    </div>
+
+    <script>
+        // Get the target server URL from the current location
+        const targetServer = window.location.hostname === 'localhost' 
+            ? 'http://localhost:5000' 
+            : `${window.location.protocol}//${window.location.hostname.replace('cors-test', 'cli-debrid')}`;
+        
+        document.getElementById('serverUrl').textContent = targetServer;
+        document.getElementById('loginLink').href = `${targetServer}/auth/login`;
+        document.getElementById('loginLink').textContent = `${targetServer}/auth/login`;
+
+        // Set document.domain to allow cross-subdomain communication
+        try {
+            const domainParts = window.location.hostname.split('.');
+            if (domainParts.length > 2) {
+                document.domain = domainParts.slice(-2).join('.');
+            }
+        } catch (e) {
+            console.warn('Could not set document.domain:', e);
+        }
+
+        function updateCookieInfo() {
+            const cookieInfo = document.getElementById('cookieInfo');
+            const cookies = document.cookie;
+            
+            // Try to parse and display individual cookies
+            if (cookies) {
+                const cookieList = cookies.split(';').map(cookie => cookie.trim());
+                cookieInfo.textContent = 'Cookies found:\n' + cookieList.join('\n');
+            } else {
+                cookieInfo.textContent = 'No cookies present';
+            }
+        }
+
+        // Update cookie info every 2 seconds
+        updateCookieInfo();
+        setInterval(updateCookieInfo, 2000);
+
+        function showStatus(message, isError = false) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + (isError ? 'error' : 'success');
+        }
+
+        function showResponse(data) {
+            const responseDiv = document.getElementById('response');
+            if (typeof data === 'object') {
+                responseDiv.textContent = JSON.stringify(data, null, 2);
+            } else {
+                responseDiv.textContent = String(data).substring(0, 1000) + 
+                    (String(data).length > 1000 ? '...' : '');
+            }
+        }
+
+        async function checkLoginStatus() {
+            try {
+                const response = await fetch(`${targetServer}/auth/login`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'text/html',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    mode: 'cors'  // Explicitly set CORS mode
+                });
+                
+                if (response.redirected && response.url.includes('login')) {
+                    showStatus('Not logged in - please log in through the main application first', true);
+                    return false;
+                }
+                
+                const cookies = document.cookie;
+                if (!cookies) {
+                    showStatus('Warning: No cookies present after login. Cross-origin cookies might be blocked. Make sure you are using HTTPS if required.', true);
+                    console.log('Debug info:');
+                    console.log('Response headers:', [...response.headers.entries()]);
+                    console.log('Target server:', targetServer);
+                } else {
+                    showStatus('Successfully logged in');
+                }
+                return true;
+            } catch (error) {
+                showStatus(`Error checking login status: ${error.message}`, true);
+                console.error('Error:', error);
+                console.log('Target server:', targetServer);
+                return false;
+            }
+        }
+
+        async function testTaskTimings() {
+            if (!(await checkLoginStatus())) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${targetServer}/program_operation/task_timings`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'text/html',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+
+                const text = await response.text();
+                showStatus('Successfully accessed task_timings page');
+                showResponse(text);
+            } catch (error) {
+                showStatus(`Error accessing task_timings: ${error.message}`, true);
+                console.error('Error:', error);
+            }
+        }
+
+        async function testTaskTimingsAPI() {
+            if (!(await checkLoginStatus())) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${targetServer}/program_operation/api/task_timings`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+
+                const data = await response.json();
+                showStatus('Successfully accessed task_timings API');
+                showResponse(data);
+            } catch (error) {
+                showStatus(`Error accessing task_timings API: ${error.message}`, true);
+                console.error('Error:', error);
+            }
+        }
+    </script>
+</body>
+</html> 
