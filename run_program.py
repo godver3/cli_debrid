@@ -912,7 +912,10 @@ def run_program():
 
     if program_runner is None or not program_runner.is_running():
         program_runner = ProgramRunner()
-        #program_runner.start()  # This will now run the main loop directly
+        # Update the program runner in program_operation_routes
+        from routes.program_operation_routes import program_operation_bp
+        program_operation_bp.program_runner = program_runner
+        program_runner.start()  # Start the program runner
     else:
         logging.info("Program is already running")
     return program_runner

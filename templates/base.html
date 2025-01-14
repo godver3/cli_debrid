@@ -1164,6 +1164,246 @@
     .release-notes-popup::-webkit-scrollbar-thumb:hover {
         background: #555;
     }
+
+    /* Add task monitor styles */
+    .task-monitor-container {
+        position: fixed;
+        top: 50px;
+        right: 45px; /* Increased to make room for toggle button */
+        z-index: 999;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+    }
+
+    .task-monitor-container.hidden .current-task-display,
+    .task-monitor-container.hidden .task-monitor-dropdown {
+        display: none;
+    }
+
+    .task-monitor-toggle {
+        position: fixed;
+        top: 50px;
+        right: 20px;
+        background-color: #1a1a1a;
+        color: #888;
+        border: none;
+        padding: 8px;
+        border-radius: 0 0 4px 4px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        z-index: 1000;
+        width: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .task-monitor-toggle:hover {
+        color: #f4f4f4;
+        background-color: #2c2c2c;
+    }
+
+    .task-monitor-toggle i {
+        transition: transform 0.2s ease;
+    }
+
+    .task-monitor-container.hidden + .task-monitor-toggle i {
+        transform: rotate(180deg);
+    }
+
+    .current-task-display {
+        background-color: #1a1a1a;
+        padding: 10px 15px;
+        border-radius: 0 0 4px 4px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        cursor: pointer;
+        transition: background-color 0.2s;
+        min-width: 200px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-right: 5px; /* Add spacing between current task and toggle */
+    }
+
+    .current-task-display:hover {
+        background-color: #2c2c2c;
+    }
+
+    .current-task-name {
+        font-weight: 600;
+        color: #f4f4f4;
+        margin-right: 10px;
+    }
+
+    .current-task-time {
+        color: #888;
+        font-size: 0.9em;
+    }
+
+    .task-monitor-dropdown {
+        display: none;
+        position: relative;
+        top: 0;
+        background-color: #1a1a1a;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        width: 300px;
+        max-height: 400px;
+        overflow-y: auto;
+        margin-top: 5px;
+        padding: 0;
+    }
+
+    .task-monitor-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 15px;
+        border-bottom: 1px solid #333;
+        position: sticky;
+        top: 0;
+        background-color: #1a1a1a;
+        z-index: 1;
+    }
+
+    .task-monitor-title {
+        font-weight: 600;
+        color: #f4f4f4;
+        font-size: 1.1em;
+    }
+
+    .task-monitor-refresh {
+        background: none;
+        border: none;
+        color: #888;
+        cursor: pointer;
+        padding: 8px;
+        border-radius: 4px;
+        transition: all 0.2s ease;
+    }
+
+    .task-monitor-refresh:hover {
+        color: #f4f4f4;
+        background-color: #333;
+    }
+
+    .task-list {
+        padding: 10px 0;
+    }
+
+    .task-item {
+        padding: 12px 15px;
+        border-bottom: 1px solid #2c2c2c;
+        transition: background-color 0.2s ease;
+    }
+
+    .task-item:last-child {
+        border-bottom: none;
+    }
+
+    .task-item:hover {
+        background-color: #2c2c2c;
+    }
+
+    .task-name {
+        font-weight: 500;
+        color: #f4f4f4;
+        margin-bottom: 5px;
+    }
+
+    .task-timing {
+        display: flex;
+        justify-content: space-between;
+        color: #888;
+        font-size: 0.9em;
+    }
+
+    .task-timing span {
+        background-color: #333;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 0.85em;
+    }
+
+    .no-tasks {
+        padding: 20px;
+        text-align: center;
+        color: #888;
+        font-style: italic;
+    }
+
+    .error {
+        padding: 20px;
+        text-align: center;
+        color: #ff6b6b;
+    }
+
+    .loading {
+        padding: 20px;
+        text-align: center;
+        color: #888;
+    }
+
+    /* Task monitor scrollbar styles */
+    .task-monitor-dropdown::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .task-monitor-dropdown::-webkit-scrollbar-track {
+        background: #1a1a1a;
+        border-radius: 8px;
+    }
+
+    .task-monitor-dropdown::-webkit-scrollbar-thumb {
+        background: #444;
+        border-radius: 8px;
+        border: 2px solid #1a1a1a;
+    }
+
+    .task-monitor-dropdown::-webkit-scrollbar-thumb:hover {
+        background: #555;
+    }
+
+    /* Remove the task monitor button from the header controls */
+    .action-controls .task-monitor-button {
+        display: none;
+    }
+
+    @media (max-width: 768px) {
+        .task-monitor-container {
+            display: none;
+        }
+
+        .task-monitor-toggle {
+            display: none;
+        }
+        
+        .current-task-display,
+        .task-monitor-dropdown {
+            width: auto;
+        }
+    }
+
+    /* Add task monitor mobile styles */
+    @media (max-width: 776px) {
+        .task-monitor-button {
+            min-width: 40px;
+            min-height: 40px;
+            width: 40px;
+            height: 40px;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            touch-action: manipulation;
+        }
+        
+        .task-monitor-button:active {
+            transform: scale(0.98);
+        }
+    }
 </style>
 <!-- Add this near the top of the <body> tag -->
 <script>
@@ -1283,6 +1523,9 @@
                                 <span class="button-text" id="program-control-button">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                             </button>
                         {% endif %}
+                        <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
+                            <i class="fas fa-clipboard-list"></i>
+                        </button>
                     </div>
                 {% endif %}
             {% else %}
@@ -1291,18 +1534,35 @@
                         <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
                         <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                     </button>
+                    <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
+                        <i class="fas fa-clipboard-list"></i>
+                    </button>
                 </div>
-            {% endif %}
-            {% if is_user_system_enabled() %}
-                {% if current_user.is_authenticated %}
-                <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
-                    <i class="fas fa-clipboard-list"></i>
-                </button>
-                {% endif %}
             {% endif %}
         </div>
         {% endif %}
     </header>
+    <!-- Add task monitor container -->
+    <div class="task-monitor-container" id="taskMonitorContainer">
+        <div class="current-task-display" id="currentTaskDisplay">
+            <span class="current-task-name">Loading...</span>
+            <span class="current-task-time"></span>
+        </div>
+        <div class="task-monitor-dropdown" id="taskMonitorDropdown">
+            <div class="task-monitor-header">
+                <span class="task-monitor-title">Task Monitor</span>
+                <button class="task-monitor-refresh" id="refreshTasksButton">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+            <div class="task-list" id="taskList">
+                <div class="loading">Loading tasks...</div>
+            </div>
+        </div>
+    </div>
+    <button class="task-monitor-toggle" id="taskMonitorToggle">
+        <i class="fas fa-chevron-up"></i>
+    </button>
     <main>
         {% block content %}{% endblock %}
     </main>
@@ -1449,71 +1709,13 @@
 
     <!-- Add marked.js for Markdown parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Add task monitor script import -->
+    <script type="module">
+        import { initializeTaskMonitor } from "{{ url_for('static', filename='js/task_monitor.js') }}";
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeTaskMonitor();
+        });
+    </script>
 </body>
 </html>
-
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const isRateLimited = document.body.dataset.rateLimited === 'true';
-        const navMenu = document.getElementById('navMenu');
-        const programControlButton = document.getElementById('programControlButton');
-    
-        if (isRateLimited) {
-            // Hide nav menu and program control button
-            if (navMenu) navMenu.style.display = 'none';
-            if (programControlButton) programControlButton.style.display = 'none';
-        }
-    });
-</script>
-
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const releaseNotesButton = document.getElementById('releaseNotesButton');
-        const releaseNotesPopup = document.getElementById('releaseNotesPopup');
-        const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
-        const releaseNotesClose = document.getElementById('releaseNotesClose');
-        const releaseNotesContent = document.getElementById('releaseNotesContent');
-
-        function showReleaseNotes() {
-            releaseNotesPopup.style.display = 'block';
-            releaseNotesOverlay.style.display = 'block';
-            fetchReleaseNotes();
-        }
-
-        function hideReleaseNotes() {
-            releaseNotesPopup.style.display = 'none';
-            releaseNotesOverlay.style.display = 'none';
-        }
-
-        async function fetchReleaseNotes() {
-            try {
-                const response = await fetch('/base/api/release-notes');
-                const data = await response.json();
-
-                if (data.success) {
-                    const date = new Date(data.published_at).toLocaleDateString();
-                    releaseNotesContent.innerHTML = `
-                        <h4>${data.name || data.version}</h4>
-                        <div class="release-notes-body">${marked.parse(data.body || 'No release notes available.')}</div>
-                        <div class="release-notes-date">Released: ${date}</div>
-                    `;
-                } else {
-                    releaseNotesContent.innerHTML = '<p>Failed to load release notes.</p>';
-                }
-            } catch (error) {
-                releaseNotesContent.innerHTML = '<p>Error loading release notes.</p>';
-                console.error('Error:', error);
-            }
-        }
-
-        if (releaseNotesButton) {
-            releaseNotesButton.addEventListener('click', showReleaseNotes);
-        }
-        if (releaseNotesClose) {
-            releaseNotesClose.addEventListener('click', hideReleaseNotes);
-        }
-        if (releaseNotesOverlay) {
-            releaseNotesOverlay.addEventListener('click', hideReleaseNotes);
-        }
-    });
-</script>

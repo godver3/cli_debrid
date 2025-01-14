@@ -19,6 +19,10 @@ program_operation_bp = Blueprint('program_operation', __name__)
 
 program_runner = None
 
+def get_program_runner():
+    global program_runner
+    return program_runner
+
 def run_server():
     from extensions import app
     
