@@ -288,19 +288,21 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 # Restore current values
                 item['filled_by_file'] = current_filled_by_file
                 item['version'] = current_version
-                
-                # Remove the old file from Plex
-                from utilities.plex_functions import remove_symlink_from_plex
-                remove_symlink_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
 
                 if old_dest and os.path.lexists(old_dest):
                     try:
                         os.unlink(old_dest)
-                        logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+                        logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")                                            
                     except Exception as e:
                         logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
                 else:
                     logging.debug(f"[UPGRADE] No old symlink found at {old_dest}")
+
+                # Remove the old file from Plex
+                from utilities.plex_functions import remove_file_from_plex
+                # Sleep for 0.5 seconds to give plex time to remove the file
+                # time.sleep(0.5)
+                remove_file_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
 
             if not os.path.exists(dest_file):
                 success = create_symlink(source_file, dest_file)

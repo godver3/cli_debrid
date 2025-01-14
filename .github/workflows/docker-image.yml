@@ -62,8 +62,28 @@ jobs:
           name: windows-executable
           path: windows-executable
 
-      - name: Get version from version.txt
-        run: echo "VERSION=$(cat version.txt)" >> $GITHUB_ENV
+      - name: Get version and verify branch
+        id: version_check
+        run: |
+          VERSION=$(cat version.txt)
+          BRANCH_ID=$(cat branch_id)
+          CURRENT_BRANCH=${{ github.ref_name }}
+          
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          
+          # Verify branch_id matches current branch
+          if [ "$BRANCH_ID" != "$CURRENT_BRANCH" ]; then
+            echo "::error::Branch mismatch! branch_id contains '$BRANCH_ID' but current branch is '$CURRENT_BRANCH'"
+            exit 1
+          fi
+          
+          # For main/dev branches, verify the version tag doesn't already exist
+          if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "dev" ]]; then
+            if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+              echo "::error::Tag v$VERSION already exists!"
+              exit 1
+            fi
+          fi
 
       - name: Rename Windows executable
         shell: bash
@@ -80,6 +100,11 @@ jobs:
           tag_name: "v${{ env.VERSION }}"
           draft: false
           prerelease: ${{ github.ref_name == 'dev' }}
+          body: |
+            Version ${{ env.VERSION }} (${{ github.ref_name }} branch)
+            
+            This release was automatically created from the ${{ github.ref_name }} branch.
+            Commit: ${{ github.sha }}
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
 

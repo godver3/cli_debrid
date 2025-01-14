@@ -163,30 +163,35 @@ class CheckingQueue:
         from notifications import send_notifications
         from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
         from extensions import app
+        from database.database_reading import get_media_item_by_id
 
-        logging.debug(f"Sending notification for item {item['id']} - upgrading: {item.get('upgrading_from')}")
+        item['upgrading'] = get_media_item_by_id(item['id'])['upgrading']
+
+        logging.debug(f"Sending notification for item {item['id']} - upgrading: {item.get('upgrading')}")
 
         # Send notification for the state change
         try:
-            with app.app_context():
-                response = get_enabled_notifications_for_category('checking')
-                if response.json['success']:
-                    enabled_notifications = response.json['enabled_notifications']
-                    if enabled_notifications:
-                        notification_data = {
-                            'id': item['id'],
-                            'title': item.get('title', 'Unknown Title'),
-                            'type': item.get('type', 'unknown'),
-                            'year': item.get('year', ''),
-                            'version': item.get('version', ''),
-                            'season_number': item.get('season_number'),
-                            'episode_number': item.get('episode_number'),
-                            'new_state': 'Checking',
-                            'upgrading': True if item.get('upgrading_from') else False,
-                            'upgrading_from': item.get('upgrading_from')  # Pass the upgrading_from value to help with notification formatting
-                        }
-                        send_notifications([notification_data], enabled_notifications, notification_category='state_change')
-                        logging.debug(f"Sent notification for item {item['id']} - upgrading: {item.get('upgrading_from')}")
+            # Only send notification if this is not an upgrade
+            if not item.get('upgrading'):
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('checking')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            notification_data = {
+                                'id': item['id'],
+                                'title': item.get('title', 'Unknown Title'),
+                                'type': item.get('type', 'unknown'),
+                                'year': item.get('year', ''),
+                                'version': item.get('version', ''),
+                                'season_number': item.get('season_number'),
+                                'episode_number': item.get('episode_number'),
+                                'new_state': 'Checking',
+                                'is_upgrade': False,
+                                'upgrading_from': None
+                            }
+                            send_notifications([notification_data], enabled_notifications, notification_category='state_change')
+                            logging.debug(f"Sent notification for item {item['id']}")
         except Exception as e:
             logging.error(f"Failed to send state change notification: {str(e)}")
 

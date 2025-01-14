@@ -183,6 +183,8 @@ class UpgradingQueue:
         item_identifier = self.generate_identifier(item)
         logging.info(f"Performing hourly scrape for {item_identifier}")
 
+        update_media_item(item['id'], upgrading=True)
+
         is_multi_pack = self.check_multi_pack(item)
         is_multi_pack = False
 
@@ -326,8 +328,34 @@ class UpgradingQueue:
                 item['last_updated'] = datetime.now()
                 item['state'] = 'Checking'
 
-                # Optionally, add to collected notifications
-                # add_to_collected_notifications(item)
+                # Send notification for the upgrade
+                try:
+                    from notifications import send_notifications
+                    from routes.settings_routes import get_enabled_notifications_for_category
+                    from extensions import app
+
+                    with app.app_context():
+                        response = get_enabled_notifications_for_category('upgrading')
+                        if response.json['success']:
+                            enabled_notifications = response.json['enabled_notifications']
+                            if enabled_notifications:
+                                notification_data = {
+                                    'id': item['id'],
+                                    'title': item.get('title', 'Unknown Title'),
+                                    'type': item.get('type', 'unknown'),
+                                    'year': item.get('year', ''),
+                                    'version': item.get('version', ''),
+                                    'season_number': item.get('season_number'),
+                                    'episode_number': item.get('episode_number'),
+                                    'new_state': 'Checking',
+                                    'is_upgrade': True,
+                                    'upgrading_from': upgrading_from
+                                }
+                                send_notifications([notification_data], enabled_notifications, notification_category='collected')
+                                logging.debug(f"Sent upgrade notification for item {item['id']}")
+                except Exception as e:
+                    logging.error(f"Failed to send upgrade notification: {str(e)}")
+
             except Exception as e:
                 conn.rollback()
                 logging.error(f"Error updating item {self.generate_identifier(item)}: {str(e)}", exc_info=True)
