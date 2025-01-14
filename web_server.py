@@ -19,12 +19,6 @@ import sys
 
 from routes import register_blueprints, auth_bp
 
-app.config['SESSION_TYPE'] = 'filesystem'
-Session(app)
-app.secret_key = '9683650475'
-
-queue_manager = QueueManager()
-
 # Get db_content directory from environment variable with fallback
 db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 os.makedirs(db_directory, exist_ok=True)

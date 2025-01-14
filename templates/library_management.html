@@ -1,0 +1,572 @@
+{% extends "base.html" %}
+
+{% block title %}Library Management{% endblock %}
+
+{% block head %}
+<style>
+    .library-management {
+        padding: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+
+    .library-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .library-grid {
+        display: grid;
+        gap: 20px;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        margin-bottom: 40px;
+    }
+
+    .library-card {
+        background: var(--card-bg);
+        border-radius: 8px;
+        padding: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .library-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .library-card-title {
+        font-size: 1.1em;
+        font-weight: 600;
+        margin: 0;
+    }
+
+    .library-card-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .library-path {
+        font-family: monospace;
+        background: var(--code-bg);
+        padding: 8px;
+        border-radius: 4px;
+        word-break: break-all;
+        margin: 10px 0;
+    }
+
+    .library-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.9em;
+    }
+
+    .status-indicator {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+
+    .status-active {
+        background-color: var(--success-color);
+    }
+
+    .status-inactive {
+        background-color: var(--danger-color);
+    }
+
+    /* Symlink scan section styles */
+    .symlink-scan {
+        background: var(--card-bg);
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 20px;
+    }
+
+    .symlink-scan-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .symlink-stats {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+        padding: 15px;
+        background: var(--bg-secondary);
+        border-radius: 8px;
+    }
+
+    .stat-item {
+        flex: 1;
+        text-align: center;
+    }
+
+    .stat-value {
+        font-size: 1.5em;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+
+    .stat-label {
+        font-size: 0.9em;
+        color: var(--text-muted);
+    }
+
+    .broken-symlinks-list {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+
+    .broken-symlink-item {
+        padding: 15px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .broken-symlink-item:last-child {
+        border-bottom: none;
+    }
+
+    .broken-symlink-path {
+        font-family: monospace;
+        font-size: 0.9em;
+        margin-bottom: 5px;
+    }
+
+    .broken-symlink-target {
+        font-family: monospace;
+        font-size: 0.9em;
+        color: var(--danger-color);
+    }
+
+    .scan-status {
+        display: none;
+        align-items: center;
+        gap: 10px;
+        margin-left: 20px;
+    }
+
+    .scan-status.active {
+        display: flex;
+    }
+
+    .scan-spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--border-color);
+        border-top-color: var(--primary-color);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-muted);
+    }
+
+    /* Modal styles remain unchanged */
+    .modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        z-index: 1000;
+    }
+
+    .modal-content {
+        position: relative;
+        background: var(--card-bg);
+        margin: 10% auto;
+        padding: 20px;
+        width: 90%;
+        max-width: 500px;
+        border-radius: 8px;
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .modal-close {
+        cursor: pointer;
+        font-size: 1.5em;
+    }
+
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    .form-group input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--input-bg);
+        color: var(--text-color);
+    }
+
+    .path-validation {
+        margin-top: 5px;
+        font-size: 0.9em;
+    }
+
+    .validation-error {
+        color: var(--danger-color);
+    }
+
+    .validation-success {
+        color: var(--success-color);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="library-management">
+    <div class="library-controls">
+        <h2>Library Management</h2>
+        <button class="btn btn-primary" id="addLibraryBtn">
+            <i class="fas fa-plus"></i> Add Library
+        </button>
+    </div>
+
+    <div class="library-grid" id="libraryGrid">
+        <!-- Libraries will be populated here via JavaScript -->
+    </div>
+
+    <!-- Symlink Scan Section -->
+    <div class="symlink-scan">
+        <div class="symlink-scan-header">
+            <h3>Symlink Health Check</h3>
+            <div class="scan-controls">
+                <button class="btn btn-primary" id="scanSymlinksBtn">
+                    <i class="fas fa-search"></i> Scan for Broken Symlinks
+                </button>
+                <div class="scan-status" id="scanStatus">
+                    <div class="scan-spinner"></div>
+                    <span>Scanning...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="symlink-stats" id="symlinkStats" style="display: none;">
+            <div class="stat-item">
+                <div class="stat-value" id="totalSymlinks">0</div>
+                <div class="stat-label">Total Symlinks</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="brokenSymlinks">0</div>
+                <div class="stat-label">Broken Symlinks</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="healthScore">100%</div>
+                <div class="stat-label">Health Score</div>
+            </div>
+        </div>
+
+        <div class="broken-symlinks-list" id="brokenSymlinksList" style="display: none;">
+            <!-- Broken symlinks will be populated here -->
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Library Modal -->
+<div class="modal" id="libraryModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitle">Add Library</h3>
+            <span class="modal-close" id="closeModal">&times;</span>
+        </div>
+        <form id="libraryForm">
+            <div class="form-group">
+                <label for="libraryName">Library Name</label>
+                <input type="text" id="libraryName" name="name" required>
+            </div>
+            <div class="form-group">
+                <label for="libraryPath">Library Path</label>
+                <input type="text" id="libraryPath" name="path" required>
+                <div class="path-validation" id="pathValidation"></div>
+            </div>
+            <div class="form-group">
+                <button type="submit" class="btn btn-primary">Save Library</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    // Existing library management functionality
+    document.addEventListener('DOMContentLoaded', () => {
+        loadLibraries();
+        setupEventListeners();
+    });
+
+    function setupEventListeners() {
+        const addLibraryBtn = document.getElementById('addLibraryBtn');
+        const closeModal = document.getElementById('closeModal');
+        const libraryForm = document.getElementById('libraryForm');
+        const libraryPath = document.getElementById('libraryPath');
+        const scanSymlinksBtn = document.getElementById('scanSymlinksBtn');
+
+        addLibraryBtn.addEventListener('click', () => openModal());
+        closeModal.addEventListener('click', () => closeModal());
+        libraryForm.addEventListener('submit', handleLibrarySubmit);
+        libraryPath.addEventListener('input', debounce(validatePath, 500));
+        scanSymlinksBtn.addEventListener('click', scanForBrokenSymlinks);
+    }
+
+    async function loadLibraries() {
+        try {
+            const response = await fetch('/library_management/api/libraries');
+            const libraries = await response.json();
+            renderLibraries(libraries);
+        } catch (error) {
+            console.error('Error loading libraries:', error);
+        }
+    }
+
+    function renderLibraries(libraries) {
+        const grid = document.getElementById('libraryGrid');
+        grid.innerHTML = libraries.map(library => `
+            <div class="library-card">
+                <div class="library-card-header">
+                    <h3 class="library-card-title">${library.name}</h3>
+                    <div class="library-card-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="editLibrary(${library.id})">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteLibrary(${library.id})">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="library-path">${library.path}</div>
+                <div class="library-status">
+                    <span class="status-indicator ${library.active ? 'status-active' : 'status-inactive'}"></span>
+                    ${library.active ? 'Active' : 'Inactive'}
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // New symlink scanning functionality
+    async function scanForBrokenSymlinks() {
+        const scanStatus = document.getElementById('scanStatus');
+        const symlinkStats = document.getElementById('symlinkStats');
+        const brokenSymlinksList = document.getElementById('brokenSymlinksList');
+        
+        try {
+            // Show scanning status
+            scanStatus.classList.add('active');
+            symlinkStats.style.display = 'none';
+            brokenSymlinksList.style.display = 'none';
+            
+            const response = await fetch('/library_management/api/libraries/scan-broken', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({})
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const results = await response.json();
+            
+            // Update stats
+            document.getElementById('totalSymlinks').textContent = results.total_symlinks;
+            document.getElementById('brokenSymlinks').textContent = results.broken_count;
+            
+            // Calculate and update health score
+            const healthScore = results.total_symlinks > 0 
+                ? Math.round(((results.total_symlinks - results.broken_count) / results.total_symlinks) * 100)
+                : 100;
+            document.getElementById('healthScore').textContent = `${healthScore}%`;
+            
+            // Show stats
+            symlinkStats.style.display = 'flex';
+            
+            // Render broken symlinks list
+            if (results.broken_count > 0) {
+                brokenSymlinksList.innerHTML = results.broken_symlinks.map(symlink => `
+                    <div class="broken-symlink-item">
+                        <div class="broken-symlink-path">
+                            <strong>Symlink:</strong> ${symlink.relative_path}
+                        </div>
+                        <div class="broken-symlink-target">
+                            <strong>Target:</strong> ${symlink.target_path}
+                        </div>
+                    </div>
+                `).join('');
+                brokenSymlinksList.style.display = 'block';
+            } else {
+                brokenSymlinksList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-check-circle"></i>
+                        <p>No broken symlinks found!</p>
+                    </div>
+                `;
+                brokenSymlinksList.style.display = 'block';
+            }
+            
+        } catch (error) {
+            console.error('Error scanning for broken symlinks:', error);
+            alert('Error scanning for broken symlinks: ' + error.message);
+            symlinkStats.style.display = 'none';
+            brokenSymlinksList.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <p>Error scanning for broken symlinks</p>
+                    <small>${error.message}</small>
+                </div>
+            `;
+            brokenSymlinksList.style.display = 'block';
+        } finally {
+            scanStatus.classList.remove('active');
+        }
+    }
+
+    // Existing utility functions
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    async function validatePath() {
+        const pathInput = document.getElementById('libraryPath');
+        const validation = document.getElementById('pathValidation');
+        
+        try {
+            const response = await fetch('/library_management/api/libraries/verify', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ path: pathInput.value })
+            });
+            
+            const result = await response.json();
+            
+            if (result.valid) {
+                validation.className = 'path-validation validation-success';
+                validation.textContent = 'Path is valid';
+            } else {
+                validation.className = 'path-validation validation-error';
+                validation.textContent = 'Invalid path';
+            }
+        } catch (error) {
+            validation.className = 'path-validation validation-error';
+            validation.textContent = 'Error validating path';
+        }
+    }
+
+    async function handleLibrarySubmit(event) {
+        event.preventDefault();
+        const formData = new FormData(event.target);
+        const data = Object.fromEntries(formData);
+        
+        try {
+            const response = await fetch('/library_management/api/libraries', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            });
+            
+            if (response.ok) {
+                closeModal();
+                loadLibraries();
+            } else {
+                const error = await response.json();
+                alert(error.message || 'Error saving library');
+            }
+        } catch (error) {
+            console.error('Error saving library:', error);
+            alert('Error saving library');
+        }
+    }
+
+    function openModal(library = null) {
+        const modal = document.getElementById('libraryModal');
+        const form = document.getElementById('libraryForm');
+        const title = document.getElementById('modalTitle');
+        
+        title.textContent = library ? 'Edit Library' : 'Add Library';
+        form.reset();
+        
+        if (library) {
+            form.name.value = library.name;
+            form.path.value = library.path;
+        }
+        
+        modal.style.display = 'block';
+    }
+
+    function closeModal() {
+        const modal = document.getElementById('libraryModal');
+        modal.style.display = 'none';
+    }
+
+    async function deleteLibrary(id) {
+        if (!confirm('Are you sure you want to delete this library?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/library_management/api/libraries/${id}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadLibraries();
+            } else {
+                const error = await response.json();
+                alert(error.message || 'Error deleting library');
+            }
+        } catch (error) {
+            console.error('Error deleting library:', error);
+            alert('Error deleting library');
+        }
+    }
+
+    window.editLibrary = editLibrary;
+    window.deleteLibrary = deleteLibrary;
+    window.closeModal = closeModal;
+</script>
+{% endblock %} 

@@ -1,0 +1,1386 @@
+/* CSS Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+    /* Scrollbar styles */
+::-webkit-scrollbar {
+    width: 16px;
+}
+
+::-webkit-scrollbar-track {
+    background: #2c2c2c;
+    border-left: 1px solid #3d3d3d;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #5a5a5a;
+    border: 3px solid #2c2c2c;
+    border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #707070;
+}
+
+/* For Firefox */
+* {
+    scrollbar-width: auto;
+    scrollbar-color: #5a5a5a #2c2c2c;
+}
+
+
+body { 
+    font-family: Arial, sans-serif; 
+    line-height: 1.6; 
+    color: #f4f4f4; 
+    background: linear-gradient(to bottom, #333 0%, #333 60%, #000 80%) fixed;
+    background-color: #000;  
+    margin: 0;
+    padding-top: 60px;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.container { 
+    width: 95%; 
+    max-width: 1200px;
+    margin: 0 auto; 
+    padding: 20px; 
+    flex-grow: 1;
+}
+
+/* Header layout */
+header {
+    background-color: #1a1a1a;
+    color: white;
+    padding: 5px 20px; 
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.7em; 
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    height: 50px; 
+}
+
+.header-content {
+    display: flex;
+    align-items: center;
+}
+
+.header-icon {
+    width: 25px; 
+    height: 25px; 
+    margin-right: 15px; 
+}
+
+.title-version {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+h1 {
+    font-size: 1.4em;
+    margin: 0;
+}
+
+/* Navigation styles */
+nav {
+    display: flex;
+    align-items: center;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 100%;
+}
+
+nav ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    height: 100%;
+    align-items: center;
+}
+
+nav ul li {
+    margin-right: 10px;
+    position: relative;
+    height: 100%; /* Fixed height */
+    display: flex;
+    align-items: center;
+}
+
+nav ul li a {
+    color: white;
+    text-decoration: none;
+    font-size: 1.3em;
+    padding: 5px 8px;
+    transition: color 0.3s ease;
+    display: flex;
+    align-items: center;
+    height: 100%; /* Make the anchor fill the li height */
+}
+
+/* Hover effect for menu items */
+nav ul li a::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 2px;
+    bottom: -2px;
+    left: 0;
+    background-color: #FFA500; /* You can change this color as needed */
+    transform: scaleX(0);
+    transition: transform 0.3s ease;
+}
+
+nav ul li a:hover {
+    color: #FFA500; /* Change text color on hover */
+}
+
+nav ul li a:hover::after {
+    transform: scaleX(1);
+}
+
+.controls-group {
+    display: flex;
+    align-items: center;
+}
+
+.user-controls, .program-controls {
+    display: flex;
+    align-items: center;
+}
+
+.username {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    margin-right: 5px;
+    font-weight: bold;
+}
+
+.version-info {
+    font-size: 0.8em;
+    color: #888;
+}
+
+/* Hamburger menu styles */
+.hamburger-menu {
+    display: none;
+}
+
+
+
+.header-controls {
+    display: flex;
+    align-items: center;
+}
+
+.user-info {
+    /* margin-right: 15px; */
+    margin-left: 10px;
+    margin-bottom: 20px;   
+}
+
+.action-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.action-controls .icon-button, .start-program {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #4CAF50;
+    color: white;
+    text-decoration: none;
+    border: none;
+    border-radius: 3px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 0.3s, opacity 0.3s;
+    padding: 8px 12px;
+    min-width: 120px;
+    height: 36px;
+}
+
+.action-controls .icon-button i, .start-program i {
+    margin-right: 5px;
+}
+
+#programControlButton.start-program {
+    background-color: #4CAF50;
+}
+
+#programControlButton.stop-program,
+#programControlButton[data-status="Running"] {
+    background-color: #f44336;
+}
+
+.action-controls .icon-button:hover, .start-program:hover {
+    opacity: 0.9;
+}
+
+/* Database table styles */
+.table-container {
+    overflow-x: auto;
+    margin-top: 20px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: #2c2c2c;
+    color: #f4f4f4;
+}
+
+th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #444;
+}
+
+th {
+    background-color: #1a1a1a;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+tr:nth-child(even) {
+    background-color: #333;
+}
+
+tr:hover {
+    background-color: #444;
+}
+
+/* Responsive table */
+@media screen and (max-width: 600px) {
+    table {
+        font-size: 14px;
+    }
+
+    th, td {
+        padding: 8px;
+    }
+}
+
+/* Column selector styles */
+#column-selector-wrapper {
+    margin-bottom: 20px;
+}
+
+.toggle-button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+#column-selector {
+    background-color: #2c2c2c;
+    padding: 15px;
+    border-radius: 4px;
+    margin-top: 10px;
+}
+
+#column-selector.hidden {
+    display: none;
+}
+
+.column-selector-container {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 15px;
+}
+
+.column-list {
+    flex: 1;
+}
+
+.column-list select {
+    width: 100%;
+    height: 150px;
+    background-color: #333;
+    color: #f4f4f4;
+    border: 1px solid #444;
+}
+
+.column-buttons {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 15px;
+}
+
+.column-buttons button {
+    margin: 5px 0;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+#update-columns {
+    background-color: #008CBA;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+/* Filter and sort styles */
+#filter-sort {
+    margin-bottom: 20px;
+    background-color: #2c2c2c;
+    padding: 15px;
+    border-radius: 4px;
+}
+
+#filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+#filter-form label {
+    margin-right: 5px;
+}
+
+#filter-form select,
+#filter-form input[type="text"] {
+    padding: 5px;
+    border-radius: 4px;
+    border: 1px solid #444;
+    background-color: #333;
+    color: #f4f4f4;
+}
+
+#filter-form button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+/* Pagination styles */
+.pagination {
+    margin: 20px 0;
+    text-align: center;
+}
+
+.pagination a {
+    color: #f4f4f4;
+    padding: 8px 16px;
+    text-decoration: none;
+    transition: background-color .3s;
+    border: 1px solid #444;
+    margin: 0 4px;
+    border-radius: 4px;
+}
+
+.pagination a.active {
+    background-color: #4CAF50;
+    color: white;
+    border: 1px solid #4CAF50;
+}
+
+.pagination a:hover:not(.active) {
+    background-color: #444;
+}
+
+/* Media Queries */
+@media (max-width: 1360px) {
+    .user-info {
+        display: none;  /* Hide the welcome message */
+    }
+
+    .header-content {
+        flex: 0 0 auto;
+    }
+    
+    nav {
+        flex: 1;
+        justify-content: center;
+    }
+    
+    .header-controls {
+        flex: 0 0 auto;
+        position: relative;
+        z-index: 1001;
+    }
+
+    .action-controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    /* Preserve button text on larger screens */
+    @media (min-width: 777px) {
+        .action-controls .icon-button, 
+        .action-controls .start-program,
+        .action-controls #programControlButton {
+            width: 36px;
+            height: 36px;
+            min-width: 36px;
+            padding: 0;
+        }
+
+        .button-text {
+            display: none;
+        }
+
+        .action-controls .icon-button i, 
+        .action-controls .start-program i,
+        .action-controls #programControlButton i {
+            margin-right: 0;
+        }
+    }
+}
+
+/* Mobile-specific styles */
+@media (max-width: 776px) {
+    .header-controls {
+        margin-right: 0px;  /* Increased right margin */
+    }
+
+    .action-controls {
+        display: flex;
+        gap: 0px;  /* Reduced gap between buttons */
+        align-items: center;
+    }
+
+    .action-controls .icon-button, 
+    .action-controls .start-program,
+    .action-controls #programControlButton {
+        min-width: 40px;  /* Slightly smaller */
+        min-height: 40px;
+        width: 40px;
+        height: 40px;
+        padding: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        touch-action: manipulation;
+    }
+
+    /* Logout button - red */
+    #logout_button {
+        background-color: #dc3545;
+        border: 1px solid #dc3545;
+    }
+    #logout_button:active {
+        background-color: #bd2130;
+    }
+
+    /* Program control button - conditional colors */
+    #programControlButton.start-program {
+        background-color: #28a745;
+        border: 1px solid #28a745;
+    }
+    #programControlButton.start-program:active {
+        background-color: #218838;
+    }
+    #programControlButton.stop-program {
+        background-color: #dc3545;
+        border: 1px solid #dc3545;
+    }
+    #programControlButton.stop-program:active {
+        background-color: #bd2130;
+    }
+
+    .action-controls .icon-button:active,
+    .action-controls .start-program:active,
+    .action-controls #programControlButton:active {
+        transform: scale(0.98);
+    }
+
+    .button-text {
+        display: none;
+    }
+
+    .action-controls .icon-button i, 
+    .action-controls .start-program i,
+    .action-controls #programControlButton i {
+        margin-right: 0;
+        color: white;
+    }
+}
+
+/* Desktop styles */
+@media (min-width: 777px) {
+    .action-controls .icon-button, 
+    .action-controls .start-program,
+    .action-controls #programControlButton {
+        min-width: 120px;  /* Set minimum width */
+        height: 36px;
+        padding: 0 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;  /* Center content */
+        border-radius: 4px;
+        transition: all 0.2s;
+        color: white;
+    }
+
+    /* Exception for release notes button */
+    .action-controls .icon-button#releaseNotesButton,
+    #releaseNotesButton {
+        min-width: 40px;
+        width: 36px;
+        height: 36px;
+        padding: 8px;
+        background-color: #ffffff00;
+        border-radius: 3px;
+        border: none;
+        margin-left: 6px;
+        color: #ffffff;
+        cursor: pointer;
+    }
+
+    #releaseNotesButton:hover {
+        color: #f0f0f0;
+    }
+
+    /* Logout button hover state */
+    #logout_button {
+        background-color: #dc3545;
+        border: 1px solid #dc3545;
+    }
+    #logout_button:hover {
+        background-color: #bd2130;
+    }
+
+    /* Program control button states */
+    #programControlButton.start-program {
+        background-color: #28a745;
+        border: 1px solid #28a745;
+    }
+    #programControlButton.start-program:hover {
+        background-color: #218838;
+    }
+    #programControlButton.stop-program {
+        background-color: #dc3545;
+        border: 1px solid #dc3545;
+    }
+    #programControlButton.stop-program:hover {
+        background-color: #bd2130;
+    }
+
+    .button-text {
+        display: inline;
+        margin-left: 8px;
+        font-size: 14px;
+        white-space: nowrap;
+        color: white;
+    }
+
+    /* Hide button text for release notes button */
+    #releaseNotesButton .button-text {
+        display: none;
+    }
+
+    .action-controls .icon-button i, 
+    .action-controls .start-program i,
+    .action-controls #programControlButton i {
+        margin-right: 0;
+        color: white;
+    }
+
+    .action-controls {
+        gap: 12px;  /* Increase gap between buttons */
+    }
+}
+@media (max-width: 1360px) and (min-width: 777px) {
+    .header-content {
+        flex: 0 0 auto;
+    }
+    
+    nav {
+        left: calc(50%); 
+    }
+    
+    .header-controls {
+        flex: 0 0 auto;
+    }
+}
+
+
+@media (max-width: 776px) {
+    nav ul {
+        flex-direction: column;
+        position: absolute;
+        top: 50px;
+        left: 0;
+        width: 100%;
+        background-color: #1a1a1a;
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease-out;
+        z-index: 1000;
+    }
+
+    nav ul.show {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    nav ul li {
+        width: 100%;
+        margin: 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .menu-group {
+        width: 100%;
+    }
+
+    .dropdown {
+        position: relative;
+        display: none;
+        width: 100%;
+        background-color: #2a2a2a;
+        transition: all 0.3s ease;
+    }
+
+    .dropdown.show {
+        display: block;
+        animation: slideDown 0.3s ease forwards;
+    }
+
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .dropdown li {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .dropdown li:last-child {
+        border-bottom: none;
+    }
+
+    .dropdown li a {
+        padding: 12px 20px 12px 40px;
+        width: 100%;
+        display: flex;
+        align-items: center;
+        color: #f4f4f4;
+        transition: all 0.2s ease;
+        font-size: 0.95em;
+        opacity: 0.9;
+    }
+
+    .dropdown li a:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+        padding-left: 45px;
+    }
+
+    .dropdown li a:active {
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .group-title {
+        width: 100%;
+        padding: 15px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background-color: #1a1a1a;
+        color: #fff;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+
+    .group-title i {
+        transition: transform 0.3s ease;
+    }
+
+    .menu-group:hover .group-title {
+        color: #FFA500; /* Orange text for group title when dropdown is open */
+    }
+
+    .menu-group .group-title.active {
+        background-color: #2a2a2a;
+        color: #FFA500;
+    }
+
+    .menu-group .group-title.active i {
+        transform: rotate(180deg);
+    }
+
+    /* Ripple effect for clicks */
+    .dropdown li a {
+        position: relative;
+        overflow: hidden;
+    }
+
+    .dropdown li a::after {
+        content: '';
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
+        background: radial-gradient(circle, rgba(255,255,255,.2) 0%, transparent 100%);
+        transform: scale(0);
+        transition: transform 0.3s ease-out;
+        pointer-events: none;
+    }
+
+    .dropdown li a:active::after {
+        transform: scale(2);
+        transition: 0s;
+    }
+
+    .hamburger-menu {
+        display: block;
+        cursor: pointer;
+        padding: 10px;
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1002;
+    }
+
+    .hamburger-menu .bar {
+        width: 25px;
+        height: 3px;
+        background-color: #fff;
+        margin: 5px 0;
+        transition: all 0.3s ease;
+        border-radius: 2px;
+    }
+
+    .hamburger-menu.active .bar:nth-child(1) {
+        transform: rotate(-45deg) translate(-5px, 6px);
+    }
+
+    .hamburger-menu.active .bar:nth-child(2) {
+        opacity: 0;
+    }
+
+    .hamburger-menu.active .bar:nth-child(3) {
+        transform: rotate(45deg) translate(-5px, -6px);
+    }
+
+    nav {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+    }
+
+    /* Exception for release notes button */
+    .action-controls .icon-button#releaseNotesButton,
+    #releaseNotesButton {
+        display: none;
+    }
+
+}
+
+body[data-is-onboarding="true"] .navMenu {
+    display: none;
+}
+
+.tooltip {
+    position: fixed;
+    background-color: #333;
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+    z-index: 9999; /* Ensure it's above other elements */
+    max-width: 200px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 300ms ease-in;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Optional: adds a subtle shadow */
+}
+
+.alert {
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+}
+
+.alert-danger {
+    color: #721c24;
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+}
+
+.blocked-domains-list {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.blocked-domains-list li {
+    background-color: #2c2c2c;
+    margin-bottom: 10px;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.action-buttons {
+    margin-top: 30px;
+}
+
+.btn {
+    display: inline-block;
+    font-weight: 400;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: middle;
+    user-select: none;
+    border: 1px solid transparent;
+    padding: 0.375rem 0.75rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    border-radius: 0.25rem;
+    transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    text-decoration: none;
+    margin-right: 10px;
+}
+
+.btn-primary {
+    color: #fff;
+    background-color: #007bff;
+    border-color: #007bff;
+}
+
+.btn-secondary {
+    color: #fff;
+    background-color: #6c757d;
+    border-color: #6c757d;
+}
+
+.btn:hover {
+    opacity: 0.9;
+}
+
+/* Add this new style for the main content */
+main {
+    position: relative;
+    z-index: 1; /* Ensure main content is below the nav menu */
+}
+
+/* Add this to your base.html style section, after the h1 styles (around line 134) */
+h2 {
+    font-size: 1.4em;
+    color: #f4f4f4;
+    margin-bottom: 1rem;
+    font-family: Arial, sans-serif;
+}
+
+/* Add these styles */
+.menu-group {
+    position: relative;
+}
+
+.menu-group .group-title {
+    padding-right: 20px; /* Space for caret */
+}
+
+.dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: #1a1a1a;
+    min-width: 160px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    z-index: 1001;
+    border-radius: 4px;
+}
+
+.dropdown li {
+    width: 100%;
+}
+
+.dropdown li a {
+    padding: 12px 16px;
+    display: block;
+    white-space: nowrap;
+    background-color: #1a1a1a;
+    width: 100%; /* Ensure the anchor takes full width */
+    font-size: small;
+}
+
+.dropdown li a:hover {
+    background-color: #333;
+    color: #FFA500;
+}
+
+.menu-group:hover .dropdown {
+    display: block;
+}
+
+.group-title i {
+    margin-left: 5px;
+}
+
+.dropdown li a::after {
+    display: none; /* Remove the underline effect from dropdown items */
+}
+
+.menu-group:hover .group-title {
+    color: #FFA500; /* Orange text for group title when dropdown is open */
+}
+
+/* Mobile-specific styles */
+@media (max-width: 768px) {
+    .icon-button {
+        min-width: 44px;  /* Minimum touch target size */
+        min-height: 44px;
+        padding: 12px 16px;
+        margin: 4px;
+        touch-action: manipulation;  /* Optimize for touch */
+    }
+    
+    .button-text {
+        font-size: 16px;  /* Larger text on mobile */
+    }
+    
+    .action-controls {
+        display: flex;
+        gap: 0px;  /* More spacing between buttons on mobile */
+    }
+}
+
+/* Release Notes Popup Styles */
+.release-notes-popup {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #1a1a1a;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 1100;
+    max-width: 800px;
+    width: 90%;
+    max-height: 85vh;
+    overflow-y: auto;
+}
+
+.release-notes-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.8);
+    z-index: 1099;
+    backdrop-filter: blur(3px);
+}
+
+.release-notes-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #333;
+}
+
+.release-notes-title {
+    font-size: 1.5em;
+    color: #fff;
+    margin: 0;
+    font-weight: 600;
+}
+
+.release-notes-close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 1.8em;
+    cursor: pointer;
+    padding: 5px;
+    transition: color 0.2s ease;
+}
+
+.release-notes-close:hover {
+    color: #fff;
+}
+
+.release-notes-content {
+    color: #f4f4f4;
+    line-height: 1.8;
+}
+
+.release-notes-content h4 {
+    color: #4CAF50;
+    font-size: 1.2em;
+    margin-bottom: 15px;
+}
+
+.release-notes-content h3 {
+    color: #888;
+    font-size: 1em;
+    font-weight: normal;
+    margin: 5px 0 0 0;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #333;
+}
+
+.release-notes-body {
+    padding: 0 0 10px 0;
+    white-space: pre-line;
+}
+
+.release-notes-date {
+    color: #666;
+    font-size: 0.9em;
+    margin-top: 20px;
+    text-align: right;
+    font-style: italic;
+}
+
+@media (max-width: 768px) {
+    .release-notes-popup {
+        width: 95%;
+        padding: 20px;
+        max-height: 90vh;
+    }
+
+    .release-notes-title {
+        font-size: 1.3em;
+    }
+
+    .release-notes-content {
+        font-size: 0.95em;
+    }
+}
+
+/* Custom scrollbar for release notes */
+.release-notes-popup::-webkit-scrollbar {
+    width: 10px;
+}
+
+.release-notes-popup::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 6px;
+}
+
+.release-notes-popup::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 6px;
+    border: 2px solid #1a1a1a;
+}
+
+.release-notes-popup::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Add task monitor styles */
+.task-monitor-container {
+    position: fixed;
+    top: 50px;
+    right: calc(80px + env(safe-area-inset-right, 0px));
+    z-index: 999;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    transform-origin: top;
+}
+
+.task-monitor-container.visible {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.task-monitor-container.hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.task-monitor-dropdown {
+    position: relative;
+    top: 0;
+    background-color: #1a1a1a;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    width: 300px;
+    max-height: 400px;
+    overflow-y: auto;
+    margin-top: 5px;
+    padding: 0;
+    opacity: 1;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.task-monitor-container.hidden .task-monitor-dropdown,
+.task-monitor-container.hidden .current-task-display {
+    transform: translateY(-20px);
+    opacity: 0;
+}
+
+.task-monitor-toggle {
+    position: fixed;
+    top: 50px;
+    right: calc(40px + env(safe-area-inset-right, 0px));
+    background-color: #1a1a1a;
+    color: #888;
+    border: none;
+    padding: 8px;
+    border-radius: 0 0 4px 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 1000;
+    width: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.task-monitor-toggle:hover {
+    color: #f4f4f4;
+    background-color: #2c2c2c;
+}
+
+.task-monitor-toggle i {
+    transition: transform 0.3s ease;
+}
+
+.task-monitor-container.hidden + .task-monitor-toggle i {
+    transform: rotate(180deg);
+}
+
+.current-task-display {
+    background-color: #1a1a1a;
+    padding: 10px 15px;
+    border-radius: 0 0 4px 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    transition: background-color 0.2s;
+    min-width: 200px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-right: 5px; /* Add spacing between current task and toggle */
+}
+
+.current-task-display:hover {
+    background-color: #2c2c2c;
+}
+
+.current-task-name {
+    font-weight: 600;
+    color: #f4f4f4;
+    margin-right: 10px;
+}
+
+.current-task-time {
+    color: #888;
+    font-size: 0.9em;
+}
+
+.task-monitor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    border-bottom: 1px solid #333;
+    position: sticky;
+    top: 0;
+    background-color: #1a1a1a;
+    z-index: 1;
+}
+
+.task-monitor-title {
+    font-weight: 600;
+    color: #f4f4f4;
+    font-size: 1.1em;
+}
+
+.task-monitor-refresh {
+    display: none;
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.task-monitor-refresh:hover {
+    color: #f4f4f4;
+    background-color: #333;
+}
+
+.task-list {
+    padding: 10px 0;
+}
+
+.task-item {
+    padding: 12px 15px;
+    border-bottom: 1px solid #2c2c2c;
+    transition: background-color 0.2s ease;
+}
+
+.task-item:last-child {
+    border-bottom: none;
+}
+
+.task-item:hover {
+    background-color: #2c2c2c;
+}
+
+.task-name {
+    font-weight: 500;
+    color: #f4f4f4;
+    margin-bottom: 5px;
+}
+
+.task-timing {
+    display: flex;
+    justify-content: space-between;
+    color: #888;
+    font-size: 0.9em;
+}
+
+.task-timing span {
+    background-color: #333;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.85em;
+}
+
+.no-tasks {
+    padding: 20px;
+    text-align: center;
+    color: #888;
+    font-style: italic;
+}
+
+.error {
+    padding: 20px;
+    text-align: center;
+    color: #ff6b6b;
+}
+
+.loading {
+    padding: 20px;
+    text-align: center;
+    color: #888;
+}
+
+/* Task monitor scrollbar styles */
+.task-monitor-dropdown::-webkit-scrollbar {
+    width: 8px;
+}
+
+.task-monitor-dropdown::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 8px;
+}
+
+.task-monitor-dropdown::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 8px;
+    border: 2px solid #1a1a1a;
+}
+
+.task-monitor-dropdown::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Remove the task monitor button from the header controls */
+.action-controls .task-monitor-button {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .task-monitor-container {
+        display: none;
+    }
+
+    .task-monitor-toggle {
+        display: none;
+    }
+    
+    .current-task-display,
+    .task-monitor-dropdown {
+        width: auto;
+    }
+}
+
+/* Add task monitor mobile styles */
+@media (max-width: 776px) {
+    .task-monitor-button {
+        min-width: 40px;
+        min-height: 40px;
+        width: 40px;
+        height: 40px;
+        padding: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        touch-action: manipulation;
+    }
+    
+    .task-monitor-button:active {
+        transform: scale(0.98);
+    }
+}

@@ -1,3 +1,5 @@
+import { showPopup, POPUP_TYPES } from './notifications.js';
+
 // Declare settingsData globally
 let settingsData = {};
 
@@ -74,7 +76,8 @@ function togglePlexSection() {
     }
 }
 
-function updateSettings() {
+// Export the updateSettings function
+export function updateSettings() {
     const settingsData = {};
     const inputs = document.querySelectorAll('#settingsForm input, #settingsForm select, #settingsForm textarea');
     
