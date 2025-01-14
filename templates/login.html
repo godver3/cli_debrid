@@ -70,6 +70,21 @@
         background-color: #45a049;
     }
 
+    .remember-me {
+        display: flex;
+        align-items: center;
+        margin-bottom: 15px;
+        color: #f4f4f4;
+    }
+
+    .remember-me input[type="checkbox"] {
+        margin-right: 8px;
+    }
+
+    .remember-me label {
+        font-size: 14px;
+    }
+
     .flash-message {
         max-width: 300px;
         margin: 50px auto;
@@ -95,6 +110,10 @@
     <form method="POST">
         <input type="text" name="username" placeholder="Username" required>
         <input type="password" name="password" placeholder="Password" required>
+        <div class="remember-me">
+            <input type="checkbox" name="remember_me" id="remember_me">
+            <label for="remember_me">Remember me</label>
+        </div>
         <input type="submit" value="Login">
     </form>
     {% if show_login_reminder %}

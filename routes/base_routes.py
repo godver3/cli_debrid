@@ -162,7 +162,7 @@ def get_current_task():
                 'tasks': tasks_info
             })
         else:
-            logging.debug("Program not running or not initialized")
+            # logging.debug("Program not running or not initialized")
             return jsonify({
                 'success': True,
                 'running': False,

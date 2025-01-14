@@ -56,8 +56,8 @@ def load_user(user_id):
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
-    
-    # logging.debug("Entering login route")
+    logging.debug("Entering login route")
+    logging.debug(f"Request method: {request.method}")
     
     if not is_user_system_enabled():
         logging.debug("User system not enabled, redirecting to root.root")
@@ -73,28 +73,109 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
+        logging.debug(f"Login attempt for username: {username}")
         
         user = User.query.filter_by(username=username).first()
         
         if user and check_password_hash(user.password, password):
-            login_user(user)
+            logging.debug("Password check passed, logging in user")
+            remember = 'remember_me' in request.form
+            
+            # Get the domain for cookies
+            host = request.host.split(':')[0]
+            domain_parts = host.split('.')
+            if len(domain_parts) > 2:
+                domain = '.' + '.'.join(domain_parts[-2:])
+            else:
+                domain = '.' + host
+                
+            from extensions import app
+            
+            # Set session cookie domain
+            app.config['SESSION_COOKIE_DOMAIN'] = domain
+            app.config['REMEMBER_COOKIE_DOMAIN'] = domain
+            
+            login_user(user, remember=remember)
+            logging.debug(f"User ID in session: {current_user.get_id()}")
+            from flask import session
+            logging.debug(f"Session contents: {dict(session)}")
+            
             if user.is_default or not user.onboarding_complete:
+                logging.debug("Redirecting to onboarding")
                 return redirect(url_for('onboarding.onboarding_step', step=1))
-            return redirect(url_for('root.root'))
+            else:
+                logging.debug("Redirecting to root")
+                response = redirect(url_for('root.root'))
+                logging.debug(f"Response cookies: {response.headers.getlist('Set-Cookie')}")
+                return response
         else:
+            logging.debug("Login failed - invalid credentials")
             flash('Please check your login details and try again.')
     
     return render_template('login.html', show_login_reminder=show_login_reminder)
 
-@auth_bp.route('/logout')
+@auth_bp.route('/logout', methods=['POST'])
 @login_required
 def logout():
     from routes.settings_routes import is_user_system_enabled
+    from flask import make_response, session
+    import logging
+
+    logging.debug("Starting logout process")
+    logging.debug(f"Current session: {dict(session)}")
+    logging.debug(f"Current cookies: {request.cookies}")
 
     if not is_user_system_enabled():
         return redirect(url_for('root.root'))
+    
+    # Clear Flask session
+    session.clear()
+    
+    # Perform Flask-Login logout
     logout_user()
-    return redirect(url_for('auth.login'))
+    
+    logging.debug("After logout_user and session clear")
+    logging.debug(f"Session after clear: {dict(session)}")
+    
+    # Create response for redirect
+    response = make_response(redirect(url_for('auth.login')))
+    
+    # Get the domain from the request host
+    host = request.host.split(':')[0]  # Remove port if present
+    domain_parts = host.split('.')
+    if len(domain_parts) > 2:
+        domain = '.' + '.'.join(domain_parts[-2:])  # e.g., .godver3.xyz
+    else:
+        domain = '.' + host  # e.g., .localhost
+    
+    # Clear all variations of cookies
+    cookies_to_clear = ['session', 'remember_token']
+    domains_to_clear = [domain, None]  # None will use the current domain
+    paths_to_clear = ['/', '/auth', '/auth/']
+    
+    for cookie_name in cookies_to_clear:
+        for cookie_domain in domains_to_clear:
+            for path in paths_to_clear:
+                response.set_cookie(
+                    cookie_name, 
+                    '', 
+                    expires=0, 
+                    domain=cookie_domain,
+                    path=path,
+                    secure=True,
+                    httponly=True,
+                    samesite='Lax'
+                )
+    
+    # Also try to delete the cookies without domain
+    for cookie_name in cookies_to_clear:
+        for path in paths_to_clear:
+            response.delete_cookie(cookie_name, path=path)
+    
+    logging.debug("Final response cookies:")
+    logging.debug(response.headers.getlist('Set-Cookie'))
+    
+    return response
 
 @auth_bp.route('/unauthorized')
 def unauthorized():

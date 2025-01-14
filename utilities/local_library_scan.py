@@ -622,3 +622,177 @@ def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
             'error': str(e),
             'item_id': item.get('id')
         }
+
+def scan_for_broken_symlinks(library_path: str = None) -> Dict[str, Any]:
+    """
+    Scan the library for broken symlinks.
+    
+    Args:
+        library_path: Optional specific library path to scan. If None, uses default symlinked path from settings.
+        
+    Returns:
+        Dict containing:
+            - total_symlinks: Total number of symlinks found
+            - broken_symlinks: List of broken symlinks with details
+            - broken_count: Number of broken symlinks
+    """
+    try:
+        if not library_path:
+            library_path = get_setting('File Management', 'symlinked_files_path')
+            
+        if not os.path.exists(library_path):
+            logging.error(f"Library path does not exist: {library_path}")
+            return {
+                'total_symlinks': 0,
+                'broken_symlinks': [],
+                'broken_count': 0,
+                'error': 'Library path does not exist'
+            }
+            
+        logging.info(f"Starting symlink scan in: {library_path}")
+        total_symlinks = 0
+        broken_symlinks = []
+        processed_files = 0
+        
+        # First count total files for progress tracking
+        total_files = sum(len(files) for _, _, files in os.walk(library_path))
+        logging.info(f"Found {total_files} total files to check")
+        
+        # Walk through the library
+        for root, _, files in os.walk(library_path):
+            relative_root = os.path.relpath(root, library_path)
+            logging.debug(f"Scanning directory: {relative_root}")
+            
+            for file in files:
+                processed_files += 1
+                if processed_files % 100 == 0:  # Log progress every 100 files
+                    progress = (processed_files / total_files) * 100
+                    logging.info(f"Progress: {progress:.1f}% ({processed_files}/{total_files} files)")
+                
+                file_path = os.path.join(root, file)
+                
+                # Check if it's a symlink
+                if os.path.islink(file_path):
+                    total_symlinks += 1
+                    target_path = os.path.realpath(file_path)
+                    relative_path = os.path.relpath(file_path, library_path)
+                    
+                    logging.debug(f"Checking symlink: {relative_path} -> {target_path}")
+                    
+                    # Check if the target exists
+                    if not os.path.exists(target_path):
+                        logging.warning(f"Found broken symlink: {relative_path} -> {target_path}")
+                        broken_symlinks.append({
+                            'symlink_path': file_path,
+                            'relative_path': relative_path,
+                            'target_path': target_path,
+                            'filename': file
+                        })
+                    else:
+                        logging.debug(f"Symlink OK: {relative_path}")
+        
+        # Calculate health metrics
+        health_percentage = ((total_symlinks - len(broken_symlinks)) / total_symlinks * 100) if total_symlinks > 0 else 100
+        
+        result = {
+            'total_symlinks': total_symlinks,
+            'broken_symlinks': broken_symlinks,
+            'broken_count': len(broken_symlinks),
+            'total_files_scanned': processed_files,
+            'health_percentage': round(health_percentage, 1)
+        }
+        
+        logging.info(f"Symlink scan complete:")
+        logging.info(f"- Total files scanned: {processed_files}")
+        logging.info(f"- Total symlinks found: {total_symlinks}")
+        logging.info(f"- Broken symlinks found: {len(broken_symlinks)}")
+        logging.info(f"- Health score: {health_percentage:.1f}%")
+        
+        if broken_symlinks:
+            logging.info("Broken symlinks summary:")
+            for symlink in broken_symlinks:
+                logging.info(f"- {symlink['relative_path']} -> {symlink['target_path']}")
+        
+        return result
+        
+    except Exception as e:
+        logging.error(f"Error scanning for broken symlinks: {str(e)}", exc_info=True)
+        return {
+            'total_symlinks': 0,
+            'broken_symlinks': [],
+            'broken_count': 0,
+            'total_files_scanned': 0,
+            'health_percentage': 0,
+            'error': str(e)
+        }
+
+def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dict[str, Any]:
+    """
+    Attempt to repair a broken symlink.
+    
+    Args:
+        symlink_path: Path to the broken symlink
+        new_target_path: Optional new target path. If None, will attempt to find the file in original files path
+        
+    Returns:
+        Dict containing:
+            - success: Whether the repair was successful
+            - message: Description of what was done or why it failed
+            - old_target: The previous target path
+            - new_target: The new target path (if successful)
+    """
+    try:
+        if not os.path.islink(symlink_path):
+            return {
+                'success': False,
+                'message': 'Path is not a symlink',
+                'old_target': None,
+                'new_target': None
+            }
+            
+        old_target = os.path.realpath(symlink_path)
+        
+        # If no new target specified, try to find the file
+        if not new_target_path:
+            original_path = get_setting('File Management', 'original_files_path')
+            filename = os.path.basename(symlink_path)
+            found_path = find_file(filename, original_path)
+            
+            if found_path:
+                new_target_path = found_path
+            else:
+                return {
+                    'success': False,
+                    'message': 'Could not find original file',
+                    'old_target': old_target,
+                    'new_target': None
+                }
+        
+        # Verify new target exists
+        if not os.path.exists(new_target_path):
+            return {
+                'success': False,
+                'message': 'New target path does not exist',
+                'old_target': old_target,
+                'new_target': new_target_path
+            }
+            
+        # Remove old symlink and create new one
+        os.unlink(symlink_path)
+        os.symlink(new_target_path, symlink_path)
+        
+        return {
+            'success': True,
+            'message': 'Symlink repaired successfully',
+            'old_target': old_target,
+            'new_target': new_target_path
+        }
+        
+    except Exception as e:
+        logging.error(f"Error repairing symlink: {str(e)}")
+        return {
+            'success': False,
+            'message': str(e),
+            'old_target': old_target if 'old_target' in locals() else None,
+            'new_target': new_target_path if 'new_target_path' in locals() else None
+        }

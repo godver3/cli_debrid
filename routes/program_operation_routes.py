@@ -216,9 +216,10 @@ def get_task_timings():
     
     if not program_runner or not program_runner.is_running():
         return jsonify({
-            "status": "error",
-            "message": "Program is not running"
-        }), 404
+            "success": True,
+            "current_task": None,
+            "tasks": []
+        })
 
     current_time = time.time()
     task_timings = {}
@@ -261,8 +262,8 @@ def get_task_timings():
             grouped_timings["system_tasks"][task] = timing
 
     return jsonify({
-        "status": "success",
-        "data": grouped_timings,
+        "success": True,
+        "tasks": grouped_timings,
         "current_time": current_time
     })
 

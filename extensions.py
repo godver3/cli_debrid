@@ -1,4 +1,3 @@
-from flask_sqlalchemy import SQLAlchemy
 from flask import Flask, redirect, request, jsonify, url_for
 from flask_login import LoginManager
 import time
@@ -17,33 +16,126 @@ import os
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+def get_root_domain(host):
+    """Get the root domain from a hostname."""
+    if not host or host.lower() in ('localhost', '127.0.0.1', '::1'):
+        return None
+    # Remove port if present
+    domain = host.split(':')[0]
+    # If IP address, return as is
+    if domain.replace('.', '').isdigit():
+        return domain
+    # For hostnames, get root domain with leading dot
+    parts = domain.split('.')
+    if len(parts) > 2:
+        return '.' + '.'.join(parts[-2:])  # e.g., .example.com for sub.example.com
+    return '.' + domain  # e.g., .localhost
+
+class SameSiteMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    def __call__(self, environ, start_response):
+        def custom_start_response(status, headers, exc_info=None):
+            new_headers = []
+            root_domain = get_root_domain(environ.get('HTTP_HOST', ''))
+            # logger.debug(f"SameSiteMiddleware processing headers for domain: {root_domain}")
+            
+            for name, value in headers:
+                if name.lower() == 'set-cookie':
+                    # logger.debug(f"Processing cookie header: {value}")
+                    # Parse the cookie
+                    parts = [p.strip() for p in value.split(';')]
+                    cookie_main = parts[0]
+                    cookie_attrs = {
+                        p.split('=')[0].lower(): p for p in parts[1:]
+                        if '=' in p or p.lower() in ['secure', 'httponly']
+                    }
+                    
+                    # Always set SameSite=None for session cookies
+                    if cookie_main.startswith('session='):
+                        cookie_attrs['samesite'] = 'SameSite=None'
+                        cookie_attrs['secure'] = 'Secure'
+                        if root_domain:
+                            cookie_attrs['domain'] = f'Domain={root_domain}'
+                        cookie_attrs['path'] = 'Path=/'
+                        
+                        # Reconstruct the cookie
+                        value = '; '.join([cookie_main] + list(cookie_attrs.values()))
+                        # logger.debug(f"Modified session cookie: {value}")
+                    
+                new_headers.append((name, value))
+            
+            return start_response(status, new_headers, exc_info)
+        
+        return self.app(environ, custom_start_response)
+
+from flask_sqlalchemy import SQLAlchemy
+
 db = SQLAlchemy()
 app = Flask(__name__)
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+# Add SameSiteMiddleware to the WSGI stack
+app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
+
 # Configure session
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_PERMANENT'] = True
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
+app.config['SESSION_PERMANENT'] = False  # Default to non-permanent sessions
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)  # Used when session is marked permanent
+app.config['SESSION_FILE_DIR'] = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')  # Specify session file location
+app.config['SESSION_FILE_THRESHOLD'] = 500  # Maximum number of session files
+app.config['SESSION_KEY_PREFIX'] = 'session:'  # Prefix for session keys
 app.secret_key = os.urandom(24)  # Generate a secure secret key
 
-# Configure session cookie settings
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # More compatible than None
-app.config['SESSION_COOKIE_SECURE'] = True  # Require HTTPS
-app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevent XSS
-app.config['SESSION_COOKIE_PATH'] = '/'
-app.config['SESSION_COOKIE_DOMAIN'] = None  # Will be set dynamically
+# Ensure session directory exists
+os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
 
-# Configure CORS with specific origins
+# Configure session cookie settings
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Required for cross-origin requests
+app.config['SESSION_COOKIE_SECURE'] = True  # Required when SameSite is None
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_PATH'] = '/'
+app.config['SESSION_COOKIE_NAME'] = 'session'
+app.config['SESSION_COOKIE_DOMAIN'] = None  # Let our middleware handle this dynamically
+
+# Configure remember me cookie settings
+app.config['REMEMBER_COOKIE_NAME'] = 'remember_token'
+app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=30)
+app.config['REMEMBER_COOKIE_SECURE'] = True
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'None'
+app.config['REMEMBER_COOKIE_REFRESH_EACH_REQUEST'] = True
+app.config['REMEMBER_COOKIE_DOMAIN'] = None  # Let our middleware handle this dynamically
+
+# Initialize Flask-Session first
+from flask_session import Session
+sess = Session()
+sess.init_app(app)
+
+def get_cookie_domain(host):
+    """Determine the cookie domain from the request host."""
+    if not host or host.lower() in ('localhost', '127.0.0.1', '::1'):
+        return None
+    # Remove port if present
+    domain = host.split(':')[0]
+    # If IP address, return as is
+    if domain.replace('.', '').isdigit():
+        return domain
+    # For hostnames, always return root domain with leading dot
+    parts = domain.split('.')
+    if len(parts) > 2:
+        return '.' + '.'.join(parts[-2:]) 
+    return '.' + domain
+
+# Configure CORS with more permissive settings
 CORS(app, resources={r"/*": {
-    "origins": ["*"],
+    "origins": ["*"],  # Allow all origins
     "methods": ["GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE"],
-    "allow_headers": ["Content-Type", "Authorization", "Accept", "Accept-Language", 
-                     "Content-Language", "Range", "X-Requested-With", "Cookie", 
-                     "X-CSRF-Token", "Upgrade-Insecure-Requests"],
+    "allow_headers": ["*"],  # Allow all headers
     "supports_credentials": True,
-    "expose_headers": ["Set-Cookie", "Content-Range"],
+    "expose_headers": ["*"],  # Expose all headers
     "max_age": 3600
 }})
 
@@ -121,7 +213,7 @@ def add_cors_headers(response):
     if origin:  # Only add CORS headers if there's an Origin header
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range, X-Requested-With, Cookie'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range, X-Requested-With, Cookie, X-CSRF-Token, Upgrade-Insecure-Requests'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
         
@@ -172,74 +264,139 @@ task_queue = SimpleTaskQueue()
 def after_request(response):
     # Get the origin from the request
     origin = request.headers.get('Origin')
-    forwarded_proto = request.headers.get('X-Forwarded-Proto', 'http')
+    # logger.debug(f"\n=== Cookie Debug ===")
+    # logger.debug(f"Processing response for URL: {request.url}")
+    # logger.debug(f"Response status: {response.status_code}")
+    # logger.debug(f"Original Set-Cookie headers: {response.headers.getlist('Set-Cookie')}")
     
     # Always set security headers
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     
-    # Handle cookies
+    # Handle cookies only if they exist
     if 'Set-Cookie' in response.headers or response.status_code in [301, 302]:
         cookies = response.headers.getlist('Set-Cookie')
         response.headers.remove('Set-Cookie')
         
-        # Get the domain from the request host
-        host = request.host.split(':')[0]  # Remove port if present
-        domain_parts = host.split('.')
-        if len(domain_parts) > 2:
-            domain = '.' + '.'.join(domain_parts[-2:])  # e.g., .godver3.xyz
-        else:
-            domain = '.' + host  # e.g., .localhost
-            
-        #logger.debug(f"Setting cookie domain to: {domain}")
+        # Get the root domain dynamically
+        root_domain = get_root_domain(request.host)
+        # logger.debug(f"Root domain for cookies: {root_domain}")
         
-        # If no cookies but we're redirecting, ensure session cookie is set
-        if not cookies and response.status_code in [301, 302]:
-            session_cookie = f"session={request.cookies.get('session', '')}; Path=/; Domain={domain}; Secure; SameSite=Lax"
-            cookies.append(session_cookie)
-        
+        # Process existing cookies
+        processed_cookies = set()
         for cookie in cookies:
+            cookie_name = cookie.split('=')[0].strip()
+            # logger.debug(f"Processing cookie: {cookie_name}")
+            # logger.debug(f"Original cookie string: {cookie}")
+            
+            if cookie_name in processed_cookies:
+                # logger.debug(f"Skipping duplicate cookie: {cookie_name}")
+                continue
+                
+            processed_cookies.add(cookie_name)
+            
+            # Always set these attributes for maximum compatibility
             if 'SameSite=' not in cookie:
-                cookie += '; SameSite=Lax'
-            if 'Domain=' not in cookie:
-                cookie += f'; Domain={domain}'
+                cookie += '; SameSite=None'
+                # logger.debug(f"Added SameSite=None to cookie")
+            if 'Domain=' not in cookie and root_domain:
+                cookie += f'; Domain={root_domain}'
+                # logger.debug(f"Added Domain={root_domain} to cookie")
             if 'Secure' not in cookie:
                 cookie += '; Secure'
+                # logger.debug(f"Added Secure flag to cookie")
+            if 'Path=' not in cookie:
+                cookie += '; Path=/'
+                # logger.debug(f"Added Path=/ to cookie")
+            
+            # logger.debug(f"Final cookie string: {cookie}")
             response.headers.add('Set-Cookie', cookie)
-            #logger.debug(f"Modified cookie: {cookie}")
+        
+        # Only add session cookie if none exists
+        if 'session' not in processed_cookies and response.status_code in [301, 302]:
+            # logger.debug("Adding missing session cookie")
+            session_cookie = f"session={request.cookies.get('session', '')}; Path=/"
+            if root_domain:
+                session_cookie += f"; Domain={root_domain}"
+            session_cookie += "; Secure; SameSite=None"  # Always add SameSite=None and Secure for session cookie
+            # logger.debug(f"Created session cookie: {session_cookie}")
+            response.headers.add('Set-Cookie', session_cookie)
     
     # Set CORS headers for all requests
     if origin:
         response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range, X-Requested-With, Cookie, X-CSRF-Token, Upgrade-Insecure-Requests'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
-        #logger.debug(f"Set CORS headers for origin: {origin}")
+        
+        if request.method == 'OPTIONS':
+            response.headers['Access-Control-Max-Age'] = '3600'
     
+    # logger.debug(f"Final Set-Cookie headers: {response.headers.getlist('Set-Cookie')}")
     return response
 
 @app.after_request
 def debug_cors_headers(response):
     """Debug middleware to log CORS headers and cookies"""
-    #logger.debug("\n=== Request Debug Info ===")
-    #logger.debug(f"Request URL: {request.url}")
-    #logger.debug(f"Request Origin: {request.headers.get('Origin')}")
-    #logger.debug(f"Request Method: {request.method}")
-    #logger.debug("\nRequest Headers:")
-    #for header, value in request.headers.items():
-    #    logger.debug(f"{header}: {value}")
+    # logger.debug("\n=== Request Debug Info ===")
+    # logger.debug(f"Request URL: {request.url}")
+    # logger.debug(f"Request Endpoint: {request.endpoint}")
+    # logger.debug(f"Request Origin: {request.headers.get('Origin')}")
+    # logger.debug(f"Request Method: {request.method}")
+    # logger.debug("\nRequest Headers:")
+    # for header, value in request.headers.items():
+        # logger.debug(f"{header}: {value}")
     
-    #logger.debug("\nRequest Cookies:")
-    #logger.debug(request.cookies)
+    # logger.debug("\nRequest Cookies:")
+    # logger.debug(request.cookies)
     
-    #logger.debug("\n=== Response Debug Info ===")
-    #logger.debug("Response Headers:")
-    #for header, value in response.headers.items():
-    #    logger.debug(f"{header}: {value}")
+    # logger.debug("\n=== Response Debug Info ===")
+    # logger.debug("Response Headers:")
+    # for header, value in response.headers.items():
+        # logger.debug(f"{header}: {value}")
     
-    #logger.debug("\nResponse Cookies:")
-    #if 'Set-Cookie' in response.headers:
-    #    logger.debug(response.headers.getlist('Set-Cookie'))
-    #else:
-    #    logger.debug("No cookies set in response")
+    # logger.debug("\nResponse Cookies:")
+    # if 'Set-Cookie' in response.headers:
+        # logger.debug(response.headers.getlist('Set-Cookie'))
+    # else:
+        # logger.debug("No cookies set in response")
     
     return response
+
+@app.after_request
+def ensure_secure_cookies(response):
+    """Ensure all cookies have proper security attributes"""
+    if 'Set-Cookie' in response.headers:
+        cookies = response.headers.getlist('Set-Cookie')
+        response.headers.remove('Set-Cookie')
+        
+        root_domain = get_root_domain(request.host)
+        
+        for cookie in cookies:
+            # Parse the cookie
+            if ';' in cookie:
+                cookie_parts = cookie.split(';')
+                main_part = cookie_parts[0]
+                attrs = [p.strip() for p in cookie_parts[1:]]
+            else:
+                main_part = cookie
+                attrs = []
+            
+            # Remove any existing SameSite, Secure, or Domain attributes
+            attrs = [a for a in attrs if not any(x in a.lower() for x in ['samesite=', 'secure', 'domain='])]
+            
+            # Add our security attributes
+            attrs.append('SameSite=None')
+            attrs.append('Secure')
+            if root_domain:
+                attrs.append(f'Domain={root_domain}')
+            
+            # Reconstruct the cookie
+            new_cookie = '; '.join([main_part] + attrs)
+            response.headers.add('Set-Cookie', new_cookie)
+    
+    return response
+
+# Place this before any other after_request handlers
+app.after_request_funcs.setdefault(None, []).insert(0, ensure_secure_cookies)
