@@ -14,6 +14,7 @@ from extensions import app_start_time
 from database import get_recently_added_items, get_poster_url, get_collected_counts, get_recently_upgraded_items
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
 from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
+from database.statistics import get_cached_download_stats
 import json
 import math
 from functools import wraps
@@ -308,66 +309,27 @@ def root():
     stats['total_episodes'] = counts['total_episodes']
     logging.info(f"Collection counts took {(time.perf_counter() - collection_start)*1000:.2f}ms")
     
-    # Get active downloads
+    # Get active downloads and usage stats
     downloads_start = time.perf_counter()
     try:
-        provider = get_debrid_provider()
-        count, limit = provider.get_active_downloads()
-        logging.info(f"Got active downloads from provider - count: {count}, limit: {limit}")
-        
-        # Always use the raw limit from provider or fallback to MAX_DOWNLOADS
-        raw_limit = limit if limit else provider.MAX_DOWNLOADS
-        # Calculate adjusted limit (75% of raw limit)
-        adjusted_limit = round(raw_limit)
-        
-        logging.info(f"Calculated limits - raw: {raw_limit}, adjusted: {adjusted_limit}")
-        
-        percentage = round((count / adjusted_limit * 100) if adjusted_limit > 0 else 0)
-        status = 'normal'
-        if percentage >= 90:
-            status = 'critical'
-        elif percentage >= 75:
-            status = 'warning'
-            
-        stats['active_downloads_data'] = {
-            'count': count,
-            'limit': adjusted_limit,
-            'percentage': percentage,
-            'status': status
-        }
-        logging.info(f"Set active_downloads_data: {stats['active_downloads_data']}")
-        
-    except TooManyDownloadsError as e:
-        logging.warning(f"Too many active downloads: {str(e)}")
-        # Parse out the counts from the error message
-        import re
-        match = re.search(r'(\d+)/(\d+)', str(e))
-        if match:
-            count, limit = map(int, match.groups())
-            stats['active_downloads_data'] = {
-                'count': count,
-                'limit': limit,
-                'percentage': round((count / limit * 100) if limit > 0 else 0),
-                'status': 'critical'
-            }
-        else:
-            # Fallback to MAX_DOWNLOADS if we can't parse the error
-            stats['active_downloads_data'] = {
-                'count': 0,
-                'limit': round(provider.MAX_DOWNLOADS * 0.75),
-                'percentage': 0,
-                'status': 'error'
-            }
+        active_downloads, usage_stats = get_cached_download_stats()
+        stats['active_downloads_data'] = active_downloads
+        stats['usage_stats_data'] = usage_stats
     except Exception as e:
-        logging.error(f"Error getting active downloads: {str(e)}", exc_info=True)
-        # Fallback to MAX_DOWNLOADS on error
+        logging.error(f"Error getting download stats: {str(e)}")
         stats['active_downloads_data'] = {
             'count': 0,
             'limit': round(provider.MAX_DOWNLOADS * 0.75),
             'percentage': 0,
             'status': 'error'
         }
-    logging.info(f"Active downloads check took {(time.perf_counter() - downloads_start)*1000:.2f}ms")
+        stats['usage_stats_data'] = {
+            'used': '0 GB',
+            'limit': '2000 GB',
+            'percentage': 0,
+            'error': 'provider_error'
+        }
+    logging.info(f"Download stats check took {(time.perf_counter() - downloads_start)*1000:.2f}ms")
     
     # Get recently aired and upcoming shows
     shows_start = time.perf_counter()
@@ -511,99 +473,97 @@ def root():
 @user_required
 @onboarding_required
 def set_time_preference():
-    data = request.json
-    use_24hour_format = data.get('use24HourFormat', True)
-    
-    # Save to settings
-    set_setting('UI Settings', 'use_24hour_format', use_24hour_format)
-    
-    # Format times with the new preference
-    recently_aired, airing_soon = get_recently_aired_and_airing_soon()
-    upcoming_releases = get_upcoming_releases()
-    
-    for item in recently_aired + airing_soon:
-        item['formatted_time'] = format_datetime_preference(item['air_datetime'], use_24hour_format)
-    
-    for item in upcoming_releases:
-        item['formatted_time'] = format_datetime_preference(item['release_date'], use_24hour_format)
-    
-    # Get recently added items and format their times
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
-    for item in recently_added['movies'] + recently_added['shows']:
-        if 'collected_at' in item and item['collected_at'] is not None:
-            try:
-                # Try parsing with microseconds
-                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
-            except ValueError:
-                try:
-                    # Try parsing without microseconds
-                    collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    item['formatted_collected_at'] = 'Unknown'
-                    continue
-            item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
-        else:
-            item['formatted_collected_at'] = 'Unknown'
-
-    upgrade_enabled = get_setting('Scraping', 'enable_upgrading', 'False')
-    upgrade_enabled_set = bool(upgrade_enabled)
-    if upgrade_enabled_set:
-        upgrading_enabled = True
-        recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
-        for item in recently_upgraded:
-            if 'collected_at' in item and item['collected_at'] is not None:
-                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
-                item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
-            else:
-                item['formatted_collected_at'] = 'Unknown'
-    else:
-        upgrading_enabled = False
-        recently_upgraded = []
+    try:
+        data = request.json
+        use_24hour_format = data.get('use24HourFormat', True)
         
-    return jsonify({
-        'status': 'OK', 
-        'use24HourFormat': use_24hour_format,
-        'recently_aired': recently_aired,
-        'airing_soon': airing_soon,
-        'upcoming_releases': upcoming_releases,
-        'recently_upgraded': recently_upgraded,
-        'upgrading_enabled': upgrading_enabled,
-        'recently_added': recently_added
-    })
+        # Save to settings
+        set_setting('UI Settings', 'use_24hour_format', use_24hour_format)
+        
+        # Create new event loop for async operations
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Get recently added items
+            recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
+            
+            # Format recently added items
+            for item in recently_added.get('movies', []) + recently_added.get('shows', []):
+                if 'collected_at' in item and item['collected_at'] is not None:
+                    try:
+                        # Try parsing with microseconds
+                        collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            # Try parsing without microseconds
+                            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                        except ValueError:
+                            collected_at = None
+                    
+                    if collected_at:
+                        item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
+                    else:
+                        item['formatted_collected_at'] = 'Unknown'
+                else:
+                    item['formatted_collected_at'] = 'Unknown'
+            
+            # Get recently aired and upcoming shows
+            recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+            
+            # Format times for recently aired and upcoming shows
+            for item in recently_aired + airing_soon:
+                if 'air_datetime' in item:
+                    item['formatted_datetime'] = format_datetime_preference(item['air_datetime'], use_24hour_format)
+            
+            # Get and format upcoming releases
+            upcoming_releases = get_upcoming_releases()
+            for release in upcoming_releases:
+                release['formatted_date'] = format_date(release.get('release_date'))
+            
+            # Get recently upgraded items if enabled
+            upgrade_enabled = get_setting('Scraping', 'enable_upgrading', 'False')
+            if upgrade_enabled:
+                recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
+                for item in recently_upgraded:
+                    if 'last_updated' in item:
+                        item['formatted_date'] = format_datetime_preference(item['last_updated'], use_24hour_format)
+            else:
+                recently_upgraded = []
+                
+            return jsonify({
+                'status': 'OK',
+                'use24HourFormat': use_24hour_format,
+                'recently_aired': recently_aired,
+                'airing_soon': airing_soon,
+                'upcoming_releases': upcoming_releases,
+                'recently_upgraded': recently_upgraded,
+                'recently_added': recently_added
+            })
+            
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logging.error(f"Error in set_time_preference: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': 'An error occurred while updating time preferences'
+        }), 500
 
 @statistics_bp.route('/active_downloads', methods=['GET'])
 @user_required
-@cache_for_seconds(30)
 def active_downloads():
     """Get active downloads and limits for the debrid provider"""
     try:
-        provider = get_debrid_provider()
-        active_count, limit = provider.get_active_downloads()
-        return jsonify({
-            'active_count': active_count,
-            'limit': limit,
-            'percentage': round((active_count / limit * 100) if limit > 0 else 0),
-            'error': None
-        })
-    except TooManyDownloadsError as e:
-        logging.warning(f"Too many active downloads: {str(e)}")
-        # Parse out the counts from the error message
-        import re
-        match = re.search(r'(\d+)/(\d+)', str(e))
-        if match:
-            active_count, limit = map(int, match.groups())
-            return jsonify({
-                'active_count': active_count,
-                'limit': limit,
-                'percentage': round((active_count / limit * 100) if limit > 0 else 0),
-                'error': 'too_many'
-            })
-        return jsonify({
-            'error': 'too_many',
-            'message': str(e)
-        }), 429  # Too Many Requests
+        active_downloads, _ = get_cached_download_stats()
+        if active_downloads['error'] == 'too_many':
+            return jsonify(active_downloads), 429  # Too Many Requests
+        elif active_downloads['error'] == 'provider_unavailable':
+            return jsonify(active_downloads), 503  # Service Unavailable
+        elif active_downloads['error']:
+            return jsonify(active_downloads), 500  # Internal Server Error
+        return jsonify(active_downloads)
     except Exception as e:
         logging.error(f"Error getting active downloads: {str(e)}")
         return jsonify({
@@ -615,38 +575,8 @@ def active_downloads():
 @user_required
 def active_downloads_api():
     try:
-        provider = get_debrid_provider()
-        count, limit = provider.get_active_downloads()
-        
-        if not count or not limit:
-            logging.warning("No active downloads data available")
-            return jsonify({
-                'active': {
-                    'count': 0,
-                    'limit': 0,
-                    'percentage': 0,
-                    'status': 'normal'
-                }
-            })
-
-        # Calculate percentage and determine status
-        percentage = round((count / limit * 100) if limit > 0 else 0)
-        
-        status = 'normal'
-        if percentage >= 90:
-            status = 'critical'
-        elif percentage >= 75:
-            status = 'warning'
-            
-        return jsonify({
-            'active': {
-                'count': count,
-                'limit': limit,
-                'percentage': percentage,
-                'status': status
-            }
-        })
-        
+        active_downloads, _ = get_cached_download_stats()
+        return jsonify({'active': active_downloads})
     except Exception as e:
         logging.error(f"Error getting active downloads: {str(e)}")
         return jsonify({
@@ -848,52 +778,11 @@ def format_bytes(bytes_value, decimals=2):
 
 @statistics_bp.route('/usage_stats', methods=['GET'])
 @user_required
-@cache_for_seconds(30)
 def usage_stats():
     """Get daily usage statistics from the debrid provider"""
     try:
-        provider = get_debrid_provider()
-        usage = provider.get_user_traffic()
-        
-        if not usage or usage.get('limit') is None:
-            return jsonify({
-                'daily': {
-                    'used': '0 GB',
-                    'limit': '2000 GB',
-                    'percentage': 0,
-                    'error': None
-                }
-            })
-
-        try:
-            # Convert GB to bytes for calculation
-            daily_used = float(usage.get('downloaded', 0)) * 1024 * 1024 * 1024  # GB to bytes
-            daily_limit = float(usage.get('limit', 2000)) * 1024 * 1024 * 1024  # GB to bytes
-            
-            percentage = round((daily_used / daily_limit) * 100) if daily_limit > 0 else 0
-            
-            response = {
-                'daily': {
-                    'used': format_bytes(daily_used),
-                    'limit': format_bytes(daily_limit),
-                    'percentage': percentage,
-                    'error': None
-                }
-            }
-            return jsonify(response)
-            
-        except (TypeError, ValueError) as e:
-            logging.error(f"Error converting usage values: {e}")
-            logging.error(f"Raw usage data that caused error: {usage}")
-            return jsonify({
-                'daily': {
-                    'used': '0 GB',
-                    'limit': '2000 GB',
-                    'percentage': 0,
-                    'error': 'conversion_error'
-                }
-            })
-            
+        _, usage_stats = get_cached_download_stats()
+        return jsonify({'daily': usage_stats})
     except Exception as e:
         logging.error(f"Error getting usage stats: {str(e)}")
         return jsonify({
@@ -901,6 +790,6 @@ def usage_stats():
                 'used': '0 GB',
                 'limit': '2000 GB',
                 'percentage': 0,
-                'error': 'provider_error'
+                'error': 'failed'
             }
         })

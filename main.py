@@ -839,6 +839,7 @@ def main():
 
     from settings import ensure_settings_file, get_setting, set_setting
     from database import verify_database
+    from database.statistics import get_cached_download_stats
 
     # Add check for Hybrid uncached management setting
     if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':
@@ -858,6 +859,14 @@ def main():
 
     ensure_settings_file()
     verify_database()
+
+    # Initialize download stats cache
+    try:
+        logging.info("Initializing download stats cache...")
+        get_cached_download_stats()
+        logging.info("Download stats cache initialized successfully")
+    except Exception as e:
+        logging.error(f"Error initializing download stats cache: {str(e)}")
 
     # Add delay to ensure server is ready
     time.sleep(2)

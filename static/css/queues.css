@@ -1,0 +1,132 @@
+/* Queue Container Styles */
+.queue-container { 
+    display: flex; 
+    flex-direction: column;
+}
+
+.queue { 
+    margin: 10px 0; 
+    background: #444; 
+    padding: 15px; 
+    border-radius: 5px;
+}
+
+.queue-title { 
+    font-size: 18px; 
+    font-weight: bold; 
+    cursor: pointer; 
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.queue-title:hover { 
+    color: #007bff; 
+}
+
+.queue-count {
+    margin-left: auto;
+}
+
+.queue-items { 
+    display: none; 
+    margin-top: 10px; 
+}
+
+.item { 
+    margin-left: 20px; 
+    padding: 5px 0;
+    word-wrap: break-word;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    max-width: 100%;
+}
+
+.item-content {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.item-detail {
+    display: block;
+    padding-left: 20px;
+}
+
+.filename-toggle {
+    cursor: pointer;
+    margin: 0 5px;
+    font-size: 1em;
+    transition: transform 0.3s ease;
+}
+
+.filename-toggle.active i {
+    transform: rotate(45deg);
+}
+
+.filename-content {
+    display: none;
+}
+
+.item-progress {
+    margin-left: 10px;
+    display: inline-flex;
+    align-items: center;
+    min-width: 200px;
+}
+
+.progress {
+    flex-grow: 1;
+    height: 20px;
+    background-color: #444;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar {
+    height: 100%;
+    background-color: #4CAF50;
+    transition: width 0.3s ease;
+    min-width: 24px;
+}
+
+.progress-text {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: white;
+    white-space: nowrap;
+    z-index: 1;
+}
+
+.group-progress {
+    margin-top: 10px;
+    margin-left: 20px;
+}
+
+.checking-group h5 {
+    color: #aaa;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #666;
+    padding-bottom: 5px;
+}
+
+#loading-indicator {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+}
+
+#loading-indicator p {
+    margin-top: 10px;
+    margin-bottom: 0;
+}
+
+.container {
+    position: relative;
+    min-height: 200px;
+}

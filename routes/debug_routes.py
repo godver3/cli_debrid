@@ -1,7 +1,13 @@
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask.json import jsonify
 from initialization import get_all_wanted_from_enabled_sources
-from run_program import get_and_add_recent_collected_from_plex, get_and_add_all_collected_from_plex, ProgramRunner, run_local_library_scan, run_recent_local_library_scan
+from run_program import (
+    get_and_add_recent_collected_from_plex, 
+    get_and_add_all_collected_from_plex, 
+    ProgramRunner, 
+    run_local_library_scan, 
+    run_recent_local_library_scan
+)
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
 from settings import get_all_settings, get_setting, set_setting
 from config_manager import load_config
@@ -9,8 +15,8 @@ import logging
 from routes import admin_required
 from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.collected import get_wanted_from_collected
-from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
-from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
+from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from metadata.metadata import process_metadata
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
@@ -353,8 +359,14 @@ def get_and_add_wanted_content(source_id):
     wanted_content = []
     if source_type == 'Overseerr':
         wanted_content = get_wanted_from_overseerr()
-    elif source_type == 'Plex Watchlist':
+    elif source_type == 'My Plex Watchlist':
         wanted_content = get_wanted_from_plex_watchlist(versions)
+    elif source_type == 'Other Plex Watchlist':
+        wanted_content = get_wanted_from_other_plex_watchlist(
+            username=source_data.get('username', ''),
+            token=source_data.get('token', ''),
+            versions=versions
+        )
     elif source_type == 'MDBList':
         mdblist_urls = source_data.get('urls', '').split(',')
         for mdblist_url in mdblist_urls:
@@ -369,6 +381,9 @@ def get_and_add_wanted_content(source_id):
         for trakt_list in trakt_lists:
             trakt_list = trakt_list.strip()
             wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+    elif source_type == 'Trakt Collection':
+        update_trakt_settings(content_sources)
+        wanted_content = get_wanted_from_trakt_collection()
     elif source_type == 'Collected':
         wanted_content = get_wanted_from_collected()
 
@@ -388,6 +403,11 @@ def get_and_add_wanted_content(source_id):
         logging.info(f"Added {total_items} wanted items from {source_id}")
     else:
         logging.warning(f"No wanted content retrieved from {source_id}")
+
+def get_content_sources():
+    """Get content sources from ProgramRunner instance."""
+    program_runner = ProgramRunner()
+    return program_runner.get_content_sources()
 
 @debug_bp.route('/api/get_wanted_content', methods=['POST'])
 def get_wanted_content():

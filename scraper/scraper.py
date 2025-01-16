@@ -86,7 +86,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         matching_aliases = []
         if item_aliases and media_country_code in item_aliases:
             matching_aliases = [alias for alias in item_aliases[media_country_code] if alias.lower() != title.lower()]
-            #logging.info(f"Matching aliases: {matching_aliases}")
+            matching_aliases = list(dict.fromkeys(matching_aliases))
+            logging.info(f"Found {len(matching_aliases)} matching aliases: {matching_aliases}")
         
         # Initialize anime-specific variables
         genres = filter_genres(genres)
@@ -215,7 +216,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             # Filter results
             task_start = time.time()
-            filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, normalized_title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres)
+            filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, normalized_title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres, matching_aliases)
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
 
@@ -275,9 +276,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             
             if matching_aliases:
                 # Remove duplicates while preserving order
-                logging.info(f"Found {len(matching_aliases)} total aliases - consolidating duplicates")
-                matching_aliases = list(dict.fromkeys(matching_aliases))
-                logging.info(f"Found {len(matching_aliases)} remaining aliases to try: {matching_aliases}")
                 best_alias = None
                 best_results = []
                 best_filtered_out = None

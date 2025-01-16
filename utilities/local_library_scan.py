@@ -359,6 +359,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     notification_item = item.copy()
                     notification_item.update(update_values)
                     notification_item['is_upgrade'] = False
+                    notification_item['new_state'] = "Collected"
                     add_to_collected_notifications(notification_item)
                     logging.info(f"Added collection notification for item: {item_identifier}")
                 # Add notification for upgrades
@@ -367,6 +368,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     notification_item = item.copy()
                     notification_item.update(update_values)
                     notification_item['is_upgrade'] = True
+                    notification_item['new_state'] = 'Upgraded'
                     add_to_collected_notifications(notification_item)
                     logging.info(f"Added upgrade notification for item: {item_identifier}")
 

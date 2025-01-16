@@ -59,6 +59,10 @@
 
         document.getElementById('time-format-toggle').addEventListener('change', function() {
             const isChecked = this.checked;
+            
+            // Disable the toggle while processing
+            this.disabled = true;
+            
             fetch('/set_time_preference', {
                 method: 'POST',
                 headers: {
@@ -69,16 +73,148 @@
                     use24HourFormat: isChecked
                 })
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 if (data.status === 'OK') {
-                    window.location.reload();
+                    // Update the UI with the new data without page reload
+                    updateUIWithTimePreference(data);
+                } else {
+                    throw new Error('Failed to update time preference');
                 }
+            })
+            .catch(error => {
+                console.error('Error updating time preference:', error);
+                // Revert the toggle state
+                this.checked = !isChecked;
+            })
+            .finally(() => {
+                // Re-enable the toggle
+                this.disabled = false;
             });
         });
 
+        // Function to update UI with new time preference data
+        function updateUIWithTimePreference(data) {
+            // Update recently aired items
+            const recentlyAiredList = document.querySelector('#recently_aired ul');
+            if (recentlyAiredList && data.recently_aired) {
+                recentlyAiredList.innerHTML = data.recently_aired.map(item => `
+                    <li>
+                        <span class="show-title">${item.title}</span>
+                        <span class="air-time">${item.formatted_datetime}</span>
+                    </li>
+                `).join('');
+            }
+
+            // Update airing soon items
+            const airingSoonList = document.querySelector('#airing_soon ul');
+            if (airingSoonList && data.airing_soon) {
+                airingSoonList.innerHTML = data.airing_soon.map(item => `
+                    <li>
+                        <span class="show-title">${item.title}</span>
+                        <span class="air-time">${item.formatted_datetime}</span>
+                    </li>
+                `).join('');
+            }
+
+            // Update upcoming releases
+            const upcomingReleasesList = document.querySelector('#upcoming_releases ul');
+            if (upcomingReleasesList && data.upcoming_releases) {
+                upcomingReleasesList.innerHTML = data.upcoming_releases.map(release => `
+                    <li>
+                        <span class="titles">${release.titles.join(', ')}</span>
+                        <span class="release-date">${release.formatted_date}</span>
+                    </li>
+                `).join('');
+            }
+
+            // Update recently added movies
+            const recentMoviesContainer = document.querySelector('#recently_added_movies .cards-container');
+            if (recentMoviesContainer && data.recently_added && data.recently_added.movies) {
+                recentMoviesContainer.innerHTML = data.recently_added.movies.map(movie => `
+                    <div class="card">
+                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                            <div class="file-details">
+                                <span class="title">${movie.title} (${movie.year})</span>
+                                <span class="metadata">Quality: ${movie.version}</span>
+                                <span class="filename">${movie.filled_by_file}</span>
+                            </div>
+                        ` : `
+                            <div class="poster-container">
+                                <img src="${movie.poster_url}" alt="${movie.title} poster" class="poster" loading="lazy">
+                                <div class="poster-hover">
+                                    <span class="title">${movie.title} (${movie.year})</span>
+                                    <span class="metadata">Quality: ${movie.version}</span>
+                                    <span class="filename">${movie.filled_by_file}</span>
+                                </div>
+                            </div>
+                        `}
+                    </div>
+                `).join('');
+            }
+
+            // Update recently added shows
+            const recentShowsContainer = document.querySelector('#recently_added_shows .cards-container');
+            if (recentShowsContainer && data.recently_added && data.recently_added.shows) {
+                recentShowsContainer.innerHTML = data.recently_added.shows.map(show => `
+                    <div class="card">
+                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                            <div class="file-details">
+                                <span class="title">${show.title}</span>
+                                <span class="metadata">S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')} (${show.year}) - Quality: ${show.version}</span>
+                                <span class="filename">${show.filled_by_file}</span>
+                            </div>
+                        ` : `
+                            <div class="poster-container">
+                                <img src="${show.poster_url}" alt="${show.title} poster" class="poster" loading="lazy">
+                                <div class="poster-hover">
+                                    <span class="title">${show.title}</span>
+                                    <span class="metadata">S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')} (${show.year}) - Quality: ${show.version}</span>
+                                    <span class="filename">${show.filled_by_file}</span>
+                                </div>
+                            </div>
+                        `}
+                    </div>
+                `).join('');
+            }
+
+            // Update recently upgraded items if they exist
+            const recentlyUpgradedContainer = document.querySelector('#recently_upgraded .cards-container');
+            if (recentlyUpgradedContainer && data.recently_upgraded) {
+                recentlyUpgradedContainer.innerHTML = data.recently_upgraded.map(item => `
+                    <div class="card">
+                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                            <div class="file-details">
+                                <span class="title">${item.title}${item.year ? ` (${item.year})` : ''}</span>
+                                <span class="metadata">${item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : ''}Quality: ${item.version}</span>
+                                <span class="filename">${item.filled_by_file}</span>
+                            </div>
+                        ` : `
+                            <div class="poster-container">
+                                <img src="${item.poster_url}" alt="${item.title} poster" class="poster" loading="lazy">
+                                <div class="poster-hover">
+                                    <span class="title">${item.title}${item.year ? ` (${item.year})` : ''}</span>
+                                    <span class="metadata">${item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : ''}Quality: ${item.version}</span>
+                                    <span class="filename">${item.filled_by_file}</span>
+                                </div>
+                            </div>
+                        `}
+                    </div>
+                `).join('');
+            }
+        }
+
         document.getElementById('compact-toggle').addEventListener('change', function() {
             const isChecked = this.checked;
+            
+            // Disable the toggle while processing
+            this.disabled = true;
+            
             fetch('/set_compact_preference', {
                 method: 'POST',
                 headers: {
@@ -89,11 +225,33 @@
                     compactView: isChecked
                 })
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 if (data.success) {
-                    window.location.reload();
+                    // Instead of immediate reload, use a small timeout
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 100);
+                } else {
+                    throw new Error('Failed to update compact preference');
                 }
+            })
+            .catch(error => {
+                // Only log and revert if it's not an AbortError (caused by navigation)
+                if (error.name !== 'AbortError') {
+                    console.error('Error updating compact preference:', error);
+                    // Revert the toggle state
+                    this.checked = !isChecked;
+                }
+            })
+            .finally(() => {
+                // Re-enable the toggle
+                this.disabled = false;
             });
         });
     </script>
@@ -320,6 +478,10 @@
 
     document.getElementById('time-format-toggle').addEventListener('change', function() {
         const isChecked = this.checked;
+        
+        // Disable the toggle while processing
+        this.disabled = true;
+        
         fetch('/set_time_preference', {
             method: 'POST',
             headers: {
@@ -330,16 +492,37 @@
                 use24HourFormat: isChecked
             })
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.status === 'OK') {
-                window.location.reload();
+                // Update the UI with the new data without page reload
+                updateUIWithTimePreference(data);
+            } else {
+                throw new Error('Failed to update time preference');
             }
+        })
+        .catch(error => {
+            console.error('Error updating time preference:', error);
+            // Revert the toggle state
+            this.checked = !isChecked;
+        })
+        .finally(() => {
+            // Re-enable the toggle
+            this.disabled = false;
         });
     });
 
     document.getElementById('compact-toggle').addEventListener('change', function() {
         const isChecked = this.checked;
+        
+        // Disable the toggle while processing
+        this.disabled = true;
+        
         fetch('/set_compact_preference', {
             method: 'POST',
             headers: {
@@ -350,11 +533,33 @@
                 compactView: isChecked
             })
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
-                window.location.reload();
+                // Instead of immediate reload, use a small timeout
+                setTimeout(() => {
+                    window.location.reload();
+                }, 100);
+            } else {
+                throw new Error('Failed to update compact preference');
             }
+        })
+        .catch(error => {
+            // Only log and revert if it's not an AbortError (caused by navigation)
+            if (error.name !== 'AbortError') {
+                console.error('Error updating compact preference:', error);
+                // Revert the toggle state
+                this.checked = !isChecked;
+            }
+        })
+        .finally(() => {
+            // Re-enable the toggle
+            this.disabled = false;
         });
     });
 </script>

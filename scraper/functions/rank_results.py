@@ -71,23 +71,23 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         year_reason = "No query year provided"
     elif isinstance(torrent_year, list):
         if query_year in torrent_year:
-            year_match = 50
+            year_match = 10
             year_reason = f"Exact year match found in list: {query_year} in {torrent_year}"
         elif any(abs(query_year - y) <= 1 for y in torrent_year):
-            year_match = 25
+            year_match = 5
             year_reason = f"Year within 1 year difference in list: {query_year} near {torrent_year}"
         else:
-            year_match = -25
+            year_match = -5
             year_reason = f"Year mismatch penalty: {query_year} not near {torrent_year}"
     else:
         if query_year == torrent_year:
-            year_match = 50
+            year_match = 10
             year_reason = f"Exact year match: {query_year}"
         elif torrent_year and abs(query_year - (torrent_year or 0)) <= 1:
-            year_match = 25
+            year_match = 5
             year_reason = f"Year within 1 year difference: {query_year} vs {torrent_year}"
         elif torrent_year:
-            year_match = -25
+            year_match = -5
             year_reason = f"Year mismatch penalty: {query_year} vs {torrent_year}"
         else:
             year_match = 0
@@ -280,6 +280,34 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Add the score breakdown to the result
     result['score_breakdown'] = score_breakdown
+
+    # Log detailed score breakdown
+    logging.debug(f"\nScore breakdown for '{torrent_title}':")
+    logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
+    logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
+    logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")
+    logging.debug(f"├─ Size: {score_breakdown['size_score']:.2f} (weight: {size_weight})")
+    logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
+    logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
+    logging.debug(f"├─ Year: {score_breakdown['year_match']:.2f} ({year_reason})")
+    if content_type.lower() == 'episode':
+        logging.debug(f"├─ Season Match: {score_breakdown['season_match']:.2f}")
+        logging.debug(f"├─ Episode Match: {score_breakdown['episode_match']:.2f}")
+        if score_breakdown['is_multi_pack']:
+            logging.debug(f"├─ Multi-pack: {score_breakdown['multi_pack_score']:.2f} ({score_breakdown['num_items']} items)")
+        if score_breakdown['single_episode_score']:
+            logging.debug(f"├─ Single Episode Penalty: {score_breakdown['single_episode_score']:.2f}")
+    if score_breakdown['content_type_score']:
+        logging.debug(f"├─ Content Type Score: {score_breakdown['content_type_score']:.2f}")
+    if preferred_filter_in_breakdown:
+        logging.debug("├─ Preferred Filter Bonuses:")
+        for pattern, score in preferred_filter_in_breakdown.items():
+            logging.debug(f"│  ├─ {pattern}: +{score}")
+    if preferred_filter_out_breakdown:
+        logging.debug("├─ Preferred Filter Penalties:")
+        for pattern, score in preferred_filter_out_breakdown.items():
+            logging.debug(f"│  ├─ {pattern}: {score}")
+    logging.debug(f"└─ Total Score: {score_breakdown['total_score']:.2f}")
 
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)

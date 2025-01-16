@@ -347,7 +347,7 @@ class UpgradingQueue:
                                     'version': item.get('version', ''),
                                     'season_number': item.get('season_number'),
                                     'episode_number': item.get('episode_number'),
-                                    'new_state': 'Checking',
+                                    'new_state': 'Upgrading',
                                     'is_upgrade': True,
                                     'upgrading_from': upgrading_from
                                 }

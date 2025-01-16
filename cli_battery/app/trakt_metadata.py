@@ -45,8 +45,8 @@ class TraktMetadata:
             self.request_times.popleft()
         
         # Check if we've hit the rate limit
-        if len(self.request_times) >= self.max_requests:
-            return False
+        # if len(self.request_times) >= self.max_requests:
+        #     return False
         
         # Add the current request time
         self.request_times.append(current_time)
@@ -164,7 +164,16 @@ class TraktMetadata:
         return None
 
     def get_show_seasons_and_episodes(self, imdb_id):
-        url = f"{self.base_url}/shows/{imdb_id}/seasons?extended=full,episodes"
+        # First search to get the show's Trakt slug
+        search_result = self._search_by_imdb(imdb_id)
+        if not search_result or search_result['type'] != 'show':
+            return None, None
+            
+        show = search_result['show']
+        slug = show['ids']['slug']
+        
+        # Now get the seasons data using the slug
+        url = f"{self.base_url}/shows/{slug}/seasons?extended=full,episodes"
         response = self._make_request(url)
         if response and response.status_code == 200:
             seasons_data = response.json()

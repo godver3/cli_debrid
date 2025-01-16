@@ -170,7 +170,8 @@ class MediaMatcher:
                 # Only check season if it's present in both the parsed result and the item
                 season_match = (not result_info.get('seasons') or  # If no season in filename, that's okay
                               not item_season or  # If no season in item, that's okay
-                              item_season in result_info.get('seasons', []))  # If both have season, they should match
+                              item_season in result_info.get('seasons', []) or  # If both have season, they should match
+                              (is_anime and 0 in result_info.get('seasons', [])))  # For anime, season 0 matches any season
                 
                 if episode_match and season_match:
                     logging.debug(f"Matched anime: E{item_episode} in {os.path.basename(file['path'])}")

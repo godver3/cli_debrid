@@ -232,7 +232,19 @@ document.addEventListener('DOMContentLoaded', function() {
             const isTV = item.mediaType === 'tv' || item.mediaType === 'show';
             tvControls.style.display = isTV ? 'block' : 'none';
             if (isTV) {
-                populateSeasonEpisodeSelects(item);
+                // Fetch season and episode data for the TV show
+                fetch(`/scraper/get_tv_details/${item.id}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            populateSeasonEpisodeSelects(data);
+                        } else {
+                            console.error('Failed to fetch TV show details:', data.error);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching TV show details:', error);
+                    });
             }
         }
     
@@ -240,7 +252,7 @@ document.addEventListener('DOMContentLoaded', function() {
         loadVersions();
     }
 
-    function populateSeasonEpisodeSelects(item) {
+    function populateSeasonEpisodeSelects(data) {
         const seasonSelect = document.getElementById('season-select');
         const episodeSelect = document.getElementById('episode-select');
     
@@ -248,57 +260,42 @@ document.addEventListener('DOMContentLoaded', function() {
         seasonSelect.innerHTML = '';
         episodeSelect.innerHTML = '';
     
-        if (item.seasonEpisodeCounts) {
+        if (data.seasons) {
             // Populate seasons
-            Object.keys(item.seasonEpisodeCounts).forEach(season => {
+            data.seasons.forEach(season => {
                 const option = document.createElement('option');
-                option.value = season;
-                option.textContent = `Season ${season}`;
+                option.value = season.season_number;
+                option.textContent = `Season ${season.season_number}`;
                 seasonSelect.appendChild(option);
             });
     
             // Add event listener to season select to update episodes
-            seasonSelect.addEventListener('change', () => updateEpisodeSelect(item, seasonSelect.value));
+            seasonSelect.addEventListener('change', () => {
+                const selectedSeason = data.seasons.find(s => s.season_number === parseInt(seasonSelect.value));
+                if (selectedSeason) {
+                    updateEpisodeSelect(selectedSeason);
+                }
+            });
     
-            // Set default season to 1 if available, otherwise first season
-            const defaultSeason = item.seasonEpisodeCounts['1'] ? '1' : Object.keys(item.seasonEpisodeCounts)[0];
-            seasonSelect.value = defaultSeason;
-    
-            // Initially populate episodes for the default season
-            updateEpisodeSelect(item, defaultSeason);
-        } else {
-            // If no season data, add default season 1
-            const option = document.createElement('option');
-            option.value = '1';
-            option.textContent = 'Season 1';
-            seasonSelect.appendChild(option);
-            
-            // Add default episode 1
-            const episodeOption = document.createElement('option');
-            episodeOption.value = '1';
-            episodeOption.textContent = 'Episode 1';
-            episodeSelect.appendChild(episodeOption);
+            // Set default season and trigger episode population
+            if (data.seasons.length > 0) {
+                seasonSelect.value = data.seasons[0].season_number;
+                updateEpisodeSelect(data.seasons[0]);
+            }
         }
     }
 
-    function updateEpisodeSelect(item, selectedSeason) {
+    function updateEpisodeSelect(season) {
         const episodeSelect = document.getElementById('episode-select');
         episodeSelect.innerHTML = '';
     
-        if (item.seasonEpisodeCounts && item.seasonEpisodeCounts[selectedSeason]) {
-            const episodeCount = item.seasonEpisodeCounts[selectedSeason];
-            for (let i = 1; i <= episodeCount; i++) {
+        if (season && season.episode_count) {
+            for (let i = 1; i <= season.episode_count; i++) {
                 const option = document.createElement('option');
                 option.value = i;
                 option.textContent = `Episode ${i}`;
                 episodeSelect.appendChild(option);
             }
-        } else {
-            // If no episode data, add default episode 1
-            const option = document.createElement('option');
-            option.value = '1';
-            option.textContent = 'Episode 1';
-            episodeSelect.appendChild(option);
         }
         
         // Set default to episode 1
@@ -622,9 +619,15 @@ document.addEventListener('DOMContentLoaded', function() {
     
         // Add TV show specific information
         if (isTV) {
-            scrapeData.season = document.getElementById('season-select').value || '1';
-            scrapeData.episode = document.getElementById('episode-select').value || '1';
-            scrapeData.multi = document.getElementById('multi-checkbox').checked;
+            const seasonSelect = document.getElementById('season-select');
+            const episodeSelect = document.getElementById('episode-select');
+            const multiCheckbox = document.getElementById('multi-checkbox');
+            
+            if (seasonSelect && episodeSelect) {
+                scrapeData.season = parseInt(seasonSelect.value) || 1;
+                scrapeData.episode = parseInt(episodeSelect.value) || 1;
+                scrapeData.multi = multiCheckbox ? multiCheckbox.checked : false;
+            }
         }
     
         console.log('Scrape data:', scrapeData);

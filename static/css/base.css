@@ -39,7 +39,7 @@ body {
     background: linear-gradient(to bottom, #333 0%, #333 60%, #000 80%) fixed;
     background-color: #000;  
     margin: 0;
-    padding-top: 60px;
+    padding-top: 85px;
     display: flex;
     flex-direction: column;
     min-height: 100vh;
@@ -165,7 +165,6 @@ nav ul li a:hover::after {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    margin-right: 5px;
     font-weight: bold;
 }
 
@@ -187,9 +186,13 @@ nav ul li a:hover::after {
 }
 
 .user-info {
-    /* margin-right: 15px; */
     margin-left: 10px;
-    margin-bottom: 20px;   
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    height: 100%;
+    padding-top: 0px;
+    min-height: 35px;
 }
 
 .action-controls {
@@ -1139,6 +1142,8 @@ h2 {
     pointer-events: none;
     transition: transform 0.3s ease, opacity 0.3s ease;
     transform-origin: top;
+    font-size: 1.0em;
+    line-height: 0.6;
 }
 
 .task-monitor-container.visible {
@@ -1232,6 +1237,7 @@ h2 {
 .current-task-time {
     color: #888;
     font-size: 0.9em;
+    display: none;
 }
 
 .task-monitor-header {
@@ -1383,4 +1389,63 @@ h2 {
     .task-monitor-button:active {
         transform: scale(0.98);
     }
+}
+
+.task-item.running {
+    background-color: rgba(var(--primary-rgb), 0.1);
+    border-left: 3px solid rgb(var(--primary-rgb));
+}
+
+.task-item.running .task-timing span:first-child {
+    color: rgb(var(--primary-rgb));
+    font-weight: 500;
+}
+
+.task-item.paused {
+    background-color: rgba(var(--warning-rgb, 255, 165, 0), 0.1);
+    border-left: 3px solid rgb(var(--warning-rgb, 255, 165, 0));
+}
+
+.task-item.paused .task-name {
+    color: rgb(var(--warning-rgb, 255, 165, 0));
+    font-weight: 600;
+}
+
+.task-item.paused .task-timing span {
+    color: rgb(var(--warning-rgb, 255, 165, 0));
+    font-weight: 500;
+    background-color: rgba(var(--warning-rgb, 255, 165, 0), 0.1);
+}
+
+.current-task-display.paused .current-task-name {
+    color: rgb(var(--warning-rgb, 255, 0, 0));
+    font-weight: 600;
+}
+
+.current-task-display.paused .current-task-time {
+    color: rgb(var(--warning-rgb, 255, 0, 0));
+    font-weight: 500;
+}
+
+.current-task-display.paused {
+    background-color: rgba(var(--warning-rgb, 255, 0, 0), 0.1);
+    border-left: 3px solid rgb(var(--warning-rgb, 255, 0, 0));
+}
+
+/* Update indicator */
+.update-indicator {
+    margin-top: 2px;
+    font-size: 14px;
+    cursor: pointer;
+    animation: strobe 3s ease-in-out infinite;
+}
+
+.update-indicator.hidden {
+    display: none !important;
+}
+
+@keyframes strobe {
+    0% { color: #FFA500; opacity: 0.4; }
+    50% { color: #FFA500; opacity: 1; }
+    100% { color: #FFA500; opacity: 0.4; }
 }

@@ -278,6 +278,8 @@ def ensure_settings_file():
                 'resolution_weight': '3',
                 'hdr_weight': '3',
                 'similarity_weight': '3',
+                'similarity_threshold': '0.8',
+                'similarity_threshold_anime': '0.35',
                 'size_weight': '3',
                 'bitrate_weight': '3',
                 'preferred_filter_in': '',
