@@ -82,7 +82,7 @@ def update_initialization_step(step_name, substep_details='', error=None, is_sub
     if not is_substep:
         initialization_status['current_step_number'] += 1
     
-    logging.info(f"Initialization {'substep' if is_substep else 'step'} {initialization_status['current_step_number']}/{initialization_status['total_steps']}: {step_name}")
+    #logging.info(f"Initialization {'substep' if is_substep else 'step'} {initialization_status['current_step_number']}/{initialization_status['total_steps']}: {step_name}")
     if substep_details:
         logging.info(f"  Details: {substep_details}")
 

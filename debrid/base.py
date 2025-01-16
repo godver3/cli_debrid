@@ -64,10 +64,10 @@ class DebridProvider(ABC):
         self._setup_encryption()
         
         # Log provider capabilities
-        logging.debug(f"[{self.__class__.__name__}] Capability check:")
-        logging.debug(f"[{self.__class__.__name__}] - supports_direct_cache_check: {self.supports_direct_cache_check}")
-        logging.debug(f"[{self.__class__.__name__}] - supports_bulk_cache_checking: {self.supports_bulk_cache_checking}")
-        logging.debug(f"[{self.__class__.__name__}] - supports_uncached: {self.supports_uncached}")
+        #logging.debug(f"[{self.__class__.__name__}] Capability check:")
+        #logging.debug(f"[{self.__class__.__name__}] - supports_direct_cache_check: {self.supports_direct_cache_check}")
+        #logging.debug(f"[{self.__class__.__name__}] - supports_bulk_cache_checking: {self.supports_bulk_cache_checking}")
+        #logging.debug(f"[{self.__class__.__name__}] - supports_uncached: {self.supports_uncached}")
     
     def _setup_encryption(self) -> None:
         """Setup encryption for provider capabilities"""

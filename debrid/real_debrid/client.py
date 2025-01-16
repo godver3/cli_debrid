@@ -416,18 +416,18 @@ class RealDebridProvider(DebridProvider):
     def get_active_downloads(self) -> Tuple[int, int]:
         """Get number of active downloads and download limit"""
         try:
-            logging.info("Fetching active downloads from Real-Debrid API...")
+            #logging.info("Fetching active downloads from Real-Debrid API...")
             # Get active torrents count and limit
             active_data = make_request('GET', '/torrents/activeCount', self.api_key)
             logging.info(f"Active torrents response: {active_data}")
             
             active_count = active_data.get('nb', 0)
             raw_max_downloads = active_data.get('limit', self.MAX_DOWNLOADS)
-            logging.info(f"Raw values - Active count: {active_count}, Max downloads: {raw_max_downloads}")
+            #logging.info(f"Raw values - Active count: {active_count}, Max downloads: {raw_max_downloads}")
 
             # Calculate adjusted max downloads (75% of limit)
             max_downloads = round(raw_max_downloads * 0.75)
-            logging.info(f"Adjusted max downloads (75% of limit): {max_downloads}")
+            #logging.info(f"Adjusted max downloads (75% of limit): {max_downloads}")
             
             if active_count >= max_downloads:
                 logging.warning(f"Active downloads ({active_count}) exceeds adjusted limit ({max_downloads})")
@@ -435,7 +435,7 @@ class RealDebridProvider(DebridProvider):
                     f"Too many active downloads ({active_count}/{max_downloads})"
                 )
                 
-            logging.info(f"Final values - Active downloads: {active_count}, Max limit: {max_downloads}")
+            #logging.info(f"Final values - Active downloads: {active_count}, Max limit: {max_downloads}")
             return active_count, max_downloads
             
         except TooManyDownloadsError:

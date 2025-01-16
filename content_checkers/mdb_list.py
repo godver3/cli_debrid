@@ -78,10 +78,11 @@ def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> Lis
     items = fetch_items_from_mdblist(mdblist_url)
     processed_items = []
     
+    skipped_count = 0
     for item in items:
         imdb_id = item.get('imdb_id')
         if not imdb_id:
-            logging.warning(f"Skipping item due to missing IMDB ID: {item.get('title', 'Unknown Title')}")
+            skipped_count += 1
             continue
         
         media_type = assign_media_type(item)
@@ -97,7 +98,6 @@ def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> Lis
         if cache_item:
             last_processed = cache_item['timestamp']
             if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                logging.debug(f"Skipping recently processed item: {cache_key}")
                 continue
         
         # Add or update cache entry
@@ -107,11 +107,13 @@ def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> Lis
         }
         
         processed_items.append(wanted_item)
+
+    if skipped_count > 0:
+        logging.info(f"Skipped {skipped_count} items due to missing IMDB IDs")
     
+    logging.info(f"Found {len(processed_items)} new items from MDBList")
     all_wanted_items.append((processed_items, versions))
     
     # Save updated cache
     save_mdblist_cache(cache)
-    logging.info(f"Retrieved {len(processed_items)} wanted items from MDB List: {mdblist_url}")
-    
     return all_wanted_items

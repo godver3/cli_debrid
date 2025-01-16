@@ -40,7 +40,7 @@ def add_statistics_indexes():
         """)
         
         conn.commit()
-        logging.info("Successfully added statistics indexes")
+        #logging.info("Successfully added statistics indexes")
         
     except Exception as e:
         logging.error(f"Error adding statistics indexes: {str(e)}")
@@ -64,7 +64,7 @@ def remove_statistics_indexes():
             cursor.execute(f"DROP INDEX IF EXISTS {index}")
         
         conn.commit()
-        logging.info("Successfully removed statistics indexes")
+        #logging.info("Successfully removed statistics indexes")
         
     except Exception as e:
         logging.error(f"Error removing statistics indexes: {str(e)}")

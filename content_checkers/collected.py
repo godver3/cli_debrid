@@ -33,7 +33,7 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
     collected_sources = [data for source, data in content_sources.items() if source.startswith('Collected') and data.get('enabled', False)]
     
     if not collected_sources:
-        logging.warning("No enabled Collected sources found in settings.")
+        logging.info("No enabled Collected sources found in settings.")
         return []
 
     all_wanted_items = []
@@ -59,7 +59,6 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                 if cache_item:
                     last_processed = cache_item['timestamp']
                     if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                        logging.debug(f"Skipping recently processed item: {cache_key}")
                         continue
                 
                 # Add or update cache entry
@@ -77,11 +76,8 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                 }
 
         result = list(consolidated_items.values())
-
-        # Debug printing
-        logging.info(f"Retrieved {len(result)} unique TV shows from local database")
-        for item in result:
-            logging.debug(f"IMDB ID: {item['imdb_id']}, Media Type: {item['media_type']}")
+        logging.info(f"Found {len(result)} unique TV shows from local database")
+        logging.debug(f"Processing batch of {len(result)} items")
 
         all_wanted_items.append((result, versions))
 

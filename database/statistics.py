@@ -13,6 +13,14 @@ from functools import wraps
 import random
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
 
+def format_bytes(size):
+    """Convert bytes to human readable format."""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024.0:
+            return f"{size:.2f} {unit}"
+        size /= 1024.0
+    return f"{size:.2f} PB"
+
 # Cache for download stats
 download_stats_cache = {
     'active_downloads': None,
@@ -20,6 +28,28 @@ download_stats_cache = {
     'last_update': 0,
     'cache_duration': 300  # 5 minutes in seconds
 }
+
+def parse_size(size_str):
+    """Convert human readable size string to bytes"""
+    try:
+        if not isinstance(size_str, str):
+            return float(size_str)
+            
+        size_str = size_str.strip()
+        if not size_str:
+            return 0
+            
+        units = {'B': 1, 'KB': 1024, 'MB': 1024**2, 'GB': 1024**3, 'TB': 1024**4}
+        number = float(''.join([c for c in size_str if c.isdigit() or c == '.']))
+        unit = ''.join([c for c in size_str if c.isalpha()]).strip()
+        
+        if unit not in units:
+            return float(size_str)  # Try direct conversion if no unit found
+            
+        return number * units[unit]
+    except (ValueError, TypeError) as e:
+        logging.error(f"Error parsing size string '{size_str}': {str(e)}")
+        return 0
 
 def get_cached_download_stats():
     """Get cached download stats or fetch new ones if cache is expired"""
@@ -92,25 +122,53 @@ def get_cached_download_stats():
                         'error': None
                     }
                 else:
-                    daily_used = float(usage.get('downloaded', 0)) * 1024 * 1024 * 1024  # GB to bytes
-                    daily_limit = float(usage.get('limit', 2000)) * 1024 * 1024 * 1024  # GB to bytes
-                    percentage = round((daily_used / daily_limit) * 100) if daily_limit > 0 else 0
-                    
-                    download_stats_cache['usage_stats'] = {
-                        'used': format_bytes(daily_used),
-                        'limit': format_bytes(daily_limit),
-                        'percentage': percentage,
-                        'error': None
-                    }
+                    # If we have formatted strings and percentage, use them directly
+                    if isinstance(usage.get('used'), str) and isinstance(usage.get('limit'), str) and 'percentage' in usage:
+                        download_stats_cache['usage_stats'] = {
+                            'used': usage['used'],
+                            'limit': usage['limit'],
+                            'percentage': usage['percentage'],
+                            'error': None
+                        }
+                    else:
+                        # Handle numeric values (old Real-Debrid format)
+                        used = usage.get('downloaded', usage.get('used', 0))
+                        limit = usage.get('limit', 2000)
+                        
+                        # If values are numeric, assume they're in GB
+                        if isinstance(used, (int, float)):
+                            daily_used = used * 1024 * 1024 * 1024  # Convert GB to bytes
+                            used_str = f"{used:.2f} GB"
+                        else:
+                            daily_used = parse_size(str(used))
+                            used_str = str(used)
+                            
+                        if isinstance(limit, (int, float)):
+                            daily_limit = limit * 1024 * 1024 * 1024  # Convert GB to bytes
+                            limit_str = f"{limit:.2f} GB"
+                        else:
+                            daily_limit = parse_size(str(limit))
+                            limit_str = str(limit)
+                        
+                        # Calculate percentage
+                        percentage = round((daily_used / daily_limit) * 100) if daily_limit > 0 else 0
+                        
+                        download_stats_cache['usage_stats'] = {
+                            'used': used_str,
+                            'limit': limit_str,
+                            'percentage': percentage,
+                            'error': None
+                        }
             except Exception as e:
                 logging.error(f"Error getting usage stats: {str(e)}")
+                logging.error(f"Raw usage data that caused error: {usage}")
                 download_stats_cache['usage_stats'] = {
                     'used': '0 GB',
                     'limit': '2000 GB',
                     'percentage': 0,
                     'error': str(e)
                 }
-            
+
             download_stats_cache['last_update'] = current_time
             
         except ProviderUnavailableError as e:
@@ -147,7 +205,7 @@ def get_cached_download_stats():
                     'percentage': 0,
                     'error': str(e)
                 }
-    
+
     return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
 
 def cache_for_seconds(seconds):

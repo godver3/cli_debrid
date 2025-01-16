@@ -39,7 +39,7 @@ body {
     background: linear-gradient(to bottom, #333 0%, #333 60%, #000 80%) fixed;
     background-color: #000;  
     margin: 0;
-    padding-top: 85px;
+    padding-top: 95px;
     display: flex;
     flex-direction: column;
     min-height: 100vh;
