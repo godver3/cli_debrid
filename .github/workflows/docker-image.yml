@@ -76,14 +76,6 @@ jobs:
             echo "::error::Branch mismatch! branch_id contains '$BRANCH_ID' but current branch is '$CURRENT_BRANCH'"
             exit 1
           fi
-          
-          # For main/dev branches, verify the version tag doesn't already exist
-          if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "dev" ]]; then
-            if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-              echo "::error::Tag v$VERSION already exists!"
-              exit 1
-            fi
-          fi
 
       - name: Rename Windows executable
         shell: bash
