@@ -64,12 +64,14 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         keep_series = get_setting('Debug', 'plex_watchlist_keep_series', False)
 
         if should_remove:
-            logging.debug(f"Plex watchlist removal is enabled")
-        if keep_series:
-            logging.debug(f"Plex watchlist keep series is enabled, remove only movies")
+            logging.debug("Plex watchlist removal enabled")
+            if keep_series:
+                logging.debug("Keeping TV series in watchlist")
         
         # Get the watchlist directly from PlexAPI
         watchlist = account.watchlist()
+        skipped_count = 0
+        removed_count = 0
         
         # Process each item in the watchlist
         for item in watchlist:
@@ -81,7 +83,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                     break
             
             if not imdb_id:
-                logging.warning(f"Skipping item due to missing IMDB ID: {item.title}")
+                skipped_count += 1
                 continue
             
             media_type = 'movie' if item.type == 'movie' else 'tv'
@@ -91,15 +93,16 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             if item_state == "Collected" and should_remove:
                 # If it's a TV show and we want to keep series, skip removal
                 if media_type == 'tv' and keep_series:
-                    logging.info(f"Keeping collected TV series in watchlist: {item.title} ({imdb_id})")
+                    logging.debug(f"Keeping TV series: {imdb_id}")
                 else:
                     # Remove from watchlist using the PlexAPI object directly
                     try:
                         account.removeFromWatchlist([item])
-                        logging.info(f"Removed collected item from watchlist: {item.title} ({imdb_id})")
+                        removed_count += 1
                         continue
                     except Exception as e:
-                        logging.error(f"Failed to remove collected item from watchlist: {item.title} ({imdb_id}): {str(e)}")
+                        logging.error(f"Failed to remove {imdb_id} from watchlist: {e}")
+                        continue
             
             # Check cache for this item
             cache_key = f"{imdb_id}_{media_type}"
@@ -108,7 +111,6 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             if cache_item:
                 last_processed = cache_item['timestamp']
                 if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                    logging.debug(f"Skipping recently processed item: {cache_key}")
                     continue
             
             # Add or update cache entry
@@ -120,23 +122,26 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                 }
             }
             
-            wanted_item = {
+            processed_items.append({
                 'imdb_id': imdb_id,
                 'media_type': media_type
-            }
-            
-            processed_items.append(wanted_item)
-            
-        logging.info(f"Retrieved {len(processed_items)} total items from Plex watchlist")
+            })
+
+        if skipped_count > 0:
+            logging.info(f"Skipped {skipped_count} items due to missing IMDB IDs")
+        if removed_count > 0:
+            logging.info(f"Removed {removed_count} collected items from watchlist")
+        
+        logging.info(f"Found {len(processed_items)} new items from Plex watchlist")
+        all_wanted_items.append((processed_items, versions))
+        
+        # Save updated cache
+        save_plex_cache(cache, PLEX_WATCHLIST_CACHE_FILE)
+        return all_wanted_items
         
     except Exception as e:
-        logging.error(f"Error fetching Plex watchlist: {str(e)}")
+        logging.error(f"Error processing Plex watchlist: {e}")
         return [([], versions)]
-    
-    # Save updated cache
-    save_plex_cache(cache, PLEX_WATCHLIST_CACHE_FILE)
-    all_wanted_items.append((processed_items, versions))
-    return all_wanted_items
 
 def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []

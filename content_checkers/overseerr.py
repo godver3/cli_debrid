@@ -62,7 +62,7 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
 
     while True:
         try:
-            logging.debug(f"Fetching page {page} (skip={skip}, take={take})")
+            logging.debug(f"Fetching Overseerr requests page {page}")
             response = api.get(
                 get_url(overseerr_url, f"/api/v1/request?take={take}&skip={skip}"),
                 headers=headers,
@@ -74,7 +74,6 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
             results = data.get('results', [])
             
             if not results:
-                logging.debug("No more results returned. Stopping pagination.")
                 break
 
             wanted_content.extend(results)
@@ -82,7 +81,6 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
             page += 1
 
             if len(results) < take:
-                logging.debug("Received fewer results than requested. This is likely the last page.")
                 break
 
         except api.exceptions.RequestException as e:
@@ -92,7 +90,7 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
             logging.error(f"Unexpected error while processing Overseerr response: {e}")
             break
 
-    logging.info(f"Fetched a total of {len(wanted_content)} wanted content items from Overseerr")
+    logging.info(f"Found {len(wanted_content)} wanted items from Overseerr")
     return wanted_content
 
 def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
@@ -117,10 +115,10 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
         try:
             wanted_content_raw = fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key)
             wanted_items = []
+            cache_skipped = 0
 
             for item in wanted_content_raw:
                 media = item.get('media', {})
-                logging.debug(f"Processing wanted item: {media}")
 
                 if media.get('mediaType') in ['movie', 'tv']:
                     wanted_item = {
@@ -145,7 +143,7 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                     if cache_item:
                         last_processed = cache_item['timestamp']
                         if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                            logging.debug(f"Skipping recently processed item: {cache_key}")
+                            cache_skipped += 1
                             continue
                     
                     # Add or update cache entry
@@ -155,10 +153,9 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                     }
                     
                     wanted_items.append(wanted_item)
-                    logging.debug(f"Added wanted item: {wanted_item}")
 
             all_wanted_items.append((wanted_items, versions))
-            logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source.")
+            logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source. Skipped {cache_skipped} items in cache.")
         except Exception as e:
             logging.error(f"Unexpected error while processing Overseerr source: {e}")
 

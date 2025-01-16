@@ -217,6 +217,10 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
 
 def _get_local_timezone():
     """Get the local timezone in a cross-platform way with fallback to settings."""
+    # Suppress tzlocal debug messages
+    import logging
+    logging.getLogger('tzlocal').setLevel(logging.WARNING)
+    
     from tzlocal import get_localzone
     from settings import get_setting
     

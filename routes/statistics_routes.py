@@ -46,17 +46,15 @@ def cache_for_seconds(seconds):
         return wrapper
     return decorator
 
-@cache_for_seconds(30)
 def get_cached_active_downloads():
     """Get active downloads with caching"""
-    provider = get_debrid_provider()
-    return provider.get_active_downloads()
+    active_downloads, _ = get_cached_download_stats()
+    return active_downloads
 
-@cache_for_seconds(30)
 def get_cached_user_traffic():
     """Get user traffic with caching"""
-    provider = get_debrid_provider()
-    return provider.get_user_traffic()
+    _, usage_stats = get_cached_download_stats()
+    return usage_stats
 
 statistics_bp = Blueprint('statistics', __name__)
 root_bp = Blueprint('root', __name__)
@@ -390,9 +388,9 @@ def root():
                 recently_added['shows'].append(show)
         
         # Get recently upgraded items with logging
-        logging.info("Fetching recently upgraded items...")
+        #logging.info("Fetching recently upgraded items...")
         recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
-        logging.info(f"Raw recently upgraded items: {recently_upgraded}")
+        #logging.info(f"Raw recently upgraded items: {recently_upgraded}")
         
         # Format dates for upgraded items
         for item in recently_upgraded:
@@ -400,7 +398,7 @@ def root():
                 item['last_updated'], 
                 use_24hour_format
             )
-            logging.info(f"Formatted upgraded item: {item}")
+            #logging.info(f"Formatted upgraded item: {item}")
     
     finally:
         loop.close()
@@ -425,9 +423,13 @@ def root():
             }
         else:
             try:
+                # Strip 'GB' from values and convert to float
+                used_gb = float(usage.get('used', '0 GB').replace(' GB', ''))
+                limit_gb = float(usage.get('limit', '2000 GB').replace(' GB', ''))
+                
                 # Convert GB to bytes for calculation
-                daily_used = float(usage.get('downloaded', 0)) * 1024 * 1024 * 1024  # GB to bytes
-                daily_limit = float(usage.get('limit', 2000)) * 1024 * 1024 * 1024  # GB to bytes
+                daily_used = used_gb * 1024 * 1024 * 1024  # GB to bytes
+                daily_limit = limit_gb * 1024 * 1024 * 1024  # GB to bytes
                 
                 percentage = round((daily_used / daily_limit) * 100) if daily_limit > 0 else 0
                 

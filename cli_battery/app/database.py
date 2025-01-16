@@ -53,7 +53,7 @@ def init_db():
     connection_string = f'sqlite:///{db_path}'
 
     try:
-        logger.info(f"Attempting to connect to database: {connection_string}")
+        #logger.info(f"Attempting to connect to database: {connection_string}")
         engine = create_engine(
             connection_string,
             echo=False,
@@ -77,7 +77,7 @@ def init_db():
         # Create tables
         Base.metadata.create_all(engine)
 
-        logger.info(f"Successfully connected to cli_battery database: {connection_string}")
+        #logger.info(f"Successfully connected to cli_battery database: {connection_string}")
         return engine
     except Exception as e:
         logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")

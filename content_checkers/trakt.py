@@ -215,15 +215,10 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return processed_items
 
 def ensure_trakt_auth():
-    logging.info("Starting Trakt authentication check")
+    logging.debug("Checking Trakt authentication")
     
     trakt.core.CONFIG_PATH = TRAKT_CONFIG_FILE
-    
-    logging.info("Loading Trakt configuration")
     trakt.core.load_config()
-    
-    logging.info(f"OAUTH_TOKEN: {trakt.core.OAUTH_TOKEN}")
-    logging.info(f"OAUTH_EXPIRES_AT: {trakt.core.OAUTH_EXPIRES_AT}")
     
     # Manually load the config file if OAUTH_EXPIRES_AT is None
     if trakt.core.OAUTH_EXPIRES_AT is None:
@@ -231,9 +226,8 @@ def ensure_trakt_auth():
             with open(trakt.core.CONFIG_PATH, 'r') as config_file:
                 config_data = json.load(config_file)
                 trakt.core.OAUTH_EXPIRES_AT = config_data.get('OAUTH_EXPIRES_AT')
-            logging.info(f"Manually loaded OAUTH_EXPIRES_AT: {trakt.core.OAUTH_EXPIRES_AT}")
         except Exception as e:
-            logging.error(f"Error manually loading config: {str(e)}")
+            logging.error(f"Error manually loading config: {e}")
     
     if trakt.core.OAUTH_TOKEN is None or trakt.core.OAUTH_EXPIRES_AT is None:
         logging.error("Trakt authentication not properly configured")
@@ -242,15 +236,15 @@ def ensure_trakt_auth():
     current_time = int(time.time())
     
     if current_time > (trakt.core.OAUTH_EXPIRES_AT - 86400):
-        logging.info("Token has expired, attempting to refresh")
+        logging.info("Token expired, refreshing")
         try:
             trakt.core._validate_token(trakt.core.CORE)
-            logging.info(f"Token successfully refreshed. New expiration: {trakt.core.OAUTH_EXPIRES_AT}")
+            logging.debug("Token refreshed successfully")
         except Exception as e:
-            logging.error(f"Failed to refresh Trakt token: {str(e)}", exc_info=True)
+            logging.error(f"Failed to refresh Trakt token: {e}", exc_info=True)
             return None
     else:
-        logging.info(f"Token is still valid. Expires in {trakt.core.OAUTH_EXPIRES_AT - current_time} seconds")
+        logging.debug("Token is valid")
     
     return trakt.core.OAUTH_TOKEN
 
@@ -311,12 +305,11 @@ def check_for_updates(list_url: str = None) -> bool:
     return False
 
 def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
-    logging.info("Preparing to make Trakt API call for watchlist")
+    logging.debug("Fetching Trakt watchlist")
     access_token = ensure_trakt_auth()
     if access_token is None:
         logging.error("Failed to obtain a valid Trakt access token")
         raise Exception("Failed to obtain a valid Trakt access token")
-    logging.info("Successfully obtained valid access token")
 
     all_wanted_items = []
     trakt_sources = get_trakt_sources()
@@ -328,30 +321,28 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
     keep_series = get_setting('Debug', 'trakt_watchlist_keep_series', False)
 
     if should_remove:
-        logging.debug("Trakt watchlist removal is enabled")
-    if keep_series:
-        logging.debug("Trakt watchlist keep series is enabled, remove only movies")
+        logging.debug("Trakt watchlist removal enabled" + (" (keeping series)" if keep_series else ""))
 
     # Process Trakt Watchlist
     for watchlist_source in trakt_sources['watchlist']:
         if watchlist_source.get('enabled', False):
             versions = watchlist_source.get('versions', {})
-            logging.info("Fetching user's watchlist")
             watchlist_items = fetch_items_from_trakt("/sync/watchlist")
-            logging.debug(f"Watchlist items fetched: {len(watchlist_items)}")
             
             processed_items = []
             movies_to_remove = []
             shows_to_remove = []
+            skipped_count = 0
             
             for item in watchlist_items:
                 media_type = assign_media_type(item)
                 if not media_type:
+                    skipped_count += 1
                     continue
                 
                 imdb_id = get_imdb_id(item, media_type)
                 if not imdb_id:
-                    logging.warning(f"Skipping item due to missing ID: {item.get(media_type, {}).get('title', 'Unknown Title')}")
+                    skipped_count += 1
                     continue
 
                 # Check cache for this item
@@ -361,7 +352,6 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
                 if cache_item:
                     last_processed = cache_item['timestamp']
                     if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                        logging.debug(f"Skipping recently processed item: {cache_key}")
                         continue
 
                 # Check if the item is already collected
@@ -369,7 +359,7 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
                 if item_state == "Collected" and should_remove:
                     # If it's a TV show and we want to keep series, skip removal
                     if media_type == 'tv' and keep_series:
-                        logging.info(f"Keeping collected TV series in watchlist: {item.get(media_type, {}).get('title')} ({imdb_id})")
+                        logging.debug(f"Keeping TV series: {imdb_id}")
                         processed_items.append({
                             'imdb_id': imdb_id,
                             'media_type': media_type
@@ -413,7 +403,10 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
                     
                     if response and response.status_code == 200:
                         result = response.json()
-                        logging.info(f"Bulk removal from watchlist successful - Removed {result.get('deleted', {}).get('movies', 0)} movies and {result.get('deleted', {}).get('shows', 0)} shows")
+                        removed_movies = result.get('deleted', {}).get('movies', 0)
+                        removed_shows = result.get('deleted', {}).get('shows', 0)
+                        if removed_movies > 0 or removed_shows > 0:
+                            logging.info(f"Removed {removed_movies} movies and {removed_shows} shows from watchlist")
                     else:
                         logging.error("Bulk removal from watchlist failed")
                         # Add back all items that failed to be removed
@@ -425,7 +418,7 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
                                     'media_type': 'movie' if item in movies_to_remove else 'tv'
                                 })
                 except Exception as e:
-                    logging.error(f"Failed to perform bulk removal from watchlist: {str(e)}")
+                    logging.error(f"Failed to perform bulk removal from watchlist: {e}")
                     # Add back all items that failed to be removed
                     for item in movies_to_remove + shows_to_remove:
                         imdb_id = item['ids'].get('imdb') or item['ids'].get('tmdb') or item['ids'].get('tvdb')
@@ -435,44 +428,42 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
                                 'media_type': 'movie' if item in movies_to_remove else 'tv'
                             })
 
+            if skipped_count > 0:
+                logging.info(f"Skipped {skipped_count} items due to missing IDs")
+            logging.info(f"Found {len(processed_items)} new items from Trakt watchlist")
             all_wanted_items.append((processed_items, versions))
 
     # Save updated cache
     save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
-    logging.info(f"Retrieved watchlist items from Trakt")
-    
     return all_wanted_items
 
 def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
-    logging.info("Preparing to make Trakt API call for lists")
+    logging.debug("Fetching Trakt lists")
     access_token = ensure_trakt_auth()
     if access_token is None:
         logging.error("Failed to obtain a valid Trakt access token")
         raise Exception("Failed to obtain a valid Trakt access token")
-    logging.info("Successfully obtained valid access token")
     
     all_wanted_items = []
     cache = load_trakt_cache(TRAKT_LISTS_CACHE_FILE)
     current_time = datetime.now()
     
-    logging.info(f"Processing Trakt list: {trakt_list_url}")
-    
     list_info = parse_trakt_list_url(trakt_list_url)
     if list_info:
         endpoint = f"/users/{list_info['username']}/lists/{list_info['list_id']}/items"
-        logging.info(f"Fetching items from list: {trakt_list_url}")
         items = fetch_items_from_trakt(endpoint)
-        logging.debug(f"List items fetched: {len(items)}")
         
         processed_items = []
+        skipped_count = 0
         for item in items:
             media_type = assign_media_type(item)
             if not media_type:
+                skipped_count += 1
                 continue
             
             imdb_id = get_imdb_id(item, media_type)
             if not imdb_id:
-                logging.warning(f"Skipping item due to missing ID: {item.get(media_type, {}).get('title', 'Unknown Title')}")
+                skipped_count += 1
                 continue
             
             # Check cache for this item
@@ -482,7 +473,6 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
             if cache_item:
                 last_processed = cache_item['timestamp']
                 if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                    logging.debug(f"Skipping recently processed item: {cache_key}")
                     continue
             
             # Add or update cache entry
@@ -499,46 +489,38 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
                 'media_type': media_type
             })
         
+        if skipped_count > 0:
+            logging.info(f"Skipped {skipped_count} items due to missing IDs")
+        logging.info(f"Found {len(processed_items)} new items from Trakt list")
         all_wanted_items.append((processed_items, versions))
     
     # Save updated cache
     save_trakt_cache(cache, TRAKT_LISTS_CACHE_FILE)
-    logging.info(f"Retrieved items from Trakt list")
-    
     return all_wanted_items
 
 def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
-    """
-    Fetches items from the user's Trakt collection.
-    Returns a list of tuples containing processed items and their versions.
-    """
-    logging.info("Preparing to make Trakt API call for collection")
+    logging.debug("Fetching Trakt collection")
     access_token = ensure_trakt_auth()
     if access_token is None:
         logging.error("Failed to obtain a valid Trakt access token")
         raise Exception("Failed to obtain a valid Trakt access token")
-    logging.info("Successfully obtained valid access token")
 
     all_wanted_items = []
-    trakt_sources = get_trakt_sources()
     cache = load_trakt_cache(TRAKT_COLLECTION_CACHE_FILE)
     current_time = datetime.now()
 
-    # Process Trakt Collection
-    logging.info("Fetching user's collection")
     # Fetch both movies and shows from collection
     collection_movies = fetch_items_from_trakt("/sync/collection/movies")
     collection_shows = fetch_items_from_trakt("/sync/collection/shows")
     
-    logging.debug(f"Collection items fetched - Movies: {len(collection_movies)}, Shows: {len(collection_shows)}")
-    
     # Process movies
     processed_movies = []
+    skipped_movies = 0
     for item in collection_movies:
         media_type = 'movie'
         imdb_id = get_imdb_id(item, media_type)
         if not imdb_id:
-            logging.warning(f"Skipping movie due to missing ID: {item.get(media_type, {}).get('title', 'Unknown Title')}")
+            skipped_movies += 1
             continue
         
         # Check cache for this movie
@@ -548,7 +530,6 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
         if cache_item:
             last_processed = cache_item['timestamp']
             if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                logging.debug(f"Skipping recently processed movie: {cache_key}")
                 continue
         
         # Add or update cache entry
@@ -567,11 +548,12 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
     
     # Process shows
     processed_shows = []
+    skipped_shows = 0
     for item in collection_shows:
         media_type = 'tv'
         imdb_id = get_imdb_id(item, media_type)
         if not imdb_id:
-            logging.warning(f"Skipping show due to missing ID: {item.get('show', {}).get('title', 'Unknown Title')}")
+            skipped_shows += 1
             continue
         
         # Check cache for this show
@@ -581,7 +563,6 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
         if cache_item:
             last_processed = cache_item['timestamp']
             if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                logging.debug(f"Skipping recently processed show: {cache_key}")
                 continue
         
         # Add or update cache entry
@@ -598,9 +579,11 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
             'media_type': media_type
         })
     
-    # Combine processed items
+    # Combine processed items and log summary
     processed_items = processed_movies + processed_shows
-    logging.info(f"Total processed collection items: {len(processed_items)} (Movies: {len(processed_movies)}, Shows: {len(processed_shows)})")
+    if skipped_movies > 0 or skipped_shows > 0:
+        logging.info(f"Skipped items due to missing IDs - Movies: {skipped_movies}, Shows: {skipped_shows}")
+    logging.info(f"Found {len(processed_movies)} movies and {len(processed_shows)} shows from Trakt collection")
     
     # Use default versions
     versions = {'Default': True}
@@ -611,11 +594,11 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
     return all_wanted_items
 
 def check_trakt_early_releases():
-    logging.info("Checking Trakt for early releases")
+    logging.debug("Checking Trakt for early releases")
     
     trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
     if not trakt_early_releases:
-        logging.info("Trakt early releases check is disabled in settings")
+        logging.debug("Trakt early releases check is disabled")
         return
 
     # Get all items with state sleeping, wanted, or unreleased
@@ -623,16 +606,17 @@ def check_trakt_early_releases():
     items_to_check = get_all_media_items(state=states_to_check)
     
     current_date = date.today()
+    updated_count = 0
+    skipped_count = 0
     
     for item in items_to_check:
-
         if item['type'] == 'episode':
-            logging.info(f"Skipping episode: {item['title']} (ID: {item['id']})")
+            skipped_count += 1
             continue
         
         imdb_id = item['imdb_id']
-        
         trakt_id = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+        
         if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
             # Check if 'movie' key exists in the first item
             if 'movie' in trakt_id[0]:
@@ -648,17 +632,15 @@ def check_trakt_early_releases():
             
             for trakt_list in trakt_lists:
                 if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
-                    logging.info(f"Media found in early release list: {trakt_list['name']}")
                     new_release_date = current_date.strftime("%Y-%m-%d")
-                    
-                    # Update the release date and state in the database
                     update_media_item(item['id'], release_date=new_release_date)
-                    logging.info(f"Updated release date to {new_release_date} for media: {item['title']} (ID: {item['id']})")
-                    break  # Stop checking other lists for this media item
-                else:
-                    logging.info(f"No early release list found for media: {item['title']} (ID: {item['id']})")
-                    
-    logging.info("Finished checking Trakt for early releases")
+                    updated_count += 1
+                    break
+    
+    if updated_count > 0:
+        logging.info(f"Updated release dates for {updated_count} items")
+    if skipped_count > 0:
+        logging.debug(f"Skipped {skipped_count} episodes")
     
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')

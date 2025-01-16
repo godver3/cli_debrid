@@ -855,16 +855,16 @@ def main():
     
     # Set metadata battery URL with the correct port
     set_setting('Metadata Battery', 'url', f'http://localhost:{battery_port}')
-    logging.info(f"Set metadata battery URL to http://localhost:{battery_port}")
+    #logging.info(f"Set metadata battery URL to http://localhost:{battery_port}")
 
     ensure_settings_file()
     verify_database()
 
     # Initialize download stats cache
     try:
-        logging.info("Initializing download stats cache...")
+        #logging.info("Initializing download stats cache...")
         get_cached_download_stats()
-        logging.info("Download stats cache initialized successfully")
+        #logging.info("Download stats cache initialized successfully")
     except Exception as e:
         logging.error(f"Error initializing download stats cache: {str(e)}")
 
