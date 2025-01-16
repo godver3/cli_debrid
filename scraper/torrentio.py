@@ -19,9 +19,9 @@ def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: 
         if not response or 'streams' not in response:
             logging.warning(f"No streams found for IMDb ID: {imdb_id} in instance {instance}")
             return []
-        logging.debug(f"Torrentio returned {len(response['streams'])} total results before parsing")
+        #logging.debug(f"Torrentio returned {len(response['streams'])} total results before parsing")
         parsed_results = parse_results(response['streams'], instance)
-        logging.debug(f"Successfully parsed {len(parsed_results)} results from Torrentio")
+        #logging.debug(f"Successfully parsed {len(parsed_results)} results from Torrentio")
         return parsed_results
     except Exception as e:
         logging.error(f"Error in scrape_torrentio_instance for {instance}: {str(e)}", exc_info=True)
@@ -62,7 +62,6 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             title = stream.get('title', '')
             if not title:
                 no_title_count += 1
-                logging.debug(f"Skipping result: No title found in stream")
                 continue
                 
             logging.debug(f"Processing stream with raw title: {title}")
@@ -72,25 +71,28 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             name = title_parts[0].strip()
             size = 0.0
             seeders = 0
+            size_found = False
             
             # Look through all lines after the title for metadata
             for metadata_line in title_parts[1:]:
                 metadata_line = metadata_line.strip()
-                logging.debug(f"Processing metadata line: {metadata_line}")
                 
                 # Try to find size and seeders in each line
                 size_info = parse_size(metadata_line)
                 if size_info > 0:
                     size = size_info
+                    size_found = True
                 
                 seeder_info = parse_seeder(metadata_line)
                 if seeder_info > 0:
                     seeders = seeder_info
 
+            if not size_found:
+                logging.error(f"No size information found in any part of title: {title}")
+
             info_hash = stream.get("infoHash", "")
             if not info_hash:
                 no_info_hash_count += 1
-                logging.debug(f"Skipping result '{name}': No info hash found")
                 continue
                 
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
@@ -109,20 +111,20 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             
         except Exception as e:
             parse_error_count += 1
-            logging.debug(f"Error parsing stream: {str(e)}")
+            logging.error(f"Error parsing stream: {str(e)}")
             if 'title' in stream:
-                logging.debug(f"Failed stream title: {stream['title']}")
+                logging.error(f"Failed stream title: {stream['title']}")
             continue
     
-    skipped_count = no_title_count + no_info_hash_count + parse_error_count
-    if skipped_count > 0:
-        logging.debug(f"Torrentio parsing summary:")
-        logging.debug(f"- Total streams: {len(streams)}")
-        logging.debug(f"- Successfully parsed: {len(results)}")
-        logging.debug(f"- Skipped {skipped_count} results:")
-        logging.debug(f"  - No title: {no_title_count}")
-        logging.debug(f"  - No info hash: {no_info_hash_count}")
-        logging.debug(f"  - Parse errors: {parse_error_count}")
+    #skipped_count = no_title_count + no_info_hash_count + parse_error_count
+    #if skipped_count > 0:
+    #    logging.debug(f"Torrentio parsing summary:")
+    #    logging.debug(f"- Total streams: {len(streams)}")
+    #    logging.debug(f"- Successfully parsed: {len(results)}")
+    #    logging.debug(f"- Skipped {skipped_count} results:")
+    #    logging.debug(f"  - No title: {no_title_count}")
+    #    logging.debug(f"  - No info hash: {no_info_hash_count}")
+    #    logging.debug(f"  - Parse errors: {parse_error_count}")
     
     return results
 
@@ -161,10 +163,9 @@ def parse_size(size_info: str) -> float:
                 logging.debug(f"Unknown size unit '{unit}' in '{size_info}'")
                 return size
     except Exception as e:
-        logging.debug(f"Error parsing size from '{size_info}': {str(e)}")
+        logging.error(f"Error parsing size from '{size_info}': {str(e)}")
         return 0.0
     
-    logging.debug(f"No size pattern found in '{size_info}'")
     return 0.0
 
 def parse_seeder(seeder_info: str) -> int:

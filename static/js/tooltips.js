@@ -418,6 +418,15 @@ function initializeTooltips() {
         }
     });
 
+    // Add scroll event listener for both mobile and desktop tooltips
+    window.addEventListener('scroll', () => {
+        if (isMobileDevice()) {
+            hideMobileTooltip();
+        } else {
+            hideTooltip();
+        }
+    }, { passive: true });
+
     // Reposition tooltip on resize
     window.addEventListener('resize', () => {
         if (mobileTooltipContent) {
@@ -479,13 +488,8 @@ function getPageName() {
 // Add this new function to handle user interactions
 function handleInteraction(event) {
     if (event.type === 'scroll') {
-        // For scroll events, wait a short delay before hiding
-        if (scrollTimeout) {
-            clearTimeout(scrollTimeout);
-        }
-        scrollTimeout = setTimeout(() => {
-            hideMobileTooltip();
-        }, SCROLL_HIDE_DELAY);
+        // Hide immediately on scroll
+        hideMobileTooltip();
     } else {
         // For touch and click events, hide immediately
         // but only if the click is not on the tooltip or the info button

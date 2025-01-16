@@ -282,7 +282,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     result['score_breakdown'] = score_breakdown
 
     # Log detailed score breakdown
-    logging.debug(f"\nScore breakdown for '{torrent_title}':")
+    logging.debug(f"Score breakdown for '{torrent_title}':")
     logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
     logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
     logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")

@@ -997,6 +997,10 @@ h2 {
         display: flex;
         gap: 0px;  /* More spacing between buttons on mobile */
     }
+
+    body {
+        padding-top: 70px;
+    }
 }
 
 /* Release Notes Popup Styles */

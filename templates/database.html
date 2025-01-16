@@ -60,7 +60,7 @@
                 <select id="filter-column" name="filter_column">
                     <option value="">None</option>
                     {% for column in selected_columns %}
-                    <option value="{{ column }}" {% if column == filter_column %}selected{% endif %}>{{ column }}</option>
+                    <option value="{{ column }}" {% if column == filter_column or (not filter_column and column == 'title') %}selected{% endif %}>{{ column }}</option>
                     {% endfor %}
                 </select>
                 <label for="filter-value">Filter Value:</label>

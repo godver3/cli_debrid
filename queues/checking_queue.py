@@ -211,7 +211,7 @@ class CheckingQueue:
             logging.debug(f"Cleaned up progress checks for torrent {torrent_id} as it has no more associated items")
 
     def process(self, queue_manager):
-        logging.debug(f"Starting to process checking queue with {len(self.items)} items")
+        #logging.debug(f"Starting to process checking queue with {len(self.items)} items")
         current_time = time.time()
 
         adding_queue = AddingQueue()
@@ -348,7 +348,7 @@ class CheckingQueue:
         for item in items_to_remove:
             self.remove_item(item)
 
-        logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
+        #logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
 
     def move_items_to_wanted(self, items, queue_manager, adding_queue, torrent_id):
         for item in items:

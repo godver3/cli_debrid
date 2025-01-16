@@ -87,7 +87,18 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)  # Used when sessi
 app.config['SESSION_FILE_DIR'] = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')  # Specify session file location
 app.config['SESSION_FILE_THRESHOLD'] = 500  # Maximum number of session files
 app.config['SESSION_KEY_PREFIX'] = 'session:'  # Prefix for session keys
-app.secret_key = os.urandom(24)  # Generate a secure secret key
+
+# Use a persistent secret key
+secret_key_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'secret_key')
+if os.path.exists(secret_key_file):
+    with open(secret_key_file, 'rb') as f:
+        app.secret_key = f.read()
+else:
+    # Generate a new secret key if one doesn't exist
+    app.secret_key = os.urandom(24)
+    # Save it for future use
+    with open(secret_key_file, 'wb') as f:
+        f.write(app.secret_key)
 
 # Ensure session directory exists
 os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
@@ -106,8 +117,9 @@ app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=30)
 app.config['REMEMBER_COOKIE_SECURE'] = True
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
 app.config['REMEMBER_COOKIE_SAMESITE'] = 'None'
-app.config['REMEMBER_COOKIE_REFRESH_EACH_REQUEST'] = True
+app.config['REMEMBER_COOKIE_REFRESH_EACH_REQUEST'] = False  # Changed to False to prevent auto-refresh
 app.config['REMEMBER_COOKIE_DOMAIN'] = None  # Let our middleware handle this dynamically
+app.config['SESSION_REFRESH_EACH_REQUEST'] = False  # Also prevent session refresh
 
 # Initialize Flask-Session first
 from flask_session import Session
@@ -148,7 +160,11 @@ login_manager = LoginManager()
 def init_login_manager(app):
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
-
+    login_manager.refresh_view = 'auth.login'
+    login_manager.needs_refresh_message = 'Please log in again to confirm your identity'
+    login_manager.needs_refresh_message_category = 'info'
+    login_manager.session_protection = 'strong'  # Use strong session protection
+    
     def login_required(func):
         @wraps(func)
         def decorated_view(*args, **kwargs):

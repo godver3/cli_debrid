@@ -107,8 +107,15 @@
                 <td>{{ user.username }}</td>
                 <td>{{ user.role }}</td>
                 <td>
-                    {% if user.username != 'admin' %}
-                    <button class="delete-button" data-user-id="{{ user.id }}">Delete</button>
+                    {% if user.role == 'admin' %}
+                        {% set admin_count = users|selectattr('role', 'equalto', 'admin')|list|length %}
+                        {% if admin_count > 1 %}
+                            <button class="delete-button" data-user-id="{{ user.id }}">Delete</button>
+                        {% else %}
+                            <span style="font-style: italic;">Cannot Delete</span>
+                        {% endif %}
+                    {% else %}
+                        <button class="delete-button" data-user-id="{{ user.id }}">Delete</button>
                     {% endif %}
                 </td>
             </tr>

@@ -24,8 +24,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     disable_adult = get_setting('Scraping', 'disable_adult', False)
     
     logging.debug(f"Starting filter_results with {len(results)} results")
-    logging.debug(f"Version settings: resolution={max_resolution}({resolution_wanted}), size={min_size_gb}-{max_size_gb}GB, HDR={enable_hdr}")
-    logging.debug(f"Filter patterns - in: {filter_in}, out: {filter_out}")
+    #logging.debug(f"Version settings: resolution={max_resolution}({resolution_wanted}), size={min_size_gb}-{max_size_gb}GB, HDR={enable_hdr}")
+    #logging.debug(f"Filter patterns - in: {filter_in}, out: {filter_out}")
     
     # Pre-compile patterns
     filter_in_patterns = filter_in if filter_in else []
@@ -43,7 +43,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     normalized_aliases = [normalize_title(alias).lower() for alias in (matching_aliases or [])]
     similarity_threshold = float(version_settings.get('similarity_threshold_anime', 0.35)) if is_anime else float(version_settings.get('similarity_threshold', 0.8))
     
-    logging.debug(f"Content type: {'movie' if is_movie else 'episode'}, Anime: {is_anime}, Title similarity threshold: {similarity_threshold}")
+    #logging.debug(f"Content type: {'movie' if is_movie else 'episode'}, Anime: {is_anime}, Title similarity threshold: {similarity_threshold}")
     
     # Cache season episode counts for multi-episode content
     total_episodes = sum(season_episode_counts.values()) if is_episode else 0
@@ -52,13 +52,13 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
         try:
             result['filter_reason'] = "Passed all filters"  # Default reason
             original_title = result.get('original_title', result.get('title', ''))
-            logging.debug(f"\nProcessing result: {original_title}")
+            logging.debug(f"Processing result: {original_title}")
             
             # Quick UFC check
             if "UFC" in original_title.upper():
                 is_ufc = True
                 similarity_threshold = 0.35
-                logging.debug("UFC content detected, lowering similarity threshold")
+                #logging.debug("UFC content detected, lowering similarity threshold")
             
             # Get parsed info from result (should be already parsed by PTT)
             parsed_info = result.get('parsed_info', {})
@@ -74,7 +74,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             # Title similarity check
             normalized_result_title = normalize_title(parsed_info.get('title', original_title)).lower()
             title_sim = fuzz.ratio(normalized_result_title, normalized_query_title) / 100.0
-            logging.debug(f"Title similarity: {title_sim:.2f} ({normalized_result_title} vs {normalized_query_title})")
+            #logging.debug(f"Title similarity: {title_sim:.2f} ({normalized_result_title} vs {normalized_query_title})")
             
             # Check against main title and aliases
             if title_sim < similarity_threshold:
@@ -84,12 +84,12 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 
                 if best_alias_sim >= similarity_threshold:
                     title_sim = best_alias_sim  # Use the best alias similarity
-                    logging.debug(f"✓ Passed title similarity check via alias with score {title_sim:.2f}")
+                    #logging.debug(f"✓ Passed title similarity check via alias with score {title_sim:.2f}")
                 else:
                     result['filter_reason'] = f"Low title similarity: {title_sim:.2f} (best alias: {best_alias_sim:.2f})"
                     logging.debug(f"❌ Failed: Title similarity {title_sim:.2f} below threshold {similarity_threshold}, best alias match: {best_alias_sim:.2f}")
                     continue
-            logging.debug("✓ Passed title similarity check")
+            #logging.debug("✓ Passed title similarity check")
             
             # Resolution check
             detected_resolution = parsed_info.get('resolution', 'Unknown')
@@ -97,14 +97,14 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 result['filter_reason'] = f"Resolution mismatch (max: {max_resolution}, wanted: {resolution_wanted})"
                 logging.debug(f"❌ Failed: Resolution {detected_resolution} doesn't match criteria {resolution_wanted} {max_resolution}")
                 continue
-            logging.debug("✓ Passed resolution check")
+            #logging.debug("✓ Passed resolution check")
             
             # HDR check
             if not enable_hdr and parsed_info.get('is_hdr', False):
                 result['filter_reason'] = "HDR content when HDR is disabled"
                 logging.debug("❌ Failed: HDR content not allowed")
                 continue
-            logging.debug("✓ Passed HDR check")
+            #logging.debug("✓ Passed HDR check")
             
             # Content type specific checks
             if is_movie and not is_ufc:
@@ -119,22 +119,22 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                         result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
                         logging.debug(f"❌ Failed: Year {parsed_year} doesn't match {year}")
                         continue
-                logging.debug("✓ Passed year check")
+                #logging.debug("✓ Passed year check")
             
             elif is_episode:
                 season_episode_info = parsed_info.get('season_episode_info', {})
-                logging.debug(f"Season episode info: {season_episode_info}")
+                #logging.debug(f"Season episode info: {season_episode_info}")
                 
                 # Check if title contains "complete" - consider it as having all episodes
                 if 'complete' in original_title.lower():
-                    logging.debug("Complete series pack detected")
+                    #logging.debug("Complete series pack detected")
                     season_episode_info['season_pack'] = 'Complete'
                     season_episode_info['seasons'] = list(season_episode_counts.keys())
                     season_episode_info['episodes'] = list(range(1, max(season_episode_counts.values()) + 1))
                     result['parsed_info']['season_episode_info'] = season_episode_info
                 
                 if multi:
-                    logging.debug(f"Multi-episode mode: season={season}, season_pack={season_episode_info.get('season_pack')}, seasons={season_episode_info.get('seasons')}")
+                    #logging.debug(f"Multi-episode mode: season={season}, season_pack={season_episode_info.get('season_pack')}, seasons={season_episode_info.get('seasons')}")
                     
                     episodes = season_episode_info.get('episodes', [])
                     if len(episodes) == 1:
@@ -149,7 +149,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
 
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     if season_pack == 'Complete':
-                        logging.debug("Complete series pack accepted")
+                        #logging.debug("Complete series pack accepted")
                         pass
                     elif season_pack == 'N/A':
                         result['filter_reason'] = "Single episode result when searching for multi"
@@ -165,9 +165,9 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"
                             logging.debug(f"❌ Failed: Season pack missing season {season}")
                             continue
-                    logging.debug("✓ Passed multi-episode checks")
+                    #logging.debug("✓ Passed multi-episode checks")
                 else:
-                    logging.debug(f"Single episode mode: S{season}E{episode}")
+                    #logging.debug(f"Single episode mode: S{season}E{episode}")
                     
                     result_seasons = season_episode_info.get('seasons', [])
                     result_episodes = season_episode_info.get('episodes', [])
@@ -202,17 +202,13 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                                     if episode_data:
                                         air_date = episode_data.get('air_date')
                                         if air_date:
-                                            if result_date == air_date:
-                                                logging.debug(f"✓ Date match: {result_date} matches episode air date")
-                                            else:
+                                            if not result_date == air_date:
                                                 # Try parsing both dates to compare
                                                 from datetime import datetime
                                                 try:
                                                     result_dt = datetime.strptime(result_date, '%Y-%m-%d').date()
                                                     episode_dt = datetime.strptime(air_date, '%Y-%m-%d').date()
-                                                    if result_dt == episode_dt:
-                                                        logging.debug(f"✓ Date match after parsing: {result_date} matches episode air date")
-                                                    else:
+                                                    if not result_dt == episode_dt:
                                                         result['filter_reason'] = f"Date mismatch: {result_date} != {air_date}"
                                                         logging.debug(f"❌ Failed: Date mismatch - found {result_date} but needed {air_date}")
                                                         continue
@@ -235,7 +231,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                             result['filter_reason'] = f"Episode mismatch: expected E{episode}, got {result_episodes}"
                             logging.debug(f"❌ Failed: Episode mismatch {result_episodes}")
                             continue
-                    logging.debug("✓ Passed episode checks")
+                    #logging.debug("✓ Passed episode checks")
             
             # Size calculation
             size_gb = parse_size(result.get('size', 0))
@@ -262,7 +258,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 bitrate = calculate_bitrate(size_gb, runtime)
             
             result['bitrate'] = bitrate
-            logging.debug(f"Size: {result['size']:.2f}GB, Bitrate: {bitrate:.2f}Mbps")
+            #logging.debug(f"Size: {result['size']:.2f}GB, Bitrate: {bitrate:.2f}Mbps")
             
             # Add to pre-size filtered results
             pre_size_filtered_results.append(result)
@@ -277,7 +273,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
                     logging.debug(f"❌ Failed: Size {result['size']:.2f}GB above maximum {max_size_gb}GB")
                     continue
-            logging.debug("✓ Passed size checks")
+            #logging.debug("✓ Passed size checks")
             
             # Pattern matching
             normalized_filter_title = normalize_title(original_title)
@@ -293,14 +289,14 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 result['filter_reason'] = "Not matching any filter_in patterns"
                 logging.debug("❌ Failed: No matching filter_in patterns")
                 continue
-            logging.debug("✓ Passed pattern checks")
+            #logging.debug("✓ Passed pattern checks")
             
             # Adult content check
             if adult_pattern and adult_pattern.search(original_title):
                 result['filter_reason'] = "Adult content filtered"
                 logging.debug("❌ Failed: Adult content detected")
                 continue
-            logging.debug("✓ Passed adult content check")
+            #logging.debug("✓ Passed adult content check")
             
             # If we made it here, add to filtered results
             filtered_results.append(result)

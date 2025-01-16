@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Tuple
 from settings import get_setting
 from database.database_reading import get_media_item_presence
 from config_manager import load_config
+from cli_battery.app.trakt_metadata import TraktMetadata
 import os
 import pickle
 from datetime import datetime, timedelta
@@ -48,6 +49,25 @@ def get_plex_client():
         logging.error(f"Error connecting to Plex: {e}")
         return None
 
+def get_show_status(imdb_id: str) -> str:
+    """Get the status of a TV show from Trakt."""
+    try:
+        trakt = TraktMetadata()
+        search_result = trakt._search_by_imdb(imdb_id)
+        if search_result and search_result['type'] == 'show':
+            show = search_result['show']
+            slug = show['ids']['slug']
+            
+            # Get the full show data using the slug
+            url = f"{trakt.base_url}/shows/{slug}?extended=full"
+            response = trakt._make_request(url)
+            if response and response.status_code == 200:
+                show_data = response.json()
+                return show_data.get('status', '').lower()
+    except Exception as e:
+        logging.error(f"Error getting show status for {imdb_id}: {str(e)}")
+    return ''
+
 def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
     processed_items = []
@@ -91,18 +111,26 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             # Check if the item is already collected
             item_state = get_media_item_presence(imdb_id=imdb_id)
             if item_state == "Collected" and should_remove:
-                # If it's a TV show and we want to keep series, skip removal
-                if media_type == 'tv' and keep_series:
-                    logging.debug(f"Keeping TV series: {imdb_id}")
-                else:
-                    # Remove from watchlist using the PlexAPI object directly
-                    try:
-                        account.removeFromWatchlist([item])
-                        removed_count += 1
+                if media_type == 'tv':
+                    if keep_series:
+                        logging.debug(f"Keeping TV series: {imdb_id}")
                         continue
-                    except Exception as e:
-                        logging.error(f"Failed to remove {imdb_id} from watchlist: {e}")
-                        continue
+                    else:
+                        # Check if the show has ended before removing
+                        show_status = get_show_status(imdb_id)
+                        if show_status != 'ended':
+                            logging.debug(f"Keeping ongoing TV series: {imdb_id} (status: {show_status})")
+                            continue
+                        logging.debug(f"Removing ended TV series: {imdb_id} (status: {show_status})")
+                
+                # Remove from watchlist using the PlexAPI object directly
+                try:
+                    account.removeFromWatchlist([item])
+                    removed_count += 1
+                    continue
+                except Exception as e:
+                    logging.error(f"Failed to remove {imdb_id} from watchlist: {e}")
+                    continue
             
             # Check cache for this item
             cache_key = f"{imdb_id}_{media_type}"

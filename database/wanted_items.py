@@ -17,7 +17,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         items_skipped = 0
         airtime_cache = {}
 
-        # Handle different types of versions input
         if isinstance(versions_input, str):
             try:
                 versions = json.loads(versions_input)
@@ -29,7 +28,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         else:
             versions = versions_input
 
-        # Prepare sets of unique identifiers for movies and episodes
         movie_imdb_ids = set()
         movie_tmdb_ids = set()
         episode_imdb_ids = set()
@@ -41,14 +39,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             imdb_id = item.get('imdb_id')
             tmdb_id = item.get('tmdb_id')
 
-            # Ensure consistent types for IDs
             if tmdb_id is not None:
                 tmdb_id = str(tmdb_id)
-                item['tmdb_id'] = tmdb_id  # Update item to use consistent tmdb_id
+                item['tmdb_id'] = tmdb_id
 
             if imdb_id is not None:
                 imdb_id = str(imdb_id)
-                item['imdb_id'] = imdb_id  # Update item to use consistent imdb_id
+                item['imdb_id'] = imdb_id
 
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
@@ -67,11 +64,9 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     episode_tmdb_ids.add(tmdb_id)
                     episode_tmdb_keys.add((tmdb_id, season_number, episode_number))
 
-        # Fetch existing movies from the database
         existing_movies = set()
-        batch_size = 450  # SQLite limit is 999, using 450 for safety
+        batch_size = 450
 
-        # Process movie IMDb IDs in batches
         if movie_imdb_ids:
             movie_imdb_list = list(movie_imdb_ids)
             for i in range(0, len(movie_imdb_list), batch_size):
@@ -84,7 +79,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 existing_movies.update(str(row['imdb_id']) for row in rows)
 
-        # Process movie TMDb IDs in batches
         if movie_tmdb_ids:
             movie_tmdb_list = list(movie_tmdb_ids)
             for i in range(0, len(movie_tmdb_list), batch_size):
@@ -97,10 +91,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 existing_movies.update(str(row['tmdb_id']) for row in rows)
 
-        # Fetch existing episodes from the database
         existing_episodes = set()
 
-        # Process episode IMDb IDs in batches
         if episode_imdb_ids:
             episode_imdb_list = list(episode_imdb_ids)
             for i in range(0, len(episode_imdb_list), batch_size):
@@ -115,7 +107,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
                     existing_episodes.add(key)
 
-        # Process episode TMDb IDs in batches
         if episode_tmdb_ids:
             episode_tmdb_list = list(episode_tmdb_ids)
             for i in range(0, len(episode_tmdb_list), batch_size):
@@ -130,7 +121,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
                     existing_episodes.add(key)
 
-        # Filter out existing items from media_items_batch
         filtered_media_items_batch = []
         for item in media_items_batch:
             imdb_id = item.get('imdb_id')
@@ -145,7 +135,6 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     skip = True
                 if skip:
                     items_skipped += 1
-                    logging.debug(f"Skipping existing movie: {item.get('title', 'Unknown')} (IMDb ID: {imdb_id}, TMDb ID: {tmdb_id})")
                     continue
             else:
                 season_number = item.get('season_number')
@@ -157,12 +146,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     skip = True
                 if skip:
                     items_skipped += 1
-                    logging.debug(f"Skipping existing episode: {item.get('title', 'Unknown')} S{season_number}E{episode_number} (IMDb ID: {imdb_id}, TMDb ID: {tmdb_id})")
                     continue
 
             filtered_media_items_batch.append(item)
 
-        # Proceed with adding new items
         media_items_batch = filtered_media_items_batch
 
         for item in media_items_batch:
@@ -172,27 +159,25 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 continue
 
             if is_blacklisted(item.get('imdb_id', '')) or is_blacklisted(item.get('tmdb_id', '')):
-                logging.debug(f"Skipping blacklisted item: {item.get('title', 'Unknown')} (IMDb ID: {item.get('imdb_id')}, TMDb ID: {item.get('tmdb_id')})")
                 items_skipped += 1
                 continue
 
             if not item.get('tmdb_id'):
                 tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
                 if tmdb_id:
-                    item['tmdb_id'] = str(tmdb_id)  # Ensure tmdb_id is a string
+                    item['tmdb_id'] = str(tmdb_id)
                 else:
                     logging.warning(f"Unable to retrieve tmdb_id for {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
 
             normalized_title = normalize_string(str(item.get('title', 'Unknown')))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
-            genres = json.dumps(item.get('genres', []))  # Convert genres list to JSON string
+            genres = json.dumps(item.get('genres', []))
 
             for version, enabled in versions.items():
                 if not enabled:
                     continue
 
-                # Insert new items into the database
                 if item_type == 'movie':
                     conn.execute('''
                         INSERT INTO media_items
@@ -202,16 +187,12 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                         item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'), item.get('country', '').lower()
                     ))
-                    logging.debug(f"Adding new movie as Wanted in DB: {normalized_title} (Version: {version})")
                     items_added += 1
                 else:
                     airtime = item.get('airtime') or '19:00'
                     
                     from settings import get_setting
 
-                    logging.info(f"allow_partial_overseerr_requests: {get_setting('Debug', 'allow_partial_overseerr_requests')}")
-
-                    # Determine initial state based on is_requested_season flag
                     if get_setting('Debug', 'allow_partial_overseerr_requests'):
                         initial_state = 'Wanted' if item.get('is_requested_season', True) else 'Blacklisted'
                     else:
@@ -231,11 +212,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower(),
                         blacklisted_date, item.get('requested_season', False)
                     ))
-                    logging.debug(f"Adding new episode as {initial_state} in DB: {normalized_title} S{item['season_number']}E{item['episode_number']} (Version: {version})")
                     items_added += 1
 
         conn.commit()
-        logging.debug(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
+        logging.info(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
     except Exception as e:
         logging.error(f"Error adding wanted items: {str(e)}", exc_info=True)
         conn.rollback()

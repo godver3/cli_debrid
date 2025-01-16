@@ -62,7 +62,7 @@ class SleepingQueue:
         logging.debug(f"Removed item from Sleeping queue: {item['id']}")
 
     def process(self, queue_manager):
-        logging.debug("Processing sleeping queue")
+        #logging.debug("Processing sleeping queue")
         current_time = datetime.now()
         wake_limit = int(get_setting("Queue", "wake_limit", default=3))
         sleep_duration = timedelta(minutes=30)
@@ -73,7 +73,7 @@ class SleepingQueue:
         for item in self.items:
             item_id = item['id']
             item_identifier = queue_manager.generate_identifier(item)
-            logging.debug(f"Processing sleeping item: {item_identifier}")
+            #logging.debug(f"Processing sleeping item: {item_identifier}")
 
             time_asleep = current_time - self.sleeping_queue_times[item_id]
             wake_count = wake_count_manager.get_wake_count(item_id)

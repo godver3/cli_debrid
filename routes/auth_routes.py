@@ -1,4 +1,4 @@
-from flask import Blueprint, redirect, url_for, flash, render_template, request
+from flask import Blueprint, redirect, url_for, flash, render_template, request, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -23,15 +23,13 @@ def create_default_admin():
                 password=hashed_password, 
                 role='admin', 
                 is_default=True,
-                onboarding_complete=False  # Set onboarding_complete to False
+                onboarding_complete=False  # Set to False for first-time onboarding
             )
             db.session.add(default_admin)
             db.session.commit()
-            logging.info("Default admin account created with onboarding incomplete.")
+            logging.info("Default admin account created with onboarding required.")
         else:
             logging.info("Default admin already exists.")
-    # else:
-    #     logging.info("Users already exist. Skipping default admin creation.")
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -63,8 +61,14 @@ def login():
         logging.debug("User system not enabled, redirecting to root.root")
         return redirect(url_for('root.root'))
 
+    # If already authenticated, clear any existing remember token if it wasn't explicitly requested
     if current_user.is_authenticated:
         logging.debug("User already authenticated, redirecting to root.root")
+        from flask import session
+        if 'remember_token' in request.cookies and 'remember_me' not in session:
+            response = redirect(url_for('root.root'))
+            response.delete_cookie('remember_token')
+            return response
         return redirect(url_for('root.root'))
 
     # Check if there are any non-default users
@@ -90,27 +94,55 @@ def login():
                 domain = '.' + host
                 
             from extensions import app
+            from flask import session
             
             # Set session cookie domain
             app.config['SESSION_COOKIE_DOMAIN'] = domain
             app.config['REMEMBER_COOKIE_DOMAIN'] = domain
             
+            # Store remember preference in session
+            if remember:
+                session['remember_me'] = True
+            
             login_user(user, remember=remember)
             logging.debug(f"User ID in session: {current_user.get_id()}")
-            from flask import session
             logging.debug(f"Session contents: {dict(session)}")
             
-            if user.is_default or not user.onboarding_complete:
+            # Create the response first
+            if not user.onboarding_complete:
                 logging.debug("Redirecting to onboarding")
-                return redirect(url_for('onboarding.onboarding_step', step=1))
+                response = redirect(url_for('onboarding.onboarding_step', step=1))
             else:
                 logging.debug("Redirecting to root")
                 response = redirect(url_for('root.root'))
-                logging.debug(f"Response cookies: {response.headers.getlist('Set-Cookie')}")
-                return response
+            
+            # Log the response cookies
+            logging.debug(f"Response cookies: {response.headers.getlist('Set-Cookie')}")
+            
+            # Ensure session cookie is set
+            if 'session' not in [c.split('=')[0].strip() for c in response.headers.getlist('Set-Cookie')]:
+                response.set_cookie(
+                    'session',
+                    session.get('_id', ''),
+                    domain=domain,
+                    secure=True,
+                    httponly=True,
+                    samesite='None'
+                )
+            
+            # If remember me wasn't checked, ensure no remember token is set
+            if not remember:
+                response.delete_cookie('remember_token', domain=domain, path='/')
+            
+            return response
         else:
             logging.debug("Login failed - invalid credentials")
             flash('Please check your login details and try again.')
+    else:
+        # On GET request, ensure no remember token exists
+        response = make_response(render_template('login.html', show_login_reminder=show_login_reminder))
+        response.delete_cookie('remember_token')
+        return response
     
     return render_template('login.html', show_login_reminder=show_login_reminder)
 
@@ -135,7 +167,6 @@ def logout():
     logout_user()
     
     logging.debug("After logout_user and session clear")
-    logging.debug(f"Session after clear: {dict(session)}")
     
     # Create response for redirect
     response = make_response(redirect(url_for('auth.login')))
@@ -144,33 +175,39 @@ def logout():
     host = request.host.split(':')[0]  # Remove port if present
     domain_parts = host.split('.')
     if len(domain_parts) > 2:
-        domain = '.' + '.'.join(domain_parts[-2:])  # e.g., .godver3.xyz
+        domain = '.' + '.'.join(domain_parts[-2:])
     else:
         domain = '.' + host  # e.g., .localhost
     
-    # Clear all variations of cookies
+    # Clear session and remember token with all domain variations
     cookies_to_clear = ['session', 'remember_token']
-    domains_to_clear = [domain, None]  # None will use the current domain
-    paths_to_clear = ['/', '/auth', '/auth/']
+    paths = ['/', '/auth', '/auth/']
     
-    for cookie_name in cookies_to_clear:
-        for cookie_domain in domains_to_clear:
-            for path in paths_to_clear:
-                response.set_cookie(
-                    cookie_name, 
-                    '', 
-                    expires=0, 
-                    domain=cookie_domain,
-                    path=path,
-                    secure=True,
-                    httponly=True,
-                    samesite='Lax'
-                )
+    # Clear with domain
+    if domain:
+        for cookie in cookies_to_clear:
+            for path in paths:
+                # Clear with dot prefix
+                response.delete_cookie(cookie, domain=domain, path=path)
+                # Clear without dot prefix
+                response.delete_cookie(cookie, domain=domain.lstrip('.'), path=path)
     
-    # Also try to delete the cookies without domain
-    for cookie_name in cookies_to_clear:
-        for path in paths_to_clear:
-            response.delete_cookie(cookie_name, path=path)
+    # Clear without domain (for local development and fallback)
+    for cookie in cookies_to_clear:
+        for path in paths:
+            response.delete_cookie(cookie, path=path)
+    
+    # Set secure attributes for all cleared cookies
+    for cookie in cookies_to_clear:
+        response.set_cookie(
+            cookie,
+            '',
+            expires=0,
+            secure=True,
+            httponly=True,
+            samesite='None',
+            path='/'
+        )
     
     logging.debug("Final response cookies:")
     logging.debug(response.headers.getlist('Set-Cookie'))

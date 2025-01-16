@@ -10,13 +10,13 @@ VIDEO_EXTENSIONS = [
 def is_video_file(filename: str) -> bool:
     """Check if a file is a video file based on its extension"""
     result = any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)
-    logging.info(f"is_video_file check for {filename}: {result}")
+    #logging.info(f"is_video_file check for {filename}: {result}")
     return result
 
 def is_unwanted_file(filename: str) -> bool:
     """Check if a file is unwanted (e.g., sample files)"""
     result = 'sample' in filename.lower()
-    logging.info(f"is_unwanted_file check for {filename}: {result}")
+    #logging.info(f"is_unwanted_file check for {filename}: {result}")
     return result
 
 def extract_hash_from_magnet(magnet_link: str) -> str:

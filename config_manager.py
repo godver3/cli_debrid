@@ -290,7 +290,7 @@ def get_version_settings(version):
     return settings
 
 def get_content_source_settings():
-    logging.debug("Entering get_content_source_settings()")
+    #logging.debug("Entering get_content_source_settings()")
     
     try:
         config = load_config()
@@ -308,7 +308,7 @@ def get_content_source_settings():
                         if k is not None and v is not None
                     }
         
-        logging.debug(f"Content source settings: {content_source_settings}")
+        #logging.debug(f"Content source settings: {content_source_settings}")
         
         return content_source_settings
     except Exception as e:
