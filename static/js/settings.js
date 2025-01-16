@@ -359,6 +359,16 @@ export function updateSettings() {
             }
         });
 
+        // Add similarity_threshold_anime with default 0.35 if it doesn't exist
+        if (!('similarity_threshold_anime' in versionData)) {
+            versionData['similarity_threshold_anime'] = 0.35;
+        }
+
+        // Add similarity_threshold with default 0.8 if it doesn't exist
+        if (!('similarity_threshold' in versionData)) {
+            versionData['similarity_threshold'] = 0.8;
+        }
+
         // Add max_size_gb with default Infinity if it doesn't exist
         if (!('max_size_gb' in versionData)) {
             versionData['max_size_gb'] = Infinity;
@@ -838,15 +848,28 @@ function updateContentSourceCheckPeriods() {
         return;
     }
 
+    const defaultIntervals = {
+        'Overseerr': 900,
+        'MDBList': 900,
+        'Collected': 86400,
+        'Trakt Watchlist': 900,
+        'Trakt Lists': 900,
+        'Trakt Collection': 900,
+        'My Plex Watchlist': 900,
+        'Other Plex Watchlist': 900
+    };
+
     const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);
     
     contentSourcesDiv.innerHTML = '';
     enabledContentSources.forEach(source => {
+        const sourceType = source.split('_')[0];
         const div = document.createElement('div');
         div.className = 'content-source-check-period';
+        const defaultInterval = defaultIntervals[sourceType] ? Math.floor(defaultIntervals[sourceType] / 60) : '';  // Convert seconds to minutes
         div.innerHTML = `
             <label for="debug-content-source-${source}">${source}:</label>
-            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" min="1" class="settings-input" placeholder="Default">
+            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" min="1" class="settings-input" placeholder="${defaultInterval}">
         `;
         contentSourcesDiv.appendChild(div);
     });

@@ -97,6 +97,9 @@ def migrate_schema():
         if 'upgrading' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN upgrading BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added upgrading column to media_items table.")
+        if 'requested_season' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN requested_season BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added requested_season column to media_items table.")
         # logging.info("Successfully added new columns to media_items table.")
 
         # Remove the existing index if it exists
@@ -121,6 +124,10 @@ def migrate_schema():
 def verify_database():
     create_tables()
     migrate_schema()
+    
+    # Add statistics indexes
+    from .migrations import add_statistics_indexes
+    add_statistics_indexes()
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -169,7 +176,7 @@ def create_tables():
                 version TEXT,
                 genres TEXT,
                 file_path TEXT,
-                runtime INTEGER,  -- Add the runtime column
+                runtime INTEGER,
                 alternate_title TEXT,
                 upgrading_from TEXT,
                 blacklisted_date TIMESTAMP,
@@ -192,7 +199,8 @@ def create_tables():
                 anime_format TEXT,
                 fall_back_to_single_scraper BOOLEAN DEFAULT FALSE,
                 preferred_alias TEXT,
-                upgrading BOOLEAN DEFAULT FALSE
+                upgrading BOOLEAN DEFAULT FALSE,
+                requested_season BOOLEAN DEFAULT FALSE
             )
         ''')
 

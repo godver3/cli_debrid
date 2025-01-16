@@ -154,7 +154,7 @@ def get_release_notes():
         }), 500
 
 @base_bp.route('/api/current-task', methods=['GET'])
-@cache_for_seconds(5)
+@cache_for_seconds(2)
 def get_current_task():
     try:
         # Get program runner using the getter function
@@ -177,9 +177,10 @@ def get_current_task():
                     tasks_info.append({
                         'name': task,
                         'last_run': last_run,
-                        'next_run': next_run,
+                        'next_run': next_run if task not in program_runner.currently_running_tasks else 0,
                         'interval': interval,
-                        'enabled': True
+                        'enabled': True,
+                        'running': task in program_runner.currently_running_tasks
                     })
             
             # Sort tasks by name for consistent ordering
@@ -189,18 +190,98 @@ def get_current_task():
             return jsonify({
                 'success': True,
                 'running': True,
-                'tasks': tasks_info
+                'tasks': tasks_info,
+                'paused': program_runner.queue_manager.is_paused() if hasattr(program_runner, 'queue_manager') else False,
+                'pause_reason': program_runner.pause_reason
             })
         else:
             # logging.debug("Program not running or not initialized")
             return jsonify({
                 'success': True,
                 'running': False,
-                'tasks': []
+                'tasks': [],
+                'paused': False,
+                'pause_reason': None
             })
     except Exception as e:
         logging.error(f"Error getting current task info: {str(e)}")
         logging.error(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500 
+
+@base_bp.route('/api/check-update', methods=['GET'])
+@cache_for_seconds(300)  # Cache for 5 minutes
+def check_for_update():
+    try:
+        # Get current branch and version
+        current_branch = get_current_branch()
+        current_version = get_version_with_branch()
+        
+        # GitHub API endpoint for commits
+        api_url = f"https://api.github.com/repos/godver3/cli_debrid/commits"
+        headers = {'User-Agent': 'cli-debrid-app'}
+        params = {
+            'per_page': 1,
+            'page': 1,
+            'sha': current_branch
+        }
+        
+        response = requests.get(api_url, headers=headers, params=params)
+        if response.status_code == 200:
+            commits = response.json()
+            if not commits:
+                return jsonify({
+                    'success': True,
+                    'update_available': False,
+                    'message': 'No commits available'
+                })
+            
+            latest_commit = commits[0]
+            latest_message = latest_commit['commit']['message']
+            
+            # Check if we're on the latest commit
+            if getattr(sys, 'frozen', False):
+                application_path = sys._MEIPASS
+            else:
+                application_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            
+            version_path = os.path.join(application_path, 'version.txt')
+            
+            with open(version_path, 'r') as f:
+                current_version = f.read().strip()
+            
+            # Extract version from latest commit message if it starts with a version number
+            latest_version = None
+            if latest_message.strip().startswith(('0.', '1.', '2.')):
+                latest_version = latest_message.split(' - ')[0].strip()
+            
+            # Compare versions properly by splitting into components
+            def parse_version(version):
+                return [int(x) for x in version.split('.')]
+            
+            update_available = False
+            if latest_version:
+                current_parts = parse_version(current_version)
+                latest_parts = parse_version(latest_version)
+                update_available = latest_parts > current_parts
+            
+            return jsonify({
+                'success': True,
+                'update_available': update_available,
+                'current_version': current_version,
+                'latest_version': latest_version,
+                'branch': current_branch
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to fetch commit history. Status code: {response.status_code}'
+            }), 500
+            
+    except Exception as e:
+        logging.error(f"Error checking for updates: {str(e)}")
         return jsonify({
             'success': False,
             'error': str(e)

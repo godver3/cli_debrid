@@ -3,9 +3,34 @@ from api_tracker import api
 from settings import get_setting, get_all_settings
 from typing import List, Dict, Any, Tuple
 from database import get_media_item_presence
+import os
+import pickle
+from datetime import datetime, timedelta
 
 DEFAULT_TAKE = 100
 REQUEST_TIMEOUT = 15  # seconds
+
+# Get db_content directory from environment variable with fallback
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+OVERSEERR_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'overseerr_cache.pkl')
+CACHE_EXPIRY_DAYS = 7
+
+def load_overseerr_cache():
+    try:
+        if os.path.exists(OVERSEERR_CACHE_FILE):
+            with open(OVERSEERR_CACHE_FILE, 'rb') as f:
+                return pickle.load(f)
+    except (EOFError, pickle.UnpicklingError, FileNotFoundError) as e:
+        logging.warning(f"Error loading Overseerr cache: {e}. Creating a new cache.")
+    return {}
+
+def save_overseerr_cache(cache):
+    try:
+        os.makedirs(os.path.dirname(OVERSEERR_CACHE_FILE), exist_ok=True)
+        with open(OVERSEERR_CACHE_FILE, 'wb') as f:
+            pickle.dump(cache, f)
+    except Exception as e:
+        logging.error(f"Error saving Overseerr cache: {e}")
 
 def get_overseerr_headers(api_key: str) -> Dict[str, str]:
     return {
@@ -77,6 +102,8 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
     logging.info(f"allow_partial: {allow_partial}")
     
     all_wanted_items = []
+    cache = load_overseerr_cache()
+    current_time = datetime.now()
     
     for source in overseerr_sources:
         overseerr_url = source.get('url')
@@ -111,6 +138,22 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                             wanted_item['requested_seasons'] = requested_seasons
                             logging.info(f"TV show {media.get('tmdbId')} has specific season requests: {requested_seasons}")
 
+                    # Check cache for this item
+                    cache_key = f"{wanted_item['tmdb_id']}_{wanted_item['media_type']}"
+                    cache_item = cache.get(cache_key)
+                    
+                    if cache_item:
+                        last_processed = cache_item['timestamp']
+                        if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
+                            logging.debug(f"Skipping recently processed item: {cache_key}")
+                            continue
+                    
+                    # Add or update cache entry
+                    cache[cache_key] = {
+                        'timestamp': current_time,
+                        'data': wanted_item
+                    }
+                    
                     wanted_items.append(wanted_item)
                     logging.debug(f"Added wanted item: {wanted_item}")
 
@@ -119,6 +162,8 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
         except Exception as e:
             logging.error(f"Unexpected error while processing Overseerr source: {e}")
 
+    # Save updated cache
+    save_overseerr_cache(cache)
     logging.info(f"Retrieved items from {len(all_wanted_items)} Overseerr sources.")
     
     return all_wanted_items

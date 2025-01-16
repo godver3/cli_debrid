@@ -112,6 +112,9 @@ def normalize_title(title: str) -> str:
     if '%' in title:
         title = title.replace('1%', '1.percent').replace('1.%', '1.percent')
     
+    # Replace slashes with spaces before normalization
+    title = title.replace('/', ' ')
+    
     # Normalize Unicode characters
     normalized = unicodedata.normalize('NFKD', title)
     

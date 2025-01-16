@@ -7,6 +7,13 @@ from settings_schema import SETTINGS_SCHEMA
 from collections import defaultdict
 from datetime import datetime
 import time
+from threading import Timer, Lock
+
+# Global notification buffer
+notification_buffer = []
+notification_timer = None
+buffer_lock = Lock()
+BUFFER_TIMEOUT = 10  # seconds to wait before sending notifications
 
 def safe_format_date(date_value):
     if not date_value:
@@ -107,13 +114,15 @@ def format_notification_content(notifications, notification_type, notification_c
         media_type = item.get('type', 'movie')
         new_state = item.get('new_state', '')
         
-        # Choose prefix based on state, upgrade status, and media type
-        if new_state in ['Checking', 'Sleeping', 'Upgrading']:
+        # Choose prefix based on state and upgrade status
+        if new_state == 'Checking':
             prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
-        elif is_upgrade and new_state == 'Collected':
-            prefix = EMOJIS['upgrade']  # Use upgrade symbol for upgrades
+        elif new_state == 'Upgrading':
+            prefix = EMOJIS['movie'] if media_type == 'movie' else EMOJIS['show']
+        elif new_state == 'Upgraded':
+            prefix = EMOJIS['upgrade']
         elif new_state == 'Collected':
-            prefix = EMOJIS['new']  # Use NEW symbol for collected items
+            prefix = EMOJIS['new']
         else:
             prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
         
@@ -130,27 +139,14 @@ def format_notification_content(notifications, notification_type, notification_c
         if season is not None and episode is not None:
             version = item.get('version', '')
             version_str = f" [{version}]" if version else ""
-            
-            # Add prefix based on state
-            new_state = item.get('new_state', '')
-            is_upgrade = item.get('is_upgrade', False)
-            
-            if new_state in ['Checking', 'Sleeping', 'Upgrading']:
-                prefix = EMOJIS['show']
-            elif is_upgrade and new_state == 'Collected':
-                prefix = EMOJIS['upgrade']
-            elif new_state == 'Collected':
-                prefix = EMOJIS['new']
-            else:
-                prefix = EMOJIS['show']
-                
-            return f"    {prefix} S{season:02d}E{episode:02d}{version_str}"
+            return f"    S{season:02d}E{episode:02d}{version_str}"
         return None
 
     # Group items by show/movie
     grouped_items = {}
     for item in notifications:
-        key = (item.get('title'), item.get('type'), item.get('year'))
+        # Group by title, type, year, and state for better batching
+        key = (item.get('title'), item.get('type'), item.get('year'), item.get('new_state'), item.get('is_upgrade', False))
         if key not in grouped_items:
             grouped_items[key] = []
         grouped_items[key].append(item)
@@ -158,44 +154,63 @@ def format_notification_content(notifications, notification_type, notification_c
     content = []
     
     # Process each group
-    for (title, type_, year), items in sorted(grouped_items.items()):
-        if type_ == 'movie':
-            # For movies, each item is a separate line
-            for item in items:
-                state = item.get('new_state', 'Collected')
-                is_upgrade = item.get('is_upgrade', False)
-                line = f"{format_title(item)} {format_state_suffix(state, is_upgrade)}"
-                content.append(line)
-        else:
-            # For shows, group episodes under the show title
-            show_item = items[0]  # Use first item for show details
-            content.append(format_title(show_item))
-            
-            # Add episodes
-            episode_lines = []
-            for item in sorted(items, key=lambda x: (x.get('season_number', 0), x.get('episode_number', 0))):
+    for (title, type_, year, state, is_upgrade), items in sorted(grouped_items.items()):
+        # Create a representative item for the group
+        group_item = items[0].copy()
+        
+        # Add the title line only once per group
+        content.append(format_title(group_item))
+        
+        # Sort episodes by season and episode number
+        if type_ == 'episode':
+            sorted_items = sorted(items, key=lambda x: (x.get('season_number', 0), x.get('episode_number', 0)))
+            for item in sorted_items:
                 episode_line = format_episode(item)
                 if episode_line:
-                    state = item.get('new_state', 'Collected')
-                    is_upgrade = item.get('is_upgrade', False)
-                    episode_lines.append(f"{episode_line} {format_state_suffix(state, is_upgrade)}")
-            
-            content.extend(episode_lines)
+                    content.append(f"{episode_line} {format_state_suffix(state, is_upgrade)}")
+        else:
+            # For movies, just add the state suffix to the title line
+            content[-1] = f"{content[-1]} {format_state_suffix(state, is_upgrade)}"
 
         # Add spacing between different shows/movies
-        if (title, type_, year) != list(grouped_items.keys())[-1]:
+        if (title, type_, year, state, is_upgrade) != list(grouped_items.keys())[-1]:
             content.append("")
 
     return "\n".join(content)
 
-def send_notifications(notifications, enabled_notifications, notification_category='collected'):
+def buffer_notifications(notifications, enabled_notifications, notification_category='collected'):
+    global notification_timer, notification_buffer
+    
+    with buffer_lock:
+        # Add new notifications to buffer
+        notification_buffer.extend(notifications)
+        
+        # Cancel existing timer if there is one
+        if notification_timer is not None:
+            notification_timer.cancel()
+        
+        # Set new timer
+        notification_timer = Timer(BUFFER_TIMEOUT, flush_notification_buffer, args=[enabled_notifications, notification_category])
+        notification_timer.start()
+
+def flush_notification_buffer(enabled_notifications, notification_category):
+    global notification_buffer
+    
+    with buffer_lock:
+        if notification_buffer:
+            # Send all buffered notifications
+            _send_notifications(notification_buffer, enabled_notifications, notification_category)
+            # Clear the buffer
+            notification_buffer = []
+
+def _send_notifications(notifications, enabled_notifications, notification_category='collected'):
+    # Original send_notifications logic moved here
     for notification_id, notification_config in enabled_notifications.items():
         if not notification_config.get('enabled', False):
             continue
 
-        # Check if this notification category is enabled for this notification type
         notify_on = notification_config.get('notify_on', {})
-        if not notify_on.get(notification_category, True):  # Default to True for backward compatibility
+        if not notify_on.get(notification_category, True):
             logging.debug(f"Skipping {notification_id} notification: {notification_category} notifications are disabled")
             continue
 
@@ -235,12 +250,12 @@ def send_notifications(notifications, enabled_notifications, notification_catego
                     continue
                 send_ntfy_notification(host, api_key, priority, topic, content)
             
-            else:
-                logging.warning(f"Unknown notification type: {notification_type}")
         except Exception as e:
-            logging.error(f"Error sending {notification_type} notification: {str(e)}")
+            logging.error(f"Failed to send {notification_type} notification: {str(e)}")
 
-    logging.info(f"Notification process completed")
+def send_notifications(notifications, enabled_notifications, notification_category='collected'):
+    """Buffer notifications and send them after a short delay to allow for batching."""
+    buffer_notifications(notifications, enabled_notifications, notification_category)
 
 def send_discord_notification(webhook_url, content):
     MAX_LENGTH = 1900  # Leave some room for formatting

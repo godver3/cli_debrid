@@ -19,8 +19,9 @@ def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: 
         if not response or 'streams' not in response:
             logging.warning(f"No streams found for IMDb ID: {imdb_id} in instance {instance}")
             return []
+        logging.debug(f"Torrentio returned {len(response['streams'])} total results before parsing")
         parsed_results = parse_results(response['streams'], instance)
-
+        logging.debug(f"Successfully parsed {len(parsed_results)} results from Torrentio")
         return parsed_results
     except Exception as e:
         logging.error(f"Error in scrape_torrentio_instance for {instance}: {str(e)}", exc_info=True)
@@ -51,59 +52,119 @@ def fetch_data(url: str) -> Dict:
 
 def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str, Any]]:
     results = []
+    skipped_count = 0
+    no_title_count = 0
+    no_info_hash_count = 0
+    parse_error_count = 0
+    
     for stream in streams:
         try:
             title = stream.get('title', '')
-            #logging.debug(f"Raw title: {title}")
+            if not title:
+                no_title_count += 1
+                logging.debug(f"Skipping result: No title found in stream")
+                continue
+                
+            logging.debug(f"Processing stream with raw title: {title}")
             title_parts = title.split('\n')
+            
+            # First line is always the main title
             name = title_parts[0].strip()
             size = 0.0
             seeders = 0
             
-            # Look for size and seeder info in all parts
-            for part in title_parts:
-                size_info = parse_size(part)
+            # Look through all lines after the title for metadata
+            for metadata_line in title_parts[1:]:
+                metadata_line = metadata_line.strip()
+                logging.debug(f"Processing metadata line: {metadata_line}")
+                
+                # Try to find size and seeders in each line
+                size_info = parse_size(metadata_line)
                 if size_info > 0:
                     size = size_info
-                seeder_info = parse_seeder(part)
+                
+                seeder_info = parse_seeder(metadata_line)
                 if seeder_info > 0:
                     seeders = seeder_info
 
             info_hash = stream.get("infoHash", "")
+            if not info_hash:
+                no_info_hash_count += 1
+                logging.debug(f"Skipping result '{name}': No info hash found")
+                continue
+                
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
             if stream.get('fileIdx') is not None:
                 magnet_link += f'&dn={quote_plus(name)}&so={stream["fileIdx"]}'
-            results.append({
+            
+            result = {
                 'title': name,
                 'size': size,
                 'source': f'{instance}',
                 'magnet': magnet_link,
                 'seeders': seeders
-            })
-            #logging.debug(f"Parsed result: title={name}, size={size}, seeders={seeders}")
+            }
+            results.append(result)
+            logging.debug(f"Successfully parsed result: {result}")
+            
         except Exception as e:
+            parse_error_count += 1
+            logging.debug(f"Error parsing stream: {str(e)}")
+            if 'title' in stream:
+                logging.debug(f"Failed stream title: {stream['title']}")
             continue
+    
+    skipped_count = no_title_count + no_info_hash_count + parse_error_count
+    if skipped_count > 0:
+        logging.debug(f"Torrentio parsing summary:")
+        logging.debug(f"- Total streams: {len(streams)}")
+        logging.debug(f"- Successfully parsed: {len(results)}")
+        logging.debug(f"- Skipped {skipped_count} results:")
+        logging.debug(f"  - No title: {no_title_count}")
+        logging.debug(f"  - No info hash: {no_info_hash_count}")
+        logging.debug(f"  - Parse errors: {parse_error_count}")
+    
     return results
 
 def parse_size(size_info: str) -> float:
-    # Try the original pattern first
-    size_match = re.search(r'💾\s*([\d.]+)\s*(\w+)', size_info)
-    if not size_match:
-        # If the original pattern fails, try a more lenient pattern
-        size_match = re.search(r'([\d.]+)\s*(\w+)', size_info)
+    try:
+        # Try the original pattern first (emoji version)
+        size_match = re.search(r'💾\s*([\d.]+)\s*(\w+)', size_info)
+        if not size_match:
+            # If the original pattern fails, try a more lenient pattern
+            size_match = re.search(r'([\d.]+)\s*(\w+)', size_info)
+        
+        if size_match:
+            size_str, unit = size_match.groups()
+            # Clean the size string
+            size_str = size_str.strip()
+            if not size_str or size_str == '.':
+                logging.debug(f"Invalid size string '{size_str}' in '{size_info}'")
+                return 0.0
+                
+            try:
+                size = float(size_str)
+            except ValueError:
+                logging.debug(f"Could not convert '{size_str}' to float in '{size_info}'")
+                return 0.0
+                
+            unit = unit.lower()
+            if unit.startswith(('g', 'г')):  # GB, GiB (including Cyrillic г for Russian)
+                return size
+            elif unit.startswith(('m', 'м')):  # MB, MiB
+                return size / 1024
+            elif unit.startswith(('t', 'т')):  # TB, TiB
+                return size * 1024
+            elif unit.startswith(('k', 'к')):  # KB, KiB
+                return size / (1024 * 1024)
+            else:
+                logging.debug(f"Unknown size unit '{unit}' in '{size_info}'")
+                return size
+    except Exception as e:
+        logging.debug(f"Error parsing size from '{size_info}': {str(e)}")
+        return 0.0
     
-    if size_match:
-        size, unit = size_match.groups()
-        size = float(size)
-        if unit.lower() == 'gb':
-            return size
-        elif unit.lower() == 'mb':
-            converted_size = size / 1024
-            return converted_size
-        else:
-            return size
-    
-    #logging.debug("Returning 0.0 as fallback")
+    logging.debug(f"No size pattern found in '{size_info}'")
     return 0.0
 
 def parse_seeder(seeder_info: str) -> int:

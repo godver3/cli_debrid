@@ -234,6 +234,8 @@ SETTINGS_SCHEMA = {
                 "resolution_weight": {"type": "integer", "default": 3, "min": 0},
                 "hdr_weight": {"type": "integer", "default": 3, "min": 0},
                 "similarity_weight": {"type": "integer", "default": 3, "min": 0},
+                "similarity_threshold": {"type": "float", "default": 0.8, "min": 0, "max": 1},
+                "similarity_threshold_anime": {"type": "float", "default": 0.35, "min": 0, "max": 1},
                 "size_weight": {"type": "integer", "default": 3, "min": 0},
                 "bitrate_weight": {"type": "integer", "default": 3, "min": 0},
                 "preferred_filter_in": {"type": "list", "default": []},
@@ -431,6 +433,11 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "display_name": {"type": "string", "default": "Trakt Lists"}
             },
+            "Trakt Collection": {
+                "enabled": {"type": "boolean", "default": False},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "Trakt Collection"}
+            },
             "Overseerr": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"},
@@ -438,10 +445,17 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "display_name": {"type": "string", "default": "Overseerr"}
             },
-            "Plex Watchlist": {
+            "My Plex Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
-                "display_name": {"type": "string", "default": "Plex Watchlist"}
+                "display_name": {"type": "string", "default": "My Plex Watchlist"}
+            },
+            "Other Plex Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "username": {"type": "string", "default": ""},
+                "token": {"type": "string", "default": "", "sensitive": True},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "Other Plex Watchlist"}
             }
         }
     },

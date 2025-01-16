@@ -10,6 +10,145 @@ from urllib.parse import urlparse
 from datetime import datetime
 import time
 from functools import wraps
+import random
+from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
+
+# Cache for download stats
+download_stats_cache = {
+    'active_downloads': None,
+    'usage_stats': None,
+    'last_update': 0,
+    'cache_duration': 300  # 5 minutes in seconds
+}
+
+def get_cached_download_stats():
+    """Get cached download stats or fetch new ones if cache is expired"""
+    current_time = time.time()
+    if (download_stats_cache['last_update'] + download_stats_cache['cache_duration'] < current_time or 
+        download_stats_cache['active_downloads'] is None or 
+        download_stats_cache['usage_stats'] is None):
+        
+        try:
+            provider = get_debrid_provider()
+            
+            # Get active downloads
+            try:
+                active_count, limit = provider.get_active_downloads()
+                raw_limit = limit if limit else provider.MAX_DOWNLOADS
+                adjusted_limit = round(raw_limit)
+                percentage = round((active_count / adjusted_limit * 100) if adjusted_limit > 0 else 0)
+                
+                status = 'normal'
+                if percentage >= 90:
+                    status = 'critical'
+                elif percentage >= 75:
+                    status = 'warning'
+                
+                download_stats_cache['active_downloads'] = {
+                    'count': active_count,
+                    'limit': adjusted_limit,
+                    'percentage': percentage,
+                    'status': status,
+                    'error': None
+                }
+            except TooManyDownloadsError as e:
+                import re
+                match = re.search(r'(\d+)/(\d+)', str(e))
+                if match:
+                    active_count, limit = map(int, match.groups())
+                    download_stats_cache['active_downloads'] = {
+                        'count': active_count,
+                        'limit': limit,
+                        'percentage': round((active_count / limit * 100) if limit > 0 else 0),
+                        'status': 'critical',
+                        'error': 'too_many'
+                    }
+                else:
+                    download_stats_cache['active_downloads'] = {
+                        'count': 0,
+                        'limit': 0,
+                        'percentage': 0,
+                        'status': 'error',
+                        'error': 'too_many'
+                    }
+            except Exception as e:
+                logging.error(f"Error getting active downloads: {str(e)}")
+                download_stats_cache['active_downloads'] = {
+                    'count': 0,
+                    'limit': 0,
+                    'percentage': 0,
+                    'status': 'error',
+                    'error': str(e)
+                }
+            
+            # Get usage stats
+            try:
+                usage = provider.get_user_traffic()
+                if not usage or usage.get('limit') is None:
+                    download_stats_cache['usage_stats'] = {
+                        'used': '0 GB',
+                        'limit': '2000 GB',
+                        'percentage': 0,
+                        'error': None
+                    }
+                else:
+                    daily_used = float(usage.get('downloaded', 0)) * 1024 * 1024 * 1024  # GB to bytes
+                    daily_limit = float(usage.get('limit', 2000)) * 1024 * 1024 * 1024  # GB to bytes
+                    percentage = round((daily_used / daily_limit) * 100) if daily_limit > 0 else 0
+                    
+                    download_stats_cache['usage_stats'] = {
+                        'used': format_bytes(daily_used),
+                        'limit': format_bytes(daily_limit),
+                        'percentage': percentage,
+                        'error': None
+                    }
+            except Exception as e:
+                logging.error(f"Error getting usage stats: {str(e)}")
+                download_stats_cache['usage_stats'] = {
+                    'used': '0 GB',
+                    'limit': '2000 GB',
+                    'percentage': 0,
+                    'error': str(e)
+                }
+            
+            download_stats_cache['last_update'] = current_time
+            
+        except ProviderUnavailableError as e:
+            logging.error(f"Provider unavailable: {str(e)}")
+            if download_stats_cache['active_downloads'] is None:
+                download_stats_cache['active_downloads'] = {
+                    'count': 0,
+                    'limit': 0,
+                    'percentage': 0,
+                    'status': 'error',
+                    'error': 'provider_unavailable'
+                }
+            if download_stats_cache['usage_stats'] is None:
+                download_stats_cache['usage_stats'] = {
+                    'used': '0 GB',
+                    'limit': '2000 GB',
+                    'percentage': 0,
+                    'error': 'provider_unavailable'
+                }
+        except Exception as e:
+            logging.error(f"Error updating download stats cache: {str(e)}")
+            if download_stats_cache['active_downloads'] is None:
+                download_stats_cache['active_downloads'] = {
+                    'count': 0,
+                    'limit': 0,
+                    'percentage': 0,
+                    'status': 'error',
+                    'error': str(e)
+                }
+            if download_stats_cache['usage_stats'] is None:
+                download_stats_cache['usage_stats'] = {
+                    'used': '0 GB',
+                    'limit': '2000 GB',
+                    'percentage': 0,
+                    'error': str(e)
+                }
+    
+    return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
 
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
@@ -105,9 +244,9 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
     try:
         cursor = conn.cursor()
         
-        # Query for movies - limit directly in SQL
-        movie_query = """
-        WITH RankedMovies AS (
+        # Combined query for both movies and episodes with UNION
+        combined_query = """
+        WITH MovieItems AS (
             SELECT 
                 title,
                 year,
@@ -118,61 +257,55 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                 version,
                 filled_by_title,
                 filled_by_file,
-                state,
+                NULL as season_number,
+                NULL as episode_number,
                 ROW_NUMBER() OVER (PARTITION BY title, year ORDER BY collected_at DESC) as rn
             FROM media_items
             WHERE type = 'movie' AND collected_at IS NOT NULL AND state = 'Collected'
-        )
-        SELECT *
-        FROM RankedMovies
-        WHERE rn = 1
-        ORDER BY collected_at DESC
-        LIMIT ?
-        """
-        
-        # Query for episodes - limit directly in SQL
-        episode_query = """
-        WITH RankedEpisodes AS (
+        ),
+        ShowItems AS (
             SELECT 
                 title,
                 year,
                 type,
-                season_number,
-                episode_number,
                 collected_at,
                 imdb_id,
                 tmdb_id,
                 version,
                 filled_by_title,
                 filled_by_file,
+                season_number,
+                episode_number,
                 ROW_NUMBER() OVER (PARTITION BY title ORDER BY collected_at DESC) as rn
             FROM media_items
             WHERE type = 'episode' AND collected_at IS NOT NULL AND state = 'Collected'
         )
-        SELECT *
-        FROM RankedEpisodes
-        WHERE rn = 1
+        SELECT * FROM (
+            SELECT * FROM MovieItems WHERE rn = 1 ORDER BY collected_at DESC LIMIT ?
+        )
+        UNION ALL
+        SELECT * FROM (
+            SELECT * FROM ShowItems WHERE rn = 1 ORDER BY collected_at DESC LIMIT ?
+        )
         ORDER BY collected_at DESC
-        LIMIT ?
         """
         
-        cursor.execute(movie_query, (movie_limit,))
-        movie_results = cursor.fetchall()
-        
-        cursor.execute(episode_query, (show_limit,))
-        episode_results = cursor.fetchall()
+        cursor.execute(combined_query, (movie_limit, show_limit))
+        results = cursor.fetchall()
         
         movies_list = []
         shows_list = []
         
         async with aiohttp.ClientSession() as session:
-            # Process movies
-            for row in movie_results:
+            # Process all items and create poster tasks in parallel
+            poster_tasks = []
+            
+            for row in results:
                 item = dict(row)
-                movie_item = {
+                media_item = {
                     'title': item['title'],
                     'year': item['year'],
-                    'type': 'movie',
+                    'type': 'movie' if item['type'] == 'movie' else 'show',
                     'collected_at': item['collected_at'],
                     'imdb_id': item['imdb_id'],
                     'tmdb_id': item['tmdb_id'],
@@ -181,84 +314,55 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     'filled_by_title': item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']
                 }
                 
-                # Get cached poster URL or add to list for batch fetch
-                cached_url = get_cached_poster_url(item['tmdb_id'], 'movie')
-                if cached_url:
-                    movie_item['poster_url'] = cached_url
-                movies_list.append((movie_item, item['tmdb_id']))
-            
-            # Process episodes
-            for row in episode_results:
-                item = dict(row)
-                show_item = {
-                    'title': item['title'],
-                    'year': item['year'],
-                    'type': 'show',
-                    'collected_at': item['collected_at'],
-                    'imdb_id': item['imdb_id'],
-                    'tmdb_id': item['tmdb_id'],
-                    'season_number': item['season_number'],
-                    'episode_number': item['episode_number'],
-                    'version': item['version'],
-                    'filled_by_file': item['filled_by_file'],
-                    'filled_by_title': item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']
-                }
+                if item['type'] == 'episode':
+                    media_item.update({
+                        'season_number': item['season_number'],
+                        'episode_number': item['episode_number']
+                    })
                 
-                # Get cached poster URL or add to list for batch fetch
-                cached_url = get_cached_poster_url(item['tmdb_id'], 'tv')
+                # Get cached poster URL or create task for batch fetch
+                media_type = 'movie' if item['type'] == 'movie' else 'tv'
+                cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
+                
                 if cached_url:
-                    show_item['poster_url'] = cached_url
-                shows_list.append((show_item, item['tmdb_id']))
+                    media_item['poster_url'] = cached_url
+                elif item['tmdb_id']:
+                    task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
+                    poster_tasks.append((media_item, task))
+                else:
+                    # Use placeholder if no TMDB ID
+                    if not get_setting('TMDB', 'api_key'):
+                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        media_item['poster_url'] = placeholder_url
+                
+                if item['type'] == 'movie':
+                    movies_list.append(media_item)
+                else:
+                    shows_list.append(media_item)
             
-            # Batch fetch missing poster URLs
-            movie_tasks = []
-            show_tasks = []
-            
-            for item, tmdb_id in movies_list:
-                if 'poster_url' not in item and tmdb_id:
-                    task = asyncio.create_task(get_poster_url(session, tmdb_id, 'movie'))
-                    movie_tasks.append((item, task))
-            
-            for item, tmdb_id in shows_list:
-                if 'poster_url' not in item and tmdb_id:
-                    task = asyncio.create_task(get_poster_url(session, tmdb_id, 'tv'))
-                    show_tasks.append((item, task))
-            
-            # Wait for all poster tasks to complete
-            if movie_tasks:
-                movie_results = await asyncio.gather(*[task for _, task in movie_tasks], return_exceptions=True)
-                for (item, _), result in zip(movie_tasks, movie_results):
+            # Wait for all poster tasks to complete in parallel
+            if poster_tasks:
+                results = await asyncio.gather(*[task for _, task in poster_tasks], return_exceptions=True)
+                for (item, _), result in zip(poster_tasks, results):
                     if isinstance(result, Exception):
-                        logging.error(f"Error fetching poster for movie with TMDB ID {item['tmdb_id']}: {result}")
-                    elif result:
-                        item['poster_url'] = result
-                        cache_poster_url(item['tmdb_id'], 'movie', result)
-                    else:
+                        logging.error(f"Error fetching poster for {item['title']}: {result}")
                         if not get_setting('TMDB', 'api_key'):
-                            logging.warning("TMDB API key not set, using placeholder images")
                             placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
                             item['poster_url'] = placeholder_url
-            
-            if show_tasks:
-                show_results = await asyncio.gather(*[task for _, task in show_tasks], return_exceptions=True)
-                for (item, _), result in zip(show_tasks, show_results):
-                    if isinstance(result, Exception):
-                        logging.error(f"Error fetching poster for show with TMDB ID {item['tmdb_id']}: {result}")
                     elif result:
                         item['poster_url'] = result
-                        cache_poster_url(item['tmdb_id'], 'tv', result)
-                    else:
-                        if not get_setting('TMDB', 'api_key'):
-                            logging.warning("TMDB API key not set, using placeholder images")
-                            placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
-                            item['poster_url'] = placeholder_url
+                        cache_poster_url(item['tmdb_id'], 'movie' if item['type'] == 'movie' else 'tv', result)
+                    elif not get_setting('TMDB', 'api_key'):
+                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        item['poster_url'] = placeholder_url
         
-        # Clean expired cache entries
-        clean_expired_cache()
+        # Clean expired cache entries periodically instead of every request
+        if random.random() < 0.1:  # 10% chance to clean cache
+            clean_expired_cache()
 
         return {
-            'movies': [item for item, _ in movies_list],
-            'shows': [item for item, _ in shows_list]
+            'movies': movies_list[:movie_limit],
+            'shows': shows_list[:show_limit]
         }
     except Exception as e:
         logging.error(f"Error in get_recently_added_items: {str(e)}")
@@ -266,19 +370,19 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
     finally:
         conn.close()
 
+@cache_for_seconds(30)
 async def get_recently_upgraded_items(upgraded_limit=5):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
-        # Query for upgrades using the new upgraded flag
+        # Optimized query for upgrades
         upgraded_query = """
         WITH LatestUpgrades AS (
             SELECT 
                 title,
                 year,
                 type,
-                collected_at,
                 imdb_id,
                 tmdb_id,
                 version,
@@ -287,107 +391,83 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                 last_updated,
                 season_number,
                 episode_number,
-                ROW_NUMBER() OVER (PARTITION BY title, year ORDER BY last_updated DESC) as rn
+                ROW_NUMBER() OVER (
+                    PARTITION BY 
+                        CASE 
+                            WHEN type = 'movie' THEN title || year
+                            ELSE title || season_number || episode_number
+                        END 
+                    ORDER BY last_updated DESC
+                ) as rn
             FROM media_items
             WHERE upgraded = 1
+            AND last_updated IS NOT NULL
         )
-        SELECT 
-            title,
-            year,
-            type,
-            collected_at,
-            imdb_id,
-            tmdb_id,
-            version,
-            filled_by_title,
-            filled_by_file,
-            last_updated,
-            season_number,
-            episode_number
+        SELECT *
         FROM LatestUpgrades
         WHERE rn = 1
         ORDER BY last_updated DESC
         LIMIT ?
         """
         
-        # Fetch more items initially to ensure we get enough unique ones
-        cursor.execute(upgraded_query, (upgraded_limit * 2,))
+        cursor.execute(upgraded_query, (upgraded_limit,))
         upgrade_results = cursor.fetchall()
         
-        # Debug logging
-        #logging.info(f"Found {len(upgrade_results)} upgraded items")
-        #for row in upgrade_results:
-        #    item = dict(row)
-        #    logging.info(f"Upgraded item: {item['title']} - Type: {item['type']} - Last Updated: {item['last_updated']}")
-        #    if item['type'] == 'episode':
-        #        logging.info(f"  Season: {item['season_number']} Episode: {item['episode_number']}")
-        
-        media_items = {}
+        media_items = []
+        poster_tasks = []
         
         async with aiohttp.ClientSession() as session:
-            poster_tasks = []
-            
-            # Process items until we have enough unique ones
             for row in upgrade_results:
                 item = dict(row)
-                key = f"{item['title']}-{item['year']}"
+                media_type = 'movie' if item['type'] == 'movie' else 'tv'
                 
-                if key not in media_items:
-                    media_items[key] = {
-                        **item,
-                        'versions': [item['version']],
-                        'filled_by_title': [item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']],
-                        'collected_at': item['collected_at']
-                    }
-                    
-                    # Debug logging for items being added to media_items
-                    #logging.info(f"Adding to media_items: {key}")
-                    
-                    # Set media_type based on the item type from database
-                    if item['type'] == 'movie':
-                        media_items[key]['media_type'] = 'movie'
-                    else:
-                        media_items[key]['media_type'] = 'tv'
-                        
-                    # Add poster task
-                    if item['tmdb_id']:
-                        poster_task = asyncio.create_task(
-                            get_poster_url(session, item['tmdb_id'], media_items[key]['media_type'])
-                        )
-                        poster_tasks.append((key, poster_task))
-                        
-                    # Break if we have enough unique items
-                    if len(media_items) >= upgraded_limit:
-                        break
+                media_item = {
+                    'title': item['title'],
+                    'year': item['year'],
+                    'type': item['type'],
+                    'version': item['version'],
+                    'filled_by_file': item['filled_by_file'],
+                    'filled_by_title': item['filled_by_title'] if item['filled_by_title'] else item['filled_by_file'],
+                    'last_updated': item['last_updated']
+                }
+                
+                if item['type'] == 'episode':
+                    media_item.update({
+                        'season_number': item['season_number'],
+                        'episode_number': item['episode_number']
+                    })
+                
+                # Get cached poster URL or create task for batch fetch
+                cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
+                if cached_url:
+                    media_item['poster_url'] = cached_url
+                elif item['tmdb_id']:
+                    task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
+                    poster_tasks.append((media_item, task))
                 else:
-                    # Debug logging for duplicate items
-                    #logging.info(f"Duplicate item found: {key}")
-                    if item['version'] not in media_items[key]['versions']:
-                        media_items[key]['versions'].append(item['version'])
-                    if item['filled_by_title'] and item['filled_by_title'] not in media_items[key]['filled_by_title']:
-                        media_items[key]['filled_by_title'].append(item['filled_by_title'])
-                    elif item['filled_by_file'] and item['filled_by_file'] not in media_items[key]['filled_by_title']:
-                        media_items[key]['filled_by_title'].append(item['filled_by_file'])
+                    if not get_setting('TMDB', 'api_key'):
+                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        media_item['poster_url'] = placeholder_url
+                
+                media_items.append(media_item)
             
-            # Wait for all poster tasks to complete
-            for key, task in poster_tasks:
-                try:
-                    poster_url = await task
-                    media_items[key]['poster_url'] = poster_url
-                except Exception as e:
-                    logging.error(f"Error getting poster for {key}: {str(e)}")
-                    media_items[key]['poster_url'] = None
+            # Wait for all poster tasks to complete in parallel
+            if poster_tasks:
+                results = await asyncio.gather(*[task for _, task in poster_tasks], return_exceptions=True)
+                for (item, _), result in zip(poster_tasks, results):
+                    if isinstance(result, Exception):
+                        logging.error(f"Error fetching poster for {item['title']}: {result}")
+                        if not get_setting('TMDB', 'api_key'):
+                            placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                            item['poster_url'] = placeholder_url
+                    elif result:
+                        item['poster_url'] = result
+                        cache_poster_url(item['tmdb_id'], 'movie' if item['type'] == 'movie' else 'tv', result)
+                    elif not get_setting('TMDB', 'api_key'):
+                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        item['poster_url'] = placeholder_url
         
-        # Convert to list and sort by last_updated
-        items_list = list(media_items.values())
-        items_list.sort(key=lambda x: x['last_updated'], reverse=True)
-        
-        # Debug logging for final sorted list
-        #logging.info("Final sorted items:")
-        #for item in items_list:
-            #logging.info(f"  {item['title']} - Last Updated: {item['last_updated']}")
-        
-        return items_list
+        return media_items
     except Exception as e:
         logging.error(f"Error in get_recently_upgraded_items: {str(e)}", exc_info=True)
         return []

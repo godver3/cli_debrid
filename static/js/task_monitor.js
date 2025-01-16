@@ -39,24 +39,67 @@ async function updateTasks(taskList, silent = false) {
         consecutiveErrors = 0; // Reset error counter on success
 
         if (data.success) {
-            if (data.running && data.tasks && data.tasks.length > 0) {
-                const tasksHtml = data.tasks
-                    .sort((a, b) => a.next_run - b.next_run)
-                    .map(task => `
-                        <div class="task-item">
-                            <div class="task-name">${task.name}</div>
+            if (data.running) {
+                if (data.paused && data.pause_reason) {
+                    // Show pause reason at the top of the task list
+                    taskList.innerHTML = `
+                        <div class="task-item paused">
+                            <div class="task-name">Queue Paused</div>
                             <div class="task-timing">
-                                <span>Next run: ${formatTime(task.next_run)}</span>
-                                <span>Interval: ${formatTime(task.interval)}</span>
+                                <span>${data.pause_reason}</span>
                             </div>
-                        </div>
-                    `)
-                    .join('');
-                taskList.innerHTML = tasksHtml;
-                updateCurrentTaskDisplay(data.tasks);
+                        </div>`;
+                }
+                
+                if (data.tasks && data.tasks.length > 0) {
+                    const tasksHtml = data.tasks
+                        .sort((a, b) => a.next_run - b.next_run)
+                        .map(task => `
+                            <div class="task-item ${task.running ? 'running' : ''}">
+                                <div class="task-name">${task.name}</div>
+                                <div class="task-timing">
+                                    <span>${task.running ? 'Currently running' : `Next run: ${formatTime(task.next_run)}`}</span>
+                                    <span>Interval: ${formatTime(task.interval)}</span>
+                                </div>
+                            </div>
+                        `)
+                        .join('');
+                    
+                    // If paused, append tasks after the pause message
+                    if (data.paused && data.pause_reason) {
+                        taskList.innerHTML += tasksHtml;
+                    } else {
+                        taskList.innerHTML = tasksHtml;
+                    }
+                    
+                    // Update current task display with either running task or next scheduled task
+                    const runningTask = data.tasks.find(t => t.running);
+                    const nextTask = runningTask || data.tasks.reduce((a, b) => a.next_run < b.next_run ? a : b);
+                    updateCurrentTaskDisplay([nextTask]);
+                    
+                    // Restore normal polling interval if we were in error state
+                    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS && updateInterval) {
+                        clearInterval(updateInterval);
+                        updateInterval = setInterval(() => updateTasks(taskList), 2000);
+                    }
+                } else {
+                    const status = 'Program not running';
+                    if (data.paused && data.pause_reason) {
+                        taskList.innerHTML = `
+                            <div class="task-item paused">
+                                <div class="task-name">Queue Paused</div>
+                                <div class="task-timing">
+                                    <span>${data.pause_reason}</span>
+                                </div>
+                            </div>
+                            <div class="no-tasks">${status}</div>`;
+                    } else {
+                        taskList.innerHTML = `<div class="no-tasks">${status}</div>`;
+                    }
+                    updateCurrentTaskDisplay(null);
+                }
             } else {
-                const status = data.running ? 'No active tasks' : 'Program not running';
-                taskList.innerHTML = `<div class="no-tasks">${status}</div>`;
+                taskList.innerHTML = '<div class="no-tasks">Program not running</div>';
                 updateCurrentTaskDisplay(null);
             }
         } else {
@@ -79,7 +122,7 @@ async function updateTasks(taskList, silent = false) {
         // If we've had too many consecutive errors, slow down the polling
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS && updateInterval) {
             clearInterval(updateInterval);
-            updateInterval = setInterval(() => updateTasks(taskList, true), 5000); // Retry every 5 seconds
+            updateInterval = setInterval(() => updateTasks(taskList, true), 1000); // Retry every 1 second
         }
     }
 }
@@ -149,5 +192,5 @@ export function initializeTaskMonitor() {
 
     // Start updating tasks
     updateTasks(taskList);
-    updateInterval = setInterval(() => updateTasks(taskList), 2000);
+    updateInterval = setInterval(() => updateTasks(taskList), 1000);
 } 

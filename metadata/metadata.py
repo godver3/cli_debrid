@@ -166,8 +166,12 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
 
     if airtime and timezone_str:
         try:
-            # Parse the airtime
-            air_time = datetime.strptime(airtime, "%H:%M").time()
+            # Try parsing with seconds first (HH:MM:SS)
+            try:
+                air_time = datetime.strptime(airtime, "%H:%M:%S").time()
+            except ValueError:
+                # If that fails, try without seconds (HH:MM)
+                air_time = datetime.strptime(airtime, "%H:%M").time()
             
             # Get the show's timezone
             show_tz = ZoneInfo(timezone_str)
@@ -300,6 +304,24 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             elif item['media_type'].lower() in ['tv', 'show']:
                 is_anime = 'anime' in [genre.lower() for genre in metadata.get('genres', [])]
                 
+                # Check if this show is already Overseerr managed
+                conn = get_db_connection()
+                try:
+                    cursor = conn.execute('''
+                        SELECT COUNT(*) as count FROM media_items 
+                        WHERE (imdb_id = ? OR tmdb_id = ?) 
+                        AND type = 'episode' 
+                        AND requested_season = TRUE
+                    ''', (metadata.get('imdb_id'), metadata.get('tmdb_id')))
+                    result = cursor.fetchone()
+                    has_requested_episodes = result['count'] > 0
+                finally:
+                    conn.close()
+
+                if has_requested_episodes and not item.get('requested_seasons'):
+                    logging.info(f"Skipping show {metadata.get('title', 'Unknown')} as it is managed by Overseerr")
+                    continue
+                
                 seasons = metadata.get('seasons')
                 if seasons == 'None':  # Handle the case where seasons is the string 'None'
                     seasons = {}
@@ -315,49 +337,27 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
 
                 # Get the requested seasons if they exist
                 requested_seasons = item.get('requested_seasons', [])
+                
+                # If we have specific seasons requested (e.g. from Overseerr)
                 if requested_seasons:
-                    logging.info(f"Processing requested seasons {requested_seasons} for show {item.get('title', 'Unknown')}")
+                    logging.info(f"Processing specific requested seasons {requested_seasons} for show {metadata.get('title', 'Unknown')}")
+                    seasons_to_process = requested_seasons
+                else:
+                    # For non-Overseerr sources, process all seasons
+                    logging.info(f"Processing all seasons for show {metadata.get('title', 'Unknown')} from non-Overseerr source")
+                    seasons_to_process = [int(s) for s in seasons.keys() if s != '0']  # Skip season 0 (specials)
 
-                    # Update show_requested_seasons table
-                    conn = get_db_connection()
-                    try:
-                        # Add new requested seasons in bulk
-                        conn.executemany('''
-                            INSERT OR IGNORE INTO show_requested_seasons
-                            (imdb_id, tmdb_id, season_number)
-                            VALUES (?, ?, ?)
-                        ''', [(metadata['imdb_id'], metadata.get('tmdb_id'), season) for season in requested_seasons])
-                        conn.commit()
-                    finally:
-                        conn.close()
-
-                # Get all requested seasons for this show from the database
-                conn = get_db_connection()
-                try:
-                    cursor = conn.execute('''
-                        SELECT season_number FROM show_requested_seasons
-                        WHERE imdb_id = ? OR tmdb_id = ?
-                    ''', (metadata['imdb_id'], metadata.get('tmdb_id')))
-                    all_requested_seasons = {row['season_number'] for row in cursor.fetchall()}
-                finally:
-                    conn.close()
-                    
-                if get_setting('Debug', 'allow_partial_overseerr_requests'):
-                    # Update states of existing episodes
-                    conn = get_db_connection()
-                    try:
-                        update_existing_episodes_states(conn, metadata.get('tmdb_id'), all_requested_seasons)
-                    finally:
-                        conn.close()
-
-                # Process all episodes
+                # Process the determined seasons
                 all_episodes = []
-                for season_number, season_data in seasons.items():
-                    season_number = int(season_number)
+                for season_number in seasons_to_process:
+                    season_data = seasons.get(str(season_number), {})
+                    if not season_data:
+                        logging.warning(f"No data found for season {season_number}")
+                        continue
+
                     episodes = season_data.get('episodes', {})
-                    
-                    # Skip season 0 (specials)
-                    if season_number == 0:
+                    if not episodes:
+                        logging.warning(f"No episodes found for season {season_number}")
                         continue
 
                     for episode_number, episode_data in episodes.items():
@@ -369,12 +369,15 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                             episode_data,
                             is_anime
                         )
-                        # Add requested_seasons info to each episode
-                        episode_item['is_requested_season'] = season_number in all_requested_seasons
+                        # Only mark as requested_season if it was explicitly requested
+                        if requested_seasons:
+                            episode_item['requested_season'] = True
                         all_episodes.append(episode_item)
+                        logging.debug(f"Added episode S{season_number:02d}E{episode_number:02d} to processing list")
 
                 # Add all episodes to processed_items
                 processed_items['episodes'].extend(all_episodes)
+                logging.info(f"Added {len(all_episodes)} episodes from {'requested' if requested_seasons else 'all'} seasons")
 
                 # Only add items with Overseerr versions if this is from an Overseerr webhook
                 if item.get('from_overseerr'):

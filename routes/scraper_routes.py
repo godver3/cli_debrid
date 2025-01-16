@@ -11,7 +11,7 @@ from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
 from web_scraper import search_trakt
 from database.database_reading import get_all_season_episode_counts
-from metadata.metadata import get_imdb_id_if_missing, get_metadata, get_release_date, _get_local_timezone
+from metadata.metadata import get_imdb_id_if_missing, get_metadata, get_release_date, _get_local_timezone, DirectAPI
 import re
 from queues.media_matcher import MediaMatcher
 from guessit import guessit
@@ -295,9 +295,6 @@ def add_torrent_to_debrid():
                     'year': year,
                     'type': 'episode' if media_type in ['tv', 'show'] else 'movie',
                     'version': version,
-                    'season_number': season_number,
-                    'episode_number': episode_number,
-                    'episode_title': episode_data.get('title', f'Episode {episode_number}'),
                     'tmdb_id': tmdb_id,
                     'imdb_id': imdb_id,
                     'state': 'Checking',
@@ -307,6 +304,14 @@ def add_torrent_to_debrid():
                     'filled_by_file': filled_by_file,
                     'release_date': release_date
                 }
+
+                # Add TV show specific fields if this is a TV show
+                if media_type in ['tv', 'show']:
+                    item.update({
+                        'season_number': season_number,
+                        'episode_number': episode_number,
+                        'episode_title': episode_data.get('title', f'Episode {episode_number}') if episode_number else None
+                    })
 
                 # If this is a season pack (has season but no episode number)
                 if media_type in ['tv', 'show'] and season_number is not None and episode_number is None:
@@ -694,3 +699,45 @@ def run_scrape():
     except Exception as e:
         logging.error(f"Error in run_scrape: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+@scraper_bp.route('/get_tv_details/<tmdb_id>')
+def get_tv_details(tmdb_id):
+    try:
+        # First get the IMDb ID from TMDB ID
+        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show')
+        if not imdb_id:
+            return jsonify({'success': False, 'error': 'Could not find IMDb ID for the given TMDB ID'}), 404
+
+        # Get the show metadata
+        metadata = get_metadata(imdb_id=imdb_id, tmdb_id=tmdb_id, item_media_type='tv')
+        if not metadata:
+            return jsonify({'success': False, 'error': 'Could not fetch show metadata'}), 404
+
+        # Extract seasons data
+        seasons_data = metadata.get('seasons', {})
+        if not seasons_data or seasons_data == 'None':
+            return jsonify({'success': False, 'error': 'No seasons data available'}), 404
+
+        # Format the seasons data for the frontend
+        formatted_seasons = []
+        for season_num, season_data in seasons_data.items():
+            if season_num == '0':  # Skip specials
+                continue
+            
+            episodes = season_data.get('episodes', {})
+            formatted_seasons.append({
+                'season_number': int(season_num),
+                'episode_count': len(episodes) if episodes else 0
+            })
+
+        # Sort seasons by number
+        formatted_seasons.sort(key=lambda x: x['season_number'])
+
+        return jsonify({
+            'success': True,
+            'seasons': formatted_seasons
+        })
+
+    except Exception as e:
+        logging.error(f"Error getting TV details: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500

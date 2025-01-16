@@ -21,6 +21,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/rate_limits.css') }}">
     
     {% block head %}{% endblock %}
     
@@ -47,13 +48,14 @@
             {% if current_user.is_authenticated and not is_onboarding %}
             <div class="user-info">
                 <span class="username">Welcome, {{ current_user.username }}</span>
+                <i class="fas fa-download hidden update-indicator" id="updateAvailableButton" data-tooltip="global.updateAvailableButton"></i>
             </div>
             {% endif %}
         </div>
 
         {% if not is_onboarding %}
         <nav id="mainNav">
-            {% if current_user.is_authenticated %}
+            {% if not is_user_system_enabled() or current_user.is_authenticated %}
             <div class="hamburger-menu">
                 <div class="bar"></div>
                 <div class="bar"></div>
@@ -164,6 +166,24 @@
     </header>
 
     {% if not is_user_system_enabled() or (is_user_system_enabled() and current_user.is_authenticated) %}
+    <div class="rate-limits-section">
+        <div class="rate-limits-toggle" onclick="toggleRateLimits()">
+            <span class="rate-limits-name" style="text-align: center;">Rate Limits</span>
+            <!-- <i class="fas fa-chart-line"></i> -->
+        </div>
+        <div id="rate-limits-container" class="rate-limits-container">
+            <div class="rate-limits-header">
+                <span class="rate-limits-title" style="text-align: center;">Rate Limits</span>
+                <button class="rate-limits-refresh" onclick="fetchRateLimitInfo()">
+                    <!-- <i class="fas fa-sync-alt"></i> -->
+                </button>
+            </div>
+            <div id="rate-limit-info">
+                <p>Loading rate limit information...</p>
+            </div>
+        </div>
+    </div>
+
     <div class="task-monitor-container" id="taskMonitorContainer">
         <div class="current-task-display" id="currentTaskDisplay">
             <span class="current-task-name">Loading...</span>

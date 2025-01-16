@@ -135,6 +135,47 @@ function initializeReleaseNotes() {
     });
 }
 
+// Rate Limits Functions
+function toggleRateLimits() {
+    const container = document.getElementById('rate-limits-container');
+    container.classList.toggle('show');
+    
+    // If showing the container, fetch the latest info
+    if (container.classList.contains('show')) {
+        fetchRateLimitInfo();
+    }
+}
+
+function fetchRateLimitInfo() {
+    fetch('/debug/api/rate_limit_info')
+        .then(response => response.json())
+        .then(data => {
+            const rateLimitInfo = document.getElementById('rate-limit-info');
+            let html = '';
+            for (const [domain, limits] of Object.entries(data)) {
+                const fiveMinClass = limits.five_minute.count > limits.five_minute.limit ? 'rate-limit-warning' : 'rate-limit-normal';
+                const hourlyClass = limits.hourly.count > limits.hourly.limit ? 'rate-limit-warning' : 'rate-limit-normal';
+                
+                html += `
+                    <div class="domain-rate-limit">
+                        <h5>${domain}</h5>
+                        <p class="${fiveMinClass}">5-minute: ${limits.five_minute.count} / ${limits.five_minute.limit} requests</p>
+                        <p class="${hourlyClass}">Hourly: ${limits.hourly.count} / ${limits.hourly.limit} requests</p>
+                    </div>
+                `;
+            }
+            rateLimitInfo.innerHTML = html;
+        })
+        .catch(error => {
+            console.error('Error fetching rate limit info:', error);
+            document.getElementById('rate-limit-info').innerHTML = '<p class="error">Error loading rate limit information. Please try again.</p>';
+        });
+}
+
+// Make functions globally available
+window.toggleRateLimits = toggleRateLimits;
+window.fetchRateLimitInfo = fetchRateLimitInfo;
+
 // Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     // Set updating content state to false before initializing tooltips
@@ -164,4 +205,56 @@ document.addEventListener('DOMContentLoaded', function() {
             form.submit();
         });
     }
+
+    // Add click outside handler for rate limits
+    document.addEventListener('click', function(e) {
+        const container = document.getElementById('rate-limits-container');
+        const toggle = document.querySelector('.rate-limits-toggle');
+        
+        if (container && container.classList.contains('show')) {
+            if (!toggle.contains(e.target) && !container.contains(e.target)) {
+                container.classList.remove('show');
+            }
+        }
+    });
+
+    // Update checker
+    async function checkForUpdates() {
+        try {
+            const response = await fetch('/base/api/check-update');
+            const data = await response.json();
+            console.log('Update check response:', data);
+            
+            const updateButton = document.getElementById('updateAvailableButton');
+            if (!updateButton) {
+                console.log('Update button not found');
+                return;
+            }
+            
+            // Force hide by default
+            updateButton.style.display = 'none';
+            updateButton.classList.add('hidden');
+            
+            if (data.success && data.update_available === true) {
+                console.log('Update is available, showing button');
+                updateButton.style.display = '';
+                updateButton.classList.remove('hidden');
+                updateButton.setAttribute('data-tooltip', `New version available: ${data.latest_version} (${data.branch} branch)`);
+            } else {
+                console.log('No update available or check failed, keeping button hidden');
+            }
+        } catch (error) {
+            console.error('Error checking for updates:', error);
+        }
+    }
+
+    // Check for updates periodically
+    setInterval(checkForUpdates, 5 * 60 * 1000); // Check every 5 minutes
+    checkForUpdates(); // Initial check
+
+    // Add click handler for update button
+    document.getElementById('updateAvailableButton')?.addEventListener('click', () => {
+        // Open GitHub repository in new tab
+        window.open('https://github.com/godver3/cli_debrid', '_blank');
+    });
 }); 
