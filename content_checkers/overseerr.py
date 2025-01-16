@@ -62,7 +62,7 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
 
     while True:
         try:
-            logging.debug(f"Fetching Overseerr requests page {page}")
+            #logging.debug(f"Fetching Overseerr requests page {page}")
             response = api.get(
                 get_url(overseerr_url, f"/api/v1/request?take={take}&skip={skip}"),
                 headers=headers,
@@ -134,7 +134,7 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                                 requested_seasons.append(season.get('seasonNumber'))
                         if requested_seasons:
                             wanted_item['requested_seasons'] = requested_seasons
-                            logging.info(f"TV show {media.get('tmdbId')} has specific season requests: {requested_seasons}")
+                            #logging.info(f"TV show {media.get('tmdbId')} has specific season requests: {requested_seasons}")
 
                     # Check cache for this item
                     cache_key = f"{wanted_item['tmdb_id']}_{wanted_item['media_type']}"

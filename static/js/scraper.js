@@ -565,7 +565,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             season: season || null,
                             episode: episode || null,
                             tmdb_id: torrent.tmdb_id || mediaId
-                        }).replace(/'/g, "\\'")})'>Add to Debrid</button>
+                        }).replace(/'/g, "\\'")})'>Add to Account</button>
                     </td>
                 `;
                 tbody.appendChild(row);

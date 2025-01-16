@@ -99,6 +99,7 @@
         display: inline-flex;
         align-items: center;
         min-width: 200px;
+        width: calc(100% - 20px);
     }
 
     .progress {
@@ -108,6 +109,7 @@
         border-radius: 4px;
         overflow: hidden;
         position: relative;
+        width: 100%;
     }
 
     .progress-bar {
@@ -156,12 +158,39 @@
         position: relative;
         min-height: 200px;  /* Give some minimum height for the loading indicator to center in */
     }
+
+    .pagination-controls {
+        margin-top: 10px;
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+    }
+    
+    .pagination-controls button {
+        padding: 5px 10px;
+        background: #444;
+        border: none;
+        border-radius: 3px;
+        color: white;
+        cursor: pointer;
+    }
+    
+    .pagination-controls button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .pagination-info {
+        margin: 0 10px;
+        align-self: center;
+    }
 </style>
 
 <script>
     let filenameToggleState = localStorage.getItem('filenameToggleState') === 'true' || false;
     let hasReceivedFirstResponse = false;
-
+    let eventSource = null;
+    
     function toggleQueue(element) {
         const queueItems = element.nextElementSibling;
         const isExpanded = queueItems.style.display !== 'none';
@@ -411,119 +440,115 @@
         }
     }
 
-    function updateQueueContents() {
-        const initializationStatus = document.getElementById('initialization-status');
-        const queueContents = document.getElementById('queue-contents');
+    function generateQueueContent(queueName, items) {
+        if (queueName === 'Blacklisted' || queueName === 'Unreleased') {
+            return items.map(item => `
+                <div class="item">
+                    ${item.title} (${item.year}) - Version(s): ${item.versions.join(', ')}
+                    ${item.seasons.length > 0 ? ` - Season(s): ${item.seasons.join(', ')}` : ''}
+                    ${queueName === 'Unreleased' ? ` - Release Date: ${item.release_date}` : ''}
+                </div>
+            `).join('');
+        } else {
+            return generateRegularItems(queueName, items);
+        }
+    }
+    
+    function setupQueueStream() {
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        eventSource = new EventSource('/queues/api/queue-stream');
         const loadingIndicator = document.getElementById('loading-indicator');
+        const queueContents = document.getElementById('queue-contents');
+        const initializationStatus = document.getElementById('initialization-status');
         
-        fetch('/queues/api/queue_contents')
-            .then(response => {
-                if (!response.ok) {
-                    if (response.status === 429) {
-                        // Rate limit hit - wait longer before next request
-                        const retryAfter = response.headers.get('Retry-After') || 5;
-                        console.log(`Rate limit hit, waiting ${retryAfter} seconds before next request`);
-                        // Clear existing interval and set a new one with longer delay
-                        if (window.queueUpdateInterval) {
-                            clearInterval(window.queueUpdateInterval);
-                        }
-                        window.queueUpdateInterval = setInterval(updateQueueContents, (parseInt(retryAfter) + 1) * 1000);
-                        throw new Error('Rate limit exceeded');
-                    }
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                // Reset interval to normal if request succeeds
-                if (window.queueUpdateInterval) {
-                    clearInterval(window.queueUpdateInterval);
-                }
-                window.queueUpdateInterval = setInterval(updateQueueContents, 5000);
-                return response.json();
-            })
-            .then(data => {
-                // Hide loading indicator after first response
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                
                 if (!hasReceivedFirstResponse) {
                     hasReceivedFirstResponse = true;
                     loadingIndicator.style.display = 'none';
                 }
 
-                if (queueContents) {
-                    if (data.program_running) {
-                        if (data.program_initializing && data.initialization_status) {
-                            updateInitializationStatus(data.initialization_status);
-                            queueContents.style.display = 'none';
-                        } else {
-                            initializationStatus.style.display = 'none';
-                            document.getElementById('progress-container').style.display = 'none';
-                            queueContents.style.display = 'flex';
-                            
-                            let hasContent = false;
-                            let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
-                            
-                            queueContents.innerHTML = ''; // Clear existing content
-
-                            queueOrder.forEach(queueName => {
-                                if (data.contents[queueName] && data.contents[queueName].length > 0) {
-                                    hasContent = true;
-                                    let queueDiv = document.createElement('div');
-                                    queueDiv.className = 'queue';
-                                    let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
-                                    
-                                    queueDiv.innerHTML = `
-                                        <div class="queue-title" onclick="toggleQueue(this)">
-                                            <span>${queueName}</span>
-                                            ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
-                                            <span class="queue-count">${data.contents[queueName].length} items</span>
-                                        </div>
-                                        <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
-                                            ${queueName === 'Blacklisted' ? generateConsolidatedItems(data.contents[queueName], 'Blacklisted') :
-                                              queueName === 'Unreleased' ? generateConsolidatedItems(data.contents[queueName], 'Unreleased') :
-                                              generateRegularItems(queueName, data.contents[queueName])}
-                                        </div>
-                                    `;
-                                    queueContents.appendChild(queueDiv);
-                                }
-                            });
-
-                            if (!hasContent) {
-                                queueContents.innerHTML = '<p>Program is currently idle.</p>';
-                            }
-
-                            // Update filename visibility after refreshing
-                            updateFilenameVisibility();
-                        }
+                if (data.program_running) {
+                    if (data.program_initializing && data.initialization_status) {
+                        updateInitializationStatus(data.initialization_status);
+                        queueContents.style.display = 'none';
                     } else {
                         initializationStatus.style.display = 'none';
                         document.getElementById('progress-container').style.display = 'none';
-                        queueContents.style.display = 'block';
-                        queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
+                        queueContents.style.display = 'flex';
+                        
+                        // Full update of all queues
+                        let hasContent = false;
+                        let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
+                        
+                        queueContents.innerHTML = '';
+                        
+                        queueOrder.forEach(queueName => {
+                            if (data.contents[queueName] && data.contents[queueName].length > 0) {
+                                hasContent = true;
+                                let queueDiv = document.createElement('div');
+                                queueDiv.className = 'queue';
+                                queueDiv.setAttribute('data-queue-name', queueName);
+                                let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
+                                
+                                queueDiv.innerHTML = `
+                                    <div class="queue-title" onclick="toggleQueue(this)">
+                                        <span>${queueName}</span>
+                                        ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
+                                        <span class="queue-count">${data.queue_counts ? data.queue_counts[queueName] : data.contents[queueName].length} items</span>
+                                    </div>
+                                    <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
+                                        ${generateQueueContent(queueName, data.contents[queueName])}
+                                    </div>
+                                `;
+                                queueContents.appendChild(queueDiv);
+                            }
+                        });
+
+                        if (!hasContent) {
+                            queueContents.innerHTML = '<p>Program is currently idle.</p>';
+                        }
+                        
+                        updateFilenameVisibility();
                     }
+                } else {
+                    initializationStatus.style.display = 'none';
+                    document.getElementById('progress-container').style.display = 'none';
+                    queueContents.style.display = 'block';
+                    queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
                 }
-            })
-            .catch(error => {
-                console.error('Error fetching queue contents:', error);
+            } catch (error) {
+                console.error('Error parsing queue data:', error);
                 if (!hasReceivedFirstResponse) {
                     loadingIndicator.innerHTML = '<p class="text-danger">Error loading queue data. Please refresh the page.</p>';
                 }
-                // If it's not a rate limit error, increase the interval with exponential backoff
-                if (!error.message.includes('Rate limit exceeded')) {
-                    const currentInterval = window.queueUpdateInterval ? 
-                        parseInt(window.queueUpdateInterval._idleTimeout) : 5000;
-                    const newInterval = Math.min(currentInterval * 2, 30000); // Max 30 seconds
-                    
-                    if (window.queueUpdateInterval) {
-                        clearInterval(window.queueUpdateInterval);
-                    }
-                    console.log(`Error occurred, increasing polling interval to ${newInterval}ms`);
-                    window.queueUpdateInterval = setInterval(updateQueueContents, newInterval);
-                }
-            });
+            }
+        };
+
+        eventSource.onerror = (error) => {
+            console.error('EventSource failed:', error);
+            if (!hasReceivedFirstResponse) {
+                loadingIndicator.innerHTML = '<p class="text-danger">Connection lost. Reconnecting...</p>';
+            }
+            // EventSource will automatically try to reconnect
+        };
     }
 
-    // Initial update
+    // Initial setup
     document.addEventListener('DOMContentLoaded', function() {
-        updateQueueContents();
-        // Store the interval ID so we can modify it later
-        window.queueUpdateInterval = setInterval(updateQueueContents, 5000);  // Start with 5 second refresh
+        setupQueueStream();
+    });
+
+    // Clean up when the page is unloaded
+    window.addEventListener('beforeunload', () => {
+        if (eventSource) {
+            eventSource.close();
+        }
     });
 
     console.log('Queue script loaded and running');

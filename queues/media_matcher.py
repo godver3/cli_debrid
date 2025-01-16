@@ -26,7 +26,6 @@ class MediaMatcher:
         Returns:
             List of matched files with their corresponding items
         """
-        logging.debug(f"Matching content for {item.get('title')} ({item.get('type')})")
         if item.get('type') == 'movie':
             return self._match_movie_content(files, item)
         elif item.get('type') == 'episode':
@@ -49,12 +48,10 @@ class MediaMatcher:
             video_files.append(file)
         
         if not video_files:
-            logging.debug("No video files found")
             return []
             
         # Sort by size descending and take the largest
         largest_file = max(video_files, key=lambda x: x.get('bytes', 0))
-        logging.debug(f"Selected largest video: {largest_file['path']}")
         
         # Get just the filename using os.path.basename
         file_path = os.path.basename(largest_file['path'])
@@ -107,16 +104,12 @@ class MediaMatcher:
         is_anime = any('anime' in genre.lower() for genre in genres)
         
         if not all([series_title, item_episode is not None]):
-            logging.debug(f"Missing required TV info: title='{series_title}', E{item_episode}")
+            logging.debug(f"Missing required TV info for {series_title}")
             return []
         
-        if is_anime:
-            logging.debug(f"Matching anime: '{series_title}' E{item_episode}")
-        else:
-            if item_season is None:
-                logging.debug(f"Missing season number for non-anime content")
-                return []
-            logging.debug(f"Matching TV: '{series_title}' S{item_season}E{item_episode}")
+        if not is_anime and item_season is None:
+            logging.debug("Missing season number for non-anime content")
+            return []
         
         for file in files:
             if not self.is_video_file(file['path']):
@@ -131,7 +124,6 @@ class MediaMatcher:
             
             # Get the raw PTT parse result
             ptt_result = parse_title(file['path'])
-            logging.debug(f"PTT parsed result: {ptt_result}")
             
             # Create our result info, preserving all PTT fields
             result_info = {
@@ -150,7 +142,6 @@ class MediaMatcher:
                 'bit_depth': ptt_result.get('bit_depth'),  # Include other useful fields
                 'container': ptt_result.get('container')
             }
-            logging.debug(f"Combined result info: {result_info}")
             
             # For anime, we only need to match the episode number
             if is_anime:
@@ -165,7 +156,6 @@ class MediaMatcher:
                     fallback_episode = self._extract_episode_from_filename(file['path'])
                     if fallback_episode == item_episode:
                         episode_match = True
-                        logging.debug(f"Matched episode {item_episode} using fallback parser for {file['path']}")
                 
                 # Only check season if it's present in both the parsed result and the item
                 season_match = (not result_info.get('seasons') or  # If no season in filename, that's okay
@@ -174,41 +164,30 @@ class MediaMatcher:
                               (is_anime and 0 in result_info.get('seasons', [])))  # For anime, season 0 matches any season
                 
                 if episode_match and season_match:
-                    logging.debug(f"Matched anime: E{item_episode} in {os.path.basename(file['path'])}")
                     file_path = os.path.basename(file['path'])
                     matches.append((file_path, item))
-                    logging.debug(f"Added match for anime: {file_path}")
             else:
                 # Check if this is a date-based episode first
                 date_match = False
                 has_date = 'date' in result_info and result_info['date'] is not None
                 has_seasons = bool(result_info.get('seasons'))
                 has_episodes = bool(result_info.get('episodes'))
-                logging.debug(f"Checking if date-based episode - Has date: {has_date}, Has seasons: {has_seasons}, Has episodes: {has_episodes}")
                 
                 if has_date and not has_seasons and not has_episodes:
                     try:
-                        logging.debug(f"Attempting date match for date-based episode")
-
                         from web_scraper import get_tmdb_data
                         episode_data = get_tmdb_data(int(item.get('tmdb_id')), 'tv', item.get('season_number'), item.get('episode_number'))
                         
                         if episode_data:
                             expected_air_date = episode_data.get('air_date')
-                            logging.debug(f"Date comparison - File date: {result_info['date']}, Expected air date: {expected_air_date}")
-                            
                             if expected_air_date and result_info['date'] == expected_air_date:
                                 date_match = True
-                                logging.debug(f"Matched date-based episode by air date: {expected_air_date} == {result_info['date']}")
-                            else:
-                                logging.debug(f"Date match failed - Missing air_date: {not expected_air_date}, Dates don't match: {expected_air_date != result_info.get('date')}")
                     except Exception as e:
                         logging.error(f"Error checking air date: {str(e)}")
                 
                 # Only try season/episode matching if date matching failed
                 season_episode_match = False
                 if not date_match:
-                    logging.debug("Date match failed or not applicable, trying season/episode matching")
                     season_episode_match = (item_season in result_info.get('seasons', []) and 
                                           item_episode in result_info.get('episodes', []))
                     
@@ -216,34 +195,19 @@ class MediaMatcher:
                     if not season_episode_match and result_info.get('date'):
                         try:
                             if item_season is not None and item_episode is not None:
-                                logging.debug(f"Attempting TMDB lookup for S{item_season}E{item_episode}")
-
                                 from web_scraper import get_tmdb_data
                                 episode_data = get_tmdb_data(int(item.get('tmdb_id')), 'tv', item_season, item_episode)
                                 
                                 if episode_data:
                                     air_date = episode_data.get('air_date')
-                                    logging.debug(f"TMDB lookup - File date: {result_info.get('date')}, TMDB air date: {air_date}")
                                     if air_date and result_info['date'] == air_date:
                                         date_match = True
-                                        logging.debug(f"Matched by air date: {air_date} == {result_info['date']}")
-                                    else:
-                                        logging.debug(f"TMDB date match failed - Missing air_date: {not air_date}, Dates don't match: {air_date != result_info.get('date')}")
-                                else:
-                                    logging.debug("Failed to get episode data from TMDB")
                         except Exception as e:
                             logging.error(f"Error checking air date: {str(e)}")
 
                 if season_episode_match or date_match:
-                    logging.debug(f"Matched: {'by date' if date_match else f'S{item_season}E{item_episode}'} in {os.path.basename(file['path'])}")
                     file_path = os.path.basename(file['path'])
                     matches.append((file_path, item))
-            
-        if not matches:
-            if is_anime:
-                logging.debug(f"No matches found for anime: {series_title} E{item_episode}")
-            else:
-                logging.debug(f"No matches found for TV: {series_title} S{item_season}E{item_episode}")
         
         return matches
 
@@ -266,8 +230,6 @@ class MediaMatcher:
         if parsed.get('year') and item.get('year'):
             year_match = self._is_acceptable_year_mismatch(item, parsed)
         
-        logging.debug(f"Movie match: '{parsed.get('title')}' ({parsed.get('year')}) -> {title_match and year_match}")
-        
         # Match only if both title and year match
         return title_match and year_match
 
@@ -287,7 +249,6 @@ class MediaMatcher:
             'featurette', 'making of',
             'alternate'
         ]):
-            logging.debug(f"Skipping extras/special: {original_title}")
             return False
             
         # Get parsed title and queue title
@@ -310,12 +271,8 @@ class MediaMatcher:
         season_match = item_season in parsed.get('seasons', [])
         episode_match = item_episode in parsed.get('episodes', [])
         
-        match_result = title_match and season_match and episode_match
-        if match_result:
-            logging.debug(f"Matched episode: '{parsed.get('title')}' S{item_season}E{item_episode}")
-        
         # Match only if title, season, and episode all match
-        return match_result
+        return title_match and season_match and episode_match
 
     @staticmethod
     def is_video_file(filename: str) -> bool:
@@ -369,7 +326,6 @@ class MediaMatcher:
             # Try to match this item against the files
             matches = self._match_tv_content(files, item)
             if matches:
-                logging.debug(f"Found related: S{item.get('season_number')}E{item.get('episode_number')} ({item.get('version')})")
                 related_items.append(item)
                 
         return related_items

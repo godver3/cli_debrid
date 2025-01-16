@@ -200,7 +200,7 @@ class ProgramRunner:
         return should_run
 
     def task_check_service_connectivity(self):
-        logging.debug("Checking service connectivity")
+        # logging.debug("Checking service connectivity")
         from routes.program_operation_routes import check_service_connectivity
         if check_service_connectivity():
             logging.debug("Service connectivity check passed")
@@ -367,7 +367,8 @@ class ProgramRunner:
                 self.handle_rate_limit()
                 return None
             finally:
-                self.currently_running_tasks.discard(queue_name)  # Mark task as no longer running
+                # Always remove the task from currently_running_tasks
+                self.currently_running_tasks.discard(queue_name)
             
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
             
@@ -378,8 +379,10 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error processing {queue_name} queue: {str(e)}")
             logging.error(traceback.format_exc())
-            self.currently_running_tasks.discard(queue_name)  # Mark task as no longer running on error
             return None
+        finally:
+            # Double ensure task is removed from currently_running_tasks
+            self.currently_running_tasks.discard(queue_name)
 
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()

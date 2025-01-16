@@ -25,106 +25,99 @@ function updateCurrentTaskDisplay(tasks) {
     }
 }
 
-let consecutiveErrors = 0;
-const MAX_CONSECUTIVE_ERRORS = 3;
-let updateInterval = null;
-
-async function updateTasks(taskList, silent = false) {
-    try {
-        const response = await fetch('/base/api/current-task');
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        consecutiveErrors = 0; // Reset error counter on success
-
-        if (data.success) {
-            if (data.running) {
+function updateTaskList(taskList, data) {
+    if (data.success) {
+        if (data.running) {
+            if (data.paused && data.pause_reason) {
+                // Show pause reason at the top of the task list
+                taskList.innerHTML = `
+                    <div class="task-item paused">
+                        <div class="task-name">Queue Paused</div>
+                        <div class="task-timing">
+                            <span>${data.pause_reason}</span>
+                        </div>
+                    </div>`;
+            }
+            
+            if (data.tasks && data.tasks.length > 0) {
+                const tasksHtml = data.tasks
+                    .sort((a, b) => a.next_run - b.next_run)
+                    .map(task => `
+                        <div class="task-item ${task.running ? 'running' : ''}">
+                            <div class="task-name">${task.name}</div>
+                            <div class="task-timing">
+                                <span>${task.running ? 'Currently running' : `Next run: ${formatTime(task.next_run)}`}</span>
+                                <span>Interval: ${formatTime(task.interval)}</span>
+                            </div>
+                        </div>
+                    `)
+                    .join('');
+                
+                // If paused, append tasks after the pause message
                 if (data.paused && data.pause_reason) {
-                    // Show pause reason at the top of the task list
+                    taskList.innerHTML += tasksHtml;
+                } else {
+                    taskList.innerHTML = tasksHtml;
+                }
+                
+                // Update current task display with either running task or next scheduled task
+                const runningTask = data.tasks.find(t => t.running);
+                const nextTask = runningTask || data.tasks.reduce((a, b) => a.next_run < b.next_run ? a : b);
+                updateCurrentTaskDisplay([nextTask]);
+            } else {
+                const status = 'Program not running';
+                if (data.paused && data.pause_reason) {
                     taskList.innerHTML = `
                         <div class="task-item paused">
                             <div class="task-name">Queue Paused</div>
                             <div class="task-timing">
                                 <span>${data.pause_reason}</span>
                             </div>
-                        </div>`;
-                }
-                
-                if (data.tasks && data.tasks.length > 0) {
-                    const tasksHtml = data.tasks
-                        .sort((a, b) => a.next_run - b.next_run)
-                        .map(task => `
-                            <div class="task-item ${task.running ? 'running' : ''}">
-                                <div class="task-name">${task.name}</div>
-                                <div class="task-timing">
-                                    <span>${task.running ? 'Currently running' : `Next run: ${formatTime(task.next_run)}`}</span>
-                                    <span>Interval: ${formatTime(task.interval)}</span>
-                                </div>
-                            </div>
-                        `)
-                        .join('');
-                    
-                    // If paused, append tasks after the pause message
-                    if (data.paused && data.pause_reason) {
-                        taskList.innerHTML += tasksHtml;
-                    } else {
-                        taskList.innerHTML = tasksHtml;
-                    }
-                    
-                    // Update current task display with either running task or next scheduled task
-                    const runningTask = data.tasks.find(t => t.running);
-                    const nextTask = runningTask || data.tasks.reduce((a, b) => a.next_run < b.next_run ? a : b);
-                    updateCurrentTaskDisplay([nextTask]);
-                    
-                    // Restore normal polling interval if we were in error state
-                    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS && updateInterval) {
-                        clearInterval(updateInterval);
-                        updateInterval = setInterval(() => updateTasks(taskList), 2000);
-                    }
+                        </div>
+                        <div class="no-tasks">${status}</div>`;
                 } else {
-                    const status = 'Program not running';
-                    if (data.paused && data.pause_reason) {
-                        taskList.innerHTML = `
-                            <div class="task-item paused">
-                                <div class="task-name">Queue Paused</div>
-                                <div class="task-timing">
-                                    <span>${data.pause_reason}</span>
-                                </div>
-                            </div>
-                            <div class="no-tasks">${status}</div>`;
-                    } else {
-                        taskList.innerHTML = `<div class="no-tasks">${status}</div>`;
-                    }
-                    updateCurrentTaskDisplay(null);
+                    taskList.innerHTML = `<div class="no-tasks">${status}</div>`;
                 }
-            } else {
-                taskList.innerHTML = '<div class="no-tasks">Program not running</div>';
                 updateCurrentTaskDisplay(null);
             }
         } else {
-            if (!silent) {
-                taskList.innerHTML = '<div class="error">Failed to load tasks</div>';
-                console.warn('Task fetch failed:', data.error);
-            }
+            taskList.innerHTML = '<div class="no-tasks">Program not running</div>';
             updateCurrentTaskDisplay(null);
         }
-    } catch (error) {
-        consecutiveErrors++;
-        
-        if (!silent) {
-            console.warn('Error fetching tasks:', error.message);
-            taskList.innerHTML = '<div class="error">Connection lost. Retrying...</div>';
-        }
-        
+    } else {
+        taskList.innerHTML = '<div class="error">Failed to load tasks</div>';
+        console.warn('Task fetch failed:', data.error);
         updateCurrentTaskDisplay(null);
-
-        // If we've had too many consecutive errors, slow down the polling
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS && updateInterval) {
-            clearInterval(updateInterval);
-            updateInterval = setInterval(() => updateTasks(taskList, true), 1000); // Retry every 1 second
-        }
     }
+}
+
+let eventSource = null;
+
+function setupTaskStream(taskList) {
+    if (eventSource) {
+        eventSource.close();
+    }
+
+    eventSource = new EventSource('/base/api/task-stream');
+    
+    eventSource.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            updateTaskList(taskList, data);
+        } catch (error) {
+            console.error('Error parsing task data:', error);
+            taskList.innerHTML = '<div class="error">Error parsing task data</div>';
+            updateCurrentTaskDisplay(null);
+        }
+    };
+
+    eventSource.onerror = (error) => {
+        console.error('EventSource failed:', error);
+        taskList.innerHTML = '<div class="error">Connection lost. Reconnecting...</div>';
+        updateCurrentTaskDisplay(null);
+        
+        // EventSource will automatically try to reconnect
+    };
 }
 
 export function initializeTaskMonitor() {
@@ -174,10 +167,8 @@ export function initializeTaskMonitor() {
 
     currentTaskDisplay.addEventListener('click', toggleTaskMonitor);
     refreshTasksButton.addEventListener('click', () => {
-        consecutiveErrors = 0; // Reset error counter on manual refresh
-        clearInterval(updateInterval);
-        updateTasks(taskList);
-        updateInterval = setInterval(() => updateTasks(taskList), 1000);
+        // For SSE, we'll close and reopen the connection
+        setupTaskStream(taskList);
     });
     taskMonitorToggle.addEventListener('click', toggleTaskMonitorVisibility);
 
@@ -190,7 +181,13 @@ export function initializeTaskMonitor() {
         }
     });
 
-    // Start updating tasks
-    updateTasks(taskList);
-    updateInterval = setInterval(() => updateTasks(taskList), 1000);
+    // Start the SSE connection
+    setupTaskStream(taskList);
+    
+    // Clean up when the page is unloaded
+    window.addEventListener('beforeunload', () => {
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
 } 

@@ -61,8 +61,12 @@ def delete_user(user_id):
     if not user:
         return jsonify({'success': False, 'error': 'User not found'}), 404
 
-    if user.username == 'admin':
-        return jsonify({'success': False, 'error': 'Cannot delete admin user'}), 400
+    # Count number of admin users
+    admin_count = User.query.filter_by(role='admin').count()
+
+    # If trying to delete an admin and they're the last one, prevent it
+    if user.role == 'admin' and admin_count <= 1:
+        return jsonify({'success': False, 'error': 'Cannot delete the last admin account'}), 400
 
     try:
         db.session.delete(user)

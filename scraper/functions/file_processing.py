@@ -91,7 +91,7 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
             try:
                 parsed_info = _parse_with_ptt(title)
 
-                logging.info(f"Parsed info: {parsed_info}")
+                #logging.info(f"Parsed info: {parsed_info}")
                 
                 # Convert PTT result to our standard format
                 processed_info = {

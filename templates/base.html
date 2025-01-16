@@ -166,6 +166,7 @@
     </header>
 
     {% if not is_user_system_enabled() or (is_user_system_enabled() and current_user.is_authenticated) %}
+    {% if not is_onboarding %}
     <div class="rate-limits-section">
         <div class="rate-limits-toggle" onclick="toggleRateLimits()">
             <span class="rate-limits-name" style="text-align: center;">Rate Limits</span>
@@ -183,6 +184,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 
     <div class="task-monitor-container" id="taskMonitorContainer">
         <div class="current-task-display" id="currentTaskDisplay">

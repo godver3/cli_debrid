@@ -264,12 +264,6 @@ SETTINGS_SCHEMA = {
     },
     "Debug": {
         "tab": "Debug Settings",
-        "console_logging_level": {
-            "type": "string",
-            "description": "Console logging level",
-            "default": "INFO",
-            "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        },
         "skip_initial_plex_update": {
             "type": "boolean",
             "description": "Skip Plex initial collection scan",
@@ -383,10 +377,6 @@ SETTINGS_SCHEMA = {
         "default": {},
         "schema": {
             "Zilean": {
-                "enabled": {"type": "boolean", "default": False},
-                "url": {"type": "string", "default": "", "validate": "url"}
-            },
-            "Comet": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"}
             },
