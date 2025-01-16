@@ -89,7 +89,10 @@ a = Analysis(
         'PTT.handlers',
         'PTT.parse',
         'apscheduler',
-        'apscheduler.schedulers.background'
+        'apscheduler.schedulers.background',
+        'nyaapy',
+        'nyaapy.nyaasi',
+        'nyaapy.nyaasi.nyaa'
     ],
     hookspath=['hooks'],
     hooksconfig={},
