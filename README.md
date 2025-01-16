@@ -9,9 +9,11 @@ cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is desi
 
 ## Screenshots
 
-| ![image](https://github.com/user-attachments/assets/084c3685-8ba7-481a-8dae-e4c45304e489) | ![image](https://github.com/user-attachments/assets/a11fde0a-52a7-47da-8a95-120e977d6f8c) | ![image](https://github.com/user-attachments/assets/1715c872-d508-4d54-845e-13de096feadf) |
-|---|---|---|
-| ![image](https://github.com/user-attachments/assets/335b739d-99f3-4cb9-ac97-a8ae6e887a4f) | ![image](https://github.com/user-attachments/assets/59d049cc-e17c-49d3-9afb-9b24ea7f0606) |  |
+![image](https://github.com/user-attachments/assets/084c3685-8ba7-481a-8dae-e4c45304e489)
+![image](https://github.com/user-attachments/assets/a11fde0a-52a7-47da-8a95-120e977d6f8c)
+![image](https://github.com/user-attachments/assets/1715c872-d508-4d54-845e-13de096feadf)
+![image](https://github.com/user-attachments/assets/335b739d-99f3-4cb9-ac97-a8ae6e887a4f)
+![image](https://github.com/user-attachments/assets/59d049cc-e17c-49d3-9afb-9b24ea7f0606)
 
 ## Key Features
 
