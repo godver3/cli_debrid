@@ -121,27 +121,32 @@ def check_service_connectivity():
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 def start_program():
     global program_runner
-    if program_runner is None or not program_runner.is_running():
-        # Add delay if auto-start is enabled
-        if get_setting('Debug', 'auto_run_program', default=False):
-            time.sleep(1)  # 1 second delay for auto-start
+    if program_runner is not None:
+        # Always clean up existing instance
+        program_runner.stop()
+        program_runner.invalidate_content_sources_cache()
+        program_runner = None
 
-        # Check service connectivity before starting the program
-        if not check_service_connectivity():
-            return jsonify({"status": "error", "message": "Failed to connect to Plex, Debrid Provider, or Metadata Battery. Check logs for details."})
+    # Add delay if auto-start is enabled
+    if get_setting('Debug', 'auto_run_program', default=False):
+        time.sleep(1)  # 1 second delay for auto-start
 
-        program_runner = ProgramRunner()
-        # Start the program runner in a separate thread to avoid blocking the Flask server
-        threading.Thread(target=program_runner.start).start()
-        current_app.config['PROGRAM_RUNNING'] = True
-        return jsonify({"status": "success", "message": "Program started"})
-    else:
-        return jsonify({"status": "error", "message": "Program is already running"})
+    # Check service connectivity before starting the program
+    if not check_service_connectivity():
+        return jsonify({"status": "error", "message": "Failed to connect to Plex, Debrid Provider, or Metadata Battery. Check logs for details."})
+
+    program_runner = ProgramRunner()
+    # Start the program runner in a separate thread to avoid blocking the Flask server
+    threading.Thread(target=program_runner.start).start()
+    current_app.config['PROGRAM_RUNNING'] = True
+    return jsonify({"status": "success", "message": "Program started"})
 
 def stop_program():
     global program_runner
     if program_runner is not None and program_runner.is_running():
         program_runner.stop()
+        # Invalidate content sources cache before nulling the instance
+        program_runner.invalidate_content_sources_cache()
         program_runner = None
         current_app.config['PROGRAM_RUNNING'] = False
         return {"status": "success", "message": "Program stopped"}

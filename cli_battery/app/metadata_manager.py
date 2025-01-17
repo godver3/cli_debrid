@@ -368,12 +368,18 @@ class MetadataManager:
         new_metadata = trakt.refresh_metadata(imdb_id)
         if new_metadata:
             logger.debug(f"Got new metadata for {imdb_id}")
+            # Extract the actual metadata from the response
+            metadata_to_store = new_metadata.get('metadata', new_metadata)
+            if not isinstance(metadata_to_store, dict):
+                logger.error(f"Invalid metadata format received for {imdb_id}")
+                return None
+            
             with DbSession() as session:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
                 if item:
                     logger.debug(f"Before update: {item.title} last_updated={item.updated_at}")
                     # Update metadata with the same session
-                    MetadataManager._update_metadata_with_session(item, new_metadata, 'Trakt', session)
+                    MetadataManager._update_metadata_with_session(item, metadata_to_store, 'Trakt', session)
                     # Use func.now() for consistency
                     item.updated_at = func.now()
                     session.commit()
@@ -749,8 +755,20 @@ class MetadataManager:
                         trakt = TraktMetadata()
                         show_data = trakt.get_show_metadata(imdb_id)
                         if show_data:
-                            MetadataManager.update_show_metadata(item, show_data, session)
-                            return show_data, "trakt (refreshed)"
+                            # Begin a new transaction for the update
+                            try:
+                                MetadataManager.update_show_metadata(item, show_data, session)
+                                # Verify the data was saved by re-querying
+                                session.refresh(item)
+                                metadata = session.query(Metadata).filter_by(item_id=item.id).all()
+                                if not metadata:
+                                    logger.error(f"Failed to save metadata for {imdb_id}")
+                                    return show_data, "trakt (not saved)"
+                                return show_data, "trakt (refreshed)"
+                            except Exception as e:
+                                logger.error(f"Error saving show metadata for {imdb_id}: {str(e)}")
+                                session.rollback()
+                                return show_data, "trakt (save failed)"
                     else:
                         metadata = session.query(Metadata).filter_by(item_id=item.id).all()
                         metadata_dict = {}
@@ -760,6 +778,15 @@ class MetadataManager:
                             except json.JSONDecodeError:
                                 metadata_dict[m.key] = m.value
 
+                        # Verify seasons data exists
+                        if 'seasons' not in metadata_dict:
+                            logger.warning(f"No seasons data found in cached metadata for {imdb_id}, refreshing...")
+                            trakt = TraktMetadata()
+                            show_data = trakt.get_show_metadata(imdb_id)
+                            if show_data:
+                                MetadataManager.update_show_metadata(item, show_data, session)
+                                return show_data, "trakt (missing seasons)"
+                        
                         return metadata_dict, "battery"
 
                 # Fetch from Trakt if not in database
@@ -771,6 +798,12 @@ class MetadataManager:
                         session.add(item)
                         session.flush()
                         MetadataManager.update_show_metadata(item, show_data, session)
+                        # Verify the data was saved
+                        session.refresh(item)
+                        metadata = session.query(Metadata).filter_by(item_id=item.id).all()
+                        if not metadata:
+                            logger.error(f"Failed to save initial metadata for {imdb_id}")
+                            return show_data, "trakt (not saved)"
                         return show_data, "trakt"
                     except IntegrityError:
                         session.rollback()
@@ -789,14 +822,64 @@ class MetadataManager:
 
     @staticmethod
     def update_show_metadata(item, show_data, session):
-        item.updated_at = datetime.now(timezone.utc)
-        session.query(Metadata).filter_by(item_id=item.id).delete()
-        for key, value in show_data.items():
-            if isinstance(value, (list, dict)):
-                value = json.dumps(value)
-            metadata = Metadata(item_id=item.id, key=key, value=str(value), provider='trakt')
-            session.add(metadata)
-        session.commit()
+        try:
+            item.updated_at = datetime.now(timezone.utc)
+            # Delete existing metadata in a separate query
+            session.query(Metadata).filter_by(item_id=item.id).delete()
+            session.flush()  # Ensure the delete is processed
+
+            # Add new metadata
+            metadata_entries = []
+            logger.debug(f"Processing show data keys for {item.imdb_id}: {list(show_data.keys())}")
+            
+            if 'seasons' in show_data:
+                logger.debug(f"Found seasons data for {item.imdb_id}: {list(show_data['seasons'].keys()) if show_data['seasons'] else 'Empty'}")
+            else:
+                logger.warning(f"No seasons data found in show_data for {item.imdb_id}")
+
+            for key, value in show_data.items():
+                if isinstance(value, (list, dict)):
+                    value = json.dumps(value)
+                metadata = Metadata(
+                    item_id=item.id,
+                    key=key,
+                    value=str(value),
+                    provider='trakt',
+                    last_updated=datetime.now(timezone.utc)
+                )
+                metadata_entries.append(metadata)
+                logger.debug(f"Added metadata entry for {item.imdb_id}: {key}")
+
+            # Bulk insert all metadata entries
+            session.bulk_save_objects(metadata_entries)
+            session.flush()  # Ensure the inserts are processed
+            
+            # Commit the transaction
+            session.commit()
+            
+            # Verify the metadata was saved
+            saved_metadata = session.query(Metadata).filter_by(item_id=item.id).all()
+            if not saved_metadata:
+                logger.error(f"Failed to save metadata for item {item.imdb_id}")
+                raise Exception("Metadata save verification failed")
+            
+            # Verify seasons data was saved
+            seasons_metadata = session.query(Metadata).filter_by(item_id=item.id, key='seasons').first()
+            if seasons_metadata:
+                try:
+                    saved_seasons = json.loads(seasons_metadata.value)
+                    logger.debug(f"Verified seasons data for {item.imdb_id}: {list(saved_seasons.keys()) if saved_seasons else 'Empty'}")
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to decode saved seasons data for {item.imdb_id}")
+            else:
+                logger.warning(f"No seasons metadata found after save for {item.imdb_id}")
+                
+            logger.info(f"Successfully saved {len(metadata_entries)} metadata entries for {item.imdb_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error in update_show_metadata for item {item.imdb_id}: {str(e)}")
+            session.rollback()
+            raise
 
     @staticmethod
     def get_show_aliases(imdb_id):
