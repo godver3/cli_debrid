@@ -1441,7 +1441,7 @@ h2 {
     margin-top: 2px;
     font-size: 14px;
     cursor: pointer;
-    animation: strobe 3s ease-in-out infinite;
+    animation: strobe 4s ease-in-out infinite;
 }
 
 .update-indicator.hidden {
@@ -1450,6 +1450,6 @@ h2 {
 
 @keyframes strobe {
     0% { color: #FFA500; opacity: 0.4; }
-    50% { color: #FFA500; opacity: 1; }
+    50% { color: #FFA500; opacity: 0.8; }
     100% { color: #FFA500; opacity: 0.4; }
 }
