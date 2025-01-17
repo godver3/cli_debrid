@@ -1,14 +1,11 @@
 {% extends "base.html" %}
 
 {% block head %}
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <style>
-    /* Scope Bootstrap styles to this template only */
     #taskTimingsContainer {
-        /* Reset any inherited styles */
-        all: initial;
-        /* Preserve Bootstrap font family */
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+        padding: 1rem;
+        max-width: 1200px;
+        margin: 0 auto;
     }
 
     .info-banner {
@@ -24,77 +21,114 @@
         color: #f4f4f4;
     }
 
-    /* Task Timing specific styles */
-    #taskTimingsContainer .task-tile {
+    .task-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .task-tile {
         height: 100%;
         transition: all 0.3s ease;
         border: 1px solid #444;
         border-radius: 10px;
         background-color: #2c2c2c;
+        padding: 1rem;
     }
 
-    #taskTimingsContainer .task-tile:hover {
+    .task-tile:hover {
         transform: translateY(-5px);
         box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
 
-    #taskTimingsContainer .task-tile.disabled {
+    .task-tile.disabled {
         opacity: 0.7;
         background-color: #1a1a1a;
         border-color: #333;
     }
 
-    #taskTimingsContainer .task-tile.disabled .task-name,
-    #taskTimingsContainer .task-tile.disabled .countdown,
-    #taskTimingsContainer .task-tile.disabled small {
+    .task-tile.disabled .task-name,
+    .task-tile.disabled .countdown,
+    .task-tile.disabled small {
         color: #888;
     }
 
-    #taskTimingsContainer .countdown {
+    .countdown {
         font-family: 'Roboto Mono', monospace;
         font-size: 1.2em;
         font-weight: 500;
         color: #f4f4f4;
+        text-align: center;
+        margin: 1rem 0;
     }
 
-    #taskTimingsContainer .task-name {
+    .task-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .task-name {
         font-size: 1.1em;
         font-weight: 500;
-        margin-bottom: 0.5rem;
+        margin: 0;
         color: #f4f4f4;
     }
 
-    #taskTimingsContainer .nav-tabs {
-        border-bottom: 1px solid #444;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        overflow-y: hidden;
-        -webkit-overflow-scrolling: touch;
-        -ms-overflow-style: -ms-autohiding-scrollbar;
-        white-space: nowrap;
+    .interval-badge {
+        background-color: #007bff;
+        color: white;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.875em;
     }
 
-    #taskTimingsContainer .nav-tabs::-webkit-scrollbar {
+    .disabled .interval-badge {
+        background-color: #6c757d;
+    }
+
+    .tab-container {
+        margin-bottom: 1.5rem;
+    }
+
+    .tabs {
+        display: flex;
+        border-bottom: 1px solid #444;
+        margin-bottom: 1rem;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+
+    .tabs::-webkit-scrollbar {
         display: none;
     }
 
-    #taskTimingsContainer .nav-tabs .nav-link {
-        color: #f4f4f4;
-        background-color: transparent;
-        border: none;
-        border-bottom: 2px solid transparent;
+    .tab {
         padding: 0.75rem 1rem;
-        touch-action: manipulation;
-        -webkit-tap-highlight-color: transparent;
+        color: #f4f4f4;
+        cursor: pointer;
+        border: none;
+        background: none;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
     }
 
-    #taskTimingsContainer .nav-tabs .nav-link.active {
+    .tab.active {
         color: #007bff;
-        background-color: transparent;
         border-bottom: 2px solid #007bff;
     }
 
-    #taskTimingsContainer .status-indicator {
+    .tab-content > div {
+        display: none;
+    }
+
+    .tab-content > div.active {
+        display: block;
+    }
+
+    .status-indicator {
         width: 8px;
         height: 8px;
         border-radius: 50%;
@@ -102,73 +136,75 @@
         margin-right: 8px;
     }
 
-    #taskTimingsContainer .status-indicator.enabled {
+    .status-indicator.enabled {
         background-color: #28a745;
     }
 
-    #taskTimingsContainer .status-indicator.disabled {
+    .status-indicator.disabled {
         background-color: #dc3545;
+    }
+
+    .badge {
+        background-color: #6c757d;
+        color: white;
+        padding: 0.25rem 0.5rem;
+        border-radius: 1rem;
+        font-size: 0.75em;
+        margin-left: 0.5rem;
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div id="taskTimingsContainer" class="container-fluid mt-4">
+<div id="taskTimingsContainer">
     <div class="info-banner">
         <p><i class="fas fa-info-circle"></i> Task timings are only displayed while the program is running. When the program is stopped, no timing information will be available.</p>
     </div>
     
-    <!-- Task Type Tabs -->
-    <ul class="nav nav-tabs mb-4" id="taskTabs" role="tablist">
-        <li class="nav-item">
-            <a class="nav-link active" id="queues-tab" data-bs-toggle="tab" href="#queues-content" role="tab">
-                Queues <span class="badge bg-primary queue-count"></span>
-            </a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link" id="sources-tab" data-bs-toggle="tab" href="#sources-content" role="tab">
-                Content Sources <span class="badge bg-success source-count"></span>
-            </a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link" id="system-tab" data-bs-toggle="tab" href="#system-content" role="tab">
-                System Tasks <span class="badge bg-info system-count"></span>
-            </a>
-        </li>
-    </ul>
-
-    <!-- Tab Content -->
-    <div class="tab-content" id="taskTabContent">
-        <!-- Queues Tab -->
-        <div class="tab-pane fade show active" id="queues-content" role="tabpanel">
-            <div class="row" id="queues"></div>
+    <div class="tab-container">
+        <div class="tabs">
+            <button class="tab active" data-tab="queues">
+                Queues <span class="badge queue-count">0</span>
+            </button>
+            <button class="tab" data-tab="sources">
+                Content Sources <span class="badge source-count">0</span>
+            </button>
+            <button class="tab" data-tab="system">
+                System Tasks <span class="badge system-count">0</span>
+            </button>
         </div>
+    </div>
 
-        <!-- Content Sources Tab -->
-        <div class="tab-pane fade" id="sources-content" role="tabpanel">
-            <div class="row" id="content-sources"></div>
+    <div class="tab-content">
+        <div id="queues" class="active">
+            <div class="task-grid"></div>
         </div>
-
-        <!-- System Tasks Tab -->
-        <div class="tab-pane fade" id="system-content" role="tabpanel">
-            <div class="row" id="system-tasks"></div>
+        <div id="sources">
+            <div class="task-grid"></div>
+        </div>
+        <div id="system">
+            <div class="task-grid"></div>
         </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    var tabElements = document.querySelectorAll('[data-bs-toggle="tab"]');
-    tabElements.forEach(function(tabElement) {
-        new bootstrap.Tab(tabElement);
-        
-        // Add touch-friendly click handler
-        tabElement.addEventListener('touchend', function(e) {
-            e.preventDefault();
-            this.click();
+    // Tab switching
+    const tabs = document.querySelectorAll('.tab');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            // Remove active class from all tabs and content
+            tabs.forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content > div').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Add active class to clicked tab and corresponding content
+            tab.classList.add('active');
+            document.getElementById(tab.dataset.tab).classList.add('active');
         });
     });
 });
@@ -189,26 +225,20 @@ function createTaskTile(taskName, taskData) {
         .replace(/\b\w/g, c => c.toUpperCase());
 
     return `
-        <div class="col-12 col-sm-6 col-md-4 col-lg-3 mb-4">
-            <div class="card task-tile ${enabled ? '' : 'disabled'}">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <h5 class="task-name">
-                            <span class="status-indicator ${enabled ? 'enabled' : 'disabled'}"></span>
-                            ${displayName}
-                        </h5>
-                        <span class="badge ${enabled ? 'bg-primary' : 'bg-secondary'} interval-badge">
-                            ${intervalMinutes}m
-                        </span>
-                    </div>
-                    <div class="text-center mt-3">
-                        <div class="countdown" data-task="${taskName}">
-                            ${formatTime(taskData.next_run_in.hours, taskData.next_run_in.minutes, taskData.next_run_in.seconds)}
-                        </div>
-                        <small class="text-muted">until next run</small>
-                    </div>
+        <div class="task-tile ${enabled ? '' : 'disabled'}">
+            <div class="task-header">
+                <div class="task-name">
+                    <span class="status-indicator ${enabled ? 'enabled' : 'disabled'}"></span>
+                    ${displayName}
                 </div>
+                <span class="interval-badge">
+                    ${intervalMinutes}m
+                </span>
             </div>
+            <div class="countdown" data-task="${taskName}">
+                ${formatTime(taskData.next_run_in.hours, taskData.next_run_in.minutes, taskData.next_run_in.seconds)}
+            </div>
+            <small style="display: block; text-align: center; color: #888;">until next run</small>
         </div>
     `;
 }
@@ -233,45 +263,55 @@ function updateTimers() {
 }
 
 function updateBadgeCounts(data) {
-    document.querySelector('.queue-count').textContent = Object.keys(data.queues).length;
-    document.querySelector('.source-count').textContent = Object.keys(data.content_sources).length;
-    document.querySelector('.system-count').textContent = Object.keys(data.system_tasks).length;
+    document.querySelector('.queue-count').textContent = Object.keys(data.queues || {}).length;
+    document.querySelector('.source-count').textContent = Object.keys(data.content_sources || {}).length;
+    document.querySelector('.system-count').textContent = Object.keys(data.system_tasks || {}).length;
 }
 
 function fetchAndUpdateTasks() {
     fetch('/program_operation/api/task_timings')
         .then(response => response.json())
         .then(data => {
-            if (data.status === 'success') {
+            if (data.success) {
+                const tasks = data.tasks;
+                
                 // Update task sections
-                document.getElementById('queues').innerHTML = 
-                    Object.entries(data.data.queues)
+                document.querySelector('#queues .task-grid').innerHTML = 
+                    Object.entries(tasks.queues || {})
                         .map(([name, info]) => createTaskTile(name, info))
                         .join('');
                 
-                document.getElementById('content-sources').innerHTML = 
-                    Object.entries(data.data.content_sources)
+                document.querySelector('#sources .task-grid').innerHTML = 
+                    Object.entries(tasks.content_sources || {})
                         .map(([name, info]) => createTaskTile(name, info))
                         .join('');
                 
-                document.getElementById('system-tasks').innerHTML = 
-                    Object.entries(data.data.system_tasks)
+                document.querySelector('#system .task-grid').innerHTML = 
+                    Object.entries(tasks.system_tasks || {})
                         .map(([name, info]) => createTaskTile(name, info))
                         .join('');
 
                 // Update badge counts
-                updateBadgeCounts(data.data);
+                updateBadgeCounts(tasks);
 
                 // Update timers
                 timers = {};
-                Object.entries(data.data).forEach(([category, tasks]) => {
-                    Object.entries(tasks).forEach(([taskName, info]) => {
+                ['queues', 'content_sources', 'system_tasks'].forEach(category => {
+                    Object.entries(tasks[category] || {}).forEach(([taskName, info]) => {
                         timers[taskName] = Math.max(0, Math.floor(info.next_run_in.total_seconds));
                     });
                 });
             }
         })
-        .catch(error => console.error('Error fetching task timings:', error));
+        .catch(error => {
+            console.error('Error fetching task timings:', error);
+            // Clear all sections if there's an error
+            document.querySelectorAll('.task-grid').forEach(grid => grid.innerHTML = '');
+            // Reset badge counts
+            document.querySelector('.queue-count').textContent = '0';
+            document.querySelector('.source-count').textContent = '0';
+            document.querySelector('.system-count').textContent = '0';
+        });
 }
 
 // Initial fetch and setup
@@ -282,9 +322,5 @@ setInterval(updateTimers, 1000);
 
 // Refresh data every minute
 setInterval(fetchAndUpdateTasks, 60000);
-
 </script>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-
 {% endblock %}
