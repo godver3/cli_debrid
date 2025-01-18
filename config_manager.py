@@ -8,6 +8,7 @@ import shutil
 from datetime import datetime
 from debrid import reset_provider
 from utilities.file_lock import FileLock
+import importlib
 
 # Get the base config directory from an environment variable, with a fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
@@ -55,6 +56,12 @@ def save_config(config):
     with open(CONFIG_FILE, 'w') as file:
         with FileLock(file):
             json.dump(config, file, indent=4)
+            try:
+                from routes.base_routes import clear_cache
+                clear_cache()  # Clear the update check cache when settings are saved
+                logging.debug("Cleared update check cache after saving settings")
+            except Exception as e:
+                logging.error(f"Error clearing update check cache: {str(e)}")
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]

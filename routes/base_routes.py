@@ -20,6 +20,16 @@ def generate_etag(data):
     """Generate an ETag for the given data"""
     return hashlib.md5(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
+def clear_cache():
+    """Clear the update check cache"""
+    try:
+        # Get the check_for_update function and call its clear method
+        if hasattr(check_for_update, 'clear'):
+            check_for_update.clear()
+            logging.info("Successfully cleared update check cache")
+    except Exception as e:
+        logging.error(f"Error clearing cache: {str(e)}", exc_info=True)
+
 def cache_for_seconds(seconds):
     """Enhanced caching decorator with ETag support"""
     def decorator(func):
@@ -28,6 +38,13 @@ def cache_for_seconds(seconds):
             _function_cache[cache_key] = {}
             _function_last_modified[cache_key] = {}
             _function_etags[cache_key] = {}
+        
+        # Add clear method to the decorated function
+        def clear():
+            if cache_key in _function_cache:
+                _function_cache[cache_key].clear()
+                _function_last_modified[cache_key].clear()
+                _function_etags[cache_key].clear()
         
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -77,9 +94,9 @@ def cache_for_seconds(seconds):
             response.headers['ETag'] = etag
             response.headers['Cache-Control'] = f'private, max-age={seconds}'
             
-            #logging.debug(f"Cached new value for {func.__name__} with ETag {etag}")
             return response
             
+        wrapper.clear = clear  # Attach clear method to the wrapper
         return wrapper
     return decorator
 
@@ -200,16 +217,15 @@ def get_release_notes():
             'error': str(e)
         }), 500
 
-# Clear check-update cache on startup
-if 'check_for_update' in _function_cache:
-    del _function_cache['check_for_update']
-    del _function_last_modified['check_for_update']
-    del _function_etags['check_for_update']
-    logging.info("Cleared check-update cache on startup")
-
 @base_bp.route('/api/check-update', methods=['GET'])
 @cache_for_seconds(300)  # Cache for 5 minutes
 def check_for_update():
+    from settings import get_setting
+    logging.debug(f"get_setting('Debug', 'check_for_updates', True): {get_setting('Debug', 'check_for_updates', True)}")
+    if not get_setting('Debug', 'check_for_updates', True):
+        logging.debug("Update check disabled by user setting")
+        return {'success': True, 'update_available': False, 'message': 'Update check disabled by user setting'}
+
     try:
         # Get current branch and version
         current_branch = get_current_branch()
@@ -351,3 +367,7 @@ def task_stream():
         'X-Accel-Buffering': 'no'  # Disable buffering in Nginx
     })
     return response 
+
+# Clear check-update cache on startup
+clear_cache()
+logging.info("Cleared check-update cache on startup")

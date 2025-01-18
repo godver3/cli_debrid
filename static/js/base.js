@@ -221,7 +221,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update checker
     async function checkForUpdates() {
         try {
-            const response = await fetch('/base/api/check-update');
+            const response = await fetch('/base/api/check-update', {
+                cache: 'no-store',  // Force bypass browser cache
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
+            });
             const data = await response.json();
             console.log('Update check response:', data);
             
