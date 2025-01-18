@@ -171,6 +171,12 @@ def initialize_app():
 def is_behind_proxy():
     return request.headers.get('X-Forwarded-Proto') is not None
 
+def get_protocol():
+    """Determine protocol based on headers or config"""
+    if request.headers.get('X-Forwarded-Proto'):
+        return request.headers.get('X-Forwarded-Proto')
+    return 'http'
+
 @app.before_request
 def handle_https():
     # Skip HTTPS redirect for webhook routes
@@ -208,12 +214,12 @@ def add_security_headers(response):
         if root_domain:
             app.config['SESSION_COOKIE_DOMAIN'] = root_domain
             app.config['REMEMBER_COOKIE_DOMAIN'] = root_domain
-            logging.debug("[login_testing] Cookie headers before: %s", response.headers.getlist('Set-Cookie'))
     
     # Handle CORS for the actual request
     if request.method != 'OPTIONS':
         origin = request.headers.get('Origin')
         if origin:
+            protocol = get_protocol()
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             logging.debug("[login_testing] Setting CORS headers for origin: %s", origin)
