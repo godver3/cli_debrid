@@ -32,6 +32,7 @@
 }
 
 
+
 body { 
     font-family: Arial, sans-serif; 
     line-height: 1.6; 
@@ -162,9 +163,7 @@ nav ul li a:hover::after {
 }
 
 .username {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+    display: block;
     font-weight: bold;
 }
 
@@ -190,8 +189,7 @@ nav ul li a:hover::after {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    height: 100%;
-    padding-top: 0px;
+    gap: 4px;
     min-height: 35px;
 }
 
@@ -432,7 +430,12 @@ tr:hover {
 /* Media Queries */
 @media (max-width: 1360px) {
     .user-info {
-        display: none;  /* Hide the welcome message */
+        margin-left: 10px;
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+        height: auto;
+        min-height: 35px;
     }
 
     .header-content {
@@ -1438,7 +1441,6 @@ h2 {
 
 /* Update indicator */
 .update-indicator {
-    margin-top: 2px;
     font-size: 14px;
     cursor: pointer;
     animation: strobe 4s ease-in-out infinite;
@@ -1452,4 +1454,10 @@ h2 {
     0% { color: #FFA500; opacity: 0.4; }
     50% { color: #FFA500; opacity: 0.8; }
     100% { color: #FFA500; opacity: 0.4; }
+}
+
+@media (max-width: 776px) {
+    .user-info {
+        display: none;
+    }
 }

@@ -48,8 +48,7 @@
             {% if current_user.is_authenticated and not is_onboarding %}
             <div class="user-info">
                 <span class="username">Welcome, {{ current_user.username }}</span>
-                <i class="fas fa-download hidden update-indicator" id="updateAvailableButton" data-tooltip="global.updateAvailableButton"></i>
-                <span class="fas fa-download hidden update-indicator" id="updateText" style="font-size: 12px;">  New Update Available!</span>
+                <i class="fas fa-download update-indicator hidden" id="updateAvailableButton" data-tooltip="global.updateAvailableButton"></i>
             </div>
             {% endif %}
         </div>

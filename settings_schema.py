@@ -367,6 +367,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)",
             "default": False
+        },
+        "check_for_updates": {
+            "type": "boolean",
+            "description": "Check for updates and display update indicator in header",
+            "default": True
         }
     },
     "Scrapers": {
