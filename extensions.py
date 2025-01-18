@@ -55,13 +55,13 @@ class SameSiteMiddleware:
                     
                     # Handle session and remember token cookies
                     if 'session=' in cookie_main or 'remember_token=' in cookie_main:
-                        # Check if this is a cookie clearing operation (empty or deleted value)
+                        # Check if this is a cookie clearing operation
                         is_clearing = ('=' not in cookie_main or 
                                      cookie_main.split('=')[1] == '' or 
                                      cookie_main.endswith('='))
                         
                         if is_clearing:
-                            # For cookie clearing, set expires in the past and clear the value
+                            # For cookie clearing, set expires in the past
                             value = f"{cookie_main}; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
                             if root_domain:
                                 value += f"; Domain={root_domain}"
@@ -77,7 +77,7 @@ class SameSiteMiddleware:
                                 cookie_attrs['domain'] = f'Domain={root_domain}'
                             cookie_attrs['path'] = 'Path=/'
                             
-                            # Reconstruct the cookie with attributes in specific order
+                            # Reconstruct the cookie with attributes
                             value = '; '.join([
                                 cookie_main,
                                 cookie_attrs.get('path', 'Path=/'),
@@ -99,8 +99,6 @@ db = SQLAlchemy()
 app = Flask(__name__)
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-
-# Add SameSiteMiddleware to the WSGI stack
 app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
 
 # Configure session
@@ -109,10 +107,10 @@ app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
 app.config['SESSION_FILE_DIR'] = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')
 app.config['SESSION_FILE_THRESHOLD'] = 500
-app.config['SESSION_COOKIE_SECURE'] = False  # Allow both HTTP and HTTPS
+app.config['SESSION_COOKIE_SECURE'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['REMEMBER_COOKIE_SECURE'] = False  # Allow both HTTP and HTTPS
+app.config['REMEMBER_COOKIE_SECURE'] = False
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
 app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_NAME'] = 'session'
@@ -136,7 +134,7 @@ sess.init_app(app)
 
 # Configure CORS
 CORS(app, resources={r"/*": {
-    "origins": ["http://*", "https://*"],  # Allow both HTTP and HTTPS origins
+    "origins": ["http://*", "https://*"],
     "methods": ["GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE"],
     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "Cookie"],
     "supports_credentials": True,
@@ -156,7 +154,7 @@ def init_login_manager(app):
     login_manager.refresh_view = 'auth.login'
     login_manager.needs_refresh_message = 'Please log in again to confirm your identity'
     login_manager.needs_refresh_message_category = 'info'
-    login_manager.session_protection = 'strong'  # Use strong session protection
+    login_manager.session_protection = 'strong'
     
     def login_required(func):
         @wraps(func)
@@ -172,8 +170,6 @@ def init_login_manager(app):
 
     login_manager.login_required = login_required
 
-# Call this function in your app initialization
-# init_login_manager(app)
 login_manager.init_app(app)
 login_manager.login_view = 'auth.login'
 
@@ -199,21 +195,15 @@ def is_behind_proxy():
 
 @app.before_request
 def handle_https():
-    # HTTPS redirect disabled
     pass
 
 @app.before_request
 def check_user_system():
-    # Exclude the webhook route, its subpaths, and static files
     if request.path.startswith('/webhook') or request.path.startswith('/static') or request.path.startswith('/debug'):
-        return    
-
-    # Remove any specific handling for root.root here
-    # The decorators will handle the logic now
+        return
 
 @app.before_request
 def configure_session():
-    """Configure session settings before each request"""
     proto = request.headers.get('X-Forwarded-Proto', 'http')
     scheme = request.headers.get('X-Forwarded-Scheme', proto)
     root_domain = get_root_domain(request.host)
@@ -222,46 +212,33 @@ def configure_session():
         app.config['SESSION_COOKIE_DOMAIN'] = root_domain
         app.config['REMEMBER_COOKIE_DOMAIN'] = root_domain
     else:
-        # For localhost/IP, don't set domain
         app.config['SESSION_COOKIE_DOMAIN'] = None
         app.config['REMEMBER_COOKIE_DOMAIN'] = None
     
-    # Set cookie security based on protocol
     is_secure = (scheme == 'https')
     app.config['SESSION_COOKIE_SECURE'] = is_secure
     app.config['REMEMBER_COOKIE_SECURE'] = is_secure
     
-    # Set SameSite attribute based on protocol
     if is_secure:
-        app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Must be 'None' for cross-site HTTPS
+        app.config['SESSION_COOKIE_SAMESITE'] = 'None'
         app.config['REMEMBER_COOKIE_SAMESITE'] = 'None'
     else:
-        app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Default to Lax for HTTP
+        app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
         app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 
 @app.after_request
 def add_security_headers(response):
-    """Add security headers and handle cookies"""
-    logging.debug("[login_testing] Processing request for URL: %s", request.url)
-    logging.debug("[login_testing] Request cookies: %s", dict(request.cookies))
-    logging.debug("[login_testing] Request headers: %s", dict(request.headers))
-    
-    # Security headers
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     
-    # Handle CORS
     origin = request.headers.get('Origin')
     if origin:
-        # Allow same-origin requests always
         if origin.endswith(request.host):
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
             response.headers['Vary'] = 'Origin'
-            logging.debug("[login_testing] Setting CORS headers for same origin: %s", origin)
         else:
-            # For cross-origin, verify domain
             origin_domain = get_root_domain(origin.split('://')[-1])
             root_domain = get_root_domain(request.host)
             if root_domain and origin_domain and root_domain == origin_domain:
@@ -269,37 +246,14 @@ def add_security_headers(response):
                 response.headers['Access-Control-Allow-Credentials'] = 'true'
                 response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
                 response.headers['Vary'] = 'Origin'
-                logging.debug("[login_testing] Setting CORS headers for origin: %s", origin)
     
-    # For OPTIONS requests, add necessary CORS headers
     if request.method == 'OPTIONS':
         response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS, PUT, DELETE'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cookie'
         response.headers['Access-Control-Max-Age'] = '3600'
     
-    # Log final headers and cookies
-    logging.debug("[login_testing] Final response headers: %s", dict(response.headers))
-    logging.debug("[login_testing] Final cookies: %s", response.headers.getlist('Set-Cookie'))
-    
-    # Handle login and logout responses
-    if request.endpoint:
-        if (request.endpoint == 'auth.login' and 
-            response.status_code == 302 and 
-            'session' in session):
-            logging.debug("[login_testing] Login redirect detected, ensuring session cookie is set")
-            # Force the session cookie to be set in the response
-            if not response.headers.getlist('Set-Cookie'):
-                session.modified = True
-                app.session_interface.save_session(app, session, response)
-                logging.debug("[login_testing] Manually set session cookie: %s", response.headers.getlist('Set-Cookie'))
-        elif request.endpoint == 'auth.logout':
-            logging.debug("[login_testing] Logout detected, ensuring cookies are cleared")
-            response.set_cookie('session', '', expires=0, path='/', domain=app.config['SESSION_COOKIE_DOMAIN'])
-            response.set_cookie('remember_token', '', expires=0, path='/', domain=app.config['REMEMBER_COOKIE_DOMAIN'])
-    
     return response
 
-# Add an error handler for JSON parsing
 @app.errorhandler(400)
 def bad_request(error):
     return jsonify({"error": "Bad request", "message": str(error)}), 400
@@ -330,31 +284,3 @@ class SimpleTaskQueue:
         return self.tasks.get(task_id, {'status': 'NOT_FOUND'})
 
 task_queue = SimpleTaskQueue()
-
-@app.after_request
-def debug_cors_headers(response):
-    """Debug middleware to log CORS headers and cookies"""
-    # logger.debug("\n=== Request Debug Info ===")
-    # logger.debug(f"Request URL: {request.url}")
-    # logger.debug(f"Request Endpoint: {request.endpoint}")
-    # logger.debug(f"Request Origin: {request.headers.get('Origin')}")
-    # logger.debug(f"Request Method: {request.method}")
-    # logger.debug("\nRequest Headers:")
-    # for header, value in request.headers.items():
-        # logger.debug(f"{header}: {value}")
-    
-    # logger.debug("\nRequest Cookies:")
-    # logger.debug(request.cookies)
-    
-    # logger.debug("\n=== Response Debug Info ===")
-    # logger.debug("Response Headers:")
-    # for header, value in response.headers.items():
-        # logger.debug(f"{header}: {value}")
-    
-    # logger.debug("\nResponse Cookies:")
-    # if 'Set-Cookie' in response.headers:
-        # logger.debug(response.headers.getlist('Set-Cookie'))
-    # else:
-        # logger.debug("No cookies set in response")
-    
-    return response
