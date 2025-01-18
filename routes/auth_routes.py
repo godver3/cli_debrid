@@ -7,7 +7,7 @@ import os
 import logging
 from settings import load_config
 from routes.onboarding_routes import get_next_onboarding_step
-from extensions import db, login_manager
+from extensions import db, login_manager, get_root_domain
 from .utils import is_user_system_enabled
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -110,11 +110,26 @@ def login():
                 from flask import session
                 logging.debug("[login_testing] Session: %s", dict(session))
                 
+                response = redirect(url_for('root.root'))
+                
+                # Explicitly set session cookie
+                if session.get('_id'):
+                    domain = get_root_domain(request.host)
+                    if domain:
+                        response.set_cookie(
+                            'session',
+                            session.get('_id'),
+                            domain=domain,
+                            secure=False,  # Allow both HTTP/HTTPS
+                            httponly=True,
+                            samesite='None'
+                        )
+                
                 if not user.onboarding_complete:
                     logging.debug("[login_testing] Redirecting to onboarding")
                     return redirect(url_for('onboarding.onboarding_step', step=1))
                 logging.debug("[login_testing] Redirecting to root")
-                return redirect(url_for('root.root'))
+                return response
             else:
                 logging.debug("[login_testing] Password check failed")
         else:
