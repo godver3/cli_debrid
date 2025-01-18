@@ -17,7 +17,6 @@ def create_default_admin():
     if User.query.count() == 0:
         default_admin = User.query.filter_by(username='admin').first()
         if not default_admin:
-            # Log the hashing method being used
             hashed_password = generate_password_hash('admin')
             default_admin = User(
                 username='admin', 
@@ -45,21 +44,15 @@ def init_db(app):
 @login_manager.user_loader
 def load_user(user_id):
     from routes.settings_routes import is_user_system_enabled
-    
     if not is_user_system_enabled():
         return None
-    
-    user = User.query.get(int(user_id))
-
-    return user
+    return User.query.get(int(user_id))
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
-
     if not is_user_system_enabled():
         return redirect(url_for('root.root'))
 
-    # If already authenticated, redirect to root
     if current_user.is_authenticated:
         return redirect(url_for('root.root'))
 
@@ -69,27 +62,19 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         remember = bool(request.form.get('remember_me'))
-
         
         user = User.query.filter_by(username=username).first()
-        if user:
-
-            if check_password_hash(user.password, password):
-                
-                # Always set session as permanent
-                session.permanent = True
-                
-                login_user(user, remember=remember)
-                
-                # Force session save
-                session.modified = True
-                
-                if not user.onboarding_complete:
-                    response = redirect(url_for('onboarding.onboarding_step', step=1))
-                else:
-                    response = redirect(url_for('root.root'))
-                
-                return response
+        if user and check_password_hash(user.password, password):
+            session.permanent = True
+            login_user(user, remember=remember)
+            session.modified = True
+            
+            if not user.onboarding_complete:
+                response = redirect(url_for('onboarding.onboarding_step', step=1))
+            else:
+                response = redirect(url_for('root.root'))
+            
+            return response
             
         flash('Please check your login details and try again.')
     
@@ -98,21 +83,15 @@ def login():
 @auth_bp.route('/logout', methods=['POST'])
 @login_required
 def logout():
-
     if not is_user_system_enabled():
         return redirect(url_for('root.root'))
     
-    # Clear the session
     session.clear()
-    
-    # Perform Flask-Login logout
     logout_user()
-        
-    # Create response with redirect
+    
     response = redirect(url_for('auth.login'))
     
     from extensions import get_root_domain
-    # Explicitly clear cookies with matching domain
     domain = get_root_domain(request.host) if hasattr(request, 'host') else None
     response.set_cookie('session', '', expires=0, path='/', domain=domain)
     response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
@@ -122,4 +101,4 @@ def logout():
 @auth_bp.route('/unauthorized')
 def unauthorized():
     flash('You are not authorized to access this page.', 'error')
-    return redirect(url_for('auth.login'))
+    return redirect(url_for('auth.login')) 

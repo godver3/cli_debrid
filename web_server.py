@@ -14,7 +14,6 @@ from flask_sqlalchemy import SQLAlchemy
 from extensions import db, app, app_start_time
 from routes.auth_routes import init_db
 from flask_login import current_user
-import logging
 import sys
 
 from routes import register_blueprints, auth_bp
@@ -55,7 +54,9 @@ def inject_program_status():
 @app.context_processor
 def utility_processor():
     from routes.settings_routes import is_user_system_enabled
-    return dict(render_settings=render_settings, render_content_sources=render_content_sources, is_user_system_enabled=is_user_system_enabled)
+    return dict(render_settings=render_settings, 
+                render_content_sources=render_content_sources, 
+                is_user_system_enabled=is_user_system_enabled)
 
 @app.context_processor
 def inject_version():
@@ -63,7 +64,7 @@ def inject_version():
         # Get the application's root directory
         if getattr(sys, 'frozen', False):
             # If frozen (exe), look in the PyInstaller temp directory
-            base_dir = os.path.dirname(__file__)  # This will be the _MEI* directory
+            base_dir = os.path.dirname(__file__)
         else:
             # If running from source, use the directory containing this script
             base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -73,13 +74,11 @@ def inject_version():
         with open(version_path, 'r') as f:
             version = f.read().strip()
     except FileNotFoundError:
-        logging.warning(f"version.txt not found at {version_path}")
         version = "Unknown"
     except Exception as e:
-        logging.error(f"Error reading version.txt: {str(e)}")
         version = "Unknown"
     return dict(version=version)
-    
+
 @app.template_filter('isinstance')
 def isinstance_filter(value, class_name):
     return isinstance(value, getattr(datetime, class_name, type(None)))
@@ -106,12 +105,9 @@ def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
 @app.route('/')
 def index():
     from routes.settings_routes import is_user_system_enabled
-    logging.debug("Entering index route")
     if not is_user_system_enabled() or current_user.is_authenticated:
-        logging.debug("Redirecting to root.root")
         return redirect(url_for('root.root'))
     else:
-        logging.debug("Redirecting to auth.login")
         return redirect(url_for('auth.login'))
 
 @app.route('/favicon.ico')
