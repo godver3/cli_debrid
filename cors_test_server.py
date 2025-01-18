@@ -1,6 +1,7 @@
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import os
 import logging
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -35,19 +36,33 @@ class CORSHTTPRequestHandler(SimpleHTTPRequestHandler):
         logger.debug(f"Request Path: {self.path}")
         logger.debug(f"Request Origin: {origin}")
         logger.debug(f"Request Host: {host}")
+        logger.debug(f"Request Protocol: {'https' if self.headers.get('X-Forwarded-Proto') == 'https' else 'http'}")
         logger.debug("\nRequest Headers:")
         for header, value in self.headers.items():
             logger.debug(f"  {header}: {value}")
         
         # Set CORS headers for any origin
         if origin:
-            logger.debug(f"Setting CORS headers for origin: {origin}")
-            self.send_header('Access-Control-Allow-Origin', origin)
-            self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS')
-            self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range, X-Requested-With, Cookie, X-CSRF-Token, Upgrade-Insecure-Requests')
-            self.send_header('Access-Control-Allow-Credentials', 'true')
-            self.send_header('Access-Control-Expose-Headers', 'Set-Cookie')
-            self.send_header('Vary', 'Origin')
+            # Check if origin is from a known domain
+            known_domains = ['godver3.xyz']
+            origin_domain = origin.split('://')[-1].split(':')[0]
+            is_known_domain = any(domain in origin_domain for domain in known_domains)
+            
+            logger.debug(f"Origin domain: {origin_domain}")
+            logger.debug(f"Is known domain: {is_known_domain}")
+            
+            if is_known_domain:
+                logger.debug(f"Setting CORS headers for known domain: {origin}")
+                self.send_header('Access-Control-Allow-Origin', origin)
+                self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS, PUT, DELETE')
+                self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range, X-Requested-With, Cookie, X-CSRF-Token, Upgrade-Insecure-Requests')
+                self.send_header('Access-Control-Allow-Credentials', 'true')
+                self.send_header('Access-Control-Expose-Headers', 'Set-Cookie')
+                self.send_header('Vary', 'Origin')
+            else:
+                logger.debug(f"Unknown origin domain, restricting CORS headers")
+                self.send_header('Access-Control-Allow-Origin', origin)
+                self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
         
         super().end_headers()
     
@@ -65,7 +80,10 @@ class CORSHTTPRequestHandler(SimpleHTTPRequestHandler):
                     name, value = cookie.strip().split('=', 1)
                     cookie_list.append({
                         'name': name,
-                        'value': value[:20] + '...' if len(value) > 20 else value
+                        'value': value[:20] + '...' if len(value) > 20 else value,
+                        'secure': 'Secure' in self.headers.get('Cookie-Flags', ''),
+                        'httpOnly': 'HttpOnly' in self.headers.get('Cookie-Flags', ''),
+                        'sameSite': 'SameSite' in self.headers.get('Cookie-Flags', '')
                     })
             
             # Log cookie information
@@ -73,16 +91,31 @@ class CORSHTTPRequestHandler(SimpleHTTPRequestHandler):
             logger.debug(f"Cookies received: {len(cookie_list)}")
             for cookie in cookie_list:
                 logger.debug(f"  {cookie['name']}: {cookie['value']}")
+                logger.debug(f"    Secure: {cookie['secure']}")
+                logger.debug(f"    HttpOnly: {cookie['httpOnly']}")
+                logger.debug(f"    SameSite: {cookie['sameSite']}")
             
-            # Send response with cookie information
+            # Get protocol information
+            protocol = 'https' if self.headers.get('X-Forwarded-Proto') == 'https' else 'http'
+            
+            # Send response with enhanced information
             import json
             response = {
                 'cookies_present': bool(cookie_list),
                 'cookie_count': len(cookie_list),
                 'cookies': cookie_list,
-                'host': self.headers.get('Host', ''),
-                'origin': self.headers.get('Origin', ''),
-                'user_agent': self.headers.get('User-Agent', '')
+                'request': {
+                    'host': self.headers.get('Host', ''),
+                    'origin': self.headers.get('Origin', ''),
+                    'protocol': protocol,
+                    'user_agent': self.headers.get('User-Agent', ''),
+                    'x_forwarded_proto': self.headers.get('X-Forwarded-Proto', ''),
+                    'x_forwarded_for': self.headers.get('X-Forwarded-For', '')
+                },
+                'server': {
+                    'time': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'known_domains': ['godver3.xyz'],
+                }
             }
             response_bytes = json.dumps(response, indent=2).encode('utf-8')
             
@@ -108,7 +141,10 @@ def run_server(port=8087, host='0.0.0.0'):
     httpd = HTTPServer(server_address, CORSHTTPRequestHandler)
     logger.info(f"Starting CORS test server on {host}:{port}...")
     logger.info(f"Access the test page using the same base domain as your main application")
-    logger.info(f"Example: if your app is at cli-debrid.example.com, access this at cors-test.example.com:{port}")
+    logger.info(f"Example URLs to test:")
+    logger.info(f"  - https://cli-debrid.godver3.xyz")
+    logger.info(f"  - http://cli-test.godver3.xyz")
+    logger.info(f"Make sure to test both HTTP and HTTPS combinations")
     httpd.serve_forever()
 
 if __name__ == '__main__':

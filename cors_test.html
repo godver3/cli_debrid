@@ -89,6 +89,7 @@
         <button onclick="checkServerCookies()">4. Check Server-Side Cookies</button>
         <button onclick="testPreflightRequest()">5. Test Preflight Request</button>
         <button onclick="testPostRequest()">6. Test POST Request</button>
+        <button onclick="testAllServers()">7. Test All Server Combinations</button>
         
         <div id="status" class="status"></div>
         <pre id="response"></pre>
@@ -105,14 +106,23 @@
                 return 'http://localhost:5000';
             }
             
-            // For all other cases, replace the first subdomain with 'cli-debrid'
-            const parts = hostname.split('.');
-            if (parts.length > 2) {
-                parts[0] = 'cli-debrid';
-            } else {
-                parts.unshift('cli-debrid');
-            }
-            return `${protocol}//${parts.join('.')}`;
+            // Define known test servers
+            const knownServers = [
+                'cli-debrid.godver3.xyz',
+                'cli-test.godver3.xyz'
+            ];
+            
+            // Create URLs for both HTTP and HTTPS
+            const servers = knownServers.map(server => ({
+                http: `http://${server}`,
+                https: `https://${server}`
+            }));
+            
+            // Store all servers for testing
+            window.allTestServers = servers;
+            
+            // Default to the first server's HTTPS URL
+            return servers[0].https;
         }
 
         const targetServer = getTargetServer();
@@ -142,6 +152,13 @@
             info += `Target server: ${targetServer}\n`;
             info += `Protocol: ${window.location.protocol}\n`;
             info += `Port: ${window.location.port}\n`;
+            info += `Available test servers:\n`;
+            if (window.allTestServers) {
+                window.allTestServers.forEach(server => {
+                    info += `  HTTPS: ${server.https}\n`;
+                    info += `  HTTP: ${server.http}\n`;
+                });
+            }
             info += '\nNote: Cookies may still be sent with requests even if not visible here.\n';
             info += 'Check server logs or network tab for confirmation.';
             
@@ -360,6 +377,116 @@
                 console.error('Error:', error);
             }
         }
+
+        // Add new function to test all server combinations
+        async function testAllServers() {
+            showStatus('Testing all server combinations...');
+            const results = {
+                tests: []
+            };
+            
+            for (const server of window.allTestServers) {
+                // Test HTTPS to HTTPS
+                try {
+                    showStatus(`Testing HTTPS -> HTTPS: ${server.https}`);
+                    const response = await fetch(`${server.https}/auth/login`, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: {
+                            'Accept': 'text/html',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    });
+                    results.tests.push({
+                        type: 'HTTPS -> HTTPS',
+                        server: server.https,
+                        status: response.status,
+                        success: response.status === 200 || response.status === 302
+                    });
+                } catch (error) {
+                    results.tests.push({
+                        type: 'HTTPS -> HTTPS',
+                        server: server.https,
+                        error: error.message,
+                        success: false
+                    });
+                }
+                
+                // Test HTTP to HTTP
+                try {
+                    showStatus(`Testing HTTP -> HTTP: ${server.http}`);
+                    const response = await fetch(`${server.http}/auth/login`, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: {
+                            'Accept': 'text/html',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    });
+                    results.tests.push({
+                        type: 'HTTP -> HTTP',
+                        server: server.http,
+                        status: response.status,
+                        success: response.status === 200 || response.status === 302
+                    });
+                } catch (error) {
+                    results.tests.push({
+                        type: 'HTTP -> HTTP',
+                        server: server.http,
+                        error: error.message,
+                        success: false
+                    });
+                }
+                
+                // Test mixed protocol (if current page is HTTPS)
+                if (window.location.protocol === 'https:') {
+                    try {
+                        showStatus(`Testing HTTPS -> HTTP: ${server.http}`);
+                        const response = await fetch(`${server.http}/auth/login`, {
+                            method: 'GET',
+                            credentials: 'include',
+                            headers: {
+                                'Accept': 'text/html',
+                                'X-Requested-With': 'XMLHttpRequest'
+                            }
+                        });
+                        results.tests.push({
+                            type: 'HTTPS -> HTTP',
+                            server: server.http,
+                            status: response.status,
+                            success: response.status === 200 || response.status === 302
+                        });
+                    } catch (error) {
+                        results.tests.push({
+                            type: 'HTTPS -> HTTP',
+                            server: server.http,
+                            error: error.message,
+                            success: false
+                        });
+                    }
+                }
+            }
+            
+            showResponse(results);
+            const successCount = results.tests.filter(t => t.success).length;
+            showStatus(`Completed all server tests. ${successCount}/${results.tests.length} tests passed.`);
+        }
+
+        // Add button for testing all servers
+        document.addEventListener('DOMContentLoaded', function() {
+            const container = document.querySelector('.container');
+            const newButton = document.createElement('button');
+            newButton.textContent = '7. Test All Server Combinations';
+            newButton.onclick = testAllServers;
+            newButton.style.backgroundColor = '#2196F3';
+            container.insertBefore(newButton, document.getElementById('status'));
+            
+            // Add protocol info
+            const protocolInfo = document.createElement('div');
+            protocolInfo.className = 'debug-info';
+            protocolInfo.innerHTML = `Current page protocol: <strong>${window.location.protocol}</strong>`;
+            container.insertBefore(protocolInfo, document.getElementById('status'));
+        });
     </script>
 </body>
 </html> 
