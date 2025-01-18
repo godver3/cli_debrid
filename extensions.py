@@ -82,11 +82,16 @@ app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
 
 # Configure session
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_PERMANENT'] = False  # Default to non-permanent sessions
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)  # Used when session is marked permanent
-app.config['SESSION_FILE_DIR'] = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')  # Specify session file location
-app.config['SESSION_FILE_THRESHOLD'] = 500  # Maximum number of session files
-app.config['SESSION_KEY_PREFIX'] = 'session:'  # Prefix for session keys
+app.config['SESSION_PERMANENT'] = False
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
+app.config['SESSION_FILE_DIR'] = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')
+app.config['SESSION_FILE_THRESHOLD'] = 500
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['REMEMBER_COOKIE_SECURE'] = True
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'None'
 
 # Use a persistent secret key
 secret_key_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'secret_key')
@@ -94,60 +99,22 @@ if os.path.exists(secret_key_file):
     with open(secret_key_file, 'rb') as f:
         app.secret_key = f.read()
 else:
-    # Generate a new secret key if one doesn't exist
     app.secret_key = os.urandom(24)
-    # Save it for future use
     with open(secret_key_file, 'wb') as f:
         f.write(app.secret_key)
 
-# Ensure session directory exists
-os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
-
-# Configure session cookie settings
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Required for cross-origin requests
-app.config['SESSION_COOKIE_SECURE'] = True  # Required when SameSite is None
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_PATH'] = '/'
-app.config['SESSION_COOKIE_NAME'] = 'session'
-app.config['SESSION_COOKIE_DOMAIN'] = None  # Let our middleware handle this dynamically
-
-# Configure remember me cookie settings
-app.config['REMEMBER_COOKIE_NAME'] = 'remember_token'
-app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=30)
-app.config['REMEMBER_COOKIE_SECURE'] = True
-app.config['REMEMBER_COOKIE_HTTPONLY'] = True
-app.config['REMEMBER_COOKIE_SAMESITE'] = 'None'
-app.config['REMEMBER_COOKIE_REFRESH_EACH_REQUEST'] = False  # Changed to False to prevent auto-refresh
-app.config['REMEMBER_COOKIE_DOMAIN'] = None  # Let our middleware handle this dynamically
-app.config['SESSION_REFRESH_EACH_REQUEST'] = False  # Also prevent session refresh
-
-# Initialize Flask-Session first
+# Initialize Flask-Session
 from flask_session import Session
 sess = Session()
 sess.init_app(app)
 
-def get_cookie_domain(host):
-    """Determine the cookie domain from the request host."""
-    if not host or host.lower() in ('localhost', '127.0.0.1', '::1'):
-        return None
-    # Remove port if present
-    domain = host.split(':')[0]
-    # If IP address, return as is
-    if domain.replace('.', '').isdigit():
-        return domain
-    # For hostnames, always return root domain with leading dot
-    parts = domain.split('.')
-    if len(parts) > 2:
-        return '.' + '.'.join(parts[-2:]) 
-    return '.' + domain
-
-# Configure CORS with more permissive settings
+# Configure CORS
 CORS(app, resources={r"/*": {
-    "origins": ["*"],  # Allow all origins
+    "origins": ["*"],
     "methods": ["GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE"],
-    "allow_headers": ["*"],  # Allow all headers
+    "allow_headers": ["*"],
     "supports_credentials": True,
-    "expose_headers": ["*"],  # Expose all headers
+    "expose_headers": ["Set-Cookie"],
     "max_age": 3600
 }})
 
@@ -224,24 +191,35 @@ def check_user_system():
     # The decorators will handle the logic now
 
 @app.after_request
-def add_cors_headers(response):
-    origin = request.headers.get('Origin')
-    if origin:  # Only add CORS headers if there's an Origin header
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range, X-Requested-With, Cookie, X-CSRF-Token, Upgrade-Insecure-Requests'
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
-        
-        if request.method == 'OPTIONS':
-            response.headers['Access-Control-Max-Age'] = '3600'
-    
-    return response
-
-@app.after_request
 def add_security_headers(response):
-    # Remove the upgrade-insecure-requests directive
-    # response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
+    """Add security headers and handle cookies"""
+    logging.debug("[login_testing] Processing request for URL: %s", request.url)
+    logging.debug("[login_testing] Request cookies: %s", dict(request.cookies))
+    logging.debug("[login_testing] Request headers: %s", dict(request.headers))
+    
+    # Security headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    
+    # Set cookie domain if needed
+    if 'Set-Cookie' in response.headers:
+        root_domain = get_root_domain(request.host)
+        logging.debug("[login_testing] Setting cookie domain to: %s", root_domain)
+        if root_domain:
+            app.config['SESSION_COOKIE_DOMAIN'] = root_domain
+            app.config['REMEMBER_COOKIE_DOMAIN'] = root_domain
+            logging.debug("[login_testing] Cookie headers before: %s", response.headers.getlist('Set-Cookie'))
+    
+    # Handle CORS for the actual request
+    if request.method != 'OPTIONS':
+        origin = request.headers.get('Origin')
+        if origin:
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            logging.debug("[login_testing] Setting CORS headers for origin: %s", origin)
+    
+    logging.debug("[login_testing] Final response headers: %s", dict(response.headers))
+    logging.debug("[login_testing] Final cookies: %s", response.headers.getlist('Set-Cookie'))
     return response
 
 # Add an error handler for JSON parsing
@@ -277,82 +255,6 @@ class SimpleTaskQueue:
 task_queue = SimpleTaskQueue()
 
 @app.after_request
-def after_request(response):
-    # Get the origin from the request
-    origin = request.headers.get('Origin')
-    # logger.debug(f"\n=== Cookie Debug ===")
-    # logger.debug(f"Processing response for URL: {request.url}")
-    # logger.debug(f"Response status: {response.status_code}")
-    # logger.debug(f"Original Set-Cookie headers: {response.headers.getlist('Set-Cookie')}")
-    
-    # Always set security headers
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    
-    # Handle cookies only if they exist
-    if 'Set-Cookie' in response.headers or response.status_code in [301, 302]:
-        cookies = response.headers.getlist('Set-Cookie')
-        response.headers.remove('Set-Cookie')
-        
-        # Get the root domain dynamically
-        root_domain = get_root_domain(request.host)
-        # logger.debug(f"Root domain for cookies: {root_domain}")
-        
-        # Process existing cookies
-        processed_cookies = set()
-        for cookie in cookies:
-            cookie_name = cookie.split('=')[0].strip()
-            # logger.debug(f"Processing cookie: {cookie_name}")
-            # logger.debug(f"Original cookie string: {cookie}")
-            
-            if cookie_name in processed_cookies:
-                # logger.debug(f"Skipping duplicate cookie: {cookie_name}")
-                continue
-                
-            processed_cookies.add(cookie_name)
-            
-            # Always set these attributes for maximum compatibility
-            if 'SameSite=' not in cookie:
-                cookie += '; SameSite=None'
-                # logger.debug(f"Added SameSite=None to cookie")
-            if 'Domain=' not in cookie and root_domain:
-                cookie += f'; Domain={root_domain}'
-                # logger.debug(f"Added Domain={root_domain} to cookie")
-            if 'Secure' not in cookie:
-                cookie += '; Secure'
-                # logger.debug(f"Added Secure flag to cookie")
-            if 'Path=' not in cookie:
-                cookie += '; Path=/'
-                # logger.debug(f"Added Path=/ to cookie")
-            
-            # logger.debug(f"Final cookie string: {cookie}")
-            response.headers.add('Set-Cookie', cookie)
-        
-        # Only add session cookie if none exists
-        if 'session' not in processed_cookies and response.status_code in [301, 302]:
-            # logger.debug("Adding missing session cookie")
-            session_cookie = f"session={request.cookies.get('session', '')}; Path=/"
-            if root_domain:
-                session_cookie += f"; Domain={root_domain}"
-            session_cookie += "; Secure; SameSite=None"  # Always add SameSite=None and Secure for session cookie
-            # logger.debug(f"Created session cookie: {session_cookie}")
-            response.headers.add('Set-Cookie', session_cookie)
-    
-    # Set CORS headers for all requests
-    if origin:
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range, X-Requested-With, Cookie, X-CSRF-Token, Upgrade-Insecure-Requests'
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
-        
-        if request.method == 'OPTIONS':
-            response.headers['Access-Control-Max-Age'] = '3600'
-    
-    # logger.debug(f"Final Set-Cookie headers: {response.headers.getlist('Set-Cookie')}")
-    return response
-
-@app.after_request
 def debug_cors_headers(response):
     """Debug middleware to log CORS headers and cookies"""
     # logger.debug("\n=== Request Debug Info ===")
@@ -379,40 +281,3 @@ def debug_cors_headers(response):
         # logger.debug("No cookies set in response")
     
     return response
-
-@app.after_request
-def ensure_secure_cookies(response):
-    """Ensure all cookies have proper security attributes"""
-    if 'Set-Cookie' in response.headers:
-        cookies = response.headers.getlist('Set-Cookie')
-        response.headers.remove('Set-Cookie')
-        
-        root_domain = get_root_domain(request.host)
-        
-        for cookie in cookies:
-            # Parse the cookie
-            if ';' in cookie:
-                cookie_parts = cookie.split(';')
-                main_part = cookie_parts[0]
-                attrs = [p.strip() for p in cookie_parts[1:]]
-            else:
-                main_part = cookie
-                attrs = []
-            
-            # Remove any existing SameSite, Secure, or Domain attributes
-            attrs = [a for a in attrs if not any(x in a.lower() for x in ['samesite=', 'secure', 'domain='])]
-            
-            # Add our security attributes
-            attrs.append('SameSite=None')
-            attrs.append('Secure')
-            if root_domain:
-                attrs.append(f'Domain={root_domain}')
-            
-            # Reconstruct the cookie
-            new_cookie = '; '.join([main_part] + attrs)
-            response.headers.add('Set-Cookie', new_cookie)
-    
-    return response
-
-# Place this before any other after_request handlers
-app.after_request_funcs.setdefault(None, []).insert(0, ensure_secure_cookies)

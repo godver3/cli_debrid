@@ -14,39 +14,32 @@ from flask_sqlalchemy import SQLAlchemy
 from extensions import db, app, app_start_time
 from routes.auth_routes import init_db
 from flask_login import current_user
-import logging
 import sys
 
 from routes import register_blueprints, auth_bp
 
-# Get db_content directory from environment variable with fallback
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.debug("[login_testing] Starting server initialization")
+
+# Initialize database
 db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 os.makedirs(db_directory, exist_ok=True)
-
-if not os.access(db_directory, os.W_OK):
-    raise PermissionError(f"The directory {db_directory} is not writable. Please check permissions.")
+logging.debug("[login_testing] Database directory: %s", db_directory)
 
 db_path = os.path.join(db_directory, 'users.db')
+logging.debug("[login_testing] Database path: %s", db_path)
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+logging.debug("[login_testing] Initializing database")
 init_db(app)
+logging.debug("[login_testing] Database initialization complete")
 
-# Disable Werkzeug request logging
-log = logging.getLogger('werkzeug')
-log.disabled = True
-
-# Configure logging for web_server
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Global variables for statistics
-start_time = time.time()
-
-# Get config directory from environment variable with fallback
-config_dir = os.environ.get('USER_CONFIG', '/user/config')
-CONFIG_FILE = os.path.join(config_dir, 'config.json')
-
+# Register blueprints and routes
+logging.debug("[login_testing] Registering blueprints")
 register_blueprints(app)
+logging.debug("[login_testing] Blueprints registered")
 
 @app.context_processor
 def inject_program_status():
@@ -55,64 +48,32 @@ def inject_program_status():
 @app.context_processor
 def utility_processor():
     from routes.settings_routes import is_user_system_enabled
-    return dict(render_settings=render_settings, render_content_sources=render_content_sources, is_user_system_enabled=is_user_system_enabled)
+    return dict(render_settings=render_settings, 
+                render_content_sources=render_content_sources, 
+                is_user_system_enabled=is_user_system_enabled)
 
 @app.context_processor
 def inject_version():
     try:
-        # Get the application's root directory
-        if getattr(sys, 'frozen', False):
-            # If frozen (exe), look in the PyInstaller temp directory
-            base_dir = os.path.dirname(__file__)  # This will be the _MEI* directory
-        else:
-            # If running from source, use the directory containing this script
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-        
+        base_dir = os.path.dirname(os.path.abspath(__file__)) if not getattr(sys, 'frozen', False) else os.path.dirname(__file__)
         version_path = os.path.join(base_dir, 'version.txt')
         
         with open(version_path, 'r') as f:
             version = f.read().strip()
-    except FileNotFoundError:
-        logging.warning(f"version.txt not found at {version_path}")
-        version = "Unknown"
-    except Exception as e:
-        logging.error(f"Error reading version.txt: {str(e)}")
+    except Exception:
         version = "Unknown"
     return dict(version=version)
-    
-@app.template_filter('isinstance')
-def isinstance_filter(value, class_name):
-    return isinstance(value, getattr(datetime, class_name, type(None)))
-
-@app.template_filter('is_infinite')
-def is_infinite(value):
-    return value == float('inf')
-
-@app.template_filter('from_json')
-def from_json_filter(value):
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return {}
-
-@app.template_filter('datetime')
-def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        value = datetime.fromisoformat(value)
-    return value.strftime(format)
 
 @app.route('/')
 def index():
+    logging.debug("[login_testing] Processing index route")
     from routes.settings_routes import is_user_system_enabled
-    logging.debug("Entering index route")
     if not is_user_system_enabled() or current_user.is_authenticated:
-        logging.debug("Redirecting to root.root")
+        logging.debug("[login_testing] Redirecting to root.root - User system enabled: %s, User authenticated: %s",
+                     is_user_system_enabled(), current_user.is_authenticated)
         return redirect(url_for('root.root'))
-    else:
-        logging.debug("Redirecting to auth.login")
-        return redirect(url_for('auth.login'))
+    logging.debug("[login_testing] Redirecting to login")
+    return redirect(url_for('auth.login'))
 
 @app.route('/favicon.ico')
 def favicon():
@@ -121,15 +82,8 @@ def favicon():
 
 @app.route('/site.webmanifest')
 def manifest():
-    manifest_path = os.path.join(app.static_folder, 'site.webmanifest')
-    if not os.path.exists(manifest_path):
-        return "Manifest file not found", 404
-    
-    try:
-        response = send_from_directory(app.static_folder, 'site.webmanifest', mimetype='application/manifest+json')
-        return response
-    except Exception as e:
-        return f"Error serving manifest: {str(e)}", 500
+    return send_from_directory(app.static_folder, 'site.webmanifest', 
+                             mimetype='application/manifest+json')
 
 if __name__ == '__main__':
     start_server()
