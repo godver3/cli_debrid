@@ -1,4 +1,4 @@
-from flask import Blueprint, redirect, url_for, flash, render_template, request, make_response
+from flask import Blueprint, redirect, url_for, flash, render_template, request, make_response, session
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -7,7 +7,7 @@ import os
 import logging
 from settings import load_config
 from routes.onboarding_routes import get_next_onboarding_step
-from extensions import db, login_manager, get_root_domain
+from extensions import db, login_manager
 from .utils import is_user_system_enabled
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -94,7 +94,7 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        remember = 'remember_me' in request.form
+        remember = bool(request.form.get('remember_me'))
         logging.debug("[login_testing] Login attempt for username: %s", username)
         logging.debug("[login_testing] Remember me checked: %s", remember)
         
@@ -105,30 +105,24 @@ def login():
             
             if check_password_hash(user.password, password):
                 logging.debug("[login_testing] Password check passed")
+                
+                # Always set session as permanent
+                session.permanent = True
+                
                 login_user(user, remember=remember)
                 logging.debug("[login_testing] User logged in successfully")
-                from flask import session
+                
+                # Force session save
+                session.modified = True
                 logging.debug("[login_testing] Session: %s", dict(session))
-                
-                response = redirect(url_for('root.root'))
-                
-                # Explicitly set session cookie
-                if session.get('_id'):
-                    domain = get_root_domain(request.host)
-                    if domain:
-                        response.set_cookie(
-                            'session',
-                            session.get('_id'),
-                            domain=domain,
-                            secure=False,  # Allow both HTTP/HTTPS
-                            httponly=True,
-                            samesite='None'
-                        )
                 
                 if not user.onboarding_complete:
                     logging.debug("[login_testing] Redirecting to onboarding")
-                    return redirect(url_for('onboarding.onboarding_step', step=1))
-                logging.debug("[login_testing] Redirecting to root")
+                    response = redirect(url_for('onboarding.onboarding_step', step=1))
+                else:
+                    logging.debug("[login_testing] Redirecting to root")
+                    response = redirect(url_for('root.root'))
+                
                 return response
             else:
                 logging.debug("[login_testing] Password check failed")
@@ -149,9 +143,24 @@ def logout():
         logging.debug("[login_testing] User system not enabled")
         return redirect(url_for('root.root'))
     
+    # Clear the session
+    session.clear()
+    
+    # Perform Flask-Login logout
     logout_user()
+    
     logging.debug("[login_testing] User logged out successfully")
-    return redirect(url_for('auth.login'))
+    
+    # Create response with redirect
+    response = redirect(url_for('auth.login'))
+    
+    from extensions import get_root_domain
+    # Explicitly clear cookies with matching domain
+    domain = get_root_domain(request.host) if hasattr(request, 'host') else None
+    response.set_cookie('session', '', expires=0, path='/', domain=domain)
+    response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
+    
+    return response
 
 @auth_bp.route('/unauthorized')
 def unauthorized():
