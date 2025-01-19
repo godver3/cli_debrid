@@ -11,6 +11,8 @@ import threading
 import uuid
 from datetime import timedelta
 import os
+from tld import get_tld
+from tld.exceptions import TldDomainNotFound, TldBadUrl
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -18,30 +20,43 @@ logger = logging.getLogger(__name__)
 
 def get_root_domain(host):
     """Get the root domain from a hostname."""
-    if not host or host.lower() in ('localhost', '127.0.0.1', '::1'):
+    if not host:
         return None
-    # Remove port if present
-    domain = host.split(':')[0]
-    # If IP address, return as is
-    if domain.replace('.', '').isdigit():
+        
+    # Remove port if present and ensure no leading/trailing dots
+    domain = host.split(':')[0].lower().strip('.')
+    
+    # If localhost or IP, return as is
+    if domain in ('localhost', '127.0.0.1', '::1') or domain.replace('.', '').isdigit():
         return domain
-    # For hostnames, get root domain without leading dot
-    parts = domain.split('.')
-    if len(parts) > 2:
-        return '.'.join(parts[-2:])  # e.g., example.com for sub.example.com
-    return domain  # e.g., localhost
+    
+    try:
+        # Try to get the registered domain using tld library
+        # This will properly handle all domain structures including multi-level TLDs
+        res = get_tld(f"http://{domain}", as_object=True)
+        # For subdomains, return the full domain to ensure cookies work across all subdomains
+        result_domain = domain if res.subdomain else res.fld
+        # Ensure no leading/trailing dots in the final result
+        return result_domain.strip('.')
+    except (TldDomainNotFound, TldBadUrl):
+        # If domain parsing fails, return the full domain to be safe
+        return domain if '.' in domain else None
 
 class SameSiteMiddleware:
     def __init__(self, app):
         self.app = app
+        self.logger = logging.getLogger('SameSiteMiddleware')
 
     def __call__(self, environ, start_response):
         def custom_start_response(status, headers, exc_info=None):
             new_headers = []
             host = environ.get('HTTP_HOST', '')
             root_domain = get_root_domain(host)
-            proto = environ.get('HTTP_X_FORWARDED_PROTO', 'http')
+            proto = environ.get('HTTP_X_FORWARDED_PROTO', environ.get('wsgi.url_scheme', 'http'))
             is_secure = (proto == 'https')
+            
+            self.logger.debug(f"Cookie middleware: host={host}, root_domain={root_domain}, proto={proto}, is_secure={is_secure}")
+            self.logger.debug(f"Request environment: scheme={environ.get('wsgi.url_scheme')}, forwarded_proto={environ.get('HTTP_X_FORWARDED_PROTO')}")
             
             for name, value in headers:
                 if name.lower() == 'set-cookie':
@@ -60,18 +75,19 @@ class SameSiteMiddleware:
                                      cookie_main.split('=')[1] == '' or 
                                      cookie_main.endswith('='))
                         
+                        self.logger.debug(f"Processing cookie: {cookie_main}, is_clearing={is_clearing}")
+                        
                         if is_clearing:
                             # For cookie clearing, set expires in the past
                             value = f"{cookie_main}; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
                             if root_domain:
                                 value += f"; Domain={root_domain}"
                         else:
-                            # Normal cookie setting
+                            # Normal cookie setting - more lenient approach
+                            cookie_attrs['samesite'] = 'SameSite=Lax'
+                            # Only set Secure flag if explicitly HTTPS
                             if is_secure:
-                                cookie_attrs['samesite'] = 'SameSite=None'
                                 cookie_attrs['secure'] = 'Secure'
-                            else:
-                                cookie_attrs['samesite'] = 'SameSite=Lax'
                             
                             if root_domain:
                                 cookie_attrs['domain'] = f'Domain={root_domain}'
@@ -86,6 +102,9 @@ class SameSiteMiddleware:
                                 cookie_attrs.get('secure', ''),
                                 cookie_attrs.get('httponly', 'HttpOnly')
                             ]).rstrip('; ')
+                            
+                            self.logger.debug(f"Final cookie value: {value}")
+                            self.logger.debug(f"Cookie attributes: {cookie_attrs}")
                     
                 new_headers.append((name, value))
             
@@ -116,6 +135,7 @@ app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_NAME'] = 'session'
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 app.config['SESSION_COOKIE_PATH'] = '/'
+app.config['SESSION_COOKIE_DOMAIN'] = None  # Let Flask determine the domain without leading period
 
 # Use a persistent secret key
 secret_key_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'secret_key')
@@ -209,11 +229,9 @@ def configure_session():
     root_domain = get_root_domain(request.host)
     
     if root_domain:
-        app.config['SESSION_COOKIE_DOMAIN'] = root_domain
-        app.config['REMEMBER_COOKIE_DOMAIN'] = root_domain
+        app.config['SESSION_COOKIE_DOMAIN'] = root_domain.strip('.')
     else:
         app.config['SESSION_COOKIE_DOMAIN'] = None
-        app.config['REMEMBER_COOKIE_DOMAIN'] = None
     
     is_secure = (scheme == 'https')
     app.config['SESSION_COOKIE_SECURE'] = is_secure

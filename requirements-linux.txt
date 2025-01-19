@@ -41,3 +41,4 @@ tzlocal==5.2
 APScheduler==3.10.4
 PyGithub==2.1.1
 nyaapy==0.7
+tld>=0.13
