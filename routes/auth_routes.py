@@ -43,6 +43,7 @@ def create_default_admin():
         db.session.add(default_admin)
         db.session.commit()
         
+        logging.debug(f"DISABLE_ONBOARDING value: {os.environ.get('DISABLE_ONBOARDING')}")
         if skip_onboarding:
             logging.info(f"Created default admin user '{username}' with onboarding disabled")
         else:
