@@ -19,7 +19,7 @@ def create_default_admin():
     if User.query.count() == 0:
         # Check environment variables first
         username = os.environ.get('DEFAULT_ADMIN_USER', 'admin')
-        password = os.environ.get('DEFAULT_ADMIN_PASSWORD', '')
+        password = os.environ.get('DEFAULT_ADMIN_PASSWORD', 'admin')
         skip_onboarding = os.environ.get('DISABLE_ONBOARDING', '').lower() in ('true', '1', 'yes')
 
         logging.info(f"Creating default admin user '{username}'")
