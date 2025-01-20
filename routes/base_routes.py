@@ -26,7 +26,7 @@ def clear_cache():
         # Get the check_for_update function and call its clear method
         if hasattr(check_for_update, 'clear'):
             check_for_update.clear()
-            logging.info("Successfully cleared update check cache")
+            #logging.info("Successfully cleared update check cache")
     except Exception as e:
         logging.error(f"Error clearing cache: {str(e)}", exc_info=True)
 
@@ -221,9 +221,9 @@ def get_release_notes():
 @cache_for_seconds(300)  # Cache for 5 minutes
 def check_for_update():
     from settings import get_setting
-    logging.debug(f"get_setting('Debug', 'check_for_updates', True): {get_setting('Debug', 'check_for_updates', True)}")
+    #logging.debug(f"get_setting('Debug', 'check_for_updates', True): {get_setting('Debug', 'check_for_updates', True)}")
     if not get_setting('Debug', 'check_for_updates', True):
-        logging.debug("Update check disabled by user setting")
+        #logging.debug("Update check disabled by user setting")
         return {'success': True, 'update_available': False, 'message': 'Update check disabled by user setting'}
 
     try:
@@ -240,7 +240,7 @@ def check_for_update():
             'sha': current_branch  # This ensures we only get commits from our current branch
         }
         
-        logging.debug(f"Making GitHub API request for update check on branch: {current_branch}")
+        #logging.debug(f"Making GitHub API request for update check on branch: {current_branch}")
         response = requests.get(api_url, headers=headers, params=params, timeout=5)
         if response.status_code == 200:
             commits = response.json()

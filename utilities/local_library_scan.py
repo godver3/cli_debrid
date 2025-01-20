@@ -40,7 +40,9 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
             'tmdb_id': item.get('tmdb_id', ''),
             'version': item.get('version', '').strip('*'),  # Remove all asterisks from start/end
             'quality': item.get('quality', ''),
-            'original_filename': os.path.splitext(item.get('filled_by_file', ''))[0]  # Remove extension from original filename
+            'original_filename': os.path.splitext(item.get('filled_by_file', ''))[0],  # Remove extension from original filename
+            'content_source': item.get('content_source', ''),  # Add content source for template use
+            'resolution': item.get('resolution', '')  # Add resolution for template use
         }
         
         if media_type == 'movie':
@@ -343,7 +345,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     'filled_by_title': item.get('filled_by_title'),
                     'filled_by_file': item.get('filled_by_file'),
                     'filled_by_magnet': item.get('filled_by_magnet'),
-                    'filled_by_torrent_id': item.get('filled_by_torrent_id')
+                    'filled_by_torrent_id': item.get('filled_by_torrent_id'),
+                    'resolution': item.get('resolution')
                 }
                 
                 # Only set upgrading_from if this is a confirmed upgrade

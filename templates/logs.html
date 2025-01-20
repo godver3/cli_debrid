@@ -17,6 +17,7 @@
         border: 1px solid #555;
         border-radius: 5px;
         position: relative; /* Add this */
+        margin-top: 25px
     }
 
     /* Mobile-specific adjustments */
@@ -38,17 +39,40 @@
         #log-search {
             flex: 1;
             min-width: 120px;
+            margin-right: 0 !important;
+        }
+
+        .match-count {
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .bottom-button {
+            position: absolute !important;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 120px;
+            width: 90px;
+        }
+
+        #pause-indicator {
+            top: 124px !important;
+            right: 10px !important;
+        }
+
+        #goto-container {
+            width: 100%;
         }
     }
 
     .log-controls {
-        padding: 10px;
+        padding: 5px 10px;
         background-color: #333;
         border-bottom: 1px solid #555;
         display: flex;
         align-items: center;
         gap: 10px;
-        flex-wrap: wrap;
+        white-space: nowrap;
     }
 
     #log-level-filter {
@@ -158,8 +182,8 @@
 
     #pause-indicator {
         position: absolute;
-        top: 10px;
-        right: 10px;
+        top: 5px;
+        right: 8%;
         background-color: #444;
         color: #f4f4f4;
         padding: 5px 10px;
@@ -175,12 +199,6 @@
         0% { opacity: 0.7; }
         50% { opacity: 0; }
         100% { opacity: 0.7; }
-    }
-
-    @media screen and (max-width: 768px) {
-        #pause-indicator {
-            top: 55px;
-        }
     }
 
     /* Style for the new hidden div */
@@ -316,21 +334,28 @@
     }
 
     /* Add styles for the goto search container */
-    .goto-search-container {
+    .goto-container {
         display: flex;
-        align-items: center;
         gap: 5px;
-        position: relative;
     }
 
-    #goto-search {
+    .goto-btn {
         padding: 5px;
         background-color: #444;
         color: #f4f4f4;
         border: 1px solid #666;
         border-radius: 3px;
-        width: 150px;
-        padding-right: 8px;  /* Add some padding for cleaner text input */
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .goto-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .goto-btn:not(:disabled):hover {
+        background-color: #555;
     }
 
     .goto-nav-buttons {
@@ -339,25 +364,21 @@
     }
 
     .goto-nav-button {
+        padding: 5px;
         background-color: #444;
         color: #f4f4f4;
         border: 1px solid #666;
         border-radius: 3px;
-        padding: 5px 8px;
         cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 28px;  /* Ensure consistent button width */
-    }
-
-    .goto-nav-button:hover {
-        background-color: #555;
     }
 
     .goto-nav-button:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+    }
+
+    .goto-nav-button:not(:disabled):hover {
+        background-color: #555;
     }
 
     .match-count {
@@ -378,10 +399,44 @@
         background-color: rgba(255, 255, 0, 0.2);
         outline: 2px solid rgba(255, 255, 0, 0.3);
     }
+
+    #goto-search {
+        padding: 5px;
+        background-color: #444;
+        color: #f4f4f4;
+        border: 1px solid #666;
+        border-radius: 3px;
+        width: 150px;
+    }
+
+    /* Add styles for the bottom button */
+    .bottom-button {
+        position: absolute;
+        top: 5px;
+        right: 10px;
+        padding: 5px 10px;
+        background-color: #444;
+        color: #f4f4f4;
+        border: 1px solid #666;
+        border-radius: 3px;
+        cursor: pointer;
+        z-index: 100;
+        display: none;  /* Hidden by default, shown when not at bottom */
+    }
+
+    .bottom-button:hover {
+        background-color: #555;
+    }
+
+    /* Show bottom button when not at bottom */
+    .bottom-button.visible {
+        display: block;
+    }
 </style>
 
 <div class="log-container">
     <div id="pause-indicator">Logging paused...</div>
+    <button class="bottom-button" onclick="scrollToBottomAndResume()">⭳ Bottom</button>
     <div class="log-controls">
         <select id="log-level-filter">
             <option value="all">All Levels</option>
@@ -391,20 +446,20 @@
             <option value="error">Error</option>
             <option value="critical">Critical</option>
         </select>
-        <div class="goto-search-container">
-            <input type="text" id="goto-search" placeholder="Go to...">
-            <div class="goto-nav-buttons">
-                <button class="goto-nav-button" id="prev-match" title="Previous match (Shift+Enter)" disabled>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
-                    </svg>
-                </button>
-                <button class="goto-nav-button" id="next-match" title="Next match (Enter)" disabled>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                    </svg>
-                </button>
-            </div>
+        <div class="goto-container">
+            <button class="goto-btn" onclick="navigateToFirstMatch()">⭱ First</button>
+            <button class="goto-nav-button" id="prev-match" title="Previous match (Shift+Enter)" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+                </svg>
+            </button>
+            <input type="text" id="goto-search" placeholder="Go to... (Enter/Shift+Enter to navigate)" />
+            <button class="goto-nav-button" id="next-match" title="Next match (Enter)" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+            </button>
+            <button class="goto-btn" onclick="navigateToLastMatch()">⭳ Last</button>
             <span class="match-count"></span>
         </div>
         <input type="text" id="log-search" placeholder="Filter logs...">
@@ -440,11 +495,12 @@ let isScrolledToBottom = true;
 let isSearchActive = false;
 let currentMatches = [];
 let currentMatchIndex = -1;
-const MAX_LOGS = 500;
+const MAX_LOGS = 1500;
 
 function checkScrollPosition() {
     const logEntries = document.getElementById('log-entries');
     const previousScrolledToBottom = isScrolledToBottom;
+    const bottomButton = document.querySelector('.bottom-button');
     
     // Increase tolerance for mobile devices
     const tolerance = window.innerWidth <= 768 ? 50 : 2;
@@ -453,6 +509,13 @@ function checkScrollPosition() {
     clearTimeout(window.scrollTimeout);
     window.scrollTimeout = setTimeout(() => {
         isScrolledToBottom = Math.abs(logEntries.scrollHeight - logEntries.clientHeight - logEntries.scrollTop) < tolerance;
+        
+        // Show/hide bottom button based on scroll position
+        if (isScrolledToBottom) {
+            bottomButton.classList.remove('visible');
+        } else {
+            bottomButton.classList.add('visible');
+        }
         
         // Only update pause state if we've been in the new position for a moment
         if (isScrolledToBottom !== previousScrolledToBottom) {
@@ -951,7 +1014,33 @@ function navigateToMatch(index) {
     updateGotoNavButtons();
 }
 
+function navigateToFirstMatch() {
+    if (currentMatches && currentMatches.length > 0) {
+        currentMatchIndex = 0;
+        navigateToMatch(currentMatchIndex);
+        updateGotoNavButtons();
+    }
+}
+
+function navigateToLastMatch() {
+    if (currentMatches && currentMatches.length > 0) {
+        currentMatchIndex = currentMatches.length - 1;
+        navigateToMatch(currentMatchIndex);
+        updateGotoNavButtons();
+    }
+}
+
 // Add event listeners for goto search
+document.getElementById('goto-search').addEventListener('input', (e) => {
+    if (e.target.value) {
+        isPaused = true;
+        document.getElementById('pause-indicator').style.display = 'block';
+    } else {
+        isPaused = false;
+        document.getElementById('pause-indicator').style.display = 'none';
+    }
+});
+
 document.getElementById('goto-search').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
         if (e.shiftKey) {
@@ -1002,5 +1091,14 @@ document.getElementById('goto-search').addEventListener('input', (e) => {
         }, 300);  // Wait 300ms after typing stops before searching
     }
 });
+
+// Add function to scroll to bottom and resume logging
+function scrollToBottomAndResume() {
+    const logEntries = document.getElementById('log-entries');
+    scrollToBottom(logEntries);
+    isPaused = false;
+    document.getElementById('pause-indicator').style.display = 'none';
+    document.querySelector('.bottom-button').classList.remove('visible');
+}
 </script>
 {% endblock %}

@@ -1461,3 +1461,28 @@ h2 {
         display: none;
     }
 }
+
+/* Navigation hover effect for rate limits */
+#mainNav:hover + .rate-limits-section,
+#mainNav:hover ~ .rate-limits-section,
+#navMenu:hover + .rate-limits-section,
+#navMenu:hover ~ .rate-limits-section,
+.dropdown:hover + .rate-limits-section,
+.dropdown:hover ~ .rate-limits-section,
+header:hover ~ .rate-limits-section {
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -100%);
+    transition: all 0.5s ease 0.3s;
+}
+
+.rate-limits-section {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    transition: all 0.5s ease;
+    z-index: 998;
+    position: fixed;
+    top: 50px;
+    left: 50%;
+    width: auto;
+}

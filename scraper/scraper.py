@@ -66,6 +66,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
     try:
         start_time = time.time()
         
+        # Handle "No Version" case
+        if version == "No Version":
+            version = None
+            
         # Check for preferred alias first
         preferred_alias = get_preferred_alias(tmdb_id, imdb_id, content_type, season)
         if preferred_alias:
@@ -156,9 +160,27 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # Parse scraping settings based on version
             scraping_versions = get_setting('Scraping', 'versions', {})
             version_settings = scraping_versions.get(version, None)
+            logging.info(f"Scraping settings for version {version}: {version_settings}")
             if version_settings is None:
-                logging.warning(f"Version {version} not found in settings. Using default settings.")
-                version_settings = {}
+                logging.info(f"Using default settings for version {version}")
+                version_settings = {
+                    'enable_hdr': True,
+                    'max_resolution': '2160p',
+                    'resolution_wanted': '<=',
+                    'resolution_weight': '3',
+                    'hdr_weight': '3',
+                    'similarity_weight': '3',
+                    'size_weight': '3',
+                    'bitrate_weight': '3',
+                    'min_size_gb': 0.01,
+                    'max_size_gb': None,
+                    'similarity_threshold_anime': 0.35,
+                    'similarity_threshold': 0.8,
+                    'filter_in': [],
+                    'filter_out': [],
+                    'preferred_filter_in': [],
+                    'preferred_filter_out': []
+                }
 
             task_start = time.time()
             normalized_title = normalize_title(search_title)
@@ -207,6 +229,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 original_title = result.get('title', '')
                 normalized_result['original_title'] = original_title
                 normalized_result['title'] = parsed_info.get('title', original_title)
+                normalized_result['resolution'] = parsed_info.get('resolution', 'Unknown')
                 normalized_result['parsed_info'] = parsed_info
                 if is_alias:
                     normalized_result['alias_country'] = alias_country
@@ -330,6 +353,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         filtered_results = [sanitize_result(result) for result in filtered_results]
         filtered_out_results = [sanitize_result(result) for result in filtered_out_results] if filtered_out_results else None
+
+        if version == None:
+            # Sort by size in descending order (largest first)
+            filtered_results.sort(key=lambda x: float(x.get('size_gb', 0)), reverse=True)
 
         # Log final results
         logging.debug(f"Total scrape results: {len(filtered_results)}")

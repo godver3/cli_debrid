@@ -225,13 +225,13 @@ def _get_local_timezone():
     from settings import get_setting
     
     # Check for override in settings
-    timezone_override = get_setting('Debug', 'timezone_override', '')
-    if timezone_override:
-        try:
-            from zoneinfo import ZoneInfo
-            return ZoneInfo(timezone_override)
-        except ZoneInfoNotFoundError:
-            logging.error(f"Invalid timezone override: {timezone_override}, falling back to system timezone")
+    #timezone_override = '' # get_setting('Debug', 'timezone_override', '')
+    #if timezone_override:
+    #    try:
+    #        from zoneinfo import ZoneInfo
+    #        return ZoneInfo(timezone_override)
+    #    except ZoneInfoNotFoundError:
+    #        logging.error(f"Invalid timezone override: {timezone_override}, falling back to system timezone")
     
     return get_localzone()
 
@@ -401,6 +401,9 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                     content_sources = get_all_settings().get('Content Sources', {})
                     overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
                     versions = overseerr_settings.get('versions', {})
+                    # Add content source to episodes
+                    for episode in all_episodes:
+                        episode['content_source'] = 'overseerr_webhook'
                     add_wanted_items(all_episodes, versions)
 
         except Exception as e:

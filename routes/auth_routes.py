@@ -9,25 +9,44 @@ from settings import load_config
 from routes.onboarding_routes import get_next_onboarding_step
 from extensions import db, login_manager
 from .utils import is_user_system_enabled
+import random
+import string
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 
 def create_default_admin():
-    # Check if there are any existing users
+    """Create default admin user if no users exist."""
     if User.query.count() == 0:
-        default_admin = User.query.filter_by(username='admin').first()
-        if not default_admin:
-            # Log the hashing method being used
-            hashed_password = generate_password_hash('admin')
-            default_admin = User(
-                username='admin', 
-                password=hashed_password, 
-                role='admin', 
-                is_default=True,
-                onboarding_complete=False
-            )
-            db.session.add(default_admin)
-            db.session.commit()
+        # Check environment variables first
+        username = os.environ.get('DEFAULT_ADMIN_USER', 'admin')
+        password = os.environ.get('DEFAULT_ADMIN_PASSWORD', '')
+        skip_onboarding = os.environ.get('DISABLE_ONBOARDING', '').lower() in ('true', '1', 'yes')
+
+        logging.info(f"Creating default admin user '{username}'")
+        logging.info(f"Skip onboarding: {skip_onboarding}")
+        logging.info(f"Default admin password: {password}")
+        
+        # If no password specified, generate a random one
+        if not password:
+            password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+            logging.info(f"Generated random password for default admin: {password}")
+        
+        hashed_password = generate_password_hash(password)
+        
+        default_admin = User(
+            username=username,
+            password=hashed_password, 
+            role='admin', 
+            is_default=True,
+            onboarding_complete=skip_onboarding
+        )
+        db.session.add(default_admin)
+        db.session.commit()
+        
+        if skip_onboarding:
+            logging.info(f"Created default admin user '{username}' with onboarding disabled")
+        else:
+            logging.info(f"Created default admin user '{username}' - onboarding required")
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)

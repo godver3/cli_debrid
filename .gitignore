@@ -141,3 +141,4 @@ run.sh
 ~
 config/config.json.backup
 config/secret_key
+config

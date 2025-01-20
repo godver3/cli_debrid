@@ -436,7 +436,16 @@ def update_settings():
                 if isinstance(value, dict):
                     if key not in current or not isinstance(current[key], dict):
                         current[key] = {}
-                    update_nested_dict(current[key], value)
+                    if key == 'Content Sources':
+                        for source_id, source_config in value.items():
+                            if source_id in current[key]:
+                                # Don't save config here, just update the dictionary
+                                current[key][source_id].update(source_config)
+                            else:
+                                # Don't save config here, just add to the dictionary
+                                current[key][source_id] = source_config
+                    else:
+                        update_nested_dict(current[key], value)
                 else:
                     current[key] = value
 
@@ -445,7 +454,7 @@ def update_settings():
         # Update content source check periods
         if 'Debug' in new_settings and 'content_source_check_period' in new_settings['Debug']:
             config['Debug']['content_source_check_period'] = {
-                source: int(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
+                source: float(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
             }
         
         # Handle Reverse Parser settings
@@ -459,6 +468,14 @@ def update_settings():
 
         save_config(config)
         
+        # Save config only once at the end
+        from debrid import reset_provider
+        reset_provider()
+        from queue_manager import QueueManager
+        QueueManager().reinitialize_queues()
+        from run_program import ProgramRunner
+        ProgramRunner().reinitialize()
+
         return jsonify({"status": "success", "message": "Settings updated successfully"})
     except Exception as e:
         logging.error(f"Error updating settings: {str(e)}", exc_info=True)

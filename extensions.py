@@ -14,9 +14,9 @@ import os
 from tld import get_tld
 from tld.exceptions import TldDomainNotFound, TldBadUrl
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+# Configure logging at INFO level only
+#logging.basicConfig(level=logging.INFO)
+#logger = logging.getLogger(__name__)
 
 def get_root_domain(host):
     """Get the root domain from a hostname."""
@@ -45,7 +45,6 @@ def get_root_domain(host):
 class SameSiteMiddleware:
     def __init__(self, app):
         self.app = app
-        self.logger = logging.getLogger('SameSiteMiddleware')
 
     def __call__(self, environ, start_response):
         def custom_start_response(status, headers, exc_info=None):
@@ -54,9 +53,6 @@ class SameSiteMiddleware:
             root_domain = get_root_domain(host)
             proto = environ.get('HTTP_X_FORWARDED_PROTO', environ.get('wsgi.url_scheme', 'http'))
             is_secure = (proto == 'https')
-            
-            self.logger.debug(f"Cookie middleware: host={host}, root_domain={root_domain}, proto={proto}, is_secure={is_secure}")
-            self.logger.debug(f"Request environment: scheme={environ.get('wsgi.url_scheme')}, forwarded_proto={environ.get('HTTP_X_FORWARDED_PROTO')}")
             
             for name, value in headers:
                 if name.lower() == 'set-cookie':
@@ -70,22 +66,16 @@ class SameSiteMiddleware:
                     
                     # Handle session and remember token cookies
                     if 'session=' in cookie_main or 'remember_token=' in cookie_main:
-                        # Check if this is a cookie clearing operation
                         is_clearing = ('=' not in cookie_main or 
                                      cookie_main.split('=')[1] == '' or 
                                      cookie_main.endswith('='))
                         
-                        self.logger.debug(f"Processing cookie: {cookie_main}, is_clearing={is_clearing}")
-                        
                         if is_clearing:
-                            # For cookie clearing, set expires in the past
                             value = f"{cookie_main}; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
                             if root_domain:
                                 value += f"; Domain={root_domain}"
                         else:
-                            # Normal cookie setting - more lenient approach
                             cookie_attrs['samesite'] = 'SameSite=Lax'
-                            # Only set Secure flag if explicitly HTTPS
                             if is_secure:
                                 cookie_attrs['secure'] = 'Secure'
                             
@@ -93,7 +83,6 @@ class SameSiteMiddleware:
                                 cookie_attrs['domain'] = f'Domain={root_domain}'
                             cookie_attrs['path'] = 'Path=/'
                             
-                            # Reconstruct the cookie with attributes
                             value = '; '.join([
                                 cookie_main,
                                 cookie_attrs.get('path', 'Path=/'),
@@ -102,9 +91,6 @@ class SameSiteMiddleware:
                                 cookie_attrs.get('secure', ''),
                                 cookie_attrs.get('httponly', 'HttpOnly')
                             ]).rstrip('; ')
-                            
-                            self.logger.debug(f"Final cookie value: {value}")
-                            self.logger.debug(f"Cookie attributes: {cookie_attrs}")
                     
                 new_headers.append((name, value))
             

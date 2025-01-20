@@ -382,6 +382,10 @@ class RealDebridProvider(DebridProvider):
         """Get number of active downloads and download limit"""
         try:
             # Get active torrents count and limit
+            from settings import get_setting
+            if get_setting("Debrid Provider", "api_key") == "demo_key":
+                return 0, 0
+
             active_data = make_request('GET', '/torrents/activeCount', self.api_key)
             
             active_count = active_data.get('nb', 0)
@@ -407,6 +411,10 @@ class RealDebridProvider(DebridProvider):
     def get_user_traffic(self) -> Dict:
         """Get user traffic information"""
         try:
+            from settings import get_setting
+            if get_setting("Debrid Provider", "api_key") == "demo_key":
+                return {'downloaded': 0, 'limit': None}
+
             traffic_info = make_request('GET', '/traffic/details', self.api_key)
             overall_traffic = make_request('GET', '/traffic', self.api_key)
 

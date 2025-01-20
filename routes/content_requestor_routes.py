@@ -88,6 +88,10 @@ def request_content():
         if not all_items:
             return jsonify({'error': 'No valid items after processing'}), 400
             
+        # Add content source to all items
+        for item in all_items:
+            item['content_source'] = 'content_requestor'
+            
         # Pass versions dictionary to add_wanted_items
         add_wanted_items(all_items, versions)
         

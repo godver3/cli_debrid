@@ -159,7 +159,8 @@ def add_collected_items(media_items_batch, recent=False):
                                     'version': existing_item['version'],
                                     'season_number': existing_item.get('season_number'),
                                     'episode_number': existing_item.get('episode_number'),
-                                    'filled_by_file': existing_item.get('filled_by_file')
+                                    'filled_by_file': existing_item.get('filled_by_file'),
+                                    'resolution': existing_item.get('resolution')  # Preserve old resolution for reference
                                 }
                                 
                                 if upgrade_item['filled_by_file'] != upgrade_item['upgrading_from']:
@@ -180,9 +181,10 @@ def add_collected_items(media_items_batch, recent=False):
                                 UPDATE media_items
                                 SET state = ?, last_updated = ?, collected_at = ?, 
                                     original_collected_at = COALESCE(original_collected_at, ?),
-                                    location_on_disk = ?, upgraded = ?
+                                    location_on_disk = ?, upgraded = ?, resolution = ?
                                 WHERE id = ?
-                            ''', (new_state, datetime.now(), collected_at, existing_collected_at, location, is_upgrade, item_id))
+                            ''', (new_state, datetime.now(), collected_at, existing_collected_at, 
+                                  location, is_upgrade, item.get('resolution'), item_id))
 
                             if not existing_item.get('collected_at'):
                                 cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
@@ -201,12 +203,12 @@ def add_collected_items(media_items_batch, recent=False):
                         if item_type == 'movie':
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), location, False, item.get('country', '').lower()
+                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), location, False, item.get('country', '').lower(), item.get('resolution')
                             ))
                         else:
                             if imdb_id not in airtime_cache:
@@ -219,13 +221,13 @@ def add_collected_items(media_items_batch, recent=False):
                             airtime = airtime_cache[imdb_id]
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), location, False, item.get('country', '').lower()
+                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), location, False, item.get('country', '').lower(), item.get('resolution')
                             ))
 
             except Exception as e:

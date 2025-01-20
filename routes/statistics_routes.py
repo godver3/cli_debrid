@@ -18,6 +18,8 @@ from database.statistics import get_cached_download_stats
 import json
 import math
 from functools import wraps
+from zoneinfo import ZoneInfo
+from tzlocal import get_localzone
 
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
@@ -139,7 +141,13 @@ def get_recently_aired_and_airing_soon():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    now = datetime.now()
+    # Get timezone from system or override
+    timezone = get_setting('Debug', 'timezone_override', '')
+    if timezone: 
+        local_tz = ZoneInfo(timezone)
+    else:
+        local_tz = get_localzone()
+    now = datetime.now(local_tz)
     two_days_ago = now - timedelta(days=2)
     
     query = """
@@ -194,7 +202,14 @@ def get_recently_aired_and_airing_soon():
                 logging.warning(f"Invalid airtime format for {title}: {airtime}. Using default.")
                 airtime = datetime.strptime("19:00", '%H:%M').time()
             
+            # Create datetime in system timezone first
+            system_tz = get_localzone()
             air_datetime = datetime.combine(release_date.date(), airtime)
+            air_datetime = system_tz.localize(air_datetime) if hasattr(system_tz, 'localize') else air_datetime.replace(tzinfo=system_tz)
+            
+            # Convert to display timezone if different
+            if local_tz != system_tz:
+                air_datetime = air_datetime.astimezone(local_tz)
             
             # Create a key for grouping
             show_key = f"{title}_{season}_{release_date.date()}"
@@ -295,7 +310,11 @@ def root():
     stats = {}
     
     # Get timezone from system or override
-    local_tz = _get_local_timezone()
+    timezone = get_setting('Debug', 'timezone_override', '')
+    if timezone: 
+        local_tz = ZoneInfo(timezone)
+    else:
+        local_tz = get_localzone()
     stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)
     
@@ -734,6 +753,12 @@ def format_datetime_preference(date_input, use_24hour_format):
     if not date_input:
         return ''
     try:
+        # Get timezone from system or override
+        timezone = get_setting('Debug', 'timezone_override', '')
+        if timezone: 
+            local_tz = ZoneInfo(timezone)
+        else:
+            local_tz = get_localzone()
         if isinstance(date_input, str):
             date = datetime.fromisoformat(date_input.rstrip('Z'))  # Remove 'Z' if present
         elif isinstance(date_input, datetime):
@@ -741,7 +766,11 @@ def format_datetime_preference(date_input, use_24hour_format):
         else:
             return str(date_input)
         
-        now = datetime.now()
+        # Ensure the datetime is timezone-aware
+        if date.tzinfo is None:
+            date = local_tz.localize(date) if hasattr(local_tz, 'localize') else date.replace(tzinfo=local_tz)
+        
+        now = datetime.now(local_tz)
         today = now.date()
         yesterday = today - timedelta(days=1)
         tomorrow = today + timedelta(days=1)

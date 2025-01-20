@@ -33,6 +33,7 @@ class ScrapingQueue:
             item_identifier = queue_manager.generate_identifier(item)
             try:
                 logging.info(f"Starting to process scraping results for {item_identifier}")
+                logging.debug(f"Scraping Queue - Item resolution: {item.get('resolution', 'Not found')} for {item_identifier}")
                 
                 # Check release date logic
                 if item['release_date'] == 'Unknown':
@@ -131,6 +132,9 @@ class ScrapingQueue:
                         logging.info(f"Reverse order scraping enabled. Reversing results.")
                         filtered_results.reverse()
                     
+                    for result in filtered_results:
+                        logging.debug(f"Result: {result.get('resolution', 'Unknown')} - {result['title']}")
+
                     logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
                     try:
                         queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)

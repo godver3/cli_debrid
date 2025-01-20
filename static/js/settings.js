@@ -94,6 +94,13 @@ export function updateSettings() {
         }
 
         const nameParts = name.split('.');
+        // Special handling for content source check period
+        if (nameParts.length >= 3 && nameParts[0] === 'Debug' && nameParts[1] === 'content_source_check_period') {
+            console.log(`Content source check period - Before conversion: name=${name}, value=${value}, type=${typeof value}`);
+            value = parseFloat(value) || 0;
+            console.log(`Content source check period - After conversion: value=${value}, type=${typeof value}`);
+        }
+
         let current = settingsData;
         
         for (let i = 0; i < nameParts.length - 1; i++) {
@@ -317,6 +324,14 @@ export function updateSettings() {
         }
     });
 
+    // Log the Debug settings before sending
+    if (settingsData.Debug && settingsData.Debug.content_source_check_period) {
+        console.log('Final Debug content_source_check_period values:', settingsData.Debug.content_source_check_period);
+        Object.entries(settingsData.Debug.content_source_check_period).forEach(([key, value]) => {
+            console.log(`${key}: value=${value}, type=${typeof value}`);
+        });
+    }
+
     const versions = {};
     document.querySelectorAll('.settings-section[data-version-id]').forEach(section => {
         const versionId = section.getAttribute('data-version-id');
@@ -507,7 +522,7 @@ export function updateSettings() {
         const sourceName = input.id.replace('debug-content-source-', '');
         const value = input.value.trim();
         if (value !== '') {
-            contentSourceCheckPeriods[sourceName] = parseInt(value) || 1;
+            contentSourceCheckPeriods[sourceName] = parseFloat(value) || 0.1;
         }
     });
     settingsData['Debug'] = settingsData['Debug'] || {};
@@ -869,7 +884,9 @@ function updateContentSourceCheckPeriods() {
         const defaultInterval = defaultIntervals[sourceType] ? Math.floor(defaultIntervals[sourceType] / 60) : '';  // Convert seconds to minutes
         div.innerHTML = `
             <label for="debug-content-source-${source}">${source}:</label>
-            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" min="1" class="settings-input" placeholder="${defaultInterval}">
+            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" 
+                   value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" 
+                   step="0.1" min="0.1" class="settings-input" placeholder="${defaultInterval}">
         `;
         contentSourcesDiv.appendChild(div);
     });
