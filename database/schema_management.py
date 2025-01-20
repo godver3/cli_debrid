@@ -100,6 +100,13 @@ def migrate_schema():
         if 'requested_season' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN requested_season BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added requested_season column to media_items table.")
+        if 'content_source' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN content_source TEXT')
+            logging.info("Successfully added content_source column to media_items table.")
+        if 'resolution' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN resolution TEXT')
+            logging.info("Successfully added resolution column to media_items table.")
+        
         # logging.info("Successfully added new columns to media_items table.")
 
         # Remove the existing index if it exists
@@ -200,7 +207,9 @@ def create_tables():
                 fall_back_to_single_scraper BOOLEAN DEFAULT FALSE,
                 preferred_alias TEXT,
                 upgrading BOOLEAN DEFAULT FALSE,
-                requested_season BOOLEAN DEFAULT FALSE
+                requested_season BOOLEAN DEFAULT FALSE,
+                content_source TEXT,
+                resolution TEXT
             )
         ''')
 

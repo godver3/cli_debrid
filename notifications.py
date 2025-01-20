@@ -115,7 +115,9 @@ def format_notification_content(notifications, notification_type, notification_c
         new_state = item.get('new_state', '')
         
         # Choose prefix based on state and upgrade status
-        if new_state == 'Checking':
+        if new_state == 'Downloading':
+            prefix = "⬇️"  # Download emoji for downloading state
+        elif new_state == 'Checking':
             prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
         elif new_state == 'Upgrading':
             prefix = EMOJIS['movie'] if media_type == 'movie' else EMOJIS['show']

@@ -181,11 +181,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 if item_type == 'movie':
                     conn.execute('''
                         INSERT INTO media_items
-                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'), item.get('country', '').lower()
+                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'), item.get('country', '').lower(), item.get('content_source')
                     ))
                     items_added += 1
                 else:
@@ -203,14 +203,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         INSERT INTO media_items
                         (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, 
                          episode_title, last_updated, version, runtime, airtime, genres, country, blacklisted_date,
-                         requested_season)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         requested_season, content_source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                         item.get('release_date'), initial_state, 'episode',
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
                         datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower(),
-                        blacklisted_date, item.get('requested_season', False)
+                        blacklisted_date, item.get('requested_season', False), item.get('content_source')
                     ))
                     items_added += 1
 

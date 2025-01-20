@@ -948,6 +948,8 @@ def main():
         while True:
             time.sleep(5)
     except KeyboardInterrupt:
+        from program_operation_routes import cleanup_port
+        cleanup_port()
         stop_program()
         stop_global_profiling()
         print("Program stopped.")

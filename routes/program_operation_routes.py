@@ -14,21 +14,179 @@ import time
 import socket
 import os
 import re
+import signal
+import psutil
+import sys
+import subprocess
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
 program_runner = None
+server_thread = None
 
 def get_program_runner():
     global program_runner
     return program_runner
+
+def cleanup_port(port):
+    """Cleanup any process using the specified port using multiple methods."""
+    try:
+        success = False
+        
+        # Method 1: Try lsof
+        try:
+            output = subprocess.check_output(['lsof', '-t', '-i', f':{port}'], stderr=subprocess.PIPE)
+            pids = output.decode().strip().split('\n')
+            
+            for pid in pids:
+                if pid:  # Check if pid is not empty
+                    pid = int(pid)
+                    logging.info(f"Found process {pid} using port {port} via lsof")
+                    try:
+                        # First try SIGTERM
+                        os.kill(pid, signal.SIGTERM)
+                        logging.info(f"Sent SIGTERM to process {pid}")
+                        
+                        # Wait up to 5 seconds for process to terminate
+                        for _ in range(50):  # 50 * 0.1 = 5 seconds
+                            try:
+                                # Check if process still exists
+                                os.kill(pid, 0)
+                                time.sleep(0.1)
+                            except OSError:
+                                # Process has terminated
+                                success = True
+                                break
+                        
+                        # If process still exists after timeout, use SIGKILL
+                        try:
+                            os.kill(pid, 0)
+                            logging.warning(f"Process {pid} did not respond to SIGTERM, using SIGKILL")
+                            os.kill(pid, signal.SIGKILL)
+                        except OSError:
+                            # Process has already terminated
+                            pass
+                            
+                        success = True
+                    except OSError as e:
+                        logging.error(f"Error killing process {pid}: {e}")
+                        
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 1 and not e.output:  # lsof returns 1 when no processes found
+                logging.info(f"No processes found using port {port} via lsof")
+            else:
+                logging.error(f"Error running lsof: {e}")
+        
+        # Method 2: Try netstat
+        try:
+            output = subprocess.check_output(['netstat', '-tlpn'], stderr=subprocess.PIPE)
+            for line in output.decode().split('\n'):
+                if f':{port}' in line:
+                    # Extract PID from netstat output
+                    match = re.search(r'LISTEN\s+(\d+)/', line)
+                    if match:
+                        pid = int(match.group(1))
+                        logging.info(f"Found process {pid} using port {port} via netstat")
+                        try:
+                            # First try SIGTERM
+                            os.kill(pid, signal.SIGTERM)
+                            logging.info(f"Sent SIGTERM to process {pid}")
+                            
+                            # Wait up to 5 seconds for process to terminate
+                            for _ in range(50):  # 50 * 0.1 = 5 seconds
+                                try:
+                                    # Check if process still exists
+                                    os.kill(pid, 0)
+                                    time.sleep(0.1)
+                                except OSError:
+                                    # Process has terminated
+                                    success = True
+                                    break
+                            
+                            # If process still exists after timeout, use SIGKILL
+                            try:
+                                os.kill(pid, 0)
+                                logging.warning(f"Process {pid} did not respond to SIGTERM, using SIGKILL")
+                                os.kill(pid, signal.SIGKILL)
+                            except OSError:
+                                # Process has already terminated
+                                pass
+                                
+                            success = True
+                        except OSError as e:
+                            logging.error(f"Error killing process {pid}: {e}")
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Error running netstat: {e}")
+        
+        # Method 3: Try fuser as last resort
+        try:
+            output = subprocess.check_output(['fuser', f'{port}/tcp'], stderr=subprocess.PIPE)
+            pids = output.decode().strip().split()
+            for pid in pids:
+                if pid:
+                    pid = int(pid)
+                    logging.info(f"Found process {pid} using port {port} via fuser")
+                    try:
+                        # First try SIGTERM
+                        os.kill(pid, signal.SIGTERM)
+                        logging.info(f"Sent SIGTERM to process {pid}")
+                        
+                        # Wait up to 5 seconds for process to terminate
+                        for _ in range(50):  # 50 * 0.1 = 5 seconds
+                            try:
+                                # Check if process still exists
+                                os.kill(pid, 0)
+                                time.sleep(0.1)
+                            except OSError:
+                                # Process has terminated
+                                success = True
+                                break
+                        
+                        # If process still exists after timeout, use SIGKILL
+                        try:
+                            os.kill(pid, 0)
+                            logging.warning(f"Process {pid} did not respond to SIGTERM, using SIGKILL")
+                            os.kill(pid, signal.SIGKILL)
+                        except OSError:
+                            # Process has already terminated
+                            pass
+                            
+                        success = True
+                    except OSError as e:
+                        logging.error(f"Error killing process {pid}: {e}")
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 1:  # fuser returns 1 when no processes found
+                logging.info(f"No processes found using port {port} via fuser")
+            else:
+                logging.error(f"Error running fuser: {e}")
+        
+        if success:
+            # Give the system time to fully release the port
+            time.sleep(2)
+            return True
+            
+        return False
+            
+    except Exception as e:
+        logging.error(f"Error cleaning up port {port}: {str(e)}")
+        return False
+
+def signal_handler(signum, frame):
+    """Handle termination signals gracefully."""
+    logging.info(f"Received signal {signum}")
+    stop_program()
+    sys.exit(0)
 
 def run_server():
     from extensions import app
     
     # Get port from environment variable or use default
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port)
+    try:
+        app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port)
+    except Exception as e:
+        logging.error(f"Error running server: {str(e)}")
+        cleanup_port(port)
 
 def start_server():
     from extensions import app
@@ -36,19 +194,42 @@ def start_server():
     
     # Get port from environment variable or use default
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+    max_retries = 3
+    retry_delay = 2  # seconds
     
-    # Check if port is available
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(('0.0.0.0', port))
-        sock.close()
-    except socket.error:
-        logging.error(f"Port {port} is already in use. Please close any other instances or applications using this port.")
-        return False
+    for attempt in range(max_retries):
+        # Check if port is available
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(('0.0.0.0', port))
+            sock.close()
+            
+            if result != 0:  # Port is free
+                break
+                
+            # Port is in use, try to clean it up
+            logging.warning(f"Port {port} is in use (attempt {attempt + 1}/{max_retries}), attempting to clean up...")
+            if cleanup_port(port):
+                time.sleep(retry_delay)  # Wait for port to be fully released
+                continue
+            else:
+                if attempt == max_retries - 1:
+                    logging.error(f"Port {port} is still in use after {max_retries} cleanup attempts. Please try again or use a different port.")
+                    return False
+        except Exception as e:
+            logging.error(f"Error checking port {port}: {e}")
+            return False
+        
+    # Setup signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
         
     with app.app_context():
         perform_database_migration()
         initialize_app()
+    
+    global server_thread
     server_thread = threading.Thread(target=run_server)
     server_thread.daemon = True
     server_thread.start()
@@ -142,16 +323,23 @@ def start_program():
     return jsonify({"status": "success", "message": "Program started"})
 
 def stop_program():
-    global program_runner
-    if program_runner is not None and program_runner.is_running():
-        program_runner.stop()
-        # Invalidate content sources cache before nulling the instance
-        program_runner.invalidate_content_sources_cache()
-        program_runner = None
+    global program_runner, server_thread
+    try:
+        if program_runner is not None and program_runner.is_running():
+            program_runner.stop()
+            # Invalidate content sources cache before nulling the instance
+            program_runner.invalidate_content_sources_cache()
+            program_runner = None
+            
+        # Cleanup port
+        # port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+        # cleanup_port(port)
+        
         current_app.config['PROGRAM_RUNNING'] = False
         return {"status": "success", "message": "Program stopped"}
-    else:
-        return {"status": "error", "message": "Program is not running"}
+    except Exception as e:
+        logging.error(f"Error stopping program: {str(e)}")
+        return {"status": "error", "message": f"Error stopping program: {str(e)}"}
 
 @program_operation_bp.route('/api/stop_program', methods=['POST'])
 def stop_program_route():
@@ -178,7 +366,7 @@ def program_is_running():
     global program_runner
     return program_runner.is_running() if program_runner else False
 
-def program_is_initializing():  # Add this function
+def program_is_initializing():  
     global program_runner
     return program_runner.is_initializing() if program_runner else False
 

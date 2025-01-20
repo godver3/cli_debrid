@@ -59,7 +59,7 @@ def save_config(config):
             try:
                 from routes.base_routes import clear_cache
                 clear_cache()  # Clear the update check cache when settings are saved
-                logging.debug("Cleared update check cache after saving settings")
+                #logging.debug("Cleared update check cache after saving settings")
             except Exception as e:
                 logging.error(f"Error clearing update check cache: {str(e)}")
 

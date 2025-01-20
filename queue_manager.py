@@ -216,6 +216,9 @@ class QueueManager:
         update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
+            # Copy downloading flag from original item
+            if 'downloading' in item:
+                updated_item['downloading'] = item['downloading']
             self.queues["Checking"].add_item(updated_item)
             # Remove the item from the Adding queue and the Wanted queue
             if from_queue in ["Adding", "Wanted"]:

@@ -146,10 +146,10 @@ class ProgramRunner:
                 'Overseerr': 900,
                 'MDBList': 900,
                 'Collected': 86400,
-                'Trakt Watchlist': 900,
+                'Trakt Watchlist': 30,
                 'Trakt Lists': 900,
                 'Trakt Collection': 900,
-                'My Plex Watchlist': 900,
+                'My Plex Watchlist': 30,
                 'Other Plex Watchlist': 900
             }
             
@@ -166,7 +166,8 @@ class ProgramRunner:
                 # Use custom check period if present, otherwise use default
                 custom_interval = custom_check_periods.get(source)
                 if custom_interval is not None:
-                    data['interval'] = int(custom_interval) * 60  # Convert minutes to seconds
+                    # Convert minutes to seconds, handling decimals
+                    data['interval'] = int(float(custom_interval) * 60)  # First multiply by 60, then convert to int
                 else:
                     data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
 
@@ -462,6 +463,8 @@ class ProgramRunner:
                             processed_items = process_metadata(items)
                             if processed_items:
                                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                                for item in all_items:
+                                    item['content_source'] = source
                                 add_wanted_items(all_items, item_versions or versions)
                                 total_items += len(all_items)
                         except Exception as e:
@@ -473,6 +476,8 @@ class ProgramRunner:
                         processed_items = process_metadata(wanted_content)
                         if processed_items:
                             all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                            for item in all_items:
+                                item['content_source'] = source
                             add_wanted_items(all_items, versions)
                             total_items += len(all_items)
                     except Exception as e:
@@ -843,6 +848,8 @@ def process_overseerr_webhook(data):
         logging.info(f"Versions: {versions}")
 
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
+        for item in all_items:
+            item['content_source'] = 'overseerr_webhook'
         add_wanted_items(all_items, versions)
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
 

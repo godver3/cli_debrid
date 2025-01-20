@@ -186,7 +186,7 @@ class CheckingQueue:
                                 'version': item.get('version', ''),
                                 'season_number': item.get('season_number'),
                                 'episode_number': item.get('episode_number'),
-                                'new_state': 'Checking',
+                                'new_state': 'Downloading' if item.get('downloading') else 'Checking',
                                 'is_upgrade': False,
                                 'upgrading_from': None
                             }
@@ -211,6 +211,10 @@ class CheckingQueue:
             logging.debug(f"Cleaned up progress checks for torrent {torrent_id} as it has no more associated items")
 
     def process(self, queue_manager):
+        if self.items:
+            item = self.items[0]
+            item_identifier = queue_manager.generate_identifier(item)
+            logging.debug(f"Checking Queue - Processing item with resolution: {item.get('resolution', 'Not found')} for {item_identifier}")
         #logging.debug(f"Starting to process checking queue with {len(self.items)} items")
         current_time = time.time()
 

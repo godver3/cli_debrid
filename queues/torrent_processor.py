@@ -249,7 +249,7 @@ class TorrentProcessor:
                     except Exception as e:
                         logging.error(f"[Result {idx}/{len(results)}] Error checking download limits: {str(e)}")
                         continue
-                
+
                 info = None
                 torrent_title = None
                 if is_cached:
@@ -283,7 +283,7 @@ class TorrentProcessor:
                 if info:
                     info['title'] = torrent_title or result.get('title', '')
                     info['original_scraped_torrent_title'] = result.get('original_title')
-                    
+                    info['downloading'] = not is_cached
                     if len(info.get('files', [])) > 0:
                         if item and 'magnet' in result:
                             result_magnet = result['magnet']

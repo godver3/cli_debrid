@@ -72,6 +72,11 @@ class AddingQueue:
             return False
             
         success = False
+        if self.items:
+            item = self.items[0]  # Peek at first item
+            item_identifier = queue_manager.generate_identifier(item)
+            logging.debug(f"Adding Queue - Processing item with resolution: {item.get('resolution', 'Not found')} for {item_identifier}")
+            
         for item in self.items[:]:  # Copy list as we'll modify it
             item_identifier = f"{item.get('title')} ({item.get('type')})"
             logging.info(f"Processing item: {item_identifier}")
@@ -149,7 +154,14 @@ class AddingQueue:
                 logging.info(f"Best matching file for {item_identifier}: {matched_file}")
                 
                 original_scraped_torrent_title = torrent_info.get('original_scraped_torrent_title')
-                update_media_item(item['id'], original_scraped_torrent_title=original_scraped_torrent_title)
+                resolution = None
+                # Extract resolution from torrent info or scrape results
+                if results and isinstance(results[0], dict):
+                    best_result = results[0]
+                    resolution = best_result.get('resolution')
+                    logging.debug(f"Extracted resolution {resolution} from best result for {item_identifier}")
+
+                update_media_item(item['id'], original_scraped_torrent_title=original_scraped_torrent_title, resolution=resolution)
 
                 logging.info(f"Moving {item_identifier} to checking queue")
                 queue_manager.move_to_checking(
@@ -172,6 +184,14 @@ class AddingQueue:
                         related_identifier = f"{related.get('title')} S{related.get('season_number')}E{related.get('episode_number')}"
                         related_matches = self.media_matcher.match_content(files, related)
                         if related_matches:
+                            # Pass resolution to related episodes
+                            resolution = None
+                            if results and isinstance(results[0], dict):
+                                best_result = results[0]
+                                resolution = best_result.get('resolution')
+                                logging.debug(f"Passing resolution {resolution} to related episode {related_identifier}")
+
+                            update_media_item(related['id'], original_scraped_torrent_title=original_scraped_torrent_title, resolution=resolution)
                             related_file = related_matches[0][0]
                             logging.info(f"Moving related episode {related_identifier} to checking")
                             queue_manager.move_to_checking(

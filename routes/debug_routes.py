@@ -345,8 +345,8 @@ def update_trakt_settings(content_sources):
         if source_id.startswith('Trakt Lists') and source_data['enabled']
     ])
 
-    set_setting('Trakt', 'user_watchlist_enabled', trakt_watchlist_enabled)
-    set_setting('Trakt', 'trakt_lists', trakt_lists)
+    #set_setting('Trakt', 'user_watchlist_enabled', trakt_watchlist_enabled)
+    #set_setting('Trakt', 'trakt_lists', trakt_lists)
 
 def get_and_add_wanted_content(source_id):
     content_sources = get_all_settings().get('Content Sources', {})
@@ -396,6 +396,9 @@ def get_and_add_wanted_content(source_id):
             processed_items = process_metadata(items)
             if processed_items:
                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                # Add content source
+                for item in all_items:
+                    item['content_source'] = source_id
                 logging.debug(f"Calling add_wanted_items with {len(all_items)} items and versions: {item_versions}")
                 add_wanted_items(all_items, item_versions)
                 total_items += len(all_items)

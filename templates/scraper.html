@@ -115,6 +115,7 @@
         <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">
             <input type="text" name="search_term" placeholder="Enter search term" required>
             <select name="version" id="version-select">
+                <option value="No Version">No Version</option>
                 {% for version in versions %}
                     <option value="{{ version }}">{{ version }}</option>
                 {% endfor %}

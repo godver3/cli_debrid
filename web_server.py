@@ -43,7 +43,7 @@ start_time = time.time()
 
 # Get config directory from environment variable with fallback
 config_dir = os.environ.get('USER_CONFIG', '/user/config')
-CONFIG_FILE = os.path.join(config_dir, 'config.json')
+CONFIG_FILE = os.path.join(config_dir, 'runtime-config.json')
 
 register_blueprints(app)
 

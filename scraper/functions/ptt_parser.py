@@ -30,6 +30,7 @@ def parse_with_ptt(title: str) -> Dict[str, Any]:
             'seasons': result.get('seasons', []),
             'episodes': result.get('episodes', [])
         }
+        logging.debug(f"PTT Parser - Resolution set to: {processed['resolution']} for title: {title}")
         
         # Handle single season/episode for compatibility
         if len(processed['seasons']) == 1:
