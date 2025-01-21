@@ -46,7 +46,8 @@ class ScrapingQueue:
                     release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
                     today = date.today()
 
-                    if release_date > today:
+                    # Only check release date if not an early release
+                    if not item.get('early_release', False) and release_date > today:
                         logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
                         queue_manager.move_to_wanted(item, "Scraping")
                         processed_count += 1
