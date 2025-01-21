@@ -31,7 +31,7 @@
             message: 'Select the type of scraper you want to add:',
             dropdownOptions: [
                 { value: 'Zilean', text: 'Zilean' },
-                { value: 'Comet', text: 'Comet' },
+                { value: 'MediaFusion', text: 'MediaFusion' },
                 { value: 'Jackett', text: 'Jackett' },
                 { value: 'Torrentio', text: 'Torrentio' },
                 { value: 'Nyaa', text: 'Nyaa' }
@@ -180,7 +180,7 @@
             <label for="{{ scraper_id }}-enabled" class="settings-title">Enabled:</label>
             <input type="checkbox" id="{{ scraper_id }}-enabled" name="Scrapers.{{ scraper_id }}.enabled" {% if config.enabled %}checked{% endif %} data-section="Scrapers" data-key="{{ scraper_id }}.enabled">
         </div>
-        {% if config.type in ['Zilean', 'Comet', 'Jackett'] %}
+        {% if config.type in ['Zilean', 'MediaFusion', 'Jackett'] %}
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-url" class="settings-title">URL:</label>
             <input type="text" id="{{ scraper_id }}-url" name="Scrapers.{{ scraper_id }}.url" value="{{ config.url }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.url">

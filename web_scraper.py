@@ -388,7 +388,7 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
 
         if season is not None:
             return {
-                "episodeResults": [
+                "episode_results": [
                     {
                         "id": media_id,
                         "title": title,
@@ -410,7 +410,7 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
             }
         else:
             return {
-                "results": [
+                "episode_results": [
                     {
                         "id": media_id,
                         "title": title,
