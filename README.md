@@ -281,6 +281,7 @@ cli_debrid will always be free for anyone to use.
 Thanks to:
 
 - Various other projects that have come before this one, and likely do things better in many ways
+- Specific thanks to the NyaaPy and PTT/Parsett libraries (https://github.com/JuanjoSalvador/NyaaPy and https://github.com/dreulavelle/PTT)
 - The original creator of plex_debrid
 - Helpful communities of content creators
 
