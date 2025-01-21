@@ -545,6 +545,9 @@ def refresh_release_dates():
             if media_type == 'movie':
                 new_release_date = get_release_date(metadata, imdb_id)
 
+                # Store original values for comparison
+                item_dict['early_release_original'] = item_dict.get('early_release', False)
+
                 # Check Trakt for early releases if setting is enabled
                 trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
                 if trakt_early_releases:
@@ -557,10 +560,6 @@ def refresh_release_dates():
                             if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
                                 logging.info(f"Movie found in early release list: {trakt_list['name']}")
                                 item_dict['early_release'] = True
-                                # Set release date to today for early releases
-                                new_release_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                                logging.info(f"Setting early release date to today: {new_release_date}")
-                                break
             else:  # TV show episode
                 retry_count = 0
                 while retry_count < 2:  # Try up to 2 times (original + 1 retry)
@@ -684,8 +683,8 @@ def refresh_release_dates():
 
             logging.info(f"New state: {new_state}")
 
-            if new_state != item_dict['state'] or new_release_date != item_dict['release_date']:
-                logging.info("Updating release date and state in database")
+            if new_state != item_dict['state'] or new_release_date != item_dict['release_date'] or item_dict.get('early_release', False) != item_dict.get('early_release_original', False):
+                logging.info("Updating release date, state, and early release flag in database")
                 update_release_date_and_state(item_dict['id'], new_release_date, new_state, early_release=item_dict.get('early_release', False))
                 logging.info(f"Updated: {title} has a release date of: {new_release_date}")
             else:

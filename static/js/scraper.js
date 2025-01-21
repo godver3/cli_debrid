@@ -164,12 +164,12 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                 } else {
                     displaySeasonInfoTextOnly(selectedItem.title, selectedItem.season_num);
                 }
-                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
+                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
             });
 
             seasonPackButton.onclick = function() {
                 const selectedItem = JSON.parse(dropdown.value);
-                selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi);
+                selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
             };
 
             resultsDiv.style.display = 'block';
@@ -198,7 +198,7 @@ function displaySeasonInfoTextOnly(title, season_num) {
     `;
 }
 
-function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) {
+function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
     showLoadingState();
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
@@ -221,7 +221,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) 
         if (data.error) {
             displayError(data.error);
         } else {
-            displayEpisodeResults(data.episodeResults, title, year, version);
+            displayEpisodeResults(data.episode_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
         }
     })
     .catch(error => {
@@ -231,7 +231,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi) 
     });
 }
 
-async function selectMedia(mediaId, title, year, mediaType, season, episode, multi) {
+async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
     showLoadingState();
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
@@ -250,7 +250,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     .then(response => response.json())
     .then(data => {
         hideLoadingState();
-        displayTorrentResults(data.torrent_results, title, year, version, mediaId, mediaType, season, episode);
+        displayTorrentResults(data.torrent_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
     })
     .catch(error => {
         hideLoadingState();
@@ -278,6 +278,7 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('episode', torrent.episode || '');
             formData.append('version', torrent.version || '');
             formData.append('tmdb_id', torrent.tmdb_id || '');
+            formData.append('genres', torrent.genres || '');
 
             fetch('/scraper/add_to_debrid', {
                 method: 'POST',
@@ -380,7 +381,7 @@ function hideLoadingState() {
     }
 }
 
-function displayEpisodeResults(episodeResults, title, year, version) {
+function displayEpisodeResults(episodeResults, title, year, version, mediaId, mediaType, season, episode, genre_ids) {
     toggleResultsVisibility('displayEpisodeResults');
     const episodeResultsDiv = document.getElementById('episodeResults');
     episodeResultsDiv.innerHTML = '';
@@ -417,7 +418,7 @@ function displayEpisodeResults(episodeResults, title, year, version) {
             </div></button>
         `;
         episodeDiv.onclick = function() {
-            selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi);
+            selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi, genre_ids);
         };
         gridContainer.appendChild(episodeDiv);
     });
@@ -457,7 +458,7 @@ function toggleResultsVisibility(section) {
     }
 }
 
-function displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode) {
+function displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids) {
     hideLoadingState();
     const overlay = document.getElementById('overlay');
 
@@ -503,7 +504,8 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                         media_type: mediaType,
                         season: season || null,
                         episode: episode || null,
-                        tmdb_id: mediaId
+                        tmdb_id: mediaId,
+                        genres: genre_ids
                     };
                     addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                 };
@@ -564,7 +566,8 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             media_type: mediaType,
                             season: season || null,
                             episode: episode || null,
-                            tmdb_id: torrent.tmdb_id || mediaId
+                            tmdb_id: torrent.tmdb_id || mediaId,
+                            genres: genre_ids
                         }).replace(/'/g, "\\'")})'>Add to Account</button>
                     </td>
                 `;

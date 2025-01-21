@@ -61,7 +61,8 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
             logging.debug(f'item.get("genres", ""): {item.get("genres", "")}')
 
             # Try to get anime metadata if enabled and item is anime
-            if get_setting('Debug', 'anime_renaming_using_anidb', False) and 'anime' in item.get('genres', '').lower():
+            genres = item.get('genres', '') or ''
+            if get_setting('Debug', 'anime_renaming_using_anidb', False) and 'anime' in genres.lower():
                 logging.debug(f"Checking for anime metadata for {item.get('title')}")
                 from utilities.anidb_functions import get_anidb_metadata_for_item
                 anime_metadata = get_anidb_metadata_for_item(item)

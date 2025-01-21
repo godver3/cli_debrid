@@ -193,6 +193,11 @@ def add_collected_items(media_items_batch, recent=False):
                                 
                                 updated_item_dict = dict(updated_item)
                                 updated_item_dict['is_upgrade'] = is_upgrade
+                                if is_upgrade:
+                                    notification_state = 'Upgraded'
+                                else:
+                                    notification_state = 'Collected'
+                                updated_item_dict['new_state'] = notification_state
                                 updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at', existing_item.get('collected_at', collected_at))
                                 add_to_collected_notifications(updated_item_dict)
 

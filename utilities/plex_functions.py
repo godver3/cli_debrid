@@ -20,6 +20,30 @@ logger = logging.getLogger(__name__)
 MAX_CONCURRENT_REQUESTS = 400
 CHUNK_SIZE = 10  # Adjust this value to find the optimal balance
 
+def process_library_names(library_names: str, all_libraries: dict, libraries_by_key: dict) -> list:
+    """
+    Process a comma-separated string of library names/ids and return their corresponding library keys.
+    Handles both library names and numeric IDs.
+    
+    Args:
+        library_names: Comma-separated string of library names or IDs
+        all_libraries: Dictionary mapping library names to keys
+        libraries_by_key: Dictionary mapping library keys to names
+        
+    Returns:
+        List of library keys
+    """
+    libraries = []
+    for name in library_names.split(','):
+        name = name.strip()
+        if not name:
+            continue
+        if name in all_libraries:  # If it's a library name
+            libraries.append(all_libraries[name])
+        elif name in libraries_by_key:  # If it's a library key/ID
+            libraries.append(name)
+    return libraries
+
 async def fetch_data(session: aiohttp.ClientSession, url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
     async with semaphore:
         async with session.get(url, headers=headers) as response:
@@ -279,30 +303,13 @@ async def get_collected_from_plex(request='all'):
             libraries_url = f"{plex_url}/library/sections"
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
             
-            # Create two mappings - one for names and one for keys
-            all_libraries_by_name = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
-            all_libraries_by_key = {str(library['key']): library['key'] for library in libraries_data['MediaContainer']['Directory']}
+            # Create mappings for library names and keys
+            libraries_by_key = {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']}
+            all_libraries = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
             
-            movie_library_names = get_setting('Plex', 'movie_libraries', '').split(',')
-            show_library_names = get_setting('Plex', 'shows_libraries', '').split(',')
-            
-            # Try to match by name first, then by key
-            movie_libraries = []
-            show_libraries = []
-            
-            for name in movie_library_names:
-                name = name.strip()
-                if name in all_libraries_by_name:
-                    movie_libraries.append(all_libraries_by_name[name])
-                elif name in all_libraries_by_key:
-                    movie_libraries.append(all_libraries_by_key[name])
-            
-            for name in show_library_names:
-                name = name.strip()
-                if name in all_libraries_by_name:
-                    show_libraries.append(all_libraries_by_name[name])
-                elif name in all_libraries_by_key:
-                    show_libraries.append(all_libraries_by_key[name])
+            # Process movie and show libraries
+            movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, libraries_by_key)
+            show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, libraries_by_key)
             
             logger.info(f"TV Show libraries to process: {show_libraries}")
             logger.info(f"Movie libraries to process: {movie_libraries}")
@@ -388,8 +395,8 @@ async def get_recent_from_plex():
             movie_library_names = get_setting('Plex', 'movie_libraries', '').split(',')
             show_library_names = get_setting('Plex', 'shows_libraries', '').split(',')
             
-            movie_libraries = [all_libraries[name.strip()] for name in movie_library_names if name.strip() in all_libraries]
-            show_libraries = [all_libraries[name.strip()] for name in show_library_names if name.strip() in all_libraries]
+            movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']})
+            show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']})
             
             logger.info(f"TV Show libraries to process: {show_libraries}")
             logger.info(f"Movie libraries to process: {movie_libraries}")
@@ -750,7 +757,7 @@ def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str
                 return False
                 
             # Connect to Plex server
-            plex = plexapi.server.PlexServer(plex_url, plex_token)
+            plex = PlexServer(plex_url, plex_token)
             
             # Get all library sections
             sections = plex.library.sections()
@@ -834,6 +841,7 @@ def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str
                             if hasattr(item, 'media'):
                                 for media in item.media:
                                     for part in media.parts:
+                                        logger.info(f"Checking file: {part.file}")
                                         if os.path.basename(part.file).lower() == os.path.basename(item_path).lower():
                                             logger.info(f"Found matching movie: {item.title}")
                                             logger.info(f"Movie rating key: {item.ratingKey}")

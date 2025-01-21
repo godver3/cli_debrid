@@ -605,9 +605,8 @@ def check_trakt_early_releases():
     states_to_check = ('Sleeping', 'Wanted', 'Unreleased')
     items_to_check = get_all_media_items(state=states_to_check)
     
-    current_date = date.today()
-    updated_count = 0
     skipped_count = 0
+    updated_count = 0
     
     for item in items_to_check:
         if item['type'] == 'episode':
@@ -632,13 +631,12 @@ def check_trakt_early_releases():
             
             for trakt_list in trakt_lists:
                 if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
-                    new_release_date = current_date.strftime("%Y-%m-%d")
-                    update_media_item(item['id'], release_date=new_release_date)
+                    update_media_item(item['id'], early_release=True)
                     updated_count += 1
                     break
     
     if updated_count > 0:
-        logging.info(f"Updated release dates for {updated_count} items")
+        logging.info(f"Set early release flag for {updated_count} items")
     if skipped_count > 0:
         logging.debug(f"Skipped {skipped_count} episodes")
     

@@ -218,7 +218,7 @@ def get_release_notes():
         }), 500
 
 @base_bp.route('/api/check-update', methods=['GET'])
-@cache_for_seconds(300)  # Cache for 5 minutes
+@cache_for_seconds(3600)  # Cache for 1 hour
 def check_for_update():
     from settings import get_setting
     #logging.debug(f"get_setting('Debug', 'check_for_updates', True): {get_setting('Debug', 'check_for_updates', True)}")
