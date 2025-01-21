@@ -473,6 +473,10 @@ def select_season():
                 results = web_scrape_tvshow(media_id, title, year)
                 if not results:
                     return jsonify({'error': 'No results found'}), 404
+                elif 'error' in results:
+                    return jsonify({'error': results['error']}), 404
+                elif 'episode_results' not in results or not results['episode_results']:
+                    return jsonify({'error': 'No episode results found'}), 404
                     
                 session['show_results'] = results
                 return jsonify(results)
@@ -500,16 +504,19 @@ def select_episode():
                 episodeResults = web_scrape_tvshow(media_id, title, year, season)
                 if not episodeResults:
                     return jsonify({'error': 'No results found'}), 404
+                elif 'error' in episodeResults:
+                    return jsonify({'error': episodeResults['error']}), 404
+                elif 'episode_results' not in episodeResults or not episodeResults['episode_results']:
+                    return jsonify({'error': 'No episode results found'}), 404
                     
                 # Ensure each episode has required fields
-                if 'results' in episodeResults:
-                    for episode in episodeResults['results']:
-                        if 'vote_average' not in episode:
-                            episode['vote_average'] = 0.0
-                        if 'still_path' not in episode:
-                            episode['still_path'] = episode.get('poster_path')
-                        if 'episode_title' not in episode:
-                            episode['episode_title'] = f"Episode {episode.get('episode_num', '?')}"
+                for episode in episodeResults['episode_results']:
+                    if 'vote_average' not in episode:
+                        episode['vote_average'] = 0.0
+                    if 'still_path' not in episode:
+                        episode['still_path'] = episode.get('poster_path')
+                    if 'episode_title' not in episode:
+                        episode['episode_title'] = f"Episode {episode.get('episode_num', '?')}"
                             
                 return jsonify(episodeResults)
             except Exception as e:

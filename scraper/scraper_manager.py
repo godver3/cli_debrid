@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .nyaa import scrape_nyaa
 from .jackett import scrape_jackett_instance
-from .comet import scrape_comet_instance
+from .mediafusion import scrape_mediafusion_instance
 from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
@@ -14,7 +14,7 @@ class ScraperManager:
         self.config = config
         self.scrapers = {
             'Jackett': scrape_jackett_instance,
-            'Comet': scrape_comet_instance,
+            'MediaFusion': scrape_mediafusion_instance,
             'Prowlarr': scrape_prowlarr_instance,
             'Torrentio': scrape_torrentio_instance,
             'Zilean': scrape_zilean_instance,
