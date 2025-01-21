@@ -174,10 +174,7 @@ def format_notification_content(notifications, notification_type, notification_c
             # For movies, just add the state suffix to the title line
             content[-1] = f"{content[-1]} {format_state_suffix(state, is_upgrade)}"
 
-        # Add spacing between different shows/movies
-        if (title, type_, year, state, is_upgrade) != list(grouped_items.keys())[-1]:
-            content.append("")
-
+    # Join with single newlines between items
     return "\n".join(content)
 
 def buffer_notifications(notifications, enabled_notifications, notification_category='collected'):

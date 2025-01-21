@@ -135,6 +135,14 @@ def add_torrent_to_debrid():
         version = request.form.get('version')
         tmdb_id = request.form.get('tmdb_id')
 
+        logging.info(f"Adding {title} ({year}) to debrid provider")
+
+        # Get metadata to determine genres
+        metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type) if tmdb_id else {}
+        genres = metadata.get('genres', [])
+        genres_str = ','.join(genres) if genres else ''
+        logging.info(f"Genres from metadata: {genres_str}")
+
         # Convert season and episode to integers or None
         try:
             season_number = int(season) if season and season.lower() != 'null' else None
@@ -302,7 +310,8 @@ def add_torrent_to_debrid():
                     'filled_by_torrent_id': torrent_id,
                     'filled_by_title': filled_by_title,
                     'filled_by_file': filled_by_file,
-                    'release_date': release_date
+                    'release_date': release_date,
+                    'genres': genres_str
                 }
 
                 # Add TV show specific fields if this is a TV show

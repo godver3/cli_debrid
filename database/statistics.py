@@ -265,7 +265,7 @@ def get_collected_counts():
         cursor.execute('''
             SELECT COUNT(DISTINCT imdb_id) 
             FROM media_items 
-            WHERE type = 'movie' AND state = 'Collected'
+            WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')
         ''')
         total_movies = cursor.fetchone()[0]
 
@@ -273,7 +273,7 @@ def get_collected_counts():
         cursor.execute('''
             SELECT COUNT(DISTINCT imdb_id) 
             FROM media_items 
-            WHERE type = 'episode' AND state = 'Collected'
+            WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
         ''')
         total_shows = cursor.fetchone()[0]
 
@@ -281,7 +281,7 @@ def get_collected_counts():
         cursor.execute('''
             SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number) 
             FROM media_items 
-            WHERE type = 'episode' AND state = 'Collected'
+            WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
         ''')
         total_episodes = cursor.fetchone()[0]
 
@@ -319,7 +319,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                 NULL as episode_number,
                 ROW_NUMBER() OVER (PARTITION BY title, year ORDER BY collected_at DESC) as rn
             FROM media_items
-            WHERE type = 'movie' AND collected_at IS NOT NULL AND state = 'Collected'
+            WHERE type = 'movie' AND collected_at IS NOT NULL AND state IN ('Collected', 'Upgrading')
         ),
         ShowItems AS (
             SELECT 
@@ -336,7 +336,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                 episode_number,
                 ROW_NUMBER() OVER (PARTITION BY title ORDER BY collected_at DESC) as rn
             FROM media_items
-            WHERE type = 'episode' AND collected_at IS NOT NULL AND state = 'Collected'
+            WHERE type = 'episode' AND collected_at IS NOT NULL AND state IN ('Collected', 'Upgrading')
         )
         SELECT * FROM (
             SELECT * FROM MovieItems WHERE rn = 1 ORDER BY collected_at DESC LIMIT ?
