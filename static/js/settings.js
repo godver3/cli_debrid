@@ -307,7 +307,7 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'Comet', 'Jackett', 'Torrentio', 'Nyaa'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
             if (settingsData['Scrapers'][key] && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
