@@ -147,7 +147,12 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
         if (data.error) {
             displayError(data.error);
         } else {
-            const seasonResults = data.results;
+            const seasonResults = data.episode_results || data.results;
+
+            if (!seasonResults || seasonResults.length === 0) {
+                displayError('No season results found');
+                return;
+            }
 
             dropdown.innerHTML = '';
             seasonResults.forEach(item => {
@@ -220,6 +225,8 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
         hideLoadingState();
         if (data.error) {
             displayError(data.error);
+        } else if (!data.episode_results) {
+            displayError('No episode results found');
         } else {
             displayEpisodeResults(data.episode_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
         }
@@ -382,6 +389,11 @@ function hideLoadingState() {
 }
 
 function displayEpisodeResults(episodeResults, title, year, version, mediaId, mediaType, season, episode, genre_ids) {
+    if (!episodeResults) {
+        displayError('No episode results found');
+        return;
+    }
+    
     toggleResultsVisibility('displayEpisodeResults');
     const episodeResultsDiv = document.getElementById('episodeResults');
     episodeResultsDiv.innerHTML = '';
@@ -406,15 +418,15 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
         const episodeDiv = document.createElement('div');
         episodeDiv.className = 'episode';
         var options = {year: 'numeric', month: 'long', day: 'numeric' };
-        var date  = new Date(item.air_date);
+        var date = item.air_date ? new Date(item.air_date) : null;
         episodeDiv.innerHTML = `        
-            <button><span class="episode-rating">${(item.vote_average).toFixed(1)}</span>
+            <button><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
             <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}" 
-                alt="${item.episode_title}" 
+                alt="${item.episode_title || ''}" 
                 class="${item.still_path ? '' : 'placeholder-episode'}">
             <div class="episode-info">
-                <h2 class="episode-title">${item.episode_num}. ${item.episode_title}</h2>
-                <p class="episode-sub">${date.toLocaleDateString("en-US", options)}</p>
+                <h2 class="episode-title">${item.episode_num}. ${item.episode_title || ''}</h2>
+                <p class="episode-sub">${date ? date.toLocaleDateString("en-US", options) : 'Air date unknown'}</p>
             </div></button>
         `;
         episodeDiv.onclick = function() {
@@ -528,7 +540,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     <th style="color: rgb(191 191 190); width: 80%;">Name</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Size</th>
                     <th style="color: rgb(191 191 190); width: 15%;">Source</th>
-                    <th style="color: rgb(191 191 190); width: 10%;">Score</th>
+                    <th style="color: rgb(191 191 190); width: 15%;">Score</th>
                     <th style="color: rgb(191 191 190); width: 15%; text-align: center;">Cache</th>
                     <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Action</th>
                 </tr>
@@ -657,7 +669,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         `;
         movieElement.onclick = function() {
-            selectMedia(data.tmdb_id, data.title, data.year, 'movie', 'null', 'null', 'False');
+            selectMedia(data.tmdb_id, data.title, data.year, 'movie', null, null, false, data.version);
         };
         return movieElement;
     }
@@ -674,7 +686,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         `;
         movieElement.onclick = function() {
-            selectSeason(data.tmdb_id, data.title, data.year, 'tv', 'null', 'null', 'True', data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview, data.tmdb_api_key_set)
+            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview, data.tmdb_api_key_set)
         };
         return movieElement;
     }
