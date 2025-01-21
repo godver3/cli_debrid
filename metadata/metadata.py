@@ -671,14 +671,19 @@ def refresh_release_dates():
             if new_release_date == "Unknown" or new_release_date is None:
                 new_state = "Wanted"
             else:
-                release_date = datetime.strptime(new_release_date, "%Y-%m-%d").date()
-                today = datetime.now().date()
-                
-                # If it's an early release and the original release date is in the future,
-                # keep it marked as Unreleased until the actual release date
-                if item_dict.get('early_release', False):
-                    new_state = "Wanted" if release_date <= today else "Unreleased"
-                else:
+                try:
+                    release_date = datetime.strptime(new_release_date, "%Y-%m-%d").date()
+                    today = datetime.now().date()
+                    
+                    # If it's an early release, set to Wanted regardless of release date
+                    if item_dict.get('early_release', False):
+                        new_state = "Wanted"
+                        logging.info(f"Item is an early release, setting state to Wanted")
+                    # Otherwise, set to Wanted only if it's past the release date
+                    else:
+                        new_state = "Wanted" if release_date <= today else "Unreleased"
+                        logging.info(f"Item release date is {release_date}, today is {today}, setting state to {new_state}")
+                except ValueError:
                     new_state = "Wanted"
 
             logging.info(f"New state: {new_state}")
