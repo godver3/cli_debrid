@@ -7,6 +7,8 @@ import sys
 import shutil
 from datetime import datetime
 from debrid import reset_provider
+from utilities.file_lock import FileLock
+import importlib
 
 # Get the base config directory from an environment variable, with a fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
@@ -44,101 +46,22 @@ def release_lock(lock_file_handle):
     lock_file_handle.close()
 
 def load_config():
-    try:
-        config_file_path = os.path.join(os.environ['USER_CONFIG'], 'config.json')
-        #logging.debug(f"Attempting to load config from: {config_file_path}")
-        
-        if not os.path.exists(config_file_path):
-            logging.warning(f"Config file does not exist: {config_file_path}")
-            return {'Scraping': {'versions': {}}, 'Notifications': {}, 'Content Sources': {}}
-        
-        #logging.debug(f"Config file exists. Checking permissions...")
-        
-        # Check file permissions
-        if not os.access(config_file_path, os.R_OK):
-            logging.error(f"File is not readable: {config_file_path}")
-        
-        with open(config_file_path, 'r') as config_file:
-            #logging.debug("Successfully opened config file")
-            config = json.load(config_file)
-            #logging.debug("Successfully loaded JSON from config file")
-        
-        # Ensure 'Scraping' and 'versions' exist
-        if 'Scraping' not in config:
-            config['Scraping'] = {}
-        if 'versions' not in config['Scraping']:
-            config['Scraping']['versions'] = {}
-        
-        # Ensure 'Notifications' exists and remove any None values
-        if 'Notifications' not in config:
-            config['Notifications'] = {}
-        config['Notifications'] = {k: v for k, v in config['Notifications'].items() if v is not None}
-        
-        # Ensure 'Content Sources' exists
-        if 'Content Sources' not in config:
-            config['Content Sources'] = {}
-        
-        return config
-    except Exception as e:
-        logging.exception(f"Error loading config: {str(e)}")
-        return {'Scraping': {'versions': {}}, 'Notifications': {}, 'Content Sources': {}}
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+    with open(CONFIG_FILE, 'r') as file:
+        with FileLock(file):
+            return json.load(file)
 
 def save_config(config):
-    process_id = str(uuid.uuid4())[:8]
-    lock_file = acquire_lock()
-    try:
-        config = clean_notifications(config)
-        config = trim_trailing_slashes(config)
-        
-        # Ensure only valid top-level keys are present
-        valid_keys = set(SETTINGS_SCHEMA.keys())
-        cleaned_config = {key: value for key, value in config.items() if key in valid_keys}
-        
-        # Ensure 'Content Sources' is included in the cleaned config
-        if 'Content Sources' in config:
-            cleaned_config['Content Sources'] = config['Content Sources']
-        
-        # Ensure 'Scraping' is included in the cleaned config
-        if 'Scraping' in config:
-            cleaned_config['Scraping'] = config['Scraping']
-            #logging.debug(f"[{process_id}] Scraping settings: {cleaned_config['Scraping']}")
-        else:
-            logging.warning(f"[{process_id}] No Scraping settings found in config")
-        
-        # Write the entire config to a temporary file first
-        temp_file = CONFIG_FILE + '.tmp'
-        with open(temp_file, 'w') as config_file:
-            json.dump(cleaned_config, config_file, indent=2)
-            
-        # If the write was successful, rename the temp file to the actual config file
-        os.replace(temp_file, CONFIG_FILE)
-        
-        logging.info(f"[{process_id}] Config saved successfully")
-        
-        # Verify that the changes were saved
-        with open(CONFIG_FILE, 'r') as verify_file:
-            verified_config = json.load(verify_file)
-        log_config_state(f"[{process_id}] Verified saved config", verified_config)
-        
-        # Double-check if the verified config matches the cleaned config
-        if verified_config != cleaned_config:
-            logging.error(f"[{process_id}] Verified config does not match cleaned config")
-        else:
-            # Reset the debrid provider and reinitialize components to pick up new settings
-            logging.debug("Resetting debrid provider and reinitializing components to pick up new settings")
-            reset_provider()
-            from queue_manager import QueueManager
-            QueueManager().reinitialize_queues()
-            # Also reinitialize the program runner
-            from run_program import ProgramRunner
-            ProgramRunner().reinitialize()
-            
-    except Exception as e:
-        logging.error(f"[{process_id}] Error saving config: {str(e)}", exc_info=True)
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-    finally:
-        release_lock(lock_file)
+    with open(CONFIG_FILE, 'w') as file:
+        with FileLock(file):
+            json.dump(config, file, indent=4)
+            try:
+                from routes.base_routes import clear_cache
+                clear_cache()  # Clear the update check cache when settings are saved
+                #logging.debug("Cleared update check cache after saving settings")
+            except Exception as e:
+                logging.error(f"Error clearing update check cache: {str(e)}")
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
@@ -374,7 +297,7 @@ def get_version_settings(version):
     return settings
 
 def get_content_source_settings():
-    logging.debug("Entering get_content_source_settings()")
+    #logging.debug("Entering get_content_source_settings()")
     
     try:
         config = load_config()
@@ -392,7 +315,7 @@ def get_content_source_settings():
                         if k is not None and v is not None
                     }
         
-        logging.debug(f"Content source settings: {content_source_settings}")
+        #logging.debug(f"Content source settings: {content_source_settings}")
         
         return content_source_settings
     except Exception as e:

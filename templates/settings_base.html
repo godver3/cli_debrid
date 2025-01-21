@@ -3,15 +3,8 @@
 {% block title %}Settings{% endblock %}
 
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
 <style>
-    /* Common styles */
-    .settings-container {
-        width: 95%; 
-        max-width: 1200px;
-        margin: 0 auto; 
-        padding: 20px;
-    }
-
     /* Button styles */
     .btn {
         border: none;
@@ -230,7 +223,9 @@
     }
 
     .settings-form-group {
-        margin-bottom: 15px;
+        margin-bottom: 2px;
+        padding-top: 2px;
+        padding-top: 2px;
     }
 
     .settings-input-wrapper {
@@ -368,7 +363,6 @@
         flex: 0 0 60px;
     }
 
-
     /* Responsive styles for settings tabs */
     @media screen and (max-width: 768px) {
         .settings-tabs {
@@ -460,8 +454,14 @@
     
     <div id="saveStatus"></div>
 </div>
-<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
-<script>
+<script type="module" src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script type="module">
+    import { updateSettings } from '/static/js/settings.js';
+    import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+    
+    // Make POPUP_TYPES available globally for other scripts
+    window.POPUP_TYPES = POPUP_TYPES;
+    
     // Define reloadTabContent in the global scope
     window.reloadTabContent = function(tabName, callback) {
         return fetch(`/settings/${tabName}/content`)
@@ -632,12 +632,7 @@
         // Add event listener for the Save Settings button
         const saveSettingsButton = document.getElementById('saveSettingsButton');
         saveSettingsButton.addEventListener('click', function() {
-            // Assuming updateSettings is exported from settings.js
-            if (typeof updateSettings === 'function') {
-                updateSettings();
-            } else {
-                console.error('updateSettings function not found. Make sure it is exported from settings.js');
-            }
+            updateSettings();
         });
     });
 </script>

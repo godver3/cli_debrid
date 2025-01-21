@@ -9,6 +9,7 @@ import platform
 import psutil
 import webbrowser
 import socket
+from datetime import datetime
 
 # Import Windows-specific modules only on Windows
 if platform.system() == 'Windows':
@@ -107,6 +108,45 @@ def backup_config():
         logging.info(f"Backup of config.json created: {backup_path}")
     else:
         logging.warning("config.json not found, no backup created.")
+
+def backup_database():
+    """
+    Creates a backup of the media_items.db file with a timestamp.
+    Keeps only the two most recent backups.
+    """
+    try:
+        # Get db_content directory from environment variable
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        db_path = os.path.join(db_content_dir, 'media_items.db')
+        
+        if not os.path.exists(db_path):
+            logging.warning("media_items.db not found, no backup created.")
+            return
+            
+        # Create backup directory if it doesn't exist
+        backup_dir = os.path.join(db_content_dir, 'backups')
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # Generate backup filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = os.path.join(backup_dir, f'media_items_{timestamp}.db')
+        
+        # Create the backup
+        shutil.copy2(db_path, backup_path)
+        logging.info(f"Backup of media_items.db created: {backup_path}")
+        
+        # Get list of existing backups and sort by modification time
+        existing_backups = [os.path.join(backup_dir, f) for f in os.listdir(backup_dir) 
+                          if f.startswith('media_items_') and f.endswith('.db')]
+        existing_backups.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        
+        # Remove older backups, keeping only the two most recent
+        for old_backup in existing_backups[2:]:
+            os.remove(old_backup)
+            logging.info(f"Removed old backup: {old_backup}")
+            
+    except Exception as e:
+        logging.error(f"Error creating database backup: {str(e)}")
 
 def get_version():
     try:
@@ -758,6 +798,34 @@ def open_log_file():
     else:
         logging.error("Log file does not exist.")
 
+def fix_notification_settings():
+    """Check and fix notification settings during startup."""
+    try:
+        from settings import load_config, save_config
+        config = load_config()
+        needs_update = False
+
+        if 'Notifications' in config and config['Notifications']:
+            for notification_id, notification_config in config['Notifications'].items():
+                if notification_config is not None:
+                    if 'notify_on' not in notification_config or not notification_config['notify_on']:
+                        needs_update = True
+                        break
+
+        if needs_update:
+            logging.info("Found notifications with missing or empty notify_on settings, fixing...")
+            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+            try:
+                response = requests.post(f'http://localhost:{port}/notifications/update_defaults')
+                if response.status_code == 200:
+                    logging.info("Successfully updated notification defaults")
+                else:
+                    logging.error(f"Failed to update notification defaults: {response.text}")
+            except requests.RequestException as e:
+                logging.error(f"Error updating notification defaults: {e}")
+    except Exception as e:
+        logging.error(f"Error checking notification settings: {e}")
+
 # Update the main function to use a single thread for the metadata battery
 def main():
     global program_runner, metadata_process
@@ -767,9 +835,11 @@ def main():
 
     setup_directories()
     backup_config()
+    backup_database()  # Add the database backup call here
 
     from settings import ensure_settings_file, get_setting, set_setting
     from database import verify_database
+    from database.statistics import get_cached_download_stats
 
     # Add check for Hybrid uncached management setting
     if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':
@@ -785,10 +855,24 @@ def main():
     
     # Set metadata battery URL with the correct port
     set_setting('Metadata Battery', 'url', f'http://localhost:{battery_port}')
-    logging.info(f"Set metadata battery URL to http://localhost:{battery_port}")
+    #logging.info(f"Set metadata battery URL to http://localhost:{battery_port}")
 
     ensure_settings_file()
     verify_database()
+
+    # Initialize download stats cache
+    try:
+        #logging.info("Initializing download stats cache...")
+        get_cached_download_stats()
+        #logging.info("Download stats cache initialized successfully")
+    except Exception as e:
+        logging.error(f"Error initializing download stats cache: {str(e)}")
+
+    # Add delay to ensure server is ready
+    time.sleep(2)
+
+    # Fix notification settings if needed
+    fix_notification_settings()
 
     # Add the update_media_locations call here
     # update_media_locations()
@@ -864,6 +948,8 @@ def main():
         while True:
             time.sleep(5)
     except KeyboardInterrupt:
+        from program_operation_routes import cleanup_port
+        cleanup_port()
         stop_program()
         stop_global_profiling()
         print("Program stopped.")

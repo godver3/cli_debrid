@@ -20,7 +20,8 @@ def setup_scraper_logger():
         scraper_logger.removeHandler(handler)
     
     log_file = log_dir / 'scraper.log'
-    file_handler = logging.FileHandler(str(log_file))
+    file_handler = logging.handlers.RotatingFileHandler(
+        str(log_file), maxBytes=50*1024*1024, backupCount=0, encoding='utf-8', errors='replace')
     file_handler.setLevel(logging.DEBUG)
     
     formatter = logging.Formatter('%(asctime)s - %(message)s')

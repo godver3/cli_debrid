@@ -705,6 +705,9 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 result['cached'] = 'Yes'
             elif result['cached'] == False:
                 result['cached'] = 'No'
+            # Add TMDB ID and version to result
+            result['tmdb_id'] = str(tmdb_id)
+            result['version'] = version
             logging.info(f"Cache status for {original_title} (hash: {result_hash}): {result['cached']}")
     return processed_results, cache_status
 

@@ -1,5 +1,4 @@
-from flask_sqlalchemy import SQLAlchemy
-from flask import Flask, redirect, request, jsonify, url_for
+from flask import Flask, redirect, request, jsonify, url_for, session
 from flask_login import LoginManager
 import time
 from sqlalchemy import inspect
@@ -12,28 +11,142 @@ import threading
 import uuid
 from datetime import timedelta
 import os
+from tld import get_tld
+from tld.exceptions import TldDomainNotFound, TldBadUrl
+
+# Configure logging at INFO level only
+#logging.basicConfig(level=logging.INFO)
+#logger = logging.getLogger(__name__)
+
+def get_root_domain(host):
+    """Get the root domain from a hostname."""
+    if not host:
+        return None
+        
+    # Remove port if present and ensure no leading/trailing dots
+    domain = host.split(':')[0].lower().strip('.')
+    
+    # If localhost or IP, return as is
+    if domain in ('localhost', '127.0.0.1', '::1') or domain.replace('.', '').isdigit():
+        return domain
+    
+    try:
+        # Try to get the registered domain using tld library
+        # This will properly handle all domain structures including multi-level TLDs
+        res = get_tld(f"http://{domain}", as_object=True)
+        # For subdomains, return the full domain to ensure cookies work across all subdomains
+        result_domain = domain if res.subdomain else res.fld
+        # Ensure no leading/trailing dots in the final result
+        return result_domain.strip('.')
+    except (TldDomainNotFound, TldBadUrl):
+        # If domain parsing fails, return the full domain to be safe
+        return domain if '.' in domain else None
+
+class SameSiteMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    def __call__(self, environ, start_response):
+        def custom_start_response(status, headers, exc_info=None):
+            new_headers = []
+            host = environ.get('HTTP_HOST', '')
+            root_domain = get_root_domain(host)
+            proto = environ.get('HTTP_X_FORWARDED_PROTO', environ.get('wsgi.url_scheme', 'http'))
+            is_secure = (proto == 'https')
+            
+            for name, value in headers:
+                if name.lower() == 'set-cookie':
+                    # Parse the cookie
+                    parts = [p.strip() for p in value.split(';')]
+                    cookie_main = parts[0]
+                    cookie_attrs = {
+                        p.split('=')[0].lower(): p for p in parts[1:]
+                        if '=' in p or p.lower() in ['secure', 'httponly']
+                    }
+                    
+                    # Handle session and remember token cookies
+                    if 'session=' in cookie_main or 'remember_token=' in cookie_main:
+                        is_clearing = ('=' not in cookie_main or 
+                                     cookie_main.split('=')[1] == '' or 
+                                     cookie_main.endswith('='))
+                        
+                        if is_clearing:
+                            value = f"{cookie_main}; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+                            if root_domain:
+                                value += f"; Domain={root_domain}"
+                        else:
+                            cookie_attrs['samesite'] = 'SameSite=Lax'
+                            if is_secure:
+                                cookie_attrs['secure'] = 'Secure'
+                            
+                            if root_domain:
+                                cookie_attrs['domain'] = f'Domain={root_domain}'
+                            cookie_attrs['path'] = 'Path=/'
+                            
+                            value = '; '.join([
+                                cookie_main,
+                                cookie_attrs.get('path', 'Path=/'),
+                                cookie_attrs.get('domain', ''),
+                                cookie_attrs.get('samesite', 'SameSite=Lax'),
+                                cookie_attrs.get('secure', ''),
+                                cookie_attrs.get('httponly', 'HttpOnly')
+                            ]).rstrip('; ')
+                    
+                new_headers.append((name, value))
+            
+            return start_response(status, new_headers, exc_info)
+        
+        return self.app(environ, custom_start_response)
+
+from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
 app = Flask(__name__)
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
 
 # Configure session
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
-app.secret_key = os.urandom(24)  # Generate a secure secret key
+app.config['SESSION_FILE_DIR'] = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')
+app.config['SESSION_FILE_THRESHOLD'] = 500
+app.config['SESSION_COOKIE_SECURE'] = False
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['REMEMBER_COOKIE_SECURE'] = False
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_NAME'] = 'session'
+app.config['SESSION_REFRESH_EACH_REQUEST'] = True
+app.config['SESSION_COOKIE_PATH'] = '/'
+app.config['SESSION_COOKIE_DOMAIN'] = None  # Let Flask determine the domain without leading period
+
+# Use a persistent secret key
+secret_key_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'secret_key')
+if os.path.exists(secret_key_file):
+    with open(secret_key_file, 'rb') as f:
+        app.secret_key = f.read()
+else:
+    app.secret_key = os.urandom(24)
+    with open(secret_key_file, 'wb') as f:
+        f.write(app.secret_key)
+
+# Initialize Flask-Session
+from flask_session import Session
+sess = Session()
+sess.init_app(app)
 
 # Configure CORS
 CORS(app, resources={r"/*": {
-    "origins": "*",
-    "methods": ["GET", "HEAD", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization", "Accept", "Accept-Language", "Content-Language", "Range"],
-    "supports_credentials": True
+    "origins": ["http://*", "https://*"],
+    "methods": ["GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE"],
+    "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "Cookie"],
+    "supports_credentials": True,
+    "expose_headers": ["Set-Cookie"],
+    "max_age": 3600
 }})
-
-# app.config['PREFERRED_URL_SCHEME'] = 'https'
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Add this line
 
 from flask_login import LoginManager
 from flask import redirect, url_for
@@ -44,7 +157,11 @@ login_manager = LoginManager()
 def init_login_manager(app):
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
-
+    login_manager.refresh_view = 'auth.login'
+    login_manager.needs_refresh_message = 'Please log in again to confirm your identity'
+    login_manager.needs_refresh_message_category = 'info'
+    login_manager.session_protection = 'strong'
+    
     def login_required(func):
         @wraps(func)
         def decorated_view(*args, **kwargs):
@@ -59,8 +176,6 @@ def init_login_manager(app):
 
     login_manager.login_required = login_required
 
-# Call this function in your app initialization
-# init_login_manager(app)
 login_manager.init_app(app)
 login_manager.login_view = 'auth.login'
 
@@ -86,41 +201,63 @@ def is_behind_proxy():
 
 @app.before_request
 def handle_https():
-    if is_behind_proxy():
-        if request.headers.get('X-Forwarded-Proto') == 'http':
-            url = request.url.replace('http://', 'https://', 1)
-            print(f"Redirecting to: {url}")
-            return redirect(url, code=301)
-    # Remove any forced HTTPS redirect for non-proxy requests
+    pass
 
 @app.before_request
 def check_user_system():
-    # Exclude the webhook route, its subpaths, and static files
     if request.path.startswith('/webhook') or request.path.startswith('/static') or request.path.startswith('/debug'):
-        return    
+        return
 
-    # Remove any specific handling for root.root here
-    # The decorators will handle the logic now
+@app.before_request
+def configure_session():
+    proto = request.headers.get('X-Forwarded-Proto', 'http')
+    scheme = request.headers.get('X-Forwarded-Scheme', proto)
+    root_domain = get_root_domain(request.host)
+    
+    if root_domain:
+        app.config['SESSION_COOKIE_DOMAIN'] = root_domain.strip('.')
+    else:
+        app.config['SESSION_COOKIE_DOMAIN'] = None
+    
+    is_secure = (scheme == 'https')
+    app.config['SESSION_COOKIE_SECURE'] = is_secure
+    app.config['REMEMBER_COOKIE_SECURE'] = is_secure
+    
+    if is_secure:
+        app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+        app.config['REMEMBER_COOKIE_SAMESITE'] = 'None'
+    else:
+        app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+        app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 
 @app.after_request
-def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
-    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Accept-Language, Content-Language, Range'
-    response.headers['Access-Control-Allow-Credentials'] = 'true'
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    
+    origin = request.headers.get('Origin')
+    if origin:
+        if origin.endswith(request.host):
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
+            response.headers['Vary'] = 'Origin'
+        else:
+            origin_domain = get_root_domain(origin.split('://')[-1])
+            root_domain = get_root_domain(request.host)
+            if root_domain and origin_domain and root_domain == origin_domain:
+                response.headers['Access-Control-Allow-Origin'] = origin
+                response.headers['Access-Control-Allow-Credentials'] = 'true'
+                response.headers['Access-Control-Expose-Headers'] = 'Set-Cookie'
+                response.headers['Vary'] = 'Origin'
     
     if request.method == 'OPTIONS':
+        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, POST, OPTIONS, PUT, DELETE'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cookie'
         response.headers['Access-Control-Max-Age'] = '3600'
     
     return response
 
-@app.after_request
-def add_security_headers(response):
-    # Remove the upgrade-insecure-requests directive
-    # response.headers['Content-Security-Policy'] = "upgrade-insecure-requests"
-    return response
-
-# Add an error handler for JSON parsing
 @app.errorhandler(400)
 def bad_request(error):
     return jsonify({"error": "Bad request", "message": str(error)}), 400

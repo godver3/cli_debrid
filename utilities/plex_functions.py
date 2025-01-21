@@ -11,12 +11,38 @@ import plexapi.exceptions
 import os
 from cli_battery.app.direct_api import DirectAPI
 from plexapi.server import PlexServer
+from database.database_reading import get_media_item_by_id
+import requests
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_REQUESTS = 400
 CHUNK_SIZE = 10  # Adjust this value to find the optimal balance
+
+def process_library_names(library_names: str, all_libraries: dict, libraries_by_key: dict) -> list:
+    """
+    Process a comma-separated string of library names/ids and return their corresponding library keys.
+    Handles both library names and numeric IDs.
+    
+    Args:
+        library_names: Comma-separated string of library names or IDs
+        all_libraries: Dictionary mapping library names to keys
+        libraries_by_key: Dictionary mapping library keys to names
+        
+    Returns:
+        List of library keys
+    """
+    libraries = []
+    for name in library_names.split(','):
+        name = name.strip()
+        if not name:
+            continue
+        if name in all_libraries:  # If it's a library name
+            libraries.append(all_libraries[name])
+        elif name in libraries_by_key:  # If it's a library key/ID
+            libraries.append(name)
+    return libraries
 
 async def fetch_data(session: aiohttp.ClientSession, url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
     async with semaphore:
@@ -277,13 +303,13 @@ async def get_collected_from_plex(request='all'):
             libraries_url = f"{plex_url}/library/sections"
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
             
+            # Create mappings for library names and keys
+            libraries_by_key = {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']}
             all_libraries = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
             
-            movie_library_names = get_setting('Plex', 'movie_libraries', '').split(',')
-            show_library_names = get_setting('Plex', 'shows_libraries', '').split(',')
-            
-            movie_libraries = [all_libraries[name.strip()] for name in movie_library_names if name.strip() in all_libraries]
-            show_libraries = [all_libraries[name.strip()] for name in show_library_names if name.strip() in all_libraries]
+            # Process movie and show libraries
+            movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, libraries_by_key)
+            show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, libraries_by_key)
             
             logger.info(f"TV Show libraries to process: {show_libraries}")
             logger.info(f"Movie libraries to process: {movie_libraries}")
@@ -369,8 +395,8 @@ async def get_recent_from_plex():
             movie_library_names = get_setting('Plex', 'movie_libraries', '').split(',')
             show_library_names = get_setting('Plex', 'shows_libraries', '').split(',')
             
-            movie_libraries = [all_libraries[name.strip()] for name in movie_library_names if name.strip() in all_libraries]
-            show_libraries = [all_libraries[name.strip()] for name in show_library_names if name.strip() in all_libraries]
+            movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']})
+            show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']})
             
             logger.info(f"TV Show libraries to process: {show_libraries}")
             logger.info(f"Movie libraries to process: {movie_libraries}")
@@ -440,7 +466,7 @@ async def get_recent_from_plex():
 
 def is_anime(item):
     if 'Genre' in item:
-        return any(genre.get('tag') == 'Anime' for genre in item['Genre'])
+        return any(genre.get('tag').lower() == 'anime' for genre in item['Genre'])
     return False
 
 def filter_genres(genres):
@@ -601,9 +627,16 @@ def sync_run_get_recent_from_plex():
 
 def remove_file_from_plex(item_title, item_path, episode_title=None):
     try:
-        plex_url = get_setting('Plex', 'url').rstrip('/')
-        plex_token = get_setting('Plex', 'token')
-        
+        if get_setting('File Management', 'file_collection_management') == 'Plex':
+            plex_url = get_setting('Plex', 'url').rstrip('/')
+            plex_token = get_setting('Plex', 'token')
+        elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+            plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+        else:
+            logger.error("No Plex URL or token found in settings")
+            return False
+            
         plex = plexapi.server.PlexServer(plex_url, plex_token)
         
         logger.info(f"Searching for item with title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
@@ -634,6 +667,12 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
                                     for part in media.parts:
                                         if os.path.basename(part.file) == os.path.basename(item_path):
                                             logger.info(f"Found matching file in episode: {episode.title}")
+                                            # Refresh media before deletion
+                                            try:
+                                                episode.refresh()
+                                                logger.info(f"Refreshed episode: {episode.title}")
+                                            except Exception as e:
+                                                logger.error(f"Error refreshing episode: {str(e)}")
                                             media.delete()
                                             logger.info(f"Successfully deleted media containing file: {part.file}")
                                             file_deleted = True
@@ -652,6 +691,12 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
                                     logger.info(f"Checking file: {part.file}")
                                     if os.path.basename(part.file) == os.path.basename(item_path):
                                         logger.info(f"Found matching file in item: {item.title}")
+                                        # Refresh media before deletion
+                                        try:
+                                            item.refresh()
+                                            logger.info(f"Refreshed item: {item.title}")
+                                        except Exception as e:
+                                            logger.error(f"Error refreshing item: {str(e)}")
                                         media.delete()
                                         logger.info(f"Successfully deleted media containing file: {part.file} from item: {item.title}")
                                         file_deleted = True
@@ -677,6 +722,196 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
     except Exception as e:
         logger.error(f"Unexpected error removing file from Plex: {str(e)}", exc_info=True)
         return False
+
+def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str = None) -> bool:
+    """
+    Remove a symlinked file from Plex without touching the symlink itself.
+    This function assumes the symlink has already been or will be handled elsewhere.
+    
+    Args:
+        item_title (str): The title of the show or movie
+        item_path (str): The full path to the symlinked file
+        episode_title (str, optional): The episode title for TV shows
+        
+    Returns:
+        bool: True if successfully removed from Plex, False otherwise
+    """
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                logger.info(f"Retry attempt {attempt + 1}/{max_retries} for {item_title} - {episode_title}")
+                time.sleep(retry_delay)
+                
+            # Get Plex connection details based on file management type
+            if get_setting('File Management', 'file_collection_management') == 'Plex':
+                plex_url = get_setting('Plex', 'url').rstrip('/')
+                plex_token = get_setting('Plex', 'token')
+            elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+                plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+            else:
+                logger.error("No Plex URL or token found in settings")
+                return False
+                
+            # Connect to Plex server
+            plex = PlexServer(plex_url, plex_token)
+            
+            # Get all library sections
+            sections = plex.library.sections()
+            file_deleted = False
+            
+            for section in sections:
+                try:
+                    if section.type == 'show' and episode_title:
+                        # For TV shows, we need to find the specific episode
+                        shows = section.search(title=item_title)
+                        
+                        for show in shows:
+                            episodes = show.episodes()
+                            for episode in episodes:
+                                if episode.title == episode_title:
+                                    logger.info(f"Found matching episode: {episode.title}")
+                                    logger.info(f"Episode rating key: {episode.ratingKey}")
+                                    
+                                    # Step 1: Unmatch the episode
+                                    try:
+                                        url = f"{plex_url}/library/metadata/{episode.ratingKey}/unmatch"
+                                        headers = {'X-Plex-Token': plex_token}
+                                        response = requests.put(url, headers=headers)
+                                        logger.info(f"Unmatch response: {response.status_code}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to unmatch episode: {str(e)}")
+                                    
+                                    # Step 2: Try to delete the media directly
+                                    if hasattr(episode, 'media'):
+                                        for media in episode.media:
+                                            try:
+                                                url = f"{plex_url}/library/metadata/{episode.ratingKey}/media/{media.id}"
+                                                headers = {'X-Plex-Token': plex_token}
+                                                response = requests.delete(url, headers=headers)
+                                                logger.info(f"Delete media response: {response.status_code}")
+                                            except Exception as e:
+                                                logger.error(f"Failed to delete media: {str(e)}")
+                                    
+                                    # Step 3: Empty trash for the section
+                                    try:
+                                        url = f"{plex_url}/library/sections/{section.key}/emptyTrash"
+                                        headers = {'X-Plex-Token': plex_token}
+                                        response = requests.put(url, headers=headers)
+                                        logger.info(f"Empty trash response: {response.status_code}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to empty trash: {str(e)}")
+                                    
+                                    # Step 4: Analyze the section
+                                    try:
+                                        section.analyze()
+                                        logger.info(f"Triggered analysis on section: {section.title}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to analyze section: {str(e)}")
+                                    
+                                    # Step 5: Refresh the show
+                                    try:
+                                        show.refresh()
+                                        logger.info(f"Triggered refresh on show: {show.title}")
+                                        
+                                        # Step 6: Verify if episode still exists
+                                        time.sleep(2)  # Give Plex a moment to process
+                                        try:
+                                            episode.reload()
+                                            # If we can still load the episode, continue to next retry
+                                            logger.warning("Episode still exists in Plex, will retry if attempts remain")
+                                            continue
+                                        except:
+                                            # If we can't load the episode, it was successfully removed
+                                            logger.info("Successfully removed episode from Plex")
+                                            return True
+                                            
+                                    except Exception as e:
+                                        logger.error(f"Failed to refresh show: {str(e)}")
+                                        continue
+                    elif section.type == 'movie' and not episode_title:
+                        # For movies
+                        items = section.search(title=item_title)
+                        
+                        for item in items:
+                            logger.info(f"Checking movie: {item.title}")
+                            if hasattr(item, 'media'):
+                                for media in item.media:
+                                    for part in media.parts:
+                                        logger.info(f"Checking file: {part.file}")
+                                        if os.path.basename(part.file).lower() == os.path.basename(item_path).lower():
+                                            logger.info(f"Found matching movie: {item.title}")
+                                            logger.info(f"Movie rating key: {item.ratingKey}")
+                                            
+                                            # Step 1: Unmatch the movie
+                                            try:
+                                                url = f"{plex_url}/library/metadata/{item.ratingKey}/unmatch"
+                                                headers = {'X-Plex-Token': plex_token}
+                                                response = requests.put(url, headers=headers)
+                                                logger.info(f"Unmatch response: {response.status_code}")
+                                            except Exception as e:
+                                                logger.error(f"Failed to unmatch movie: {str(e)}")
+                                            
+                                            # Step 2: Try to delete the media directly
+                                            try:
+                                                url = f"{plex_url}/library/metadata/{item.ratingKey}/media/{media.id}"
+                                                headers = {'X-Plex-Token': plex_token}
+                                                response = requests.delete(url, headers=headers)
+                                                logger.info(f"Delete media response: {response.status_code}")
+                                            except Exception as e:
+                                                logger.error(f"Failed to delete media: {str(e)}")
+                                            
+                                            # Step 3: Empty trash for the section
+                                            try:
+                                                url = f"{plex_url}/library/sections/{section.key}/emptyTrash"
+                                                headers = {'X-Plex-Token': plex_token}
+                                                response = requests.put(url, headers=headers)
+                                                logger.info(f"Empty trash response: {response.status_code}")
+                                            except Exception as e:
+                                                logger.error(f"Failed to empty trash: {str(e)}")
+                                            
+                                            # Step 4: Analyze the section
+                                            try:
+                                                section.analyze()
+                                                logger.info(f"Triggered analysis on section: {section.title}")
+                                            except Exception as e:
+                                                logger.error(f"Failed to analyze section: {str(e)}")
+                                            
+                                            # Step 5: Verify if movie still exists
+                                            time.sleep(2)  # Give Plex a moment to process
+                                            try:
+                                                item.reload()
+                                                # If we can still load the movie, continue to next retry
+                                                logger.warning("Movie still exists in Plex, will retry if attempts remain")
+                                                continue
+                                            except:
+                                                # If we can't load the movie, it was successfully removed
+                                                logger.info("Successfully removed movie from Plex")
+                                                return True
+                                                
+                except Exception as e:
+                    logger.error(f"Error processing section {section.title}: {str(e)}")
+                    continue
+            
+            if not file_deleted:
+                logger.warning(f"No matching {'episode' if episode_title else 'movie'} found in any Plex library section")
+                continue  # Try next attempt if available
+                
+        except plexapi.exceptions.Unauthorized:
+            logger.error("Unauthorized: Please check your Plex token")
+            return False
+        except plexapi.exceptions.NotFound:
+            logger.error(f"Plex server not found at {plex_url}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error removing file from Plex: {str(e)}", exc_info=True)
+            continue  # Try next attempt if available
+    
+    logger.error(f"Failed to remove {'episode' if episode_title else 'movie'} after {max_retries} attempts")
+    return False
 
 def force_match_with_tmdb(title: str, tmdb_id: str) -> bool:
     """
@@ -743,4 +978,46 @@ def force_match_with_tmdb(title: str, tmdb_id: str) -> bool:
         
     except Exception as e:
         logging.error(f"Error force matching item in Plex: {str(e)}")
+        return False
+
+def plex_update_item(item: Dict[str, Any]) -> bool:
+    try:
+        plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+        plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+        
+        if not plex_url or not plex_token:
+            logger.warning("Plex URL or token not configured for symlink")
+            return False
+            
+        plex = PlexServer(plex_url, plex_token)
+        
+        # Get the file location from the item
+        file_location = get_media_item_by_id(item['id'])['location_on_disk']
+        if not file_location:
+            logger.error("No file location provided in item")
+            return False
+            
+        # Get the directory containing the file
+        directory = os.path.dirname(file_location)
+        
+        # Find which section contains this directory
+        for section in plex.library.sections():
+            try:
+                # Get the locations for this section
+                for location in section.locations:
+                    # Check if our directory is under this location
+                    if directory.startswith(location):
+                        logger.info(f"Found matching section {section.title}, scanning directory: {directory}")
+                        # Scan the specific directory
+                        section.update(path=directory)
+                        return True
+            except Exception as e:
+                logger.error(f"Error checking section {section.title}: {str(e)}")
+                continue
+                
+        logger.warning(f"Could not find matching library section for directory: {directory}")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error updating item in Plex: {str(e)}")
         return False

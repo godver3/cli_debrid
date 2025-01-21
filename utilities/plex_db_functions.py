@@ -1,25 +1,23 @@
 import sqlite3
 import os
 import shutil
-import fcntl
 import logging
 from typing import Dict, List, Any
+from utilities.file_lock import FileLock
 
 PLEX_DB_PATH = "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
 
-def safe_copy_db(source_path: str, dest_path: str) -> None:
-    with open(source_path, 'r') as source_file:
-        fcntl.flock(source_file, fcntl.LOCK_EX)
-        try:
-            shutil.copy2(source_path, dest_path)
-        finally:
-            fcntl.flock(source_file, fcntl.LOCK_UN)
+def copy_db(source_path, destination_path):
+    with open(source_path, 'rb') as source_file:
+        with FileLock(source_file):
+            with open(destination_path, 'wb') as dest_file:
+                shutil.copyfileobj(source_file, dest_file)
 
 def get_collected_from_plex(request: str = 'all') -> Dict[str, List[Dict[str, Any]]]:
     try:
         temp_db_path = PLEX_DB_PATH + '.temp'
         logging.debug(f"Copying Plex database to temporary file: {temp_db_path}")
-        safe_copy_db(PLEX_DB_PATH, temp_db_path)
+        copy_db(PLEX_DB_PATH, temp_db_path)
 
         collected_content = {'movies': [], 'episodes': []}
 

@@ -1,7 +1,13 @@
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask.json import jsonify
 from initialization import get_all_wanted_from_enabled_sources
-from run_program import get_and_add_recent_collected_from_plex, get_and_add_all_collected_from_plex, ProgramRunner, run_local_library_scan, run_recent_local_library_scan
+from run_program import (
+    get_and_add_recent_collected_from_plex, 
+    get_and_add_all_collected_from_plex, 
+    ProgramRunner, 
+    run_local_library_scan, 
+    run_recent_local_library_scan
+)
 from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
 from settings import get_all_settings, get_setting, set_setting
 from config_manager import load_config
@@ -9,8 +15,8 @@ import logging
 from routes import admin_required
 from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.collected import get_wanted_from_collected
-from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
-from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
+from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from metadata.metadata import process_metadata
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
@@ -28,6 +34,7 @@ from not_wanted_magnets import (
     purge_not_wanted_magnets_file, save_not_wanted_magnets,
     load_not_wanted_urls, save_not_wanted_urls
 )
+import json
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -46,14 +53,16 @@ def async_get_wanted_content(source):
 def async_get_collected_from_plex(collection_type):
     try:
         if collection_type == 'all':
-            if get_setting('Debug', 'symlink_collected_files'):
-                run_local_library_scan()
+            if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                logging.info("Full library scan disabled for now")
+                #run_local_library_scan()
             else:
                 get_and_add_all_collected_from_plex()
             message = 'Successfully retrieved and added all collected items from Library'
         elif collection_type == 'recent':
-            if get_setting('Debug', 'symlink_collected_files'):
-                run_recent_local_library_scan()
+            if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                logging.info("Recent library scan disabled for now")
+                #run_recent_local_library_scan()
             else:
                 get_and_add_recent_collected_from_plex()
             message = 'Successfully retrieved and added recent collected items from Library'
@@ -336,8 +345,8 @@ def update_trakt_settings(content_sources):
         if source_id.startswith('Trakt Lists') and source_data['enabled']
     ])
 
-    set_setting('Trakt', 'user_watchlist_enabled', trakt_watchlist_enabled)
-    set_setting('Trakt', 'trakt_lists', trakt_lists)
+    #set_setting('Trakt', 'user_watchlist_enabled', trakt_watchlist_enabled)
+    #set_setting('Trakt', 'trakt_lists', trakt_lists)
 
 def get_and_add_wanted_content(source_id):
     content_sources = get_all_settings().get('Content Sources', {})
@@ -350,8 +359,14 @@ def get_and_add_wanted_content(source_id):
     wanted_content = []
     if source_type == 'Overseerr':
         wanted_content = get_wanted_from_overseerr()
-    elif source_type == 'Plex Watchlist':
+    elif source_type == 'My Plex Watchlist':
         wanted_content = get_wanted_from_plex_watchlist(versions)
+    elif source_type == 'Other Plex Watchlist':
+        wanted_content = get_wanted_from_other_plex_watchlist(
+            username=source_data.get('username', ''),
+            token=source_data.get('token', ''),
+            versions=versions
+        )
     elif source_type == 'MDBList':
         mdblist_urls = source_data.get('urls', '').split(',')
         for mdblist_url in mdblist_urls:
@@ -366,6 +381,9 @@ def get_and_add_wanted_content(source_id):
         for trakt_list in trakt_lists:
             trakt_list = trakt_list.strip()
             wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+    elif source_type == 'Trakt Collection':
+        update_trakt_settings(content_sources)
+        wanted_content = get_wanted_from_trakt_collection()
     elif source_type == 'Collected':
         wanted_content = get_wanted_from_collected()
 
@@ -378,6 +396,9 @@ def get_and_add_wanted_content(source_id):
             processed_items = process_metadata(items)
             if processed_items:
                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                # Add content source
+                for item in all_items:
+                    item['content_source'] = source_id
                 logging.debug(f"Calling add_wanted_items with {len(all_items)} items and versions: {item_versions}")
                 add_wanted_items(all_items, item_versions)
                 total_items += len(all_items)
@@ -385,6 +406,11 @@ def get_and_add_wanted_content(source_id):
         logging.info(f"Added {total_items} wanted items from {source_id}")
     else:
         logging.warning(f"No wanted content retrieved from {source_id}")
+
+def get_content_sources():
+    """Get content sources from ProgramRunner instance."""
+    program_runner = ProgramRunner()
+    return program_runner.get_content_sources()
 
 @debug_bp.route('/api/get_wanted_content', methods=['POST'])
 def get_wanted_content():
@@ -442,7 +468,12 @@ def move_item_to_wanted(item_id):
                 filled_by_torrent_id = NULL, 
                 collected_at = NULL,
                 last_updated = ?,
-                version = TRIM(version, '*')
+                location_on_disk = NULL,
+                original_path_for_symlink = NULL,
+                original_scraped_torrent_title = NULL,
+                upgrading_from = NULL,
+                version = TRIM(version, '*'),
+                upgrading = NULL
             WHERE id = ?
         ''', (datetime.now(), item_id))
         conn.commit()
@@ -460,7 +491,9 @@ def send_test_notification():
     try:
         # Create test notification items
         now = datetime.now()
-        test_notifications = [
+        
+        # Collection test notifications
+        collection_notifications = [
             {
                 'type': 'movie',
                 'title': 'Test Movie 1',
@@ -468,26 +501,9 @@ def send_test_notification():
                 'tmdb_id': '123456',
                 'original_collected_at': now.isoformat(),
                 'version': '1080p',
-                'is_upgrade': False
-            },
-            {
-                'type': 'movie',
-                'title': 'Test Movie 1',
-                'year': 2023,
-                'tmdb_id': '123456',
-                'original_collected_at': now.isoformat(),
-                'version': '2160p',
-                'is_upgrade': False
-            },
-            {
-                'type': 'movie',
-                'title': 'Test Movie 2',
-                'year': 2023,
-                'tmdb_id': '234567',
-                'original_collected_at': (now + timedelta(hours=1)).isoformat(),
-                'version': '1080p',
-                'is_upgrade': True,
-                'original_collected_at': (now - timedelta(days=7)).isoformat()
+                'is_upgrade': False,
+                'media_type': 'movie',
+                'new_state': 'Collected'  # Adding new_state for NEW indicator
             },
             {
                 'type': 'movie',
@@ -497,7 +513,9 @@ def send_test_notification():
                 'original_collected_at': (now + timedelta(hours=1)).isoformat(),
                 'version': '2160p',
                 'is_upgrade': True,
-                'original_collected_at': (now - timedelta(days=7)).isoformat()
+                'upgrading_from': 'Test Movie 2 1080p.mkv',
+                'media_type': 'movie',
+                'new_state': 'Collected'  # Adding new_state for upgrade indicator
             },
             {
                 'type': 'episode',
@@ -508,17 +526,75 @@ def send_test_notification():
                 'episode_number': 1,
                 'original_collected_at': (now + timedelta(hours=2)).isoformat(),
                 'version': 'Default',
-                'is_upgrade': False
+                'is_upgrade': False,
+                'media_type': 'tv',
+                'new_state': 'Collected'
+            },
+            {
+                'type': 'episode',
+                'title': 'Test TV Show 3',
+                'year': 2023,
+                'tmdb_id': '789012',
+                'season_number': 1,
+                'episode_number': 3,
+                'original_collected_at': (now + timedelta(hours=3)).isoformat(),
+                'version': '2160p',
+                'is_upgrade': True,
+                'upgrading_from': 'Test TV Show 3 S01E03 1080p.mkv',
+                'media_type': 'tv',
+                'new_state': 'Collected'  # This indicates it's a completed upgrade
+            }
+        ]
+
+        # State change test notifications
+        state_change_notifications = [
+            {
+                'type': 'movie',
+                'title': 'Test Movie 3',
+                'year': 2023,
+                'tmdb_id': '456789',
+                'version': '1080p',
+                'new_state': 'Checking',
+                'is_upgrade': False,
+                'upgrading_from': None,
+                'media_type': 'movie'
+            },
+            {
+                'type': 'movie',
+                'title': 'Test Movie 4',
+                'year': 2023,
+                'tmdb_id': '567890',
+                'version': '2160p',
+                'new_state': 'Sleeping',
+                'is_upgrade': False,
+                'upgrading_from': None,
+                'media_type': 'movie'
+            },
+            {
+                'type': 'episode',
+                'title': 'Test TV Show 2',
+                'year': 2023,
+                'tmdb_id': '678901',
+                'season_number': 1,
+                'episode_number': 2,
+                'version': '1080p',
+                'new_state': 'Upgrading',
+                'is_upgrade': True,
+                'upgrading_from': 'Test TV Show 2 S01E02 720p.mkv',
+                'media_type': 'tv'
             }
         ]
 
         # Fetch enabled notifications
         enabled_notifications = get_all_settings().get('Notifications', {})
         
-        # Send test notifications
-        send_notifications(test_notifications, enabled_notifications)
+        # Send collection notifications
+        send_notifications(collection_notifications, enabled_notifications, notification_category='collected')
         
-        return jsonify({'success': True, 'message': 'Test notification sent successfully'}), 200
+        # Send state change notifications
+        send_notifications(state_change_notifications, enabled_notifications, notification_category='state_change')
+        
+        return jsonify({'success': True, 'message': 'Test notifications sent successfully'}), 200
 
     except Exception as e:
         current_app.logger.error(f"Error sending test notification: {str(e)}", exc_info=True)
@@ -773,3 +849,147 @@ def get_versions():
     except Exception as e:
         logging.error(f"Error getting versions: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
+
+@debug_bp.route('/convert_to_symlinks', methods=['POST'])
+@admin_required
+def convert_to_symlinks():
+    """Convert existing library items to use symlinks."""
+    try:
+        # Get database connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Get symlinked files path from settings
+        symlinked_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
+        if not symlinked_path:
+            logging.error("Symlinked files path not configured")
+            return "Symlinked files path not configured", 400
+
+        # Get all items with location_on_disk set
+        cursor.execute("""
+            SELECT *
+            FROM media_items 
+            WHERE location_on_disk IS NOT NULL 
+            AND location_on_disk != ''
+            AND state = 'Collected'
+        """)
+        items = cursor.fetchall()
+
+        if not items:
+            logging.error("No items found with location_on_disk set")
+            return "No items found with location_on_disk set", 404
+
+        logging.info(f"Found {len(items)} items to convert to symlinks")
+
+        # Convert items to symlinks
+        from utilities.local_library_scan import convert_item_to_symlink
+        results = []
+        processed = 0
+        total = len(items)
+        wanted_count = 0
+        deleted_count = 0
+        skipped_count = 0
+
+        for item in items:
+            item_dict = dict(item)
+            
+            # Check if item is already in symlink folder
+            current_location = item_dict.get('location_on_disk', '')
+            if current_location.startswith(symlinked_path):
+                logging.info(f"Skipping {item_dict['title']} ({item_dict['version']}) - already in symlink folder")
+                skipped_count += 1
+                continue
+
+            result = convert_item_to_symlink(item_dict)
+            results.append(result)
+
+            if result['success']:
+                # Update database with new location and original path
+                cursor.execute("""
+                    UPDATE media_items 
+                    SET location_on_disk = ?,
+                        original_path_for_symlink = ?
+                    WHERE id = ?
+                """, (result['new_location'], result['old_location'], result['item_id']))
+            else:
+                # If error is "Source file not found", handle specially
+                if "Source file not found" in result['error']:
+                    # Check if we have another item with same title, type, and version that's either Wanted or Collected
+                    cursor.execute("""
+                        SELECT COUNT(*) as count 
+                        FROM media_items 
+                        WHERE title = ? 
+                        AND type = ? 
+                        AND TRIM(version, '*') = TRIM(?, '*')
+                        AND state IN ('Wanted', 'Collected')
+                        AND id != ?
+                    """, (item_dict['title'], item_dict['type'], item_dict['version'], item_dict['id']))
+                    
+                    has_duplicate = cursor.fetchone()['count'] > 0
+                    
+                    if has_duplicate:
+                        # Delete this item as we already have a copy
+                        cursor.execute("DELETE FROM media_items WHERE id = ?", (result['item_id'],))
+                        deleted_count += 1
+                        logging.info(f"Deleted item {item_dict['title']} ({item_dict['version']}) as duplicate exists")
+                    else:
+                        # Update the item to Wanted state
+                        cursor.execute("""
+                            UPDATE media_items 
+                            SET state = 'Wanted',
+                                filled_by_file = NULL,
+                                filled_by_title = NULL,
+                                filled_by_magnet = NULL,
+                                filled_by_torrent_id = NULL,
+                                collected_at = NULL,
+                                location_on_disk = NULL,
+                                last_updated = CURRENT_TIMESTAMP,
+                                version = TRIM(version, '*')
+                            WHERE id = ?
+                        """, (result['item_id'],))
+                        wanted_count += 1
+                        logging.info(f"Moved item {item_dict['title']} ({item_dict['version']}) to Wanted state")
+            
+            # Log progress every 50 items
+            processed += 1
+            if processed % 50 == 0:
+                logging.info(f"Progress: {processed}/{total} items processed")
+                conn.commit()  # Intermediate commit to avoid long transactions
+
+        conn.commit()
+        conn.close()
+
+        # Count successes and failures
+        successes = sum(1 for r in results if r['success'])
+        failures = sum(1 for r in results if not r['success'])
+
+        # Group failures by error type for better reporting
+        error_summary = {}
+        for r in results:
+            if not r['success']:
+                error_type = r['error']
+                if error_type not in error_summary:
+                    error_summary[error_type] = 0
+                error_summary[error_type] += 1
+
+        # Log the summary
+        logging.info(f"Processed {len(results)} items: {successes} successful, {failures} failed")
+        if failures > 0:
+            logging.warning("Error summary:")
+            for error_type, count in error_summary.items():
+                logging.warning(f"- {error_type}: {count} items")
+
+        summary = f"Processed {len(results)} items: {successes} successful, {failures} failed"
+        if wanted_count > 0 or deleted_count > 0 or skipped_count > 0:
+            if wanted_count > 0:
+                summary += f"\nMoved {wanted_count} items back to Wanted state"
+            if deleted_count > 0:
+                summary += f"\nDeleted {deleted_count} duplicate items"
+            if skipped_count > 0:
+                summary += f"\nSkipped {skipped_count} items already in symlink folder"
+
+        return summary, 200
+
+    except Exception as e:
+        logging.error(f"Error converting library to symlinks: {str(e)}")
+        return f"Error converting library to symlinks: {str(e)}", 500

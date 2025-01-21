@@ -20,7 +20,11 @@
         <span class="settings-toggle-icon">+</span>
     </div>
     <div class="settings-section-content">
-        <select id="default-version" name="Reverse Parser.default_version" class="settings-input">
+        <select id="default-version" 
+                name="Reverse Parser.default_version" 
+                class="settings-input"
+                data-section="Reverse Parser" 
+                data-key="default_version">
             <!-- Options will be dynamically populated -->
         </select>
     </div>
@@ -37,7 +41,13 @@ document.addEventListener('DOMContentLoaded', function() {
         div.setAttribute('data-version', version);
         div.innerHTML = `
             <span class="version-name">${version}</span>
-            <input type="text" class="settings-input version-terms" value="${terms.join(', ')}" placeholder="Enter terms separated by commas">
+            <input type="text" 
+                   class="settings-input version-terms" 
+                   value="${terms.join(', ')}" 
+                   placeholder="Enter terms separated by commas"
+                   name="Reverse Parser.version_terms.${version}"
+                   data-section="Reverse Parser"
+                   data-key="version_terms.${version}">
             <button type="button" class="move-btn move-up" title="Move Up">↑</button>
             <button type="button" class="move-btn move-down" title="Move Down">↓</button>
         `;

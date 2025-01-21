@@ -5,18 +5,87 @@ from flask import current_app, jsonify
 from datetime import datetime
 from sqlalchemy import or_, func, cast, String
 from sqlalchemy.orm import joinedload, selectinload
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from .logger_config import logger
 from sqlalchemy import text, UniqueConstraint
-from sqlalchemy.types import JSON  # Add this import
-import os  # Add this import
+from sqlalchemy.types import JSON
+import os
+import time
+import random
+from functools import wraps
 
+def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            attempt = 0
+            while attempt < max_attempts:
+                try:
+                    return func(*args, **kwargs)
+                except OperationalError as e:
+                    if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                        attempt += 1
+                        wait_time = initial_wait * (backoff_factor ** attempt) + random.uniform(0, 0.1)
+                        logger.warning(f"Database locked. Retrying in {wait_time:.2f} seconds... (Attempt {attempt + 1}/{max_attempts})")
+                        time.sleep(wait_time)
+                    else:
+                        raise
+            raise Exception(f"Failed to execute database operation after {max_attempts} attempts due to database locks")
+        return wrapper
+    return decorator
 
 # Create a base class for declarative models
 Base = declarative_base()
 
 # Create a scoped session
 Session = scoped_session(sessionmaker())
+
+def init_db():
+    global engine
+    if engine is not None:
+        return engine
+
+    # Get db_content directory from environment variable with fallback
+    db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    os.makedirs(db_directory, exist_ok=True)
+
+    db_path = os.path.join(db_directory, 'cli_battery.db')
+    connection_string = f'sqlite:///{db_path}'
+
+    try:
+        #logger.info(f"Attempting to connect to database: {connection_string}")
+        engine = create_engine(
+            connection_string,
+            echo=False,
+            connect_args={
+                'timeout': 30,  # Increase SQLite busy timeout
+                'check_same_thread': False,  # Allow multi-threaded access
+            }
+        )
+
+        # Configure PRAGMA settings once during initialization
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA busy_timeout=30000"))
+            conn.execute(text("PRAGMA synchronous=NORMAL"))
+            conn.commit()
+
+        # Configure the session with the engine
+        Session.remove()  # Clear any existing sessions
+        Session.configure(bind=engine)
+
+        # Create tables
+        Base.metadata.create_all(engine)
+
+        #logger.info(f"Successfully connected to cli_battery database: {connection_string}")
+        return engine
+    except Exception as e:
+        logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
+        engine = None  # Reset engine on failure
+        raise
+
+# Initialize the database engine
+engine = None
 
 class Item(Base):
     __tablename__ = 'items'
@@ -89,51 +158,61 @@ class TMDBToIMDBMapping(Base):
 
 class DatabaseManager:
     @staticmethod
+    @retry_on_db_lock()
     def add_or_update_item(imdb_id, title, year=None, item_type=None):
         with Session() as session:
-            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-            if item:
-                item.title = title
-                if year is not None:
-                    item.year = year
-                if item_type is not None:
-                    item.type = item_type
-                item.updated_at = datetime.utcnow()
-            else:
-                item = Item(imdb_id=imdb_id, title=title, year=year, type=item_type)
-                session.add(item)
-            session.commit()
-            return item.id
+            try:
+                item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                if item:
+                    item.title = title
+                    if year is not None:
+                        item.year = year
+                    if item_type is not None:
+                        item.type = item_type
+                    item.updated_at = datetime.utcnow()
+                else:
+                    item = Item(imdb_id=imdb_id, title=title, year=year, type=item_type)
+                    session.add(item)
+                session.commit()
+                return item.id
+            except Exception as e:
+                session.rollback()
+                raise
 
     @staticmethod
+    @retry_on_db_lock()
     def add_or_update_metadata(imdb_id, metadata_dict, provider):
         with Session() as session:
-            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-            if not item:
-                item = Item(imdb_id=imdb_id, title=metadata_dict.get('title', ''))
-                session.add(item)
-                session.flush()
+            try:
+                item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                if not item:
+                    item = Item(imdb_id=imdb_id, title=metadata_dict.get('title', ''))
+                    session.add(item)
+                    session.flush()
 
-            item_type = metadata_dict.get('type')
-            if item_type:
-                item.type = item_type
-            elif 'aired_episodes' in metadata_dict:
-                item.type = 'show'
-            else:
-                item.type = 'movie'
+                item_type = metadata_dict.get('type')
+                if item_type:
+                    item.type = item_type
+                elif 'aired_episodes' in metadata_dict:
+                    item.type = 'show'
+                else:
+                    item.type = 'movie'
 
-            now = datetime.utcnow()
-            for key, value in metadata_dict.items():
-                if key != 'type':
-                    metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
-                    if metadata:
-                        metadata.value = value
-                        metadata.last_updated = now
-                    else:
-                        metadata = Metadata(item_id=item.id, key=key, value=value, provider=provider, last_updated=now)
-                        session.add(metadata)
+                now = datetime.utcnow()
+                for key, value in metadata_dict.items():
+                    if key != 'type':
+                        metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
+                        if metadata:
+                            metadata.value = value
+                            metadata.last_updated = now
+                        else:
+                            metadata = Metadata(item_id=item.id, key=key, value=value, provider=provider, last_updated=now)
+                            session.add(metadata)
 
-            session.commit()
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                raise
 
     @staticmethod
     def get_item(imdb_id):
@@ -214,35 +293,3 @@ class DatabaseManager:
                 logger.error(f"Error removing metadata for IMDB ID {imdb_id}: {str(e)}")
                 session.rollback()
                 return False
-
-def init_db(app):
-    # Get db_content directory from environment variable with fallback
-    db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-    os.makedirs(db_directory, exist_ok=True)
-
-    db_path = os.path.join(db_directory, 'cli_battery.db')
-    connection_string = f'sqlite:///{db_path}'
-
-    try:
-        print(f"Attempting to connect to database: {connection_string}")
-        engine = create_engine(connection_string, echo=False)
-
-        # Test the connection
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-
-        # Bind the engine to the session and create tables
-        Session.configure(bind=engine)
-        Base.metadata.bind = engine
-        Base.metadata.create_all(engine)
-
-        logger.info(f"Successfully connected to cli_battery database: {connection_string}")
-        # logger.info("All database tables created successfully.")
-        return engine
-    except Exception as e:
-        logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
-        logger.critical("Database connection failed.")
-        raise
-
-# Initialize the database connection
-engine = init_db(current_app)

@@ -6,6 +6,33 @@ from email.mime.multipart import MIMEMultipart
 from settings_schema import SETTINGS_SCHEMA
 from collections import defaultdict
 from datetime import datetime
+import time
+from threading import Timer, Lock
+
+# Global notification buffer
+notification_buffer = []
+notification_timer = None
+buffer_lock = Lock()
+BUFFER_TIMEOUT = 10  # seconds to wait before sending notifications
+
+def safe_format_date(date_value):
+    if not date_value:
+        return "Unknown"
+    try:
+        if isinstance(date_value, str):
+            return datetime.fromisoformat(date_value).strftime('%Y-%m-%d')
+        elif isinstance(date_value, datetime):
+            return date_value.strftime('%Y-%m-%d')
+        else:
+            logging.warning(f"Unexpected date type: {type(date_value)}")
+            return "Unknown"
+    except Exception as e:
+        logging.warning(f"Error formatting date {date_value}: {str(e)}")
+        return "Unknown"
+
+def escape_discord_formatting(text):
+    """Escape Discord's Markdown formatting characters in text."""
+    return text.replace('*', '\\*')
 
 def consolidate_items(notifications):
     consolidated = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -62,342 +89,132 @@ def consolidate_items(notifications):
             
     return consolidated
 
-def format_notification_content(notifications, notification_type):
-    consolidated = consolidate_items(notifications)
-    
+def format_notification_content(notifications, notification_type, notification_category='collected'):
+    # Define emojis for all notification types
+    EMOJIS = {
+        'movie': "🎬",
+        'show': "📺",
+        'upgrade': "⬆️",
+        'new': "🆕"
+    }
+
+    def format_state_suffix(state, is_upgrade=False):
+        """Return the appropriate suffix based on state"""
+        if state == 'Collected' and is_upgrade:
+            return f"→ Upgraded"
+        else:
+            return f"→ {state}"
+
+    def format_title(item):
+        """Format the title with appropriate prefix and formatting."""
+        title = item.get('title', '')
+        year = item.get('year', '')
+        version = item.get('version', '').strip('*')
+        is_upgrade = item.get('is_upgrade', False)
+        media_type = item.get('type', 'movie')
+        new_state = item.get('new_state', '')
+        
+        # Choose prefix based on state and upgrade status
+        if new_state == 'Downloading':
+            prefix = "⬇️"  # Download emoji for downloading state
+        elif new_state == 'Checking':
+            prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
+        elif new_state == 'Upgrading':
+            prefix = EMOJIS['movie'] if media_type == 'movie' else EMOJIS['show']
+        elif new_state == 'Upgraded':
+            prefix = EMOJIS['upgrade']
+        elif new_state == 'Collected':
+            prefix = EMOJIS['new']
+        else:
+            prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
+        
+        # Add version info for movies
+        if media_type == 'movie':
+            return f"{prefix} **{title}** ({year}) [{version}]"
+        else:
+            return f"{prefix} **{title}** ({year})"
+
+    def format_episode(item):
+        """Format episode information"""
+        season = item.get('season_number')
+        episode = item.get('episode_number')
+        if season is not None and episode is not None:
+            version = item.get('version', '')
+            version_str = f" [{version}]" if version else ""
+            return f"    S{season:02d}E{episode:02d}{version_str}"
+        return None
+
+    # Group items by show/movie
+    grouped_items = {}
+    for item in notifications:
+        # Group by title, type, year, and state for better batching
+        key = (item.get('title'), item.get('type'), item.get('year'), item.get('new_state'), item.get('is_upgrade', False))
+        if key not in grouped_items:
+            grouped_items[key] = []
+        grouped_items[key].append(item)
+
     content = []
     
-    if notification_type == 'Discord':
-        movie_emoji = "🎬"
-        tv_emoji = "📺"
-        tv_show_emoji = "⭐"
-        movies_emoji = "⭐"
-        upgrade_emoji = "⬆️"
-        new_emoji = "🆕"
-
-        if consolidated['movie']:
-            content.append(f"\n{movie_emoji} **Movies collected/upgraded:**\n")
-            for movie, items in consolidated['movie'].items():
-                for item in items['items']:
-                    versions = ', '.join(sorted(item['versions']))
-                    status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                    if item['is_upgrade']:
-                        content.append(f"{movies_emoji} {status_emoji} **{movie}** [{versions}] (Upgraded, originally collected on {collected_date})")
-                    else:
-                        content.append(f"{movies_emoji} {status_emoji} **{movie}** [{versions}] (New collection)")
+    # Process each group
+    for (title, type_, year, state, is_upgrade), items in sorted(grouped_items.items()):
+        # Create a representative item for the group
+        group_item = items[0].copy()
         
-        if consolidated['show']:
-            content.append(f"\n{tv_emoji} **TV Shows collected/upgraded:**\n")
-            for show, seasons in consolidated['show'].items():
-                content.append(f"{tv_show_emoji} **{show}**")
-                
-                # Handle full seasons
-                if seasons.get('seasons'):
-                    for item in seasons['seasons']:
-                        status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                        status = f"Upgraded, originally collected on {collected_date}" if item['is_upgrade'] else "New collection"
-                        content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})")
-                
-                # Handle individual episodes
-                for season, episodes in seasons.items():
-                    if season == 'seasons':
-                        continue
-                        
-                    if len(episodes) > 0:
-                        # Group episodes with same version and upgrade status
-                        episode_groups = defaultdict(list)
-                        for ep in episodes:
-                            key = (ep['version'], ep['is_upgrade'], ep['original_collected_at'])
-                            episode_groups[key].append(ep['episode'])
-                        
-                        for (version, is_upgrade, collected_at), eps in episode_groups.items():
-                            status_emoji = upgrade_emoji if is_upgrade else new_emoji
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
-                            status = f"Upgraded, originally collected on {collected_date}" if is_upgrade else "New collection"
-                            
-                            # Sort episodes
-                            eps.sort(key=lambda x: (
-                                int(x.split('E')[0][1:]),  # Season number
-                                int(x.split('E')[1])       # Episode number
-                            ))
-                            episodes_str = ', '.join(eps)
-                            content.append(f"    {status_emoji} {episodes_str} [{version}] ({status})")
-                
-                # Add versions summary
-                all_versions = set()
-                for season_data in seasons.values():
-                    if isinstance(season_data, list):  # Episodes or seasons
-                        all_versions.update(item['version'] for item in season_data)
-                
-                if all_versions:
-                    content.append(f"    Versions: [{', '.join(sorted(all_versions))}]\n")
-    elif notification_type == 'Email':
-        movie_emoji = "🎬"
-        tv_emoji = "📺"
-        tv_show_emoji = "⭐"
-        movies_emoji = "⭐"
-        upgrade_emoji = "⬆️"
-        new_emoji = "🆕"
-
-        if consolidated['movie']:
-            content.append(f"\n{movie_emoji} <b>Movies collected/upgraded:</b><br><br>")
-            for movie, items in consolidated['movie'].items():
-                for item in items['items']:
-                    versions = ', '.join(sorted(item['versions']))
-                    status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                    if item['is_upgrade']:
-                        content.append(f"{movies_emoji} {status_emoji} <b>{movie}</b> [{versions}] (Upgraded, originally collected on {collected_date})<br>")
-                    else:
-                        content.append(f"{movies_emoji} {status_emoji} <b>{movie}</b> [{versions}] (New collection)<br>")
+        # Add the title line only once per group
+        content.append(format_title(group_item))
         
-        if consolidated['show']:
-            content.append(f"\n<br>{tv_emoji} <b>TV Shows collected/upgraded:</b><br><br>")
-            for show, seasons in consolidated['show'].items():
-                content.append(f"{tv_show_emoji} <b>{show}</b><br>")
-                
-                # Handle full seasons
-                if seasons.get('seasons'):
-                    for item in seasons['seasons']:
-                        status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                        status = f"Upgraded, originally collected on {collected_date}" if item['is_upgrade'] else "New collection"
-                        content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})<br>")
-                
-                # Handle individual episodes
-                for season, episodes in seasons.items():
-                    if season == 'seasons':
-                        continue
-                        
-                    if len(episodes) > 0:
-                        # Group episodes with same version and upgrade status
-                        episode_groups = defaultdict(list)
-                        for ep in episodes:
-                            key = (ep['version'], ep['is_upgrade'], ep['original_collected_at'])
-                            episode_groups[key].append(ep['episode'])
-                        
-                        for (version, is_upgrade, collected_at), eps in episode_groups.items():
-                            status_emoji = upgrade_emoji if is_upgrade else new_emoji
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
-                            status = f"Upgraded, originally collected on {collected_date}" if is_upgrade else "New collection"
-                            
-                            # Sort episodes
-                            eps.sort(key=lambda x: (
-                                int(x.split('E')[0][1:]),  # Season number
-                                int(x.split('E')[1])       # Episode number
-                            ))
-                            episodes_str = ', '.join(eps)
-                            content.append(f"    {status_emoji} {episodes_str} [{version}] ({status})<br>")
-                
-                # Add versions summary
-                all_versions = set()
-                for season_data in seasons.values():
-                    if isinstance(season_data, list):  # Episodes or seasons
-                        all_versions.update(item['version'] for item in season_data)
-                
-                if all_versions:
-                    content.append(f"    - Versions: [{', '.join(sorted(all_versions))}]<br><br>")
-    elif notification_type == 'Telegram':
-        movie_emoji = "🎬"
-        tv_emoji = "📺"
-        tv_show_emoji = "⭐"
-        movies_emoji = "⭐"
-        upgrade_emoji = "⬆️"
-        new_emoji = "🆕"
+        # Sort episodes by season and episode number
+        if type_ == 'episode':
+            sorted_items = sorted(items, key=lambda x: (x.get('season_number', 0), x.get('episode_number', 0)))
+            for item in sorted_items:
+                episode_line = format_episode(item)
+                if episode_line:
+                    content.append(f"{episode_line} {format_state_suffix(state, is_upgrade)}")
+        else:
+            # For movies, just add the state suffix to the title line
+            content[-1] = f"{content[-1]} {format_state_suffix(state, is_upgrade)}"
 
-        if consolidated['movie']:
-            content.append(f"\n{movie_emoji} <b>Movies collected/upgraded:</b>\n")
-            for movie, items in consolidated['movie'].items():
-                for item in items['items']:
-                    versions = ', '.join(sorted(item['versions']))
-                    status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                    if item['is_upgrade']:
-                        content.append(f"{movies_emoji} {status_emoji} <i>{movie}</i> [{versions}] (Upgraded, originally collected on {collected_date})")
-                    else:
-                        content.append(f"{movies_emoji} {status_emoji} <i>{movie}</i> [{versions}] (New collection)")
-        
-        if consolidated['show']:
-            content.append(f"\n{tv_emoji} <b>TV Shows collected/upgraded:</b>\n")
-            for show, seasons in consolidated['show'].items():
-                content.append(f"{tv_show_emoji} <i>{show}</i>")
-                
-                # Handle full seasons
-                if seasons.get('seasons'):
-                    for item in seasons['seasons']:
-                        status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                        status = f"Upgraded, originally collected on {collected_date}" if item['is_upgrade'] else "New collection"
-                        content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})")
-                
-                # Handle individual episodes
-                for season, episodes in seasons.items():
-                    if season == 'seasons':
-                        continue
-                        
-                    if len(episodes) > 0:
-                        # Group episodes with same version and upgrade status
-                        episode_groups = defaultdict(list)
-                        for ep in episodes:
-                            key = (ep['version'], ep['is_upgrade'], ep['original_collected_at'])
-                            episode_groups[key].append(ep['episode'])
-                        
-                        for (version, is_upgrade, collected_at), eps in episode_groups.items():
-                            status_emoji = upgrade_emoji if is_upgrade else new_emoji
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
-                            status = f"Upgraded, originally collected on {collected_date}" if is_upgrade else "New collection"
-                            
-                            # Sort episodes
-                            eps.sort(key=lambda x: (
-                                int(x.split('E')[0][1:]),  # Season number
-                                int(x.split('E')[1])       # Episode number
-                            ))
-                            episodes_str = ', '.join(eps)
-                            content.append(f"    {status_emoji} {episodes_str} [{version}] ({status})")
-                
-                # Add versions summary
-                all_versions = set()
-                for season_data in seasons.values():
-                    if isinstance(season_data, list):  # Episodes or seasons
-                        all_versions.update(item['version'] for item in season_data)
-                
-                if all_versions:
-                    content.append(f"    - Versions: [{', '.join(sorted(all_versions))}]\n")
-    elif notification_type == 'NTFY':
-        movie_emoji = "🎬"
-        tv_emoji = "📺"
-        tv_show_emoji = "⭐"
-        movies_emoji = "⭐"
-        upgrade_emoji = "⬆️"
-        new_emoji = "🆕"
-
-        if consolidated['movie']:
-            content.append(f"\n{movie_emoji} Movies collected/upgraded:\n")
-            for movie, items in consolidated['movie'].items():
-                for item in items['items']:
-                    versions = ', '.join(sorted(item['versions']))
-                    status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                    if item['is_upgrade']:
-                        content.append(f"{movies_emoji} {status_emoji} {movie} [{versions}] (Upgraded, originally collected on {collected_date})")
-                    else:
-                        content.append(f"{movies_emoji} {status_emoji} {movie} [{versions}] (New collection)")
-        
-        if consolidated['show']:
-            content.append(f"\n{tv_emoji} TV Shows collected/upgraded:\n")
-            for show, seasons in consolidated['show'].items():
-                content.append(f"{tv_show_emoji} {show}")
-                
-                # Handle full seasons
-                if seasons.get('seasons'):
-                    for item in seasons['seasons']:
-                        status_emoji = upgrade_emoji if item['is_upgrade'] else new_emoji
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                        status = f"Upgraded, originally collected on {collected_date}" if item['is_upgrade'] else "New collection"
-                        content.append(f"    {status_emoji} {item['season']} [{item['version']}] ({status})")
-                
-                # Handle individual episodes
-                for season, episodes in seasons.items():
-                    if season == 'seasons':
-                        continue
-                        
-                    if len(episodes) > 0:
-                        # Group episodes with same version and upgrade status
-                        episode_groups = defaultdict(list)
-                        for ep in episodes:
-                            key = (ep['version'], ep['is_upgrade'], ep['original_collected_at'])
-                            episode_groups[key].append(ep['episode'])
-                        
-                        for (version, is_upgrade, collected_at), eps in episode_groups.items():
-                            status_emoji = upgrade_emoji if is_upgrade else new_emoji
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
-                            status = f"Upgraded, originally collected on {collected_date}" if is_upgrade else "New collection"
-                            
-                            # Sort episodes
-                            eps.sort(key=lambda x: (
-                                int(x.split('E')[0][1:]),  # Season number
-                                int(x.split('E')[1])       # Episode number
-                            ))
-                            episodes_str = ', '.join(eps)
-                            content.append(f"    {status_emoji} {episodes_str} [{version}] ({status})")
-                
-                # Add versions summary
-                all_versions = set()
-                for season_data in seasons.values():
-                    if isinstance(season_data, list):  # Episodes or seasons
-                        all_versions.update(item['version'] for item in season_data)
-                
-                if all_versions:
-                    content.append(f"    - Versions: [{', '.join(sorted(all_versions))}]\n")
-    else:
-        if consolidated['movie']:
-            content.append("Movies collected/upgraded:\n")
-            for movie, items in consolidated['movie'].items():
-                for item in items['items']:
-                    versions = ', '.join(sorted(item['versions']))
-                    status = "Upgraded" if item['is_upgrade'] else "New collection"
-                    collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                    if item['is_upgrade']:
-                        content.append(f"  • {movie} [{versions}] (Upgraded, originally collected on {collected_date})")
-                    else:
-                        content.append(f"  • {movie} [{versions}] (New collection)")
-        
-        if consolidated['show']:
-            content.append("\nTV Shows collected/upgraded:")
-            for show, seasons in consolidated['show'].items():
-                content.append(f"• {show}")
-                
-                # Handle full seasons
-                if seasons.get('seasons'):
-                    for item in seasons['seasons']:
-                        status = "Upgraded" if item['is_upgrade'] else "New collection"
-                        collected_date = datetime.fromisoformat(item['original_collected_at']).strftime('%Y-%m-%d')
-                        content.append(f"    - {item['season']} [{item['version']}] ({status}, originally collected on {collected_date})")
-                
-                # Handle individual episodes
-                for season, episodes in seasons.items():
-                    if season == 'seasons':
-                        continue
-                        
-                    if len(episodes) > 0:
-                        # Group episodes with same version and upgrade status
-                        episode_groups = defaultdict(list)
-                        for ep in episodes:
-                            key = (ep['version'], ep['is_upgrade'], ep['original_collected_at'])
-                            episode_groups[key].append(ep['episode'])
-                        
-                        for (version, is_upgrade, collected_at), eps in episode_groups.items():
-                            status = "Upgraded" if is_upgrade else "New collection"
-                            collected_date = datetime.fromisoformat(collected_at).strftime('%Y-%m-%d')
-                            
-                            # Sort episodes
-                            eps.sort(key=lambda x: (
-                                int(x.split('E')[0][1:]),  # Season number
-                                int(x.split('E')[1])       # Episode number
-                            ))
-                            episodes_str = ', '.join(eps)
-                            content.append(f"    - {episodes_str} [{version}] ({status}, originally collected on {collected_date})")
-                
-                # Add versions summary
-                all_versions = set()
-                for season_data in seasons.values():
-                    if isinstance(season_data, list):  # Episodes or seasons
-                        all_versions.update(item['version'] for item in season_data)
-                
-                if all_versions:
-                    content.append(f"    - Versions: [{', '.join(sorted(all_versions))}]\n")
-
+    # Join with single newlines between items
     return "\n".join(content)
 
-def send_notifications(notifications, enabled_notifications):
+def buffer_notifications(notifications, enabled_notifications, notification_category='collected'):
+    global notification_timer, notification_buffer
+    
+    with buffer_lock:
+        # Add new notifications to buffer
+        notification_buffer.extend(notifications)
+        
+        # Cancel existing timer if there is one
+        if notification_timer is not None:
+            notification_timer.cancel()
+        
+        # Set new timer
+        notification_timer = Timer(BUFFER_TIMEOUT, flush_notification_buffer, args=[enabled_notifications, notification_category])
+        notification_timer.start()
+
+def flush_notification_buffer(enabled_notifications, notification_category):
+    global notification_buffer
+    
+    with buffer_lock:
+        if notification_buffer:
+            # Send all buffered notifications
+            _send_notifications(notification_buffer, enabled_notifications, notification_category)
+            # Clear the buffer
+            notification_buffer = []
+
+def _send_notifications(notifications, enabled_notifications, notification_category='collected'):
+    # Original send_notifications logic moved here
     for notification_id, notification_config in enabled_notifications.items():
         if not notification_config.get('enabled', False):
             continue
 
+        notify_on = notification_config.get('notify_on', {})
+        if not notify_on.get(notification_category, True):
+            logging.debug(f"Skipping {notification_id} notification: {notification_category} notifications are disabled")
+            continue
+
         notification_type = notification_config['type']
-        content = format_notification_content(notifications, notification_type)
+        content = format_notification_content(notifications, notification_type, notification_category)
         
         try:
             if notification_type == 'Discord':
@@ -432,21 +249,51 @@ def send_notifications(notifications, enabled_notifications):
                     continue
                 send_ntfy_notification(host, api_key, priority, topic, content)
             
-            else:
-                logging.warning(f"Unknown notification type: {notification_type}")
         except Exception as e:
-            logging.error(f"Error sending {notification_type} notification: {str(e)}")
+            logging.error(f"Failed to send {notification_type} notification: {str(e)}")
 
-    logging.info(f"Notification process completed")
+def send_notifications(notifications, enabled_notifications, notification_category='collected'):
+    """Buffer notifications and send them after a short delay to allow for batching."""
+    buffer_notifications(notifications, enabled_notifications, notification_category)
 
 def send_discord_notification(webhook_url, content):
     MAX_LENGTH = 1900  # Leave some room for formatting
+    MAX_RETRIES = 3
+    BASE_DELAY = 0.5  # Base delay in seconds
 
-    def send_chunk(chunk):
-        payload = {"content": chunk}
-        response = requests.post(webhook_url, json=payload)
-        response.raise_for_status()
-        logging.info(f"Discord notification chunk sent successfully")
+    # Check for empty content
+    if not content or not content.strip():
+        logging.warning("Skipping Discord notification: content is empty")
+        return
+
+    def send_chunk(chunk, attempt=1):
+        # Check for empty chunk
+        if not chunk or not chunk.strip():
+            logging.warning("Skipping empty chunk in Discord notification")
+            return
+
+        try:
+            payload = {"content": chunk}
+            response = requests.post(webhook_url, json=payload)
+            
+            if response.status_code == 429:  # Rate limit hit
+                retry_after = float(response.json().get('retry_after', BASE_DELAY))
+                if attempt < MAX_RETRIES:
+                    logging.warning(f"Discord rate limit hit, waiting {retry_after} seconds before retry {attempt}/{MAX_RETRIES}")
+                    time.sleep(retry_after)
+                    return send_chunk(chunk, attempt + 1)
+                else:
+                    raise Exception("Max retries reached for rate limit")
+            
+            response.raise_for_status()
+            logging.info(f"Discord notification chunk sent successfully")
+        except requests.exceptions.RequestException as e:
+            if attempt < MAX_RETRIES:
+                delay = BASE_DELAY * (2 ** (attempt - 1))  # Exponential backoff
+                logging.warning(f"Discord request failed, retrying in {delay} seconds (attempt {attempt}/{MAX_RETRIES})")
+                time.sleep(delay)
+                return send_chunk(chunk, attempt + 1)
+            raise
 
     try:
         if len(content) <= MAX_LENGTH:
@@ -464,14 +311,20 @@ def send_discord_notification(webhook_url, content):
                 chunks.append(current_chunk)
 
             for i, chunk in enumerate(chunks, 1):
-                chunk_content = f"Message part {i}/{len(chunks)}:\n\n{chunk}"
-                send_chunk(chunk_content)
+                if chunk.strip():  # Only send non-empty chunks
+                    chunk_content = f"Message part {i}/{len(chunks)}:\n\n{chunk}"
+                    send_chunk(chunk_content)
+                    # Add a small delay between chunks to help avoid rate limits
+                    if i < len(chunks):
+                        time.sleep(BASE_DELAY)
 
         logging.info(f"Discord notification sent successfully")
     except Exception as e:
         logging.error(f"Failed to send Discord notification: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
             logging.error(f"Response content: {e.response.content}")
+            if e.response.status_code == 400 and 'empty message' in str(e.response.content).lower():
+                logging.warning("Attempted to send empty message to Discord - skipping")
 
 def send_email_notification(smtp_config, content):
     try:

@@ -20,7 +20,8 @@ def setup_api_logging():
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
     log_path = os.path.join(log_dir, 'api_calls.log')
     
-    handler = logging.FileHandler(log_path)
+    handler = logging.handlers.RotatingFileHandler(
+        log_path, maxBytes=50*1024*1024, backupCount=0, encoding='utf-8', errors='replace')
     formatter = logging.Formatter('%(asctime)s - %(message)s')
     handler.setFormatter(formatter)
     api_logger.addHandler(handler)

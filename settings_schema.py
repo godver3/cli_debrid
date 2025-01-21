@@ -8,6 +8,16 @@ SETTINGS_SCHEMA = {
             "description": "Enable user account system",
             "default": True
         },
+        "use_24hour_format": {
+            "type": "boolean",
+            "description": "Use 24-hour time format instead of 12-hour",
+            "default": True
+        },
+        "compact_view": {
+            "type": "boolean",
+            "description": "Use compact view for statistics page",
+            "default": False
+        }
     },
     "Plex": {
         "tab": "Required Settings",
@@ -38,25 +48,37 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "file_collection_management": {
             "type": "string",
-            "description": "Manage files collected in Plex.",
+            "description": "Select library management method.",
             "default": "Plex",
-            "choices": ["Plex"]#, "Zurg"]
+            "choices": ["Plex", "Symlinked/Local"]
         },
-        #"zurg_all_folder": {
-        #    "type": "string",
-        #    "description": "Zurg __all__ Folder",
-        #    "default": "",
-        #},
-        #"zurg_movies_folder": {
-        #    "type": "string",
-        #    "description": "Zurg Movies Folder",
-        #    "default": "",
-        #},
-        #"zurg_shows_folder": {
-        #    "type": "string",
-        #    "description": "Zurg Shows Folder",
-        #    "default": "",
-        #},
+        "original_files_path": {
+            "type": "string",
+            "description": "Path to the original files (in Zurg use the /__all__ folder)",
+            "default": "/mnt/zurg/__all__"
+        },
+        "symlinked_files_path": {
+            "type": "string",
+            "description": "Path to the destination folder (where you want your files symlinked to)",
+            "default": "/mnt/symlinked"
+        },
+        "symlink_organize_by_type": {
+            "type": "boolean",
+            "description": "Organize symlinked files into Movies and TV Shows folders",
+            "default": True
+        },
+        "plex_url_for_symlink": {
+            "type": "string",
+            "description": "Plex server URL for symlink updates (optional)",
+            "default": "",
+            "validate": "url"
+        },
+        "plex_token_for_symlink": {
+            "type": "string",
+            "description": "Plex authentication token (optional)",
+            "default": "",
+            "sensitive": True
+        }
     },
     "Debrid Provider": {
         "tab": "Required Settings",
@@ -143,6 +165,13 @@ SETTINGS_SCHEMA = {
             "default": "None",
             "choices": ["None", "Full"]
         },
+        "upgrade_similarity_threshold": {
+            "type": "float",
+            "description": "Threshold for title similarity when upgrading (0.0 to 1.0). Higher values mean titles must be more different to be considered an upgrade. Default 0.95 means 95% similar.",
+            "default": 0.95,
+            "min": 0.0,
+            "max": 1.0
+        },
         "hybrid_mode": {
             "type": "boolean",
             "description": "Enable hybrid mode to add best uncached result if no cached results found in 'None' mode",
@@ -205,6 +234,8 @@ SETTINGS_SCHEMA = {
                 "resolution_weight": {"type": "integer", "default": 3, "min": 0},
                 "hdr_weight": {"type": "integer", "default": 3, "min": 0},
                 "similarity_weight": {"type": "integer", "default": 3, "min": 0},
+                "similarity_threshold": {"type": "float", "default": 0.8, "min": 0, "max": 1},
+                "similarity_threshold_anime": {"type": "float", "default": 0.35, "min": 0, "max": 1},
                 "size_weight": {"type": "integer", "default": 3, "min": 0},
                 "bitrate_weight": {"type": "integer", "default": 3, "min": 0},
                 "preferred_filter_in": {"type": "list", "default": []},
@@ -233,12 +264,6 @@ SETTINGS_SCHEMA = {
     },
     "Debug": {
         "tab": "Debug Settings",
-        "console_logging_level": {
-            "type": "string",
-            "description": "Console logging level",
-            "default": "INFO",
-            "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        },
         "skip_initial_plex_update": {
             "type": "boolean",
             "description": "Skip Plex initial collection scan",
@@ -297,20 +322,56 @@ SETTINGS_SCHEMA = {
             "description": "Keep series in Plex Watchlist when they have been collected, only delete movies",
             "default": False
         },
-        "symlink_collected_files": {
+        "trakt_watchlist_removal": {
             "type": "boolean",
-            "description": "Symlink collected files to the collected folder (Plex must be able to see original and symlinked path the exact same as cli_debrid does)",
+            "description": "Remove items from Trakt Watchlist when they have been collected",
             "default": False
         },
-        "original_files_path": {
-            "type": "string",
-            "description": "Path to the original files",
-            "default": "/mnt/zurg/__all__"
+        "trakt_watchlist_keep_series": {
+            "type": "boolean",
+            "description": "Keep series in Trakt Watchlist when they have been collected, only delete movies",
+            "default": False
         },
-        "symlinked_files_path": {
+        "symlink_movie_template": {
             "type": "string",
-            "description": "Path to the destination folder",
-            "default": "/mnt/symlinked"
+            "description": [
+                "Template for movie symlink names. Available variables: {title}, {year}, {imdb_id}, {tmdb_id}, {quality}, {original_filename}",
+                "Example: {title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})",
+            ],
+            "default": "{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})"
+        },
+        "symlink_episode_template": {
+            "type": "string",
+            "description": [
+                "Template for episode symlink names. Available variables: {title}, {year}, {imdb_id}, {tmdb_id}, {season_number}, {episode_number}, {episode_title}, {version}, {original_filename}",
+                "Example: {title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})",
+            ],
+            "default": "{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})"
+        },
+        "allow_partial_overseerr_requests": {
+            "type": "boolean",
+            "description": "Allow partial show requests from Overseerr",
+            "default": False
+        },
+        "timezone_override": {
+            "type": "string",
+            "description": "Override system timezone (e.g. 'America/New_York', 'Europe/London'). Leave empty to use system timezone.",
+            "default": ""
+        },
+        "filename_filter_out_list": {
+            "type": "string",
+            "description": "List of filenames to filter out from the queue, comma separated",
+            "default": ""
+        },
+        "anime_renaming_using_anidb": {
+            "type": "boolean",
+            "description": "Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)",
+            "default": False
+        },
+        "check_for_updates": {
+            "type": "boolean",
+            "description": "Check for updates and display update indicator in header",
+            "default": True
         }
     },
     "Scrapers": {
@@ -321,10 +382,6 @@ SETTINGS_SCHEMA = {
         "default": {},
         "schema": {
             "Zilean": {
-                "enabled": {"type": "boolean", "default": False},
-                "url": {"type": "string", "default": "", "validate": "url"}
-            },
-            "Comet": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"}
             },
@@ -371,6 +428,11 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "display_name": {"type": "string", "default": "Trakt Lists"}
             },
+            "Trakt Collection": {
+                "enabled": {"type": "boolean", "default": False},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "Trakt Collection"}
+            },
             "Overseerr": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"},
@@ -378,10 +440,17 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "display_name": {"type": "string", "default": "Overseerr"}
             },
-            "Plex Watchlist": {
+            "My Plex Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
-                "display_name": {"type": "string", "default": "Plex Watchlist"}
+                "display_name": {"type": "string", "default": "My Plex Watchlist"}
+            },
+            "Other Plex Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "username": {"type": "string", "default": ""},
+                "token": {"type": "string", "default": "", "sensitive": True},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "Other Plex Watchlist"}
             }
         }
     },
@@ -394,18 +463,66 @@ SETTINGS_SCHEMA = {
             "Telegram": {
                 "enabled": {"type": "boolean", "default": False},
                 "bot_token": {"type": "string", "default": "", "sensitive": True},
-                "chat_id": {"type": "string", "default": ""}
+                "chat_id": {"type": "string", "default": ""},
+                "notify_on": {
+                    "type": "dict",
+                    "default": {
+                        "collected": True,
+                        "wanted": False,
+                        "scraping": False,
+                        "adding": False,
+                        "checking": False,
+                        "sleeping": False,
+                        "unreleased": False,
+                        "blacklisted": False,
+                        "pending_uncached": False,
+                        "upgrading": False
+                    },
+                    "description": "Configure which queue state changes trigger notifications"
+                }
             },
             "Discord": {
                 "enabled": {"type": "boolean", "default": False},
-                "webhook_url": {"type": "string", "default": "", "sensitive": True}
+                "webhook_url": {"type": "string", "default": "", "sensitive": True},
+                "notify_on": {
+                    "type": "dict",
+                    "default": {
+                        "collected": True,
+                        "wanted": False,
+                        "scraping": False,
+                        "adding": False,
+                        "checking": False,
+                        "sleeping": False,
+                        "unreleased": False,
+                        "blacklisted": False,
+                        "pending_uncached": False,
+                        "upgrading": False
+                    },
+                    "description": "Configure which queue state changes trigger notifications"
+                }
             },
             "NTFY": {
                 "enabled": {"type": "boolean", "default": False},
                 "host": {"type": "string", "default": "", "sensitive": True},
                 "topic": {"type": "string", "default": "", "sensitive": True},
                 "api_key": {"type": "string", "default": ""},
-                "priority": {"type": "string", "default": ""}
+                "priority": {"type": "string", "default": ""},
+                "notify_on": {
+                    "type": "dict",
+                    "default": {
+                        "collected": True,
+                        "wanted": False,
+                        "scraping": False,
+                        "adding": False,
+                        "checking": False,
+                        "sleeping": False,
+                        "unreleased": False,
+                        "blacklisted": False,
+                        "pending_uncached": False,
+                        "upgrading": False
+                    },
+                    "description": "Configure which queue state changes trigger notifications"
+                }
             },
             "Email": {
                 "enabled": {"type": "boolean", "default": False},
@@ -414,7 +531,23 @@ SETTINGS_SCHEMA = {
                 "smtp_username": {"type": "string", "default": ""},
                 "smtp_password": {"type": "string", "default": "", "sensitive": True},
                 "from_address": {"type": "string", "default": ""},
-                "to_address": {"type": "string", "default": ""}
+                "to_address": {"type": "string", "default": ""},
+                "notify_on": {
+                    "type": "dict",
+                    "default": {
+                        "collected": True,
+                        "wanted": False,
+                        "scraping": False,
+                        "adding": False,
+                        "checking": False,
+                        "sleeping": False,
+                        "unreleased": False,
+                        "blacklisted": False,
+                        "pending_uncached": False,
+                        "upgrading": False
+                    },
+                    "description": "Configure which queue state changes trigger notifications"
+                }
             }
         }
     },

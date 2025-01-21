@@ -46,7 +46,67 @@ def migrate_schema():
         if 'early_release' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN early_release BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added early_release column to media_items table.")
-
+        if 'original_path_for_symlink' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN original_path_for_symlink TEXT')
+            logging.info("Successfully added original_path_for_symlink column to media_items table.")
+        if 'original_scraped_torrent_title' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN original_scraped_torrent_title TEXT')
+            logging.info("Successfully added original_scraped_torrent_title column to media_items table.")
+        if 'upgrading_from_torrent_id' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN upgrading_from_torrent_id TEXT')
+            logging.info("Successfully added upgrading_from_torrent_id column to media_items table.")
+        if 'country' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN country TEXT')
+            logging.info("Successfully added country column to media_items table.")
+        if 'trigger_is_anime' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_is_anime BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added trigger_is_anime column to media_items table.")
+        if 'trigger_is_sports' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_is_sports BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added trigger_is_sports column to media_items table.")
+        if 'trigger_is_movie' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_is_movie BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added trigger_is_movie column to media_items table.")
+        if 'trigger_is_tv' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_is_tv BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added trigger_is_tv column to media_items table.")
+        if 'trigger_release_year' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_release_year INTEGER')
+            logging.info("Successfully added trigger_release_year column to media_items table.")
+        if 'trigger_genres' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_genres TEXT')
+            logging.info("Successfully added trigger_genres column to media_items table.")
+        if 'trigger_content_source' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_content_source TEXT')
+            logging.info("Successfully added trigger_content_source column to media_items table.")
+        if 'trigger_version' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_version TEXT')
+            logging.info("Successfully added trigger_version column to media_items table.")
+        if 'trigger_country' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN trigger_country TEXT')
+            logging.info("Successfully added trigger_country column to media_items table.")
+        if 'anime_format' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN anime_format TEXT')
+            logging.info("Successfully added anime_format column to media_items table.")
+        if 'fall_back_to_single_scraper' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN fall_back_to_single_scraper BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added fall_back_to_single_scraper column to media_items table.")
+        if 'preferred_alias' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN preferred_alias TEXT')
+            logging.info("Successfully added preferred_alias column to media_items table.")
+        if 'upgrading' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN upgrading BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added upgrading column to media_items table.")
+        if 'requested_season' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN requested_season BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added requested_season column to media_items table.")
+        if 'content_source' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN content_source TEXT')
+            logging.info("Successfully added content_source column to media_items table.")
+        if 'resolution' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN resolution TEXT')
+            logging.info("Successfully added resolution column to media_items table.")
+        
         # logging.info("Successfully added new columns to media_items table.")
 
         # Remove the existing index if it exists
@@ -72,6 +132,10 @@ def verify_database():
     create_tables()
     migrate_schema()
     
+    # Add statistics indexes
+    from .migrations import add_statistics_indexes
+    add_statistics_indexes()
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -84,7 +148,7 @@ def verify_database():
     
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
     db_path = os.path.join(db_content_dir, 'media_items.db')
-    logging.info(f"Successfully connected to cli_debrid database: sqlite:///{db_path}")
+    #logging.info(f"Successfully connected to cli_debrid database: sqlite:///{db_path}")
 
 
 def create_tables():
@@ -119,13 +183,45 @@ def create_tables():
                 version TEXT,
                 genres TEXT,
                 file_path TEXT,
-                runtime INTEGER,  -- Add the runtime column
+                runtime INTEGER,
                 alternate_title TEXT,
                 upgrading_from TEXT,
                 blacklisted_date TIMESTAMP,
                 upgraded BOOLEAN DEFAULT FALSE,
                 location_on_disk TEXT,
-                early_release BOOLEAN DEFAULT FALSE
+                early_release BOOLEAN DEFAULT FALSE,
+                original_path_for_symlink TEXT,
+                original_scraped_torrent_title TEXT,
+                upgrading_from_torrent_id TEXT,
+                country TEXT,
+                trigger_is_anime BOOLEAN DEFAULT FALSE,
+                trigger_is_sports BOOLEAN DEFAULT FALSE,
+                trigger_is_movie BOOLEAN DEFAULT FALSE,
+                trigger_is_tv BOOLEAN DEFAULT FALSE,
+                trigger_release_year INTEGER,
+                trigger_genres TEXT,
+                trigger_content_source TEXT,
+                trigger_version TEXT,
+                trigger_country TEXT,
+                anime_format TEXT,
+                fall_back_to_single_scraper BOOLEAN DEFAULT FALSE,
+                preferred_alias TEXT,
+                upgrading BOOLEAN DEFAULT FALSE,
+                requested_season BOOLEAN DEFAULT FALSE,
+                content_source TEXT,
+                resolution TEXT
+            )
+        ''')
+
+        # Add new table for tracking requested seasons
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS show_requested_seasons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                imdb_id TEXT NOT NULL,
+                tmdb_id TEXT,
+                season_number INTEGER NOT NULL,
+                requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(imdb_id, season_number)
             )
         ''')
 

@@ -87,7 +87,7 @@ def update_media_item_state(item_id, state, **kwargs):
         params = [state, datetime.now()]
 
         # Add optional fields to the query if they are provided
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'version']
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'version', 'resolution']
         for field in optional_fields:
             if field in kwargs:
                 query += f", {field} = ?"
@@ -195,5 +195,163 @@ def update_blacklisted_date(item_id: int, blacklisted_date: datetime | None):
     except Exception as e:
         logging.error(f"Error updating blacklisted_date for item ID {item_id}: {str(e)}")
         raise
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def update_anime_format(tmdb_id: str, format_type: str):
+    """Update the preferred anime format for all episodes of a show.
+    
+    Args:
+        tmdb_id: The TMDB ID of the show
+        format_type: The format type ('regular', 'absolute', or 'combined')
+    """
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET anime_format = ?, last_updated = ?
+            WHERE tmdb_id = ? AND type = 'episode'
+        ''', (format_type, datetime.now(), tmdb_id))
+        conn.commit()
+        logging.info(f"Updated anime_format to {format_type} for show with TMDB ID {tmdb_id}")
+    except Exception as e:
+        logging.error(f"Error updating anime_format for TMDB ID {tmdb_id}: {str(e)}")
+        raise
+    finally:
+        conn.close()
+
+def get_anime_format(tmdb_id: str) -> str | None:
+    """Get the preferred anime format for a show.
+    
+    Args:
+        tmdb_id: The TMDB ID of the show
+        
+    Returns:
+        str | None: The preferred format type or None if not set
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT anime_format
+            FROM media_items
+            WHERE tmdb_id = ? AND type = 'episode'
+            LIMIT 1
+        ''', (tmdb_id,))
+        result = cursor.fetchone()
+        return result['anime_format'] if result else None
+    except Exception as e:
+        logging.error(f"Error getting anime_format for TMDB ID {tmdb_id}: {str(e)}")
+        return None
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def update_preferred_alias(tmdb_id: str, imdb_id: str, alias: str, media_type: str, season_number: int = None):
+    """Update the preferred alias for a movie or show.
+    
+    Args:
+        tmdb_id: The TMDB ID of the media
+        imdb_id: The IMDB ID of the media
+        alias: The preferred alias to use
+        media_type: The type of media ('movie' or 'episode')
+        season_number: The season number (only for TV shows)
+    """
+    conn = get_db_connection()
+    try:
+        if media_type == 'episode':
+            # For TV shows, update only the specific season
+            conn.execute('''
+                UPDATE media_items
+                SET preferred_alias = ?, last_updated = ?
+                WHERE tmdb_id = ? AND type = 'episode' AND season_number = ?
+            ''', (alias, datetime.now(), tmdb_id, season_number))
+        else:
+            # For movies, update the specific movie
+            conn.execute('''
+                UPDATE media_items
+                SET preferred_alias = ?, last_updated = ?
+                WHERE tmdb_id = ? AND imdb_id = ? AND type = 'movie'
+            ''', (alias, datetime.now(), tmdb_id, imdb_id))
+        conn.commit()
+        logging.info(f"Updated preferred_alias to '{alias}' for {'show season ' + str(season_number) if media_type == 'episode' else 'movie'} with TMDB ID {tmdb_id}")
+    except Exception as e:
+        logging.error(f"Error updating preferred_alias for TMDB ID {tmdb_id}: {str(e)}")
+        raise
+    finally:
+        conn.close()
+
+def get_preferred_alias(tmdb_id: str, imdb_id: str = None, media_type: str = None, season_number: int = None) -> str | None:
+    """Get the preferred alias for a movie or show.
+    
+    Args:
+        tmdb_id: The TMDB ID of the media
+        imdb_id: The IMDB ID of the media (required for movies)
+        media_type: The type of media ('movie' or 'episode')
+        season_number: The season number (only for TV shows)
+        
+    Returns:
+        str | None: The preferred alias or None if not set
+    """
+    conn = get_db_connection()
+    try:
+        if media_type == 'episode':
+            cursor = conn.execute('''
+                SELECT preferred_alias
+                FROM media_items
+                WHERE tmdb_id = ? AND type = 'episode' AND season_number = ?
+                LIMIT 1
+            ''', (tmdb_id, season_number))
+        else:
+            cursor = conn.execute('''
+                SELECT preferred_alias
+                FROM media_items
+                WHERE tmdb_id = ? AND imdb_id = ? AND type = 'movie'
+                LIMIT 1
+            ''', (tmdb_id, imdb_id))
+        result = cursor.fetchone()
+        return result['preferred_alias'] if result else None
+    except Exception as e:
+        logging.error(f"Error getting preferred_alias for TMDB ID {tmdb_id}: {str(e)}")
+        return None
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def add_media_item(item: dict) -> int:
+    """Add a new media item to the database.
+    
+    Args:
+        item: Dictionary containing the media item data
+        
+    Returns:
+        int: The ID of the newly inserted item, or None if insertion failed
+    """
+    conn = get_db_connection()
+    try:
+        # Get the column names from the item dictionary
+        columns = list(item.keys())
+        placeholders = ['?' for _ in columns]
+        values = [item[col] for col in columns]
+        
+        # Add last_updated column
+        columns.append('last_updated')
+        placeholders.append('?')
+        values.append(datetime.now())
+        
+        # Build and execute the INSERT query
+        query = f'''
+            INSERT INTO media_items ({', '.join(columns)})
+            VALUES ({', '.join(placeholders)})
+        '''
+        cursor = conn.execute(query, values)
+        item_id = cursor.lastrowid
+        conn.commit()
+        
+        logging.info(f"Added new media item to database with ID {item_id}")
+        return item_id
+    except Exception as e:
+        logging.error(f"Error adding media item to database: {str(e)}")
+        return None
     finally:
         conn.close()

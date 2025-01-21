@@ -174,8 +174,12 @@ def get_details(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # Fetch additional metadata using the metadata module
         metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
 
-        # Combine Trakt data with additional metadata
-        combined_data = {**trakt_data, **metadata}
+        # Combine Trakt data with additional metadata and ensure media type is preserved
+        combined_data = {
+            **trakt_data,
+            **metadata,
+            'mediaType': media_type  # Explicitly preserve the media type
+        }
 
         return combined_data
     except api.exceptions.RequestException as e:

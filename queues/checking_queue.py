@@ -1,21 +1,34 @@
 import logging
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from database import get_all_media_items
 from run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
-from utilities.local_library_scan import check_local_file_for_item
+from utilities.local_library_scan import check_local_file_for_item, local_library_scan
+from utilities.plex_functions import plex_update_item
 from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from queues.adding_queue import AddingQueue
 from debrid import get_debrid_provider
 from settings import get_setting
 from debrid.common import timed_lru_cache
+from pathlib import Path
+import os
 
 class CheckingQueue:
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(CheckingQueue, cls).__new__(cls)
+            # Initialize instance attributes
+            cls._instance.items = []
+            cls._instance.checking_queue_times = {}
+            cls._instance.progress_checks = {}
+            cls._instance.debrid_provider = get_debrid_provider()
+        return cls._instance
+
     def __init__(self):
-        self.items = []
-        self.checking_queue_times = {}
-        self.progress_checks = {}
-        self.debrid_provider = get_debrid_provider()
+        # __init__ will be called every time, but instance is already created
+        pass
 
     def update(self):
         db_items = get_all_media_items(state="Checking")
@@ -103,7 +116,7 @@ class CheckingQueue:
             self.remove_item(item)
 
     @timed_lru_cache(seconds=30)
-    def get_torrent_progress(self, torrent_id: str) -> int:
+    def get_torrent_progress(self, torrent_id: str) -> Optional[int]:
         """Get the current progress percentage for a torrent"""
         try:
             torrent_info = self.debrid_provider.get_torrent_info(torrent_id)
@@ -111,12 +124,10 @@ class CheckingQueue:
                 return torrent_info.get('progress', 0)
             else:
                 logging.info(f"Torrent {torrent_id} not found on Real-Debrid (404)")
-                from queue_manager import QueueManager  # Import here to avoid circular import
-                queue_manager = QueueManager()
-                self.handle_missing_torrent(torrent_id, queue_manager)
+                return None
         except Exception as e:
             logging.error(f"Failed to get progress for torrent {torrent_id}: {str(e)}")
-            return 0
+            return None
 
     def get_torrent_state(self, torrent_id: str) -> str:
         """Get the current state of a torrent (downloaded or downloading)"""
@@ -149,6 +160,41 @@ class CheckingQueue:
         self.checking_queue_times[item['id']] = time.time()
         logging.debug(f"Added item {item['id']} to checking queue")
 
+        from notifications import send_notifications
+        from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
+        from extensions import app
+        from database.database_reading import get_media_item_by_id
+
+        item['upgrading'] = get_media_item_by_id(item['id'])['upgrading']
+
+        logging.debug(f"Sending notification for item {item['id']} - upgrading: {item.get('upgrading')}")
+
+        # Send notification for the state change
+        try:
+            # Only send notification if this is not an upgrade
+            if not item.get('upgrading'):
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('checking')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            notification_data = {
+                                'id': item['id'],
+                                'title': item.get('title', 'Unknown Title'),
+                                'type': item.get('type', 'unknown'),
+                                'year': item.get('year', ''),
+                                'version': item.get('version', ''),
+                                'season_number': item.get('season_number'),
+                                'episode_number': item.get('episode_number'),
+                                'new_state': 'Downloading' if item.get('downloading') else 'Checking',
+                                'is_upgrade': False,
+                                'upgrading_from': None
+                            }
+                            send_notifications([notification_data], enabled_notifications, notification_category='state_change')
+                            logging.debug(f"Sent notification for item {item['id']}")
+        except Exception as e:
+            logging.error(f"Failed to send state change notification: {str(e)}")
+
     def remove_item(self, item: Dict[str, Any]):
         torrent_id = item.get('filled_by_torrent_id')
         self.items = [i for i in self.items if i['id'] != item['id']]
@@ -165,21 +211,12 @@ class CheckingQueue:
             logging.debug(f"Cleaned up progress checks for torrent {torrent_id} as it has no more associated items")
 
     def process(self, queue_manager):
-        logging.debug(f"Starting to process checking queue with {len(self.items)} items")
-        logging.debug("Processing checking queue")
+        if self.items:
+            item = self.items[0]
+            item_identifier = queue_manager.generate_identifier(item)
+            logging.debug(f"Checking Queue - Processing item with resolution: {item.get('resolution', 'Not found')} for {item_identifier}")
+        #logging.debug(f"Starting to process checking queue with {len(self.items)} items")
         current_time = time.time()
-
-        # Process collected content from Plex
-        if not get_setting('Debug', 'symlink_collected_files'):
-            get_and_add_recent_collected_from_plex()
-        else:
-            for item in self.items:
-                if check_local_file_for_item(item):
-                    logging.info(f"Local file found for item {item['id']}")
-                    pass
-                else:
-                    logging.info(f"Local file not found for item {item['id']}, running recent local library scan")
-                    run_recent_local_library_scan()
 
         adding_queue = AddingQueue()
 
@@ -195,61 +232,118 @@ class CheckingQueue:
                 items_by_torrent[torrent_id] = []
             items_by_torrent[torrent_id].append(item)
             logging.debug(f"Grouped item {item['id']} under torrent ID {torrent_id}")
+            # Ensure checking_queue_times is initialized for this item
             if item['id'] not in self.checking_queue_times:
+                logging.warning(f"Item {item['id']} missing from checking_queue_times. Initializing with current time.")
                 self.checking_queue_times[item['id']] = current_time
 
         # Process items by torrent ID
         for torrent_id, items in items_by_torrent.items():
             try:
-                logging.debug(f"Processing torrent {torrent_id} with {len(items)} associated items: {[item['id'] for item in items]}")
-                torrent_info = self.debrid_provider.get_torrent_info(torrent_id)
+                logging.debug(f"Processing torrent {torrent_id} with {len(items)} associated items")
                 
-                if torrent_info:
-                    current_progress = self.get_torrent_progress(torrent_id)
-                    
-                    if torrent_id not in self.progress_checks:
-                        logging.debug(f"Initializing progress check for torrent {torrent_id} with progress {current_progress}")
-                        self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': current_progress}
-                    
-                    last_check = self.progress_checks[torrent_id]['last_check']
-                    last_progress = self.progress_checks[torrent_id]['last_progress']
-                    logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
-                    
-                    # Check if we've exceeded the checking queue period for non-actively-downloading items
-                    if current_progress == 100:
-                        oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
-                        time_in_queue = current_time - oldest_item_time
-                        checking_queue_limit = get_setting('Debug', 'checking_queue_period')
-                        
-                        logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (limit: {checking_queue_limit} seconds)")
-                        
-                        if time_in_queue > checking_queue_limit:
-                            logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds")
+                # Use the cached get_torrent_progress which includes error handling for 404s
+                current_progress = self.get_torrent_progress(torrent_id)
+                
+                # If current_progress is None, the torrent was not found (404)
+                if current_progress is None:
+                    logging.info(f"Torrent {torrent_id} not found (404), moving items back to Wanted")
+                    self.move_items_to_wanted(items, queue_manager, adding_queue, torrent_id)
+                    items_to_remove.extend(items)
+                    continue
+                
+                if torrent_id not in self.progress_checks:
+                    logging.debug(f"Initializing progress check for torrent {torrent_id} with progress {current_progress}")
+                    self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': current_progress}
+                
+                last_check = self.progress_checks[torrent_id]['last_check']
+                last_progress = self.progress_checks[torrent_id]['last_progress']
+                logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
+                            
+                if current_progress == 100:
+                    # Process collected content based on symlink setting
+                    if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                        # First check all items for local files directly
+                        items_to_scan = []
+                        for item in items:
                             try:
-                                self.debrid_provider.remove_torrent(torrent_id)
-                            except Exception as e:
-                                logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
-                            # Move all items for this torrent back to Wanted
-                            for item in items:
-                                queue_manager.move_to_wanted(item, "Checking")
-                                items_to_remove.append(item)
-                            continue
+                                time_in_queue = current_time - self.checking_queue_times[item['id']]
+                            except KeyError:
+                                logging.warning(f"Item {item['id']} missing from checking_queue_times. Initializing with current time.")
+                                self.checking_queue_times[item['id']] = current_time
+                                time_in_queue = 0
+                            
+                            # Run extended search after 15 minutes and every 15 minutes thereafter
+                            # Use a wider 5-minute window to ensure we don't miss checks due to queue timing
+                            if time_in_queue > 900 and (time_in_queue % 900) < 300:  # Check within a 5-minute window every 15 minutes
+                                logging.info(f"Checking for local file for item {item['id']} with extended search")
+                                file_found = check_local_file_for_item(item, extended_search=True)
+                            else:
+                                logging.info(f"Checking for local file for item {item['id']} without extended search")
+                                file_found = check_local_file_for_item(item)
+                            if file_found:
+                                logging.info(f"Local file found and symlinked for item {item['id']}")
 
-                    # Skip remaining checks if the torrent is completed
-                    if current_progress == 100:
-                        continue
+                                if get_setting('File Management', 'plex_url_for_symlink', default=False):
+                                    # Call Plex update for the item if we have a Plex URL
+                                    plex_update_item(item)
+
+                                # Check if the item was marked for upgrading by check_local_file_for_item
+                                from database.core import get_db_connection
+                                conn = get_db_connection()
+                                cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
+                                current_state = cursor.fetchone()['state']
+                                conn.close()
+
+                                if current_state == 'Upgrading':
+                                    logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
+                                else:
+                                    queue_manager.move_to_collected(item, "Checking", skip_notification=True)
+                            else:
+                                items_to_scan.append(item)
+                        
+                        # If we have items that weren't found directly, do a full scan
+                        if items_to_scan:
+                            logging.info("Full library scan disabled for now")
+
+                    else:
+                        get_and_add_recent_collected_from_plex()
+
+                # Check if we've exceeded the checking queue period for non-actively-downloading items
+                if current_progress == 100:
+                    oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
+                    time_in_queue = current_time - oldest_item_time
+                    checking_queue_limit = get_setting('Debug', 'checking_queue_period')
                     
-                    if current_time - last_check >= 300:  # 5 minutes
-                        if current_progress == last_progress:
-                            logging.info(f"No progress for torrent {torrent_id} in 5 minutes. Moving all associated items back to Wanted queue.")
-                            try:
-                                self.debrid_provider.remove_torrent(torrent_id)
-                            except Exception as e:
-                                logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
-                            self.move_items_to_wanted(items, queue_manager, adding_queue, torrent_id)
-                            items_to_remove.extend(items)
-                        else:
-                            self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': current_progress}
+                    logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (limit: {checking_queue_limit} seconds)")
+                    
+                    if time_in_queue > checking_queue_limit:
+                        logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds")
+                        try:
+                            self.debrid_provider.remove_torrent(torrent_id)
+                        except Exception as e:
+                            logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
+                        # Move all items for this torrent back to Wanted
+                        for item in items:
+                            queue_manager.move_to_wanted(item, "Checking")
+                            items_to_remove.append(item)
+                        continue
+
+                # Skip remaining checks if the torrent is completed
+                if current_progress == 100:
+                    continue
+                
+                if current_time - last_check >= 300:  # 5 minutes
+                    if current_progress == last_progress:
+                        logging.info(f"No progress for torrent {torrent_id} in 5 minutes. Moving all associated items back to Wanted queue.")
+                        try:
+                            self.debrid_provider.remove_torrent(torrent_id)
+                        except Exception as e:
+                            logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
+                        self.move_items_to_wanted(items, queue_manager, adding_queue, torrent_id)
+                        items_to_remove.extend(items)
+                    else:
+                        self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': current_progress}
 
             except Exception as e:
                 logging.error(f"Error processing items for torrent {torrent_id} in checking queue: {e}", exc_info=True)
@@ -258,7 +352,7 @@ class CheckingQueue:
         for item in items_to_remove:
             self.remove_item(item)
 
-        logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
+        #logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
 
     def move_items_to_wanted(self, items, queue_manager, adding_queue, torrent_id):
         for item in items:
@@ -294,6 +388,4 @@ class CheckingQueue:
         
         # Clean up progress cache for removed torrents
         current_torrent_ids = {item.get('filled_by_torrent_id') for item in self.items if item.get('filled_by_torrent_id')}
-        # self.progress_cache = {k: v for k, v in self.progress_cache.items() if k in current_torrent_ids}
-        # self.progress_cache_times = {k: v for k, v in self.progress_cache_times.items() if k in current_torrent_ids}
         logging.debug(f"Cleaned up checking time for item ID: {current_item_ids}")

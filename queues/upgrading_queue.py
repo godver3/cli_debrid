@@ -1,7 +1,8 @@
 import logging
 from typing import Dict, Any
 from datetime import datetime, timedelta
-from database import get_all_media_items, update_media_item_state, get_media_item_by_id, add_to_collected_notifications
+from database import get_all_media_items, update_media_item_state, get_media_item_by_id
+from database.database_writing import add_to_collected_notifications
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
 from settings import get_setting
@@ -11,6 +12,7 @@ import pickle
 from pathlib import Path
 from database.database_writing import update_media_item
 from database.core import get_db_connection
+from difflib import SequenceMatcher
 
 class UpgradingQueue:
     def __init__(self):
@@ -181,8 +183,9 @@ class UpgradingQueue:
         item_identifier = self.generate_identifier(item)
         logging.info(f"Performing hourly scrape for {item_identifier}")
 
-        is_multi_pack = self.check_multi_pack(item)
+        update_media_item(item['id'], upgrading=True)
 
+        is_multi_pack = self.check_multi_pack(item)
         is_multi_pack = False
 
         # Perform scraping
@@ -190,27 +193,47 @@ class UpgradingQueue:
 
         if results:
             # Find the position of the current item's 'filled_by_magnet' in the results
-            current_title = item.get('filled_by_title')
+            current_title = item.get('original_scraped_torrent_title')
+            if current_title is None:
+                logging.warning(f"No original_scraped_torrent_title found for item {item_identifier}, using filled_by_title as fallback")
+                current_title = item.get('filled_by_title')
+                if current_title is None:
+                    logging.error(f"No title information found for item {item_identifier}, skipping upgrade check")
+                    return
+
             current_position = next((index for index, result in enumerate(results) if result.get('title') == current_title), None)
 
+            # Get similarity threshold from settings, default to 95%
+            similarity_threshold = 0.95 #float(get_setting('Scraping', 'upgrade_similarity_threshold', '0.95'))
+
             for index, result in enumerate(results):
-                logging.info(f"Result {index}: {result['title']}")
+                # Calculate similarity score
+                similarity = SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio()
+                logging.info(f"Result {index}: {result['title']} (Similarity: {similarity:.2%})")
 
             if current_position is None:
                 logging.info(f"Current item {item_identifier} not found in scrape results")
-                better_results = results  # Consider all results as potential upgrades
+                # Filter out results that are too similar to current title
+                better_results = [
+                    result for result in results 
+                    if SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold
+                ]
             else:
                 logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the scrape results")
                 logging.info(f"Current item title: {current_title}")
                 
-                # Only consider results that are in higher positions than the current item
-                better_results = results[:current_position]
+                # Only consider results that are in higher positions AND not too similar
+                better_results = [
+                    result for result in results[:current_position]
+                    if SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold
+                ]
             
             if better_results:
-                logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier}")
+                logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier} after similarity filtering")
                 logging.info("Better results to try:")
                 for i, result in enumerate(better_results):
-                    logging.info(f"  {i}: {result.get('title')}")
+                    similarity = SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio()
+                    logging.info(f"  {i}: {result['title']} (Similarity: {similarity:.2%})")
 
                 # Update item with scrape results in database first
                 best_result = better_results[0]
@@ -222,9 +245,15 @@ class UpgradingQueue:
                 uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
                 adding_queue.add_item(updated_item)
                 adding_queue.process(queue_manager)
-                success = len(adding_queue.items) == 0  # If item was processed successfully, it will be removed
 
-                if success:
+                # Check if the item was successfully moved to Checking queue
+                from database.core import get_db_connection
+                conn = get_db_connection()
+                cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
+                current_state = cursor.fetchone()['state']
+                conn.close()
+
+                if current_state == 'Checking':
                     logging.info(f"Successfully initiated upgrade for item {item_identifier}")
                     
                     # Ensure the upgrades_data entry is initialized
@@ -247,9 +276,12 @@ class UpgradingQueue:
                     # Remove the item from the Upgrading queue
                     self.remove_item(item)
 
-                    logging.info(f"Maintained item {item_identifier} in Upgrading state after successful upgrade.")
+                    logging.info(f"Successfully upgraded item {item_identifier} to Checking state")
                 else:
-                    logging.info(f"Failed to upgrade item {item_identifier}")
+                    logging.info(f"Failed to upgrade item {item_identifier} - current state: {current_state}")
+                    # Return the item to Upgrading state since the upgrade attempt failed
+                    update_media_item_state(item['id'], 'Upgrading')
+                    logging.info(f"Returned item {item_identifier} to Upgrading state after failed upgrade attempt")
             else:
                 logging.info(f"No better results found for {item_identifier}")
         else:
@@ -271,7 +303,7 @@ class UpgradingQueue:
                 # Update the item in the database with new values
                 conn.execute('''
                     UPDATE media_items
-                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?
+                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?, upgrading_from_torrent_id = ?, upgraded = 1
                     WHERE id = ?
                 ''', (
                     upgrading_from,
@@ -280,6 +312,7 @@ class UpgradingQueue:
                     new_values['version'],
                     datetime.now(),
                     'Checking',
+                    item['filled_by_torrent_id'],
                     item['id']
                 ))
 
@@ -290,12 +323,39 @@ class UpgradingQueue:
                 item['upgrading_from'] = upgrading_from
                 item['filled_by_file'] = new_values['filled_by_file']
                 item['filled_by_magnet'] = new_values['filled_by_magnet']
+                item['upgrading_from_torrent_id'] = item['filled_by_torrent_id']
                 item['version'] = new_values['version']
                 item['last_updated'] = datetime.now()
                 item['state'] = 'Checking'
 
-                # Optionally, add to collected notifications
-                add_to_collected_notifications(item)
+                # Send notification for the upgrade
+                try:
+                    from notifications import send_notifications
+                    from routes.settings_routes import get_enabled_notifications_for_category
+                    from extensions import app
+
+                    with app.app_context():
+                        response = get_enabled_notifications_for_category('upgrading')
+                        if response.json['success']:
+                            enabled_notifications = response.json['enabled_notifications']
+                            if enabled_notifications:
+                                notification_data = {
+                                    'id': item['id'],
+                                    'title': item.get('title', 'Unknown Title'),
+                                    'type': item.get('type', 'unknown'),
+                                    'year': item.get('year', ''),
+                                    'version': item.get('version', ''),
+                                    'season_number': item.get('season_number'),
+                                    'episode_number': item.get('episode_number'),
+                                    'new_state': 'Upgrading',
+                                    'is_upgrade': True,
+                                    'upgrading_from': upgrading_from
+                                }
+                                send_notifications([notification_data], enabled_notifications, notification_category='collected')
+                                logging.debug(f"Sent upgrade notification for item {item['id']}")
+                except Exception as e:
+                    logging.error(f"Failed to send upgrade notification: {str(e)}")
+
             except Exception as e:
                 conn.rollback()
                 logging.error(f"Error updating item {self.generate_identifier(item)}: {str(e)}", exc_info=True)

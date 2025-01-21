@@ -4,37 +4,113 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 
-{% for section in ['Plex', 'Debrid Provider', 'Trakt'] %}
-    <div class="settings-section">
-        <div class="settings-section-header">
-            <h4>{{ section }}</h4>
-            <span class="settings-toggle-icon">+</span>
-        </div>
-        <div class="settings-section-content">
-            {% for key, value in settings_schema[section].items() %}
-                {% if key != 'tab' %}
-                <div class="settings-form-group">
-                    <label for="{{ section|lower }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                    {% if value.type == 'boolean' %}
-                        <input type="checkbox" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" {% if settings.get(section, {}).get(key) %}checked{% endif %}>
-                    {% elif value.choices %}
-                        <select id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" class="settings-input">
-                            {% for choice in value.choices %}
-                                <option value="{{ choice }}" {% if settings.get(section, {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
-                            {% endfor %}
-                        </select>
-                    {% else %}
-                        <input type="{{ value.type }}" id="{{ section|lower }}-{{ key }}" name="{{ section }}.{{ key }}" value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input" {% if value.sensitive %}type="password"{% endif %}>
-                    {% endif %}
-                    {% if value.description %}
-                        <p class="settings-description">{{ value.description }}</p>
-                    {% endif %}
-                </div>
-                {% endif %}
-            {% endfor %}
-        </div>
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Debrid Provider</h4>
+        <span class="settings-toggle-icon">+</span>
     </div>
-{% endfor %}
+    <div class="settings-section-content">
+        {% for key, value in settings_schema['Debrid Provider'].items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="debrid provider-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
+                           data-section="Debrid Provider" data-key="{{ key }}"
+                           {% if settings.get('Debrid Provider', {}).get(key) %}checked{% endif %}>
+                {% elif value.choices %}
+                    <select id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" class="settings-input"
+                            data-section="Debrid Provider" data-key="{{ key }}">
+                        {% for choice in value.choices %}
+                            <option value="{{ choice }}" {% if settings.get('Debrid Provider', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type }}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
+                           value="{{ settings.get('Debrid Provider', {}).get(key, '') }}" class="settings-input"
+                           data-section="Debrid Provider" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    <p class="settings-description">{{ value.description }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>File Management</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% for key, value in settings_schema['File Management'].items() %}
+            {% if key != 'tab' and key != 'symlink_organize_by_type' %}
+            <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink'] %}symlink-plex-setting{% endif %}">
+                <label for="file management-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="file management-{{ key }}" name="File Management.{{ key }}"
+                           data-section="File Management" data-key="{{ key }}"
+                           {% if settings.get('File Management', {}).get(key) %}checked{% endif %}>
+                {% elif value.choices %}
+                    <select id="file management-{{ key }}" name="File Management.{{ key }}" class="settings-input"
+                            data-section="File Management" data-key="{{ key }}">
+                        {% for choice in value.choices %}
+                            <option value="{{ choice }}" {% if settings.get('File Management', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type }}" id="file management-{{ key }}" name="File Management.{{ key }}"
+                           value="{{ settings.get('File Management', {}).get(key, '') }}" class="settings-input"
+                           data-section="File Management" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    <p class="settings-description">{{ value.description }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Trakt</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% for key, value in settings_schema['Trakt'].items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="trakt-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="trakt-{{ key }}" name="Trakt.{{ key }}"
+                           data-section="Trakt" data-key="{{ key }}"
+                           {% if settings.get('Trakt', {}).get(key) %}checked{% endif %}>
+                {% elif value.choices %}
+                    <select id="trakt-{{ key }}" name="Trakt.{{ key }}" class="settings-input"
+                            data-section="Trakt" data-key="{{ key }}">
+                        {% for choice in value.choices %}
+                            <option value="{{ choice }}" {% if settings.get('Trakt', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type }}" id="trakt-{{ key }}" name="Trakt.{{ key }}"
+                           value="{{ settings.get('Trakt', {}).get(key, '') }}" class="settings-input"
+                           data-section="Trakt" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    <p class="settings-description">{{ value.description }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
 
 <!-- Trakt Authorization Section -->
 <div class="settings-section">
@@ -54,3 +130,41 @@
         </div>
     </div>
 </div>
+
+<!-- Always include Plex section but initially hidden -->
+<div class="settings-section" id="plex-settings-section" style="display: none;">
+    <div class="settings-section-header">
+        <h4>Plex</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% for key, value in settings_schema['Plex'].items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="plex-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="plex-{{ key }}" name="Plex.{{ key }}"
+                           data-section="Plex" data-key="{{ key }}"
+                           {% if settings.get('Plex', {}).get(key) %}checked{% endif %}>
+                {% elif value.choices %}
+                    <select id="plex-{{ key }}" name="Plex.{{ key }}" class="settings-input"
+                            data-section="Plex" data-key="{{ key }}">
+                        {% for choice in value.choices %}
+                            <option value="{{ choice }}" {% if settings.get('Plex', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type }}" id="plex-{{ key }}" name="Plex.{{ key }}"
+                           value="{{ settings.get('Plex', {}).get(key, '') }}" class="settings-input"
+                           data-section="Plex" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    <p class="settings-description">{{ value.description }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+

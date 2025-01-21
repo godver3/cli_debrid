@@ -216,6 +216,9 @@ class QueueManager:
         update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
+            # Copy downloading flag from original item
+            if 'downloading' in item:
+                updated_item['downloading'] = item['downloading']
             self.queues["Checking"].add_item(updated_item)
             # Remove the item from the Adding queue and the Wanted queue
             if from_queue in ["Adding", "Wanted"]:
@@ -300,5 +303,34 @@ class QueueManager:
 
     def is_paused(self):
         return self.paused
+
+    def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False):
+        """Move an item to the Collected state after symlink is created."""
+        item_identifier = self.generate_identifier(item)
+        logging.info(f"Moving item {item_identifier} to Collected state")
+        
+        from datetime import datetime
+        collected_at = datetime.now()
+        
+        # Update the item state in the database
+        from database import update_media_item_state, get_media_item_by_id
+        update_media_item_state(item['id'], 'Collected', collected_at=collected_at)
+        
+        # Get the updated item
+        updated_item = get_media_item_by_id(item['id'])
+        if updated_item:
+            # Remove from the source queue
+            self.queues[from_queue].remove_item(item)
+            logging.info(f"Successfully moved item {item_identifier} to Collected state")
+            
+            # Add to collected notifications if not skipped
+            if not skip_notification:
+                from database.collected_items import add_to_collected_notifications
+                updated_item_dict = dict(updated_item)
+                updated_item_dict['is_upgrade'] = False  # Not an upgrade since it's a new collection
+                updated_item_dict['original_collected_at'] = collected_at
+                add_to_collected_notifications(updated_item_dict)
+        else:
+            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
 
     # Add other methods as needed

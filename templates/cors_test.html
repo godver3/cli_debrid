@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Test</title>
+    <link rel="icon" href="data:,">  <!-- Empty favicon to prevent 404 errors -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .success {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .debug-info {
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        .cookie-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .test-group {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .test-group h3 {
+            margin-top: 0;
+            color: #2196F3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CORS Test Page</h1>
+        <p>This page tests CORS functionality across different domains and protocols.</p>
+        
+        <div class="important-notice" style="background-color: #ffebee; color: #c62828; padding: 15px; margin: 15px 0; border-radius: 4px;">
+            <strong>Important:</strong> You must first log in through the main application at:
+            <a href="" id="loginLink" target="_blank">Loading...</a>
+            <br>
+            <small>Default credentials: username <strong>admin</strong>, password <strong>admin</strong></small>
+        </div>
+
+        <div class="debug-info">
+            <strong>Current Environment:</strong>
+            <pre id="envInfo">Loading...</pre>
+        </div>
+
+        <div class="cookie-info">
+            <strong>Cookie Status:</strong>
+            <pre id="cookieInfo">Checking...</pre>
+        </div>
+
+        <div class="test-group">
+            <h3>Authentication Tests</h3>
+            <button onclick="checkLoginStatus()">1. Check Login Status</button>
+            <button onclick="checkServerCookies()">2. Check Server-Side Cookies</button>
+        </div>
+
+        <div class="test-group">
+            <h3>CORS Protocol Tests</h3>
+            <button onclick="testHttpToHttp()">3. Test HTTP → HTTP</button>
+            <button onclick="testHttpToHttps()">4. Test HTTP → HTTPS</button>
+            <button onclick="testHttpsToHttp()">5. Test HTTPS → HTTP</button>
+            <button onclick="testHttpsToHttps()">6. Test HTTPS → HTTPS</button>
+        </div>
+
+        <div class="test-group">
+            <h3>Request Method Tests</h3>
+            <button onclick="testPreflightRequest()">7. Test Preflight Request</button>
+            <button onclick="testPostRequest()">8. Test POST Request</button>
+        </div>
+
+        <div class="test-group">
+            <h3>Comprehensive Tests</h3>
+            <button onclick="testAllCombinations()">9. Test All Combinations</button>
+        </div>
+        
+        <div id="status" class="status"></div>
+        <pre id="response"></pre>
+    </div>
+
+    <script>
+        // Get the target server URLs
+        const servers = {
+            'cli-debrid': {
+                http: 'http://cli-debrid.godver3.xyz',
+                https: 'https://cli-debrid.godver3.xyz'
+            },
+            'cli-test': {
+                http: 'http://cli-test.godver3.xyz',
+                https: 'https://cli-test.godver3.xyz'
+            }
+        };
+
+        // Initialize environment info
+        function updateEnvInfo() {
+            const envInfo = document.getElementById('envInfo');
+            const info = {
+                'Current Protocol': window.location.protocol,
+                'Current Host': window.location.host,
+                'Available Test Servers': servers,
+                'User Agent': navigator.userAgent,
+                'Mixed Content Warning': window.location.protocol === 'https:' ? 
+                    'HTTP requests may be blocked when testing from HTTPS' : 'No mixed content restrictions'
+            };
+            envInfo.textContent = JSON.stringify(info, null, 2);
+        }
+
+        // Helper function to check if a request will be blocked
+        function willBeBlocked(targetUrl) {
+            return window.location.protocol === 'https:' && targetUrl.startsWith('http:');
+        }
+
+        // Update cookie information
+        function updateCookieInfo() {
+            const cookieInfo = document.getElementById('cookieInfo');
+            const cookies = document.cookie;
+            
+            let info = '';
+            info += 'Client-Side Cookie Info:\n';
+            if (cookies) {
+                const cookieList = cookies.split(';').map(cookie => {
+                    const [name, value] = cookie.trim().split('=');
+                    return `${name} = ${value.substring(0, 20)}${value.length > 20 ? '...' : ''}`;
+                });
+                info += cookieList.join('\n');
+            } else {
+                info += 'No cookies visible to JavaScript\n';
+                info += '(This is normal due to security settings)\n';
+            }
+            
+            cookieInfo.textContent = info;
+        }
+
+        // Helper functions for UI
+        function showStatus(message, isError = false) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + (isError ? 'error' : 'success');
+        }
+
+        function showResponse(data) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.textContent = typeof data === 'object' ? 
+                JSON.stringify(data, null, 2) : String(data);
+        }
+
+        // Test functions
+        async function checkLoginStatus() {
+            try {
+                showStatus('Checking login status...');
+                const response = await fetch('/cors_testing/cookie-check', {
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                const data = await response.json();
+                showResponse(data);
+                
+                const isLoggedIn = data.server.user_authenticated;
+                showStatus(isLoggedIn ? 'User is logged in' : 'User is not logged in');
+                
+                return isLoggedIn;
+            } catch (error) {
+                showStatus('Error checking login status: ' + error.message, true);
+                console.error('Error:', error);
+                return false;
+            }
+        }
+
+        async function checkServerCookies() {
+            try {
+                showStatus('Checking server-side cookies...');
+                const response = await fetch('/cors_testing/cookie-check', {
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                const data = await response.json();
+                showResponse(data);
+                showStatus('Successfully checked server-side cookies');
+            } catch (error) {
+                showStatus('Error checking server cookies: ' + error.message, true);
+                console.error('Error:', error);
+            }
+        }
+
+        async function testCorsRequest(targetUrl, method = 'GET', body = null) {
+            // Check for mixed content blocking
+            if (willBeBlocked(targetUrl)) {
+                return {
+                    status: 'error',
+                    statusText: 'Mixed Content Blocked',
+                    error: 'Browser blocked HTTP request from HTTPS page. Try running these tests from an HTTP page instead.',
+                    targetUrl,
+                    currentProtocol: window.location.protocol
+                };
+            }
+
+            const options = {
+                method,
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            };
+
+            if (body) {
+                options.body = body;
+                options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            }
+
+            try {
+                const response = await fetch(targetUrl, options);
+                return {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: Object.fromEntries([...response.headers.entries()]),
+                    data: await response.text()
+                };
+            } catch (error) {
+                return {
+                    status: 'error',
+                    statusText: error.message,
+                    error: error.toString(),
+                    targetUrl,
+                    currentProtocol: window.location.protocol
+                };
+            }
+        }
+
+        async function testHttpToHttp() {
+            showStatus('Testing HTTP → HTTP...');
+            const targetUrl = servers['cli-test'].http + '/cors_testing/cookie-check';
+            
+            if (willBeBlocked(targetUrl)) {
+                showStatus('Warning: HTTP request will be blocked from HTTPS page. Try running this test from an HTTP page.', true);
+            }
+            
+            try {
+                const result = await testCorsRequest(targetUrl);
+                showResponse(result);
+                if (result.status !== 'error') {
+                    showStatus('HTTP → HTTP test completed');
+                } else {
+                    showStatus(result.error, true);
+                }
+            } catch (error) {
+                showStatus('HTTP → HTTP test failed: ' + error.message, true);
+            }
+        }
+
+        async function testHttpToHttps() {
+            showStatus('Testing HTTP → HTTPS...');
+            try {
+                const result = await testCorsRequest(servers['cli-debrid'].https + '/cors_testing/cookie-check');
+                showResponse(result);
+                if (result.status !== 'error') {
+                    showStatus('HTTP → HTTPS test completed');
+                } else {
+                    showStatus(result.error, true);
+                }
+            } catch (error) {
+                showStatus('HTTP → HTTPS test failed: ' + error.message, true);
+            }
+        }
+
+        async function testHttpsToHttp() {
+            showStatus('Testing HTTPS → HTTP...');
+            const targetUrl = servers['cli-test'].http + '/cors_testing/cookie-check';
+            
+            if (willBeBlocked(targetUrl)) {
+                showStatus('Warning: HTTP request will be blocked from HTTPS page. Try running this test from an HTTP page.', true);
+            }
+            
+            try {
+                const result = await testCorsRequest(targetUrl);
+                showResponse(result);
+                if (result.status !== 'error') {
+                    showStatus('HTTPS → HTTP test completed');
+                } else {
+                    showStatus(result.error, true);
+                }
+            } catch (error) {
+                showStatus('HTTPS → HTTP test failed: ' + error.message, true);
+            }
+        }
+
+        async function testHttpsToHttps() {
+            showStatus('Testing HTTPS → HTTPS...');
+            try {
+                const result = await testCorsRequest(servers['cli-debrid'].https + '/cors_testing/cookie-check');
+                showResponse(result);
+                if (result.status !== 'error') {
+                    showStatus('HTTPS → HTTPS test completed');
+                } else {
+                    showStatus(result.error, true);
+                }
+            } catch (error) {
+                showStatus('HTTPS → HTTPS test failed: ' + error.message, true);
+            }
+        }
+
+        async function testPreflightRequest() {
+            showStatus('Testing preflight request...');
+            try {
+                const result = await testCorsRequest('/cors_testing/test-options', 'OPTIONS');
+                showResponse(result);
+                showStatus('Preflight request test completed');
+            } catch (error) {
+                showStatus('Preflight request test failed: ' + error.message, true);
+            }
+        }
+
+        async function testPostRequest() {
+            showStatus('Testing POST request...');
+            try {
+                const result = await testCorsRequest('/cors_testing/test-post', 'POST', 'test=true');
+                showResponse(result);
+                showStatus('POST request test completed');
+            } catch (error) {
+                showStatus('POST request test failed: ' + error.message, true);
+            }
+        }
+
+        async function testAllCombinations() {
+            showStatus('Testing all combinations...');
+            const results = {
+                'HTTP → HTTP': null,
+                'HTTP → HTTPS': null,
+                'HTTPS → HTTP': null,
+                'HTTPS → HTTPS': null,
+                'POST Request': null,
+                'Preflight Request': null
+            };
+
+            try {
+                results['HTTP → HTTP'] = await testCorsRequest(servers['cli-test'].http + '/cors_testing/cookie-check');
+                results['HTTP → HTTPS'] = await testCorsRequest(servers['cli-debrid'].https + '/cors_testing/cookie-check');
+                results['HTTPS → HTTP'] = await testCorsRequest(servers['cli-test'].http + '/cors_testing/cookie-check');
+                results['HTTPS → HTTPS'] = await testCorsRequest(servers['cli-debrid'].https + '/cors_testing/cookie-check');
+                results['POST Request'] = await testCorsRequest('/cors_testing/test-post', 'POST', 'test=true');
+                results['Preflight Request'] = await testCorsRequest('/cors_testing/test-options', 'OPTIONS');
+
+                showResponse(results);
+                showStatus('All combination tests completed');
+            } catch (error) {
+                showStatus('Combination testing failed: ' + error.message, true);
+            }
+        }
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            updateEnvInfo();
+            updateCookieInfo();
+            setInterval(updateCookieInfo, 2000);
+
+            // Set login link
+            const loginLink = document.getElementById('loginLink');
+            loginLink.href = servers['cli-debrid'].https + '/auth/login';
+            loginLink.textContent = servers['cli-debrid'].https + '/auth/login';
+        });
+    </script>
+</body>
+</html> 

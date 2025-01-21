@@ -4,6 +4,24 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/database.css') }}">
 <div class="container">
     <h2>Database Content</h2>
+    <div id="bulk-actions" class="bulk-actions">
+        <div class="select-all-container">
+            <button id="select-all" class="select-all-btn">Select All</button>
+            <button id="bulk-delete" class="bulk-action-btn" disabled>Delete Selected</button>
+            <select id="bulk-move-queue" class="bulk-action-select" disabled>
+                <option value="">Move Selected to Queue...</option>
+                <option value="Adding">Adding</option>
+                <option value="Blacklisted">Blacklisted</option>
+                <option value="Checking">Checking</option>
+                <option value="Scraping">Scraping</option>
+                <option value="Sleeping">Sleeping</option>
+                <option value="Unreleased">Unreleased</option>
+                <option value="Wanted">Wanted</option>
+                <option value="Pending Uncached">Pending Uncached</option>
+                <option value="Upgrading">Upgrading</option>
+            </select>
+        </div>
+    </div>
     <div id="column-selector-wrapper">
         <button id="toggle-column-selector" class="toggle-button">Select Columns to Display</button>
         <div id="column-selector" class="hidden">
@@ -42,7 +60,7 @@
                 <select id="filter-column" name="filter_column">
                     <option value="">None</option>
                     {% for column in selected_columns %}
-                    <option value="{{ column }}" {% if column == filter_column %}selected{% endif %}>{{ column }}</option>
+                    <option value="{{ column }}" {% if column == filter_column or (not filter_column and column == 'title') %}selected{% endif %}>{{ column }}</option>
                     {% endfor %}
                 </select>
                 <label for="filter-value">Filter Value:</label>
@@ -87,6 +105,7 @@
         <table>
             <thead>
                 <tr>
+                    <th>Select</th>
                     <th>Delete</th>
                     <th>Rescrape</th>
                     {% for column in selected_columns %}
@@ -97,6 +116,9 @@
             <tbody>
                 {% for item in items %}
                     <tr>
+                        <td>
+                            <input type="checkbox" class="item-select" data-item-id="{{ item['id'] }}">
+                        </td>
                         <td>
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
                         </td>
@@ -117,11 +139,65 @@
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
-
-import { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips } from '/static/js/tooltips.js';
-
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+import { initializeDatabaseTooltips } from '/static/js/tooltips.js';
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Add tap handlers for mobile devices
+    function isMobileDevice() {
+        const hasTouchScreen = (
+            'ontouchstart' in window ||
+            navigator.maxTouchPoints > 0 ||
+            navigator.msMaxTouchPoints > 0
+        );
+        const isMobileViewport = window.innerWidth <= 768;
+        return hasTouchScreen && isMobileViewport;
+    }
+
+    function copyToClipboard(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                message: 'Content copied to clipboard!',
+                title: 'Success',
+                autoClose: 2000
+            });
+        } catch (err) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Failed to copy content',
+                title: 'Error'
+            });
+        }
+        document.body.removeChild(textarea);
+    }
+
+    // Only add mobile functionality if on a mobile device
+    if (isMobileDevice()) {
+        // Add pointer cursor to all truncated cells
+        document.querySelectorAll('.truncate').forEach(cell => {
+            cell.style.cursor = 'pointer';
+        });
+
+        // Use event delegation for cell clicks
+        document.querySelector('.table-container').addEventListener('click', function(e) {
+            const cell = e.target.closest('.truncate');
+            if (cell && !e.target.closest('button')) {
+                const content = cell.getAttribute('data-full-content');
+                    showPopup({
+                        type: POPUP_TYPES.INFO,
+                        title: 'Cell Content',
+                        message: `<div style="word-break: break-word;">${content}</div>`,
+                    });
+                }
+            });
+    }
+
     let currentContentType = '{{ content_type }}';
     let currentLetter = '{{ current_letter }}';
 
@@ -259,16 +335,25 @@ document.addEventListener('DOMContentLoaded', function() {
         currentLetter = 'A';
 
         // Update the content with default values
-        updateContent('{{ url_for('database.index') }}', {
+        updateContent("{{ url_for('database.index') }}", {
             content_type: currentContentType,
             letter: currentLetter
         });
     }
 
+    function setUpdatingContent(isUpdating) {
+        if (isUpdating) {
+            Loading.show();
+        } else {
+            Loading.hide();
+        }
+    }
+
     function renderTable(items, selectedColumns) {
         let tableHTML = '<table><thead><tr>';
-        tableHTML += '<th>Delete</th>'; // Add delete column header
-        tableHTML += '<th>Rescrape</th>'; // Add rescrape column header
+        tableHTML += '<th>Select</th>';
+        tableHTML += '<th>Delete</th>';
+        tableHTML += '<th>Rescrape</th>';
         selectedColumns.forEach(column => {
             tableHTML += `<th>${column}</th>`;
         });
@@ -276,13 +361,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
         items.forEach(item => {
             tableHTML += '<tr>';
-            tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`; // Add delete button
-            tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`; // Add rescrape button
+            tableHTML += `<td><input type="checkbox" class="item-select" data-item-id="${item['id']}"></td>`;
+            tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
+            tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
             selectedColumns.forEach(column => {
-                let cellContent = item[column];
-                if (cellContent === null || cellContent === undefined || cellContent === '') {
-                    cellContent = 'None';
-                }
+                const cellContent = item[column] === null || item[column] === undefined || item[column] === '' 
+                    ? 'None' 
+                    : String(item[column]).replace(/"/g, '&quot;');
                 tableHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
             });
             tableHTML += '</tr>';
@@ -336,9 +421,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     contentTypeFilterElement.innerHTML = renderContentTypeFilter(data);
                 }
 
-                document.querySelector('.pagination').innerHTML = renderPagination(data);
-                document.querySelector('.content-type-filter').innerHTML = renderContentTypeFilter(data);
-                
                 // Update current states
                 currentContentType = data.content_type;
                 currentLetter = data.current_letter;
@@ -351,18 +433,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 attachDeleteListeners();
                 attachRescrapeListeners();
 
-                // Clean up existing tooltips
-                // cleanupExistingTooltips();
-
-                // Reinitialize tooltips
-                initializeTooltips();
+                // Reinitialize tooltips for the updated content
+                initializeDatabaseTooltips();
             })
             .catch(error => {
                 console.error('Error updating content:', error);
                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     title: 'Error',
-                    message: 'Failed to update database content: ' + error.message
+                    message: 'Failed to update database content: ' + error.message,
                 });
             })
             .finally(() => {
@@ -551,18 +630,185 @@ document.addEventListener('DOMContentLoaded', function() {
         if (filterValue) filterValue.value = '';
     }
 
+    // Add bulk action handlers
+    const selectAllBtn = document.getElementById('select-all');
+    const bulkDeleteBtn = document.getElementById('bulk-delete');
+    const bulkMoveQueue = document.getElementById('bulk-move-queue');
+    let lastChecked = null;
+    let allSelected = false;
+
+    // Select all functionality
+    selectAllBtn.addEventListener('click', function() {
+        allSelected = !allSelected;
+        const checkboxes = document.querySelectorAll('.item-select');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = allSelected;
+        });
+        this.textContent = allSelected ? 'Unselect All' : 'Select All';
+        updateBulkActionButtons();
+    });
+
+    // Handle individual checkbox changes
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('item-select')) {
+            updateBulkActionButtons();
+            // Update select all button text based on checkbox state
+            const checkboxes = Array.from(document.querySelectorAll('.item-select'));
+            const allChecked = checkboxes.every(cb => cb.checked);
+            const noneChecked = checkboxes.every(cb => !cb.checked);
+            selectAllBtn.textContent = allChecked ? 'Unselect All' : 'Select All';
+            allSelected = allChecked;
+        }
+    });
+
+    // Handle shift+click for range selection
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('item-select')) {
+            if (!lastChecked) {
+                lastChecked = e.target;
+                return;
+            }
+
+            if (e.shiftKey) {
+                const checkboxes = Array.from(document.querySelectorAll('.item-select'));
+                const start = checkboxes.indexOf(e.target);
+                const end = checkboxes.indexOf(lastChecked);
+                
+                checkboxes.slice(
+                    Math.min(start, end),
+                    Math.max(start, end) + 1
+                ).forEach(checkbox => {
+                    checkbox.checked = lastChecked.checked;
+                });
+            }
+
+            lastChecked = e.target;
+            updateBulkActionButtons();
+        }
+    });
+
+    // Update bulk action button states
+    function updateBulkActionButtons() {
+        const selectedCount = document.querySelectorAll('.item-select:checked').length;
+        bulkDeleteBtn.disabled = selectedCount === 0;
+        bulkMoveQueue.disabled = selectedCount === 0;
+    }
+
+    // Handle bulk delete
+    bulkDeleteBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            message: `Are you sure you want to delete ${selectedItems.length} item(s)?`,
+            title: 'Confirm Deletion',
+            onConfirm: () => {
+                Loading.show();
+                const formData = new FormData();
+                formData.append('action', 'delete');
+                // Add each selected item individually
+                selectedItems.forEach(id => {
+                    formData.append('selected_items', id);
+                });
+
+                fetch('/database/bulk_queue_action', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    Loading.hide();
+                    if (data.success) {
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            message: data.message,
+                            title: 'Success'
+                        });
+                        // Refresh the page to show updated content
+                        window.location.reload();
+                    } else {
+                        throw new Error(data.error || 'Failed to delete items');
+                    }
+                })
+                .catch(error => {
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: error.message,
+                        title: 'Error'
+                    });
+                });
+            }
+        });
+    });
+
+    // Handle bulk move to queue
+    bulkMoveQueue.addEventListener('change', function() {
+        const selectedQueue = this.value;
+        if (!selectedQueue) return;
+
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            message: `Are you sure you want to move ${selectedItems.length} item(s) to ${selectedQueue} queue?`,
+            title: 'Confirm Move',
+            onConfirm: () => {
+                Loading.show();
+                const formData = new FormData();
+                formData.append('action', 'move');
+                formData.append('target_queue', selectedQueue);
+                // Add each selected item individually
+                selectedItems.forEach(id => {
+                    formData.append('selected_items', id);
+                });
+
+                fetch('/database/bulk_queue_action', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    Loading.hide();
+                    if (data.success) {
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            message: data.message,
+                            title: 'Success'
+                        });
+                        // Refresh the page to show updated content
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1000);
+                    } else {
+                        throw new Error(data.error || 'Failed to move items');
+                    }
+                })
+                .catch(error => {
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: error.message,
+                        title: 'Error'
+                    });
+                });
+            }
+        });
+        
+        // Reset the select element
+        this.value = '';
+    });
+
     // Initial attachment of event listeners
     attachEventListeners();
     attachDeleteListeners();
     attachRescrapeListeners();
-
-    // Initialize tooltips
-    initializeTooltips();
-
-    document.addEventListener('DOMContentLoaded', function() {
-        initializeTooltips();
-        initializeDatabaseTooltips();
-    });
 });
 
 Loading.init();

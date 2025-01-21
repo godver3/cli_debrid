@@ -33,6 +33,7 @@ class ScrapingQueue:
             item_identifier = queue_manager.generate_identifier(item)
             try:
                 logging.info(f"Starting to process scraping results for {item_identifier}")
+                logging.debug(f"Scraping Queue - Item resolution: {item.get('resolution', 'Not found')} for {item_identifier}")
                 
                 # Check release date logic
                 if item['release_date'] == 'Unknown':
@@ -45,7 +46,8 @@ class ScrapingQueue:
                     release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
                     today = date.today()
 
-                    if release_date > today:
+                    # Only check release date if not an early release
+                    if not item.get('early_release', False) and release_date > today:
                         logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
                         queue_manager.move_to_wanted(item, "Scraping")
                         processed_count += 1
@@ -131,6 +133,9 @@ class ScrapingQueue:
                         logging.info(f"Reverse order scraping enabled. Reversing results.")
                         filtered_results.reverse()
                     
+                    for result in filtered_results:
+                        logging.debug(f"Result: {result.get('resolution', 'Unknown')} - {result['title']}")
+
                     logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
                     try:
                         queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
@@ -158,6 +163,11 @@ class ScrapingQueue:
         item_identifier = queue_manager.generate_identifier(item)
         logging.debug(f"Scraping for {item_identifier} with is_multi_pack={is_multi_pack}, skip_filter={skip_filter}")
 
+        # Add check for fall_back_to_single_scraper flag
+        if get_media_item_by_id(item['id']).get('fall_back_to_single_scraper'):
+            logging.info(f"Forcing single scrape for {item_identifier} due to fall_back_to_single_scraper flag")
+            is_multi_pack = False
+
         results, filtered_out = scrape(
             item['imdb_id'],
             item['tmdb_id'],
@@ -167,7 +177,7 @@ class ScrapingQueue:
             item['version'],
             item.get('season_number'),
             item.get('episode_number'),
-            is_multi_pack,
+            is_multi_pack,  # This will now be False if fall_back_to_single_scraper is True
             item.get('genres')
         )
 
@@ -186,14 +196,19 @@ class ScrapingQueue:
                 logging.info(f"Filtered out {len(results) - len(filtered_results)} results due to not wanted magnets/URLs")
             results = filtered_results
 
+        is_anime = True if 'anime' in item['genres'] else False
+        
         # For episodes, filter by exact season/episode match
-        if item['type'] == 'episode' and not is_multi_pack:
-            season = item.get('season_number')
-            episode = item.get('episode_number')
+        if not is_anime:
+            season = None
+            episode = None
+            if item['type'] == 'episode' and not is_multi_pack:
+                season = item.get('season_number')
+                episode = item.get('episode_number')
             filtered_results = [
                 r for r in results 
-                if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
-                and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
+                if (season is None or r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season])
+                and (episode is None or r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode])
             ]
             if len(filtered_results) < len(results):
                 logging.info(f"Filtered out {len(results) - len(filtered_results)} results due to season/episode mismatch")
@@ -230,12 +245,26 @@ class ScrapingQueue:
             season = item.get('season_number')
             episode = item.get('episode_number')
             if season is not None and episode is not None:
-                individual_results = [
-                    r for r in individual_results 
+                # First, mark any results that are date-based
+                for result in individual_results:
+                    if result.get('parsed_info', {}).get('date'):
+                        result['is_date_based'] = True
+                        logging.debug(f"Marked result as date-based: {result['title']}")
+
+                # Filter only non-date-based results by season/episode
+                date_based_results = [r for r in individual_results if r.get('is_date_based', False)]
+                regular_results = [r for r in individual_results if not r.get('is_date_based', False)]
+                
+                filtered_regular_results = [
+                    r for r in regular_results 
                     if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
                     and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
                 ]
-                logging.info(f"After filtering individual results for specific episode S{season}E{episode}: {len(individual_results)} results remain for {item_identifier}")
+
+                # Combine date-based and filtered regular results
+                individual_results = date_based_results + filtered_regular_results
+                
+                logging.info(f"After filtering: {len(date_based_results)} date-based results and {len(filtered_regular_results)} regular results for {item_identifier}")
 
         if individual_results:
             logging.info(f"Found results for individual episode scraping of {item_identifier}.")

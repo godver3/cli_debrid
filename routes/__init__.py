@@ -25,6 +25,9 @@ from .video_routes import video_routes
 from api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
 from extensions import app
 from .content_requestor_routes import content_requestor_bp
+from .base_routes import base_bp  # Add this import
+from .library_management_routes import library_management
+from .cors_testing_routes import cors_testing_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -134,7 +137,10 @@ def register_blueprints(app):
         (over_usage_bp, '/over_usage'),
         (video_routes, '/video'),
         (content_requestor_bp, '/content'),
+        (base_bp, '/base'),
         (root_bp, '/'),
+        (library_management, '/library_management'),
+        (cors_testing_bp, '/cors_testing'),
     ]
     
     for blueprint, url_prefix in blueprints:
