@@ -115,7 +115,12 @@ class WantedQueue:
 
                         time_until_release = release_datetime - current_datetime
 
-                        if time_until_release <= timedelta():
+                        # If it's an early release and ready to be scraped, move to scraping
+                        if item.get('early_release', False):
+                            logging.debug(f"Item {item_identifier} is an early release. Moving to Scraping queue.")
+                            items_to_move_scraping.append(item)
+                        # Otherwise check normal release timing
+                        elif time_until_release <= timedelta():
                             logging.debug(f"Item {item_identifier} has met its airtime requirement. Moving to Scraping queue.")
                             items_to_move_scraping.append(item)
                         elif time_until_release > timedelta(hours=24):

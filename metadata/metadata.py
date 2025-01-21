@@ -679,7 +679,7 @@ def refresh_release_dates():
                 if item_dict.get('early_release', False):
                     new_state = "Wanted" if release_date <= today else "Unreleased"
                 else:
-                    new_state = "Wanted" if release_date <= today else "Unreleased"
+                    new_state = "Wanted"
 
             logging.info(f"New state: {new_state}")
 
