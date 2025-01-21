@@ -1,7 +1,9 @@
 {
     "global": {
       "logout_button": "Logout of the current user session.",
-      "programControlButton": "Start or stop the program."
+      "programControlButton": "Start or stop the program.",
+      "releaseNotesButton": "View recent changes and updates.",
+      "updateAvailableButton": "New version available."
     },
     "home": {
       "toggle_container": "Control panel for adjusting time format, view mode, and displaying active downloads.",

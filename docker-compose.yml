@@ -1,6 +1,6 @@
 services:
   cli_debrid:
-    image: godver3/cli_debrid:main
+    image: godver3/cli_debrid:dev
     pull_policy: always
     container_name: cli_debrid
     ports:

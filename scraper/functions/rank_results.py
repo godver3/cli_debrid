@@ -17,11 +17,81 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     similarity_weight = int(version_settings.get('similarity_weight', 3))
     size_weight = int(version_settings.get('size_weight', 3))
     bitrate_weight = int(version_settings.get('bitrate_weight', 3))
+    country_weight = int(version_settings.get('country_weight', 3))
 
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
     resolution_score = parsed_info.get('resolution_rank', 0)
     hdr_score = 1 if parsed_info.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
+
+    # Calculate country score
+    media_country = result.get('media_country_code')  # This should be passed from the scrape function
+    result_country = parsed_info.get('country')
+    
+    # Additional country code parsing for formats like "Title AU" or "Title NZ"
+    if not result_country:
+        # Common two-letter country codes that might appear after the title
+        country_codes = {'AU': 'au', 'NZ': 'nz', 'UK': 'gb', 'US': 'us', 'CA': 'ca'}
+        title_parts = torrent_title.split()
+        for i, part in enumerate(title_parts):
+            if part.upper() in country_codes and (i > 0 and not part.lower() in title_parts[i-1].lower()):  # Avoid matching part of a word
+                result_country = country_codes[part.upper()]
+                logging.info(f"Found country code in title: {part.upper()} -> {result_country}")
+                break
+    
+    country_score = 0
+    country_reason = "No country code matching applied"
+    
+    if media_country:
+        if media_country.lower() == 'us':
+            # For US content, treat missing country code as matching
+            if not result_country:
+                country_score = 10
+                country_reason = "US content - implicit match (no country code)"
+            elif result_country.lower() == 'us':
+                country_score = 10
+                country_reason = "US content - explicit match"
+            else:
+                country_score = -5
+                country_reason = f"US content - non-matching country ({result_country})"
+        else:
+            # For non-US content, require explicit country match
+            if result_country and media_country.lower() == result_country.lower():
+                country_score = 10
+                country_reason = f"Non-US content - explicit match ({media_country})"
+            elif result_country:
+                country_score = -5
+                country_reason = f"Non-US content - wrong country (wanted {media_country}, got {result_country})"
+            else:
+                country_reason = f"Non-US content - no country code in result (wanted {media_country})"
+
+    # Handle the case where torrent_year might be a list
+    if query_year is None:
+        year_match = 0  # No year match if query_year is None
+        year_reason = "No query year provided"
+    elif isinstance(torrent_year, list):
+        if query_year in torrent_year:
+            year_match = 10
+            year_reason = f"Exact year match found in list: {query_year} in {torrent_year}"
+        elif any(abs(query_year - y) <= 1 for y in torrent_year):
+            year_match = 5
+            year_reason = f"Year within 1 year difference in list: {query_year} near {torrent_year}"
+        else:
+            year_match = -5
+            year_reason = f"Year mismatch penalty: {query_year} not near {torrent_year}"
+    else:
+        if query_year == torrent_year:
+            year_match = 10
+            year_reason = f"Exact year match: {query_year}"
+        elif torrent_year and abs(query_year - (torrent_year or 0)) <= 1:
+            year_match = 5
+            year_reason = f"Year within 1 year difference: {query_year} vs {torrent_year}"
+        elif torrent_year:
+            year_match = -5
+            year_reason = f"Year mismatch penalty: {query_year} vs {torrent_year}"
+        else:
+            year_match = 0
+            year_reason = f"No year match: {query_year} vs {torrent_year}"
 
     scraper = result.get('scraper', '').lower()
 
@@ -44,6 +114,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     normalized_hdr = hdr_score * 10
     normalized_size = size_percentile * 10
     normalized_bitrate = bitrate_percentile * 10
+    normalized_country = country_score  # Already in 0-10 range
 
     # Apply weights
     weighted_similarity = normalized_similarity * similarity_weight
@@ -51,19 +122,25 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     weighted_hdr = normalized_hdr * hdr_weight
     weighted_size = normalized_size * size_weight
     weighted_bitrate = normalized_bitrate * bitrate_weight
-
-    # Handle the case where torrent_year might be a list
-    if query_year is None:
-        year_match = 0  # No year match if query_year is None
-    elif isinstance(torrent_year, list):
-        year_match = 5 if query_year in torrent_year else (1 if any(abs(query_year - y) <= 1 for y in torrent_year) else 0)
-    else:
-        year_match = 5 if query_year == torrent_year else (1 if torrent_year and abs(query_year - (torrent_year or 0)) <= 1 else 0)
+    weighted_country = normalized_country * country_weight
 
     # Only apply season and episode matching for TV shows
     if content_type.lower() == 'episode':
-        season_match = 5 if query_season == torrent_season else 0
-        episode_match = 5 if query_episode == torrent_episode else 0
+        # Check if this is an anime
+        genres = result.get('genres', [])
+        if isinstance(genres, str):
+            genres = [genres]
+        is_anime = any('anime' in genre.lower() for genre in genres)
+        
+        if is_anime:
+            # For anime, only match episode numbers, ignore season mismatch
+            episode_match = 5 if query_episode == torrent_episode else 0
+            season_match = 5  # Always give full season match score for anime
+            logging.debug(f"Anime content - ignoring season mismatch. Episode match: {episode_match}")
+        else:
+            # Regular TV show matching
+            season_match = 5 if query_season == torrent_season else 0
+            episode_match = 5 if query_episode == torrent_episode else 0
     else:
         season_match = 0
         episode_match = 0
@@ -119,6 +196,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         weighted_hdr +
         weighted_size +
         weighted_bitrate +
+        weighted_country +
         (year_match * 5) +
         (season_match * 5) +
         (episode_match * 5) +
@@ -129,24 +207,31 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Content type matching score
     content_type_score = 0
-    if content_type.lower() == 'movie':
+    if content_type.lower() == 'movie' and not result.get('is_anime', False):
         if re.search(r'(s\d{2}|e\d{2}|season|episode)', torrent_title, re.IGNORECASE):
             content_type_score = -500
+            logging.debug(f"Applied penalty for movie with season/episode in title")
     elif content_type.lower() == 'episode':
-        # Check for clear TV show indicators
-        tv_indicators = re.search(r'(s\d{2}|e\d{2}|season|episode)', torrent_title, re.IGNORECASE)
-        year_range = re.search(r'\[(\d{4}).*?(\d{4})\]', torrent_title)
+        # Use is_anime flag directly from result
+        is_anime = result.get('is_anime', False)
         
-        if not tv_indicators:
-            # If no clear TV indicators, check for year ranges typical of TV collections
-            if year_range:
-                start_year, end_year = map(int, year_range.groups())
-                if end_year - start_year > 1:  # Spans multiple years, likely a TV show
-                    content_type_score = 0
+        if not is_anime:
+            # Regular TV show pattern matching
+            tv_indicators = re.search(r'(s\d{2}|e\d{2}|season|episode)', torrent_title, re.IGNORECASE)
+            year_range = re.search(r'\[(\d{4}).*?(\d{4})\]', torrent_title)
+            
+            if not tv_indicators:
+                # If no clear TV indicators, check for year ranges typical of TV collections
+                if year_range:
+                    start_year, end_year = map(int, year_range.groups())
+                    if end_year - start_year > 1:  # Spans multiple years, likely a TV show
+                        content_type_score = 0
+                    else:
+                        content_type_score = -500
+                        logging.debug(f"Applied penalty for TV show with year range in title")
                 else:
                     content_type_score = -500
-            else:
-                content_type_score = -500
+                    logging.debug(f"Applied penalty for TV show with no season/episode in title")
     else:
         logging.warning(f"Unknown content type: {content_type} for result: {torrent_title}")
 
@@ -160,6 +245,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'hdr_score': round(weighted_hdr, 2) if version_settings.get('enable_hdr', True) else 0,
         'size_score': round(weighted_size, 2),
         'bitrate_score': round(weighted_bitrate, 2),
+        'country_score': round(weighted_country, 2),
         'year_match': year_match * 5,
         'season_match': season_match * 5,
         'episode_match': episode_match * 5,
@@ -186,13 +272,42 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
             'hdr': hdr_weight,
             'similarity': similarity_weight,
             'size': size_weight,
-            'bitrate': bitrate_weight
+            'bitrate': bitrate_weight,
+            'country': country_weight
         },
         'min_size_gb': version_settings.get('min_size_gb', 0.01)
     }
 
     # Add the score breakdown to the result
     result['score_breakdown'] = score_breakdown
+
+    # Log detailed score breakdown
+    logging.debug(f"Score breakdown for '{torrent_title}':")
+    logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
+    logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
+    logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")
+    logging.debug(f"├─ Size: {score_breakdown['size_score']:.2f} (weight: {size_weight})")
+    logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
+    logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
+    logging.debug(f"├─ Year: {score_breakdown['year_match']:.2f} ({year_reason})")
+    if content_type.lower() == 'episode':
+        logging.debug(f"├─ Season Match: {score_breakdown['season_match']:.2f}")
+        logging.debug(f"├─ Episode Match: {score_breakdown['episode_match']:.2f}")
+        if score_breakdown['is_multi_pack']:
+            logging.debug(f"├─ Multi-pack: {score_breakdown['multi_pack_score']:.2f} ({score_breakdown['num_items']} items)")
+        if score_breakdown['single_episode_score']:
+            logging.debug(f"├─ Single Episode Penalty: {score_breakdown['single_episode_score']:.2f}")
+    if score_breakdown['content_type_score']:
+        logging.debug(f"├─ Content Type Score: {score_breakdown['content_type_score']:.2f}")
+    if preferred_filter_in_breakdown:
+        logging.debug("├─ Preferred Filter Bonuses:")
+        for pattern, score in preferred_filter_in_breakdown.items():
+            logging.debug(f"│  ├─ {pattern}: +{score}")
+    if preferred_filter_out_breakdown:
+        logging.debug("├─ Preferred Filter Penalties:")
+        for pattern, score in preferred_filter_out_breakdown.items():
+            logging.debug(f"│  ├─ {pattern}: {score}")
+    logging.debug(f"└─ Total Score: {score_breakdown['total_score']:.2f}")
 
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)

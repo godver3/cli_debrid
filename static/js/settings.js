@@ -1,3 +1,5 @@
+import { showPopup, POPUP_TYPES } from './notifications.js';
+
 // Declare settingsData globally
 let settingsData = {};
 
@@ -7,6 +9,8 @@ function loadSettingsData() {
         .then(response => response.json())
         .then(data => {
             settingsData = data;
+            // After loading settings data, handle descriptions
+            handleDescriptions();
             return data;
         })
         .catch(error => {
@@ -14,7 +18,66 @@ function loadSettingsData() {
         });
 }
 
-function updateSettings() {
+// Function to handle descriptions
+function handleDescriptions() {
+    document.querySelectorAll('.settings-description').forEach(descElement => {
+        const description = descElement.textContent;
+        if (Array.isArray(description)) {
+            // If description is an array, create multiple paragraphs
+            const descriptionHtml = description.map(line => 
+                `<p class="settings-description">${line}</p>`
+            ).join('');
+            descElement.outerHTML = descriptionHtml;
+        }
+    });
+}
+
+// Function to toggle Plex section visibility
+function togglePlexSection() {
+    console.log('togglePlexSection called');
+    
+    const fileManagementSelect = document.getElementById('file management-file_collection_management');
+    const plexSection = document.getElementById('plex-settings-section');
+    
+    console.log('File Management Select element:', fileManagementSelect);
+    console.log('Plex Section element:', plexSection);
+    
+    if (fileManagementSelect && plexSection) {
+        const shouldDisplay = fileManagementSelect.value === 'Plex';
+        console.log('Should display Plex section:', shouldDisplay);
+        plexSection.style.display = shouldDisplay ? 'block' : 'none';
+        console.log('Set display style to:', plexSection.style.display);
+    } else {
+        console.warn('Missing required elements - fileManagementSelect or plexSection not found');
+    }
+
+    // Toggle path input fields and Plex symlink settings
+    const originalFilesPath = document.getElementById('file management-original_files_path');
+    const symlinkedFilesPath = document.getElementById('file management-symlinked_files_path');
+    const plexSymlinkSettings = document.querySelectorAll('.symlink-plex-setting');
+
+    if (fileManagementSelect) {
+        const isSymlinked = fileManagementSelect.value === 'Symlinked/Local';
+        
+        // Handle path fields
+        const pathElements = [
+            originalFilesPath?.closest('.settings-form-group'),
+            symlinkedFilesPath?.closest('.settings-form-group')
+        ].filter(Boolean);
+
+        pathElements.forEach(element => {
+            element.style.display = isSymlinked ? 'block' : 'none';
+        });
+
+        // Handle Plex symlink settings
+        plexSymlinkSettings.forEach(element => {
+            element.style.display = isSymlinked ? 'block' : 'none';
+        });
+    }
+}
+
+// Export the updateSettings function
+export function updateSettings() {
     const settingsData = {};
     const inputs = document.querySelectorAll('#settingsForm input, #settingsForm select, #settingsForm textarea');
     
@@ -31,6 +94,13 @@ function updateSettings() {
         }
 
         const nameParts = name.split('.');
+        // Special handling for content source check period
+        if (nameParts.length >= 3 && nameParts[0] === 'Debug' && nameParts[1] === 'content_source_check_period') {
+            console.log(`Content source check period - Before conversion: name=${name}, value=${value}, type=${typeof value}`);
+            value = parseFloat(value) || 0;
+            console.log(`Content source check period - After conversion: value=${value}, type=${typeof value}`);
+        }
+
         let current = settingsData;
         
         for (let i = 0; i < nameParts.length - 1; i++) {
@@ -81,12 +151,24 @@ function updateSettings() {
                 notificationData.title = headerElement.textContent.split('_')[0].trim();
             }
 
+            // Initialize notify_on object
+            notificationData.notify_on = {};
+
+            // Process all inputs including checkboxes for notification categories
             section.querySelectorAll('input, select').forEach(input => {
-                const fieldName = input.name.split('.').pop();
-                if (input.type === 'checkbox') {
-                    notificationData[fieldName] = input.checked;
+                const nameParts = input.name.split('.');
+                if (nameParts.length === 4 && nameParts[2] === 'notify_on') {
+                    // This is a notification category checkbox
+                    const category = nameParts[3];
+                    notificationData.notify_on[category] = input.checked;
                 } else {
-                    notificationData[fieldName] = input.value;
+                    // This is a regular field
+                    const fieldName = nameParts[nameParts.length - 1];
+                    if (input.type === 'checkbox') {
+                        notificationData[fieldName] = input.checked;
+                    } else {
+                        notificationData[fieldName] = input.value;
+                    }
                 }
             });
 
@@ -242,11 +324,20 @@ function updateSettings() {
         }
     });
 
+    // Log the Debug settings before sending
+    if (settingsData.Debug && settingsData.Debug.content_source_check_period) {
+        console.log('Final Debug content_source_check_period values:', settingsData.Debug.content_source_check_period);
+        Object.entries(settingsData.Debug.content_source_check_period).forEach(([key, value]) => {
+            console.log(`${key}: value=${value}, type=${typeof value}`);
+        });
+    }
+
     const versions = {};
     document.querySelectorAll('.settings-section[data-version-id]').forEach(section => {
         const versionId = section.getAttribute('data-version-id');
         const versionData = {};
 
+        // Handle regular inputs
         section.querySelectorAll('input, select').forEach(input => {
             if (input.name && input.name.split('.').pop() !== 'display_name') {
                 const key = input.name.split('.').pop();
@@ -264,27 +355,39 @@ function updateSettings() {
             }
         });
 
+        // Handle filter lists
+        ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
+            const filterList = section.querySelector(`.filter-list[data-version="${versionId}"][data-filter-type="${filterType}"]`);
+            if (filterList) {
+                versionData[filterType] = [];
+                filterList.querySelectorAll('.filter-item').forEach(item => {
+                    const term = item.querySelector('.filter-term')?.value?.trim();
+                    if (term) {  // Only add non-empty terms
+                        if (filterType.startsWith('preferred_')) {
+                            const weight = parseInt(item.querySelector('.filter-weight')?.value) || 1;
+                            versionData[filterType].push([term, weight]);
+                        } else {
+                            versionData[filterType].push(term);
+                        }
+                    }
+                });
+            }
+        });
+
+        // Add similarity_threshold_anime with default 0.35 if it doesn't exist
+        if (!('similarity_threshold_anime' in versionData)) {
+            versionData['similarity_threshold_anime'] = 0.35;
+        }
+
+        // Add similarity_threshold with default 0.8 if it doesn't exist
+        if (!('similarity_threshold' in versionData)) {
+            versionData['similarity_threshold'] = 0.8;
+        }
+
         // Add max_size_gb with default Infinity if it doesn't exist
         if (!('max_size_gb' in versionData)) {
             versionData['max_size_gb'] = Infinity;
         }
-
-        // Handle filter lists
-        ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'].forEach(filterType => {
-            const filterList = section.querySelector(`.filter-list[data-version="${versionId}"][data-filter-type="${filterType}"]`);
-            versionData[filterType] = [];
-            filterList.querySelectorAll('.filter-item').forEach(item => {
-                const term = item.querySelector('.filter-term').value.trim();
-                if (term) {  // Only add non-empty terms
-                    if (filterType.startsWith('preferred_')) {
-                        const weight = parseInt(item.querySelector('.filter-weight').value) || 1;
-                        versionData[filterType].push([term, weight]);
-                    } else {
-                        versionData[filterType].push(term);
-                    }
-                }
-            });
-        });
 
         // Add display_name separately to ensure it's always included
         const displayNameInput = section.querySelector('input[name$=".display_name"]');
@@ -295,7 +398,10 @@ function updateSettings() {
         versions[versionId] = versionData;
     });
 
-    settingsData['Scraping'] = { versions: versions };
+    settingsData['Scraping'] = { 
+        ...settingsData['Scraping'],
+        versions: versions 
+    };
     
     // Ensure TMDB section exists
     if (!settingsData['TMDB']) {
@@ -416,7 +522,7 @@ function updateSettings() {
         const sourceName = input.id.replace('debug-content-source-', '');
         const value = input.value.trim();
         if (value !== '') {
-            contentSourceCheckPeriods[sourceName] = parseInt(value) || 1;
+            contentSourceCheckPeriods[sourceName] = parseFloat(value) || 0.1;
         }
     });
     settingsData['Debug'] = settingsData['Debug'] || {};
@@ -604,6 +710,39 @@ function updateSettings() {
         console.warn("Disable Not Wanted Check checkbox element not found!");
     }
 
+    const filenameFilterOutList = document.getElementById('queue-filename_filter_out_list');
+    console.log("Filename Filter Out List element:", filenameFilterOutList);
+    
+    if (filenameFilterOutList) {
+        settingsData['Queue']['filename_filter_out_list'] = filenameFilterOutList.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Filename Filter Out List input element not found!");
+    }
+
+    const traktWatchlistRemoval = document.getElementById('scraping-trakt_watchlist_removal');
+    console.log("Trakt Watchlist Removal element:", traktWatchlistRemoval);
+    
+    if (traktWatchlistRemoval) {
+        settingsData['Scraping']['trakt_watchlist_removal'] = traktWatchlistRemoval.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Trakt Watchlist Removal checkbox element not found!");
+    }
+
+    const traktWatchlistKeepSeries = document.getElementById('scraping-trakt_watchlist_keep_series');
+    console.log("Trakt Watchlist Keep Series element:", traktWatchlistKeepSeries);
+    
+    if (traktWatchlistKeepSeries) {
+        settingsData['Scraping']['trakt_watchlist_keep_series'] = traktWatchlistKeepSeries.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Trakt Watchlist Keep Series checkbox element not found!");
+    }
+
     const blacklistDuration = document.getElementById('queue-blacklist_duration');
     console.log("Blacklist Duration element:", blacklistDuration);
     
@@ -648,6 +787,39 @@ function updateSettings() {
         console.warn("Plex Watchlist Keep Series checkbox element not found!");
     }
 
+    const allowPartialOverseerrRequests = document.getElementById('scraping-allow_partial_overseerr_requests');
+    console.log("Allow Partial Overseerr Requests element:", allowPartialOverseerrRequests);
+    
+    if (allowPartialOverseerrRequests) {
+        settingsData['Scraping']['allow_partial_overseerr_requests'] = allowPartialOverseerrRequests.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Allow Partial Overseerr Requests checkbox element not found!");
+    }
+
+    const timezoneOverride = document.getElementById('debug-timezone_override');
+    console.log("Timezone Override element:", timezoneOverride);
+    
+    if (timezoneOverride) {
+        settingsData['Debug']['timezone_override'] = timezoneOverride.value;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Timezone Override input element not found!");
+    }
+
+    const animeRenamingUsingAnidb = document.getElementById('scraping-anime_renaming_using_anidb');
+    console.log("Anime Renaming Using AniDB element:", animeRenamingUsingAnidb);
+    
+    if (animeRenamingUsingAnidb) {
+        settingsData['Scraping']['anime_renaming_using_anidb'] = animeRenamingUsingAnidb.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Anime Renaming Using AniDB checkbox element not found!");
+    }
+
     const debridProvider = document.getElementById('debrid provider-provider');
     console.log("Debrid Provider element:", debridProvider);
     
@@ -657,39 +829,6 @@ function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Debrid Provider select element not found!");
-    }
-
-    const symlinkCollectedFiles = document.getElementById('file management-symlink_collected_files');
-    console.log("Symlink Collected Files element:", symlinkCollectedFiles);
-    
-    if (symlinkCollectedFiles) {
-        settingsData['Debug']['symlink_collected_files'] = symlinkCollectedFiles.checked;
-
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Symlink Collected Files checkbox element not found!");
-    }
-
-    const originalFilesPath = document.getElementById('file management-original_files_path');
-    console.log("Original Files Path element:", originalFilesPath);
-    
-    if (originalFilesPath) {
-        settingsData['Debug']['original_files_path'] = originalFilesPath.value;
-
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Original Files Path input element not found!");
-    }
-
-    const symlinkedFilesPath = document.getElementById('file management-symlinked_files_path');
-    console.log("Symlinked Files Path element:", symlinkedFilesPath);
-    
-    if (symlinkedFilesPath) {
-        settingsData['Debug']['symlinked_files_path'] = symlinkedFilesPath.value;
-
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Symlinked Files Path input element not found!");
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
@@ -724,15 +863,30 @@ function updateContentSourceCheckPeriods() {
         return;
     }
 
+    const defaultIntervals = {
+        'Overseerr': 900,
+        'MDBList': 900,
+        'Collected': 86400,
+        'Trakt Watchlist': 900,
+        'Trakt Lists': 900,
+        'Trakt Collection': 900,
+        'My Plex Watchlist': 900,
+        'Other Plex Watchlist': 900
+    };
+
     const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);
     
     contentSourcesDiv.innerHTML = '';
     enabledContentSources.forEach(source => {
+        const sourceType = source.split('_')[0];
         const div = document.createElement('div');
         div.className = 'content-source-check-period';
+        const defaultInterval = defaultIntervals[sourceType] ? Math.floor(defaultIntervals[sourceType] / 60) : '';  // Convert seconds to minutes
         div.innerHTML = `
             <label for="debug-content-source-${source}">${source}:</label>
-            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" min="1" class="settings-input" placeholder="Default">
+            <input type="number" id="debug-content-source-${source}" name="Debug.content_source_check_period.${source}" 
+                   value="${(settingsData['Debug'] && settingsData['Debug']['content_source_check_period'] && settingsData['Debug']['content_source_check_period'][source]) || ''}" 
+                   step="0.1" min="0.1" class="settings-input" placeholder="${defaultInterval}">
         `;
         contentSourcesDiv.appendChild(div);
     });
@@ -741,12 +895,44 @@ function updateContentSourceCheckPeriods() {
 // Update the DOMContentLoaded event listener
 document.addEventListener('DOMContentLoaded', () => {
     loadSettingsData().then(() => {
+        // Initial toggle of Plex section
+        togglePlexSection();
+        handleDescriptions();
+        
+        // Add event listener for File Management library type changes
+        const fileManagementSelect = document.getElementById('file management-file_collection_management');
+        if (fileManagementSelect) {
+            fileManagementSelect.addEventListener('change', togglePlexSection);
+        }
+        
+        // Add mutation observer to handle dynamic changes
+        const requiredTab = document.querySelector('#required');
+        if (requiredTab) {
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                        // Check if any of the added nodes contain the Plex section
+                        mutation.addedNodes.forEach((node) => {
+                            if (node.nodeType === 1 && node.querySelector) {  // Element node
+                                const header = node.querySelector('.settings-section-header h4');
+                                if (header && header.textContent.trim() === 'Plex') {
+                                    console.log('Plex section dynamically added, updating visibility');
+                                    togglePlexSection();
+                                }
+                            }
+                        });
+                    }
+                });
+            });
+            
+            observer.observe(requiredTab, { childList: true, subtree: true });
+        }
+        
         // Ensure the content-source-check-periods element exists before calling the function
         if (document.getElementById('content-source-check-periods')) {
             updateContentSourceCheckPeriods();
         } else {
             console.warn("Element with id 'content-source-check-periods' not found. Make sure it exists in your HTML.");
         }
-        // Add any other initialization functions here
     });
 });

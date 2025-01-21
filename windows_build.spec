@@ -33,6 +33,7 @@ for directory in directories:
 # Add individual files
 individual_files = [
     ('version.txt', '.'),
+    ('branch_id', '.'),
     ('tooltip_schema.json', '.'),
     ('main.py', '.'),
     ('cli_battery/main.py', 'cli_battery')
@@ -88,7 +89,10 @@ a = Analysis(
         'PTT.handlers',
         'PTT.parse',
         'apscheduler',
-        'apscheduler.schedulers.background'
+        'apscheduler.schedulers.background',
+        'nyaapy',
+        'nyaapy.nyaasi',
+        'nyaapy.nyaasi.nyaa'
     ],
     hookspath=['hooks'],
     hooksconfig={},

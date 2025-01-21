@@ -15,11 +15,14 @@
             <div class="settings-form-group">
                 <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}" {% if settings.Debug[key] %}checked{% endif %}>
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key) %}checked{% endif %}>
                 {% elif value.type == 'string' and value.choices %}
-                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input">
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
                         {% for option in value.choices %}
-                            <option value="{{ option }}" {% if settings.Debug[key] == option %}selected{% endif %}>{{ option }}</option>
+                            <option value="{{ option }}" {% if settings.get('Debug', {}).get(key) == option %}selected{% endif %}>{{ option }}</option>
                         {% endfor %}
                     </select>
                 {% elif key == 'content_source_check_period' %}
@@ -27,15 +30,34 @@
                         {% for source, period in settings.Debug.content_source_check_period.items() %}
                             <div class="content-source-check-period">
                                 <label for="debug-content-source-{{ source }}">{{ source }}:</label>
-                                <input type="number" id="debug-content-source-{{ source }}" name="Debug.content_source_check_period.{{ source }}" value="{{ period }}" min="1" class="settings-input">
+                                <input type="number" id="debug-content-source-{{ source }}" name="Debug.content_source_check_period.{{ source }}" value="{{ period }}" step="0.1" min="0.1" class="settings-input">
                             </div>
                         {% endfor %}
                     </div>
                 {% else %}
-                    <input type="{{ value.type }}" id="debug-{{ key }}" name="Debug.{{ key }}" value="{{ settings.Debug[key] }}" class="settings-input">
+                    <input type="{{ value.type }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, '') }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}>
                 {% endif %}
                 {% if value.description %}
-                    <p class="settings-description">{{ value.description }}</p>
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
                 {% endif %}
             </div>
             {% endif %}

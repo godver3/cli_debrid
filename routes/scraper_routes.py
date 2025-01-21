@@ -11,7 +11,7 @@ from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
 from web_scraper import search_trakt
 from database.database_reading import get_all_season_episode_counts
-from metadata.metadata import get_imdb_id_if_missing
+from metadata.metadata import get_imdb_id_if_missing, get_metadata, get_release_date, _get_local_timezone, DirectAPI
 import re
 from queues.media_matcher import MediaMatcher
 from guessit import guessit
@@ -22,6 +22,7 @@ import os
 import bencodepy
 from debrid.common.torrent import torrent_to_magnet
 import hashlib
+from datetime import datetime, timezone
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -126,6 +127,33 @@ def _download_and_get_hash(url: str) -> str:
 def add_torrent_to_debrid():
     try:
         magnet_link = request.form.get('magnet_link')
+        title = request.form.get('title')
+        year = request.form.get('year')
+        media_type = request.form.get('media_type')
+        season = request.form.get('season')
+        episode = request.form.get('episode')
+        version = request.form.get('version')
+        tmdb_id = request.form.get('tmdb_id')
+
+        logging.info(f"Adding {title} ({year}) to debrid provider")
+
+        # Get metadata to determine genres
+        metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type) if tmdb_id else {}
+        genres = metadata.get('genres', [])
+        genres_str = ','.join(genres) if genres else ''
+        logging.info(f"Genres from metadata: {genres_str}")
+
+        # Convert season and episode to integers or None
+        try:
+            season_number = int(season) if season and season.lower() != 'null' else None
+        except (ValueError, TypeError):
+            season_number = None
+
+        try:
+            episode_number = int(episode) if episode and episode.lower() != 'null' else None
+        except (ValueError, TypeError):
+            episode_number = None
+            
         if not magnet_link:
             return jsonify({'error': 'No magnet link or URL provided'}), 400
 
@@ -205,19 +233,182 @@ def add_torrent_to_debrid():
             logging.error(f"Failed to process torrent content: {message}")
             return jsonify({'error': message}), 400
 
-        # Handle different debrid statuses
-        status = torrent_info.get('status', '').lower()
-        if status in ['downloading', 'queued']:
-            return jsonify({'message': f'Uncached torrent added successfully. Status: {status.capitalize()}'})
-        elif status == 'magnet_error':
-            return jsonify({'error': 'Error processing magnet link'}), 400
-        else:
-            return jsonify({'message': f'Torrent added successfully. Status: {status.capitalize()}'})
+        # Check if symlinking is enabled
+        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            try:
+                # Convert media type to movie_or_episode format
+                movie_or_episode = 'episode' if media_type == 'tv' or media_type == 'show' else 'movie'
+                
+                # Get IMDB ID from metadata
+                imdb_id = None
+                if tmdb_id:
+                    try:
+                        metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                        imdb_id = metadata.get('imdb_id')
+                        if not imdb_id:
+                            # Try to get from database mapping
+                            from cli_battery.app.direct_api import DirectAPI
+                            imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show' if media_type == 'tv' else media_type)
+                    except Exception as e:
+                        logging.warning(f"Failed to get IMDB ID: {e}")
+                
+                # Get release date from metadata
+                if media_type in ['tv', 'show']:
+                    # For TV shows, get episode-specific release date
+                    metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                    if metadata and metadata.get('seasons'):
+                        season_data = metadata['seasons'].get(str(season_number), {})
+                        episode_data = season_data.get('episodes', {}).get(str(episode_number), {})
+                        release_date = episode_data.get('first_aired')
+                        if release_date:
+                            try:
+                                # Parse the UTC datetime string
+                                first_aired_utc = datetime.strptime(release_date, "%Y-%m-%dT%H:%M:%S.%fZ")
+                                first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+
+                                # Convert UTC to local timezone
+                                local_tz = _get_local_timezone()
+                                local_dt = first_aired_utc.astimezone(local_tz)
+                                
+                                # Format the local date as string
+                                release_date = local_dt.strftime("%Y-%m-%d")
+                            except ValueError:
+                                release_date = 'Unknown'
+                else:
+                    # For movies, get movie release date
+                    metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                    if metadata:
+                        release_date = get_release_date(metadata, metadata.get('imdb_id'))
+                    else:
+                        release_date = 'Unknown'
+                
+                # Get the file info for symlinking
+                files = torrent_info.get('files', [])
+                if not files:
+                    raise Exception("No files found in torrent")
+
+                # Get the largest video file
+                video_files = [f for f in files if any(f['path'].lower().endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv'])]
+                if not video_files:
+                    raise Exception("No video files found in torrent")
+                
+                largest_file = max(video_files, key=lambda x: x.get('bytes', 0))
+                filled_by_file = os.path.basename(largest_file['path'])
+                # Get the torrent title from torrent_info's filename
+                filled_by_title = torrent_info.get('filename', '') or os.path.basename(os.path.dirname(largest_file['path']))
+
+                # Create media item
+                item = {
+                    'title': title,
+                    'year': year,
+                    'type': 'episode' if media_type in ['tv', 'show'] else 'movie',
+                    'version': version,
+                    'tmdb_id': tmdb_id,
+                    'imdb_id': imdb_id,
+                    'state': 'Checking',
+                    'filled_by_magnet': magnet_link,
+                    'filled_by_torrent_id': torrent_id,
+                    'filled_by_title': filled_by_title,
+                    'filled_by_file': filled_by_file,
+                    'release_date': release_date,
+                    'genres': genres_str
+                }
+
+                # Add TV show specific fields if this is a TV show
+                if media_type in ['tv', 'show']:
+                    item.update({
+                        'season_number': season_number,
+                        'episode_number': episode_number,
+                        'episode_title': episode_data.get('title', f'Episode {episode_number}') if episode_number else None
+                    })
+
+                # If this is a season pack (has season but no episode number)
+                if media_type in ['tv', 'show'] and season_number is not None and episode_number is None:
+                    logging.info(f"Processing season pack for {title} Season {season_number}")
+                    # Get metadata for all episodes in the season
+                    metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                    if metadata and metadata.get('seasons'):
+                        season_data = metadata['seasons'].get(str(season_number), {})
+                        episodes = season_data.get('episodes', {})
+                        
+                        # Create a MediaMatcher instance to find matching files
+                        media_matcher = MediaMatcher()
+                        
+                        # For each episode in the season
+                        for episode_num, episode_data in episodes.items():
+                            try:
+                                episode_num = int(episode_num)
+                                # Create episode-specific item
+                                episode_item = item.copy()
+                                episode_item['episode_number'] = episode_num
+                                
+                                # Get episode-specific release date and title
+                                first_aired = episode_data.get('first_aired')
+                                episode_item['episode_title'] = episode_data.get('title', f'Episode {episode_num}')
+                                
+                                if first_aired:
+                                    try:
+                                        first_aired_utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S.%fZ")
+                                        first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+                                        local_tz = _get_local_timezone()
+                                        local_dt = first_aired_utc.astimezone(local_tz)
+                                        episode_item['release_date'] = local_dt.strftime("%Y-%m-%d")
+                                    except ValueError:
+                                        episode_item['release_date'] = 'Unknown'
+                                
+                                # Find matching file for this episode
+                                matches = media_matcher.match_content(files, episode_item)
+                                if matches:
+                                    episode_item['filled_by_file'] = matches[0][0]  # Use first match's path
+                                    
+                                    # Add episode to database
+                                    from database import add_media_item
+                                    episode_id = add_media_item(episode_item)
+                                    if episode_id:
+                                        episode_item['id'] = episode_id
+                                        # Add to checking queue
+                                        from queues.checking_queue import CheckingQueue
+                                        checking_queue = CheckingQueue()
+                                        checking_queue.add_item(episode_item)
+                                        logging.info(f"Added episode {episode_num} to checking queue")
+                                else:
+                                    logging.warning(f"No matching file found for episode {episode_num}")
+                            except Exception as e:
+                                logging.error(f"Error processing episode {episode_num}: {str(e)}")
+                                continue
+                    return jsonify({
+                        'success': True,
+                        'message': 'Successfully processed season pack'
+                    })
+                else:
+                    # For single episodes or movies, proceed as normal
+                    from database import add_media_item
+
+                    item_id = add_media_item(item)
+                    if not item_id:
+                        raise Exception("Failed to add item to database")
+                    
+                    # Add the database ID to the item
+                    item['id'] = item_id
+                    
+                    # Add item to checking queue
+                    from queues.checking_queue import CheckingQueue
+                    checking_queue = CheckingQueue()
+                    checking_queue.add_item(item)
+                    logging.info(f"Added item to checking queue: {item}")
+            except Exception as e:
+                logging.error(f"Failed to add item to checking queue: {e}")
+                # Don't return error since the main operation succeeded
+        
+        return jsonify({
+            'success': True,
+            'message': 'Successfully added torrent to debrid provider and processed content'
+        })
 
     except Exception as e:
         error_message = str(e)
-        logging.error(f"Error adding torrent: {error_message}")
-        return jsonify({'error': f'An error occurred while adding torrent: {error_message}'}), 500
+        logging.error(f"Error in add_torrent_to_debrid: {error_message}")
+        return jsonify({'error': error_message}), 500
 
 @scraper_bp.route('/movies_trending', methods=['GET', 'POST'])
 def movies_trending():
@@ -517,3 +708,45 @@ def run_scrape():
     except Exception as e:
         logging.error(f"Error in run_scrape: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+@scraper_bp.route('/get_tv_details/<tmdb_id>')
+def get_tv_details(tmdb_id):
+    try:
+        # First get the IMDb ID from TMDB ID
+        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show')
+        if not imdb_id:
+            return jsonify({'success': False, 'error': 'Could not find IMDb ID for the given TMDB ID'}), 404
+
+        # Get the show metadata
+        metadata = get_metadata(imdb_id=imdb_id, tmdb_id=tmdb_id, item_media_type='tv')
+        if not metadata:
+            return jsonify({'success': False, 'error': 'Could not fetch show metadata'}), 404
+
+        # Extract seasons data
+        seasons_data = metadata.get('seasons', {})
+        if not seasons_data or seasons_data == 'None':
+            return jsonify({'success': False, 'error': 'No seasons data available'}), 404
+
+        # Format the seasons data for the frontend
+        formatted_seasons = []
+        for season_num, season_data in seasons_data.items():
+            if season_num == '0':  # Skip specials
+                continue
+            
+            episodes = season_data.get('episodes', {})
+            formatted_seasons.append({
+                'season_number': int(season_num),
+                'episode_count': len(episodes) if episodes else 0
+            })
+
+        # Sort seasons by number
+        formatted_seasons.sort(key=lambda x: x['season_number'])
+
+        return jsonify({
+            'success': True,
+            'seasons': formatted_seasons
+        })
+
+    except Exception as e:
+        logging.error(f"Error getting TV details: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500

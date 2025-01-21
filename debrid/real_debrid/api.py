@@ -1,3 +1,5 @@
+"""Real-Debrid API client implementation"""
+
 import os
 import logging
 from typing import Optional, Dict, Any, Union
@@ -82,7 +84,6 @@ def make_request(
             elif response.status_code == 404:
                 # Check if this is a duplicate torrent add attempt
                 if method == 'POST' and endpoint == '/torrents/addMagnet':
-                    logging.warning("Torrent may already be added - 404 on addMagnet")
                     return None
                 response.raise_for_status()
             elif response.status_code in [503, 504]:

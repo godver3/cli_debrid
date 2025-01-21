@@ -190,7 +190,19 @@ def add_notification():
         config['Notifications'][notification_id] = {
             'type': notification_type,
             'enabled': True,
-            'title': notification_title
+            'title': notification_title,
+            'notify_on': {
+                'collected': True,
+                'wanted': False,
+                'scraping': False,
+                'adding': False,
+                'checking': False,
+                'sleeping': False,
+                'unreleased': False,
+                'blacklisted': False,
+                'pending_uncached': False,
+                'upgrading': False
+            }
         }
 
         # Add default values based on the notification type
@@ -228,11 +240,46 @@ def add_notification():
         logging.error(f"Error adding notification: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+def ensure_notification_defaults(notification_config):
+    """Ensure notification config has all required default fields."""
+    default_categories = {
+        'collected': True,
+        'wanted': False,
+        'scraping': False,
+        'adding': False,
+        'checking': False,
+        'sleeping': False,
+        'unreleased': False,
+        'blacklisted': False,
+        'pending_uncached': False,
+        'upgrading': False
+    }
+
+    # If notify_on is missing or empty, set it to the default values
+    if 'notify_on' not in notification_config or not notification_config['notify_on']:
+        notification_config['notify_on'] = default_categories.copy()
+    else:
+        # Ensure all categories exist in notify_on
+        for category, default_value in default_categories.items():
+            if category not in notification_config['notify_on']:
+                notification_config['notify_on'][category] = default_value
+
+    return notification_config
+
 @settings_bp.route('/notifications/content', methods=['GET'])
 def notifications_content():
     try:
         config = load_config()
         notification_settings = config.get('Notifications', {})
+        
+        # Ensure all notifications have the required defaults
+        for notification_id, notification_config in notification_settings.items():
+            if notification_config is not None:
+                notification_settings[notification_id] = ensure_notification_defaults(notification_config)
+        
+        # Always save the config to ensure defaults are persisted
+        config['Notifications'] = notification_settings
+        save_config(config)
         
         # Sort notifications by type and then by number
         sorted_notifications = sorted(
@@ -241,7 +288,7 @@ def notifications_content():
         )
         
         html_content = render_template(
-            'settings_tabs/notifications_content.html',
+            'settings_tabs/notifications.html',
             notification_settings=dict(sorted_notifications),
             settings_schema=SETTINGS_SCHEMA
         )
@@ -389,7 +436,16 @@ def update_settings():
                 if isinstance(value, dict):
                     if key not in current or not isinstance(current[key], dict):
                         current[key] = {}
-                    update_nested_dict(current[key], value)
+                    if key == 'Content Sources':
+                        for source_id, source_config in value.items():
+                            if source_id in current[key]:
+                                # Don't save config here, just update the dictionary
+                                current[key][source_id].update(source_config)
+                            else:
+                                # Don't save config here, just add to the dictionary
+                                current[key][source_id] = source_config
+                    else:
+                        update_nested_dict(current[key], value)
                 else:
                     current[key] = value
 
@@ -398,7 +454,7 @@ def update_settings():
         # Update content source check periods
         if 'Debug' in new_settings and 'content_source_check_period' in new_settings['Debug']:
             config['Debug']['content_source_check_period'] = {
-                source: int(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
+                source: float(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
             }
         
         # Handle Reverse Parser settings
@@ -412,6 +468,14 @@ def update_settings():
 
         save_config(config)
         
+        # Save config only once at the end
+        from debrid import reset_provider
+        reset_provider()
+        from queue_manager import QueueManager
+        QueueManager().reinitialize_queues()
+        from run_program import ProgramRunner
+        ProgramRunner().reinitialize()
+
         return jsonify({"status": "success", "message": "Settings updated successfully"})
     except Exception as e:
         logging.error(f"Error updating settings: {str(e)}", exc_info=True)
@@ -665,6 +729,9 @@ def get_enabled_notifications():
         
         enabled_notifications = {}
         for notification_id, notification_config in notifications.items():
+            # Ensure defaults are present
+            notification_config = ensure_notification_defaults(notification_config)
+            
             if notification_config.get('enabled', False):
                 # Only include notifications that are enabled and have non-empty required fields
                 if notification_config['type'] == 'Discord':
@@ -689,9 +756,7 @@ def get_enabled_notifications():
                 elif notification_config['type'] == 'NTFY':
                     if all([
                         notification_config.get('host'),
-                        notification_config.get('topic'),
-                        notification_config.get('api_key'),
-                        notification_config.get('priority')
+                        notification_config.get('topic')
                     ]):
                         enabled_notifications[notification_id] = notification_config
         
@@ -701,4 +766,83 @@ def get_enabled_notifications():
         })
     except Exception as e:
         logging.error(f"Error getting enabled notifications: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/notifications/enabled_for_category/<category>', methods=['GET'])
+def get_enabled_notifications_for_category(category):
+    try:
+        config = load_config()
+        notifications = config.get('Notifications', {})
+        
+        enabled_notifications = {}
+        for notification_id, notification_config in notifications.items():
+            # Ensure defaults are present
+            notification_config = ensure_notification_defaults(notification_config)
+            
+            if notification_config.get('enabled', False):
+                # Check if the notification is enabled for this category
+                notify_on = notification_config.get('notify_on', {})
+                if not notify_on.get(category, False):
+                    continue
+
+                # Only include notifications that are enabled and have non-empty required fields
+                if notification_config['type'] == 'Discord':
+                    if notification_config.get('webhook_url'):
+                        enabled_notifications[notification_id] = notification_config
+                elif notification_config['type'] == 'Email':
+                    if all([
+                        notification_config.get('smtp_server'),
+                        notification_config.get('smtp_port'),
+                        notification_config.get('smtp_username'),
+                        notification_config.get('smtp_password'),
+                        notification_config.get('from_address'),
+                        notification_config.get('to_address')
+                    ]):
+                        enabled_notifications[notification_id] = notification_config
+                elif notification_config['type'] == 'Telegram':
+                    if all([
+                        notification_config.get('bot_token'),
+                        notification_config.get('chat_id')
+                    ]):
+                        enabled_notifications[notification_id] = notification_config
+                elif notification_config['type'] == 'NTFY':
+                    if all([
+                        notification_config.get('host'),
+                        notification_config.get('topic')
+                    ]):
+                        enabled_notifications[notification_id] = notification_config
+
+        return jsonify({
+            'success': True,
+            'enabled_notifications': enabled_notifications
+        })
+    except Exception as e:
+        logging.error(f"Error getting enabled notifications for category {category}: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@settings_bp.route('/notifications/update_defaults', methods=['POST'])
+def update_notification_defaults():
+    try:
+        config = load_config()
+        if 'Notifications' not in config:
+            config['Notifications'] = {}
+
+        # Force update all notifications with proper defaults
+        for notification_id, notification_config in config['Notifications'].items():
+            if notification_config is not None:
+                # Remove empty notify_on if it exists
+                if 'notify_on' in notification_config and not notification_config['notify_on']:
+                    del notification_config['notify_on']
+                
+                # Apply defaults
+                notification_config = ensure_notification_defaults(notification_config)
+                config['Notifications'][notification_id] = notification_config
+
+        save_config(config)
+        return jsonify({'success': True, 'message': 'Notification defaults updated successfully'})
+    except Exception as e:
+        logging.error(f"Error updating notification defaults: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

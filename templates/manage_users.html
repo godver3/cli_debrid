@@ -107,8 +107,15 @@
                 <td>{{ user.username }}</td>
                 <td>{{ user.role }}</td>
                 <td>
-                    {% if user.username != 'admin' %}
-                    <button onclick="deleteUser({{ user.id }})" class="delete-button">Delete</button>
+                    {% if user.role == 'admin' %}
+                        {% set admin_count = users|selectattr('role', 'equalto', 'admin')|list|length %}
+                        {% if admin_count > 1 %}
+                            <button class="delete-button" data-user-id="{{ user.id }}">Delete</button>
+                        {% else %}
+                            <span style="font-style: italic;">Cannot Delete</span>
+                        {% endif %}
+                    {% else %}
+                        <button class="delete-button" data-user-id="{{ user.id }}">Delete</button>
                     {% endif %}
                 </td>
             </tr>
@@ -131,8 +138,11 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
 document.addEventListener('DOMContentLoaded', function() {
+    // Add user form handling
     const addUserForm = document.querySelector('.add-user-form form');
     addUserForm.addEventListener('submit', function(e) {
         e.preventDefault();
@@ -173,40 +183,44 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     });
-});
 
-function deleteUser(userId) {
-    showPopup({
-        type: POPUP_TYPES.CONFIRM,
-        title: "Delete User",
-        message: "Are you sure you want to delete this user?",
-        onConfirm: function() {
-            fetch(`/user_management/delete_user/${userId}`, {
-                method: 'POST',
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Reload the page immediately
-                    window.location.reload();
-                } else {
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: 'Error deleting user: ' + (data.error || 'Unknown error'),
-                        title: 'Error'
+    // Delete user handling
+    document.querySelectorAll('.delete-button').forEach(button => {
+        button.addEventListener('click', function() {
+            const userId = this.dataset.userId;
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: "Delete User",
+                message: "Are you sure you want to delete this user?",
+                onConfirm: function() {
+                    fetch(`/user_management/delete_user/${userId}`, {
+                        method: 'POST',
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            // Reload the page immediately
+                            window.location.reload();
+                        } else {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Error deleting user: ' + (data.error || 'Unknown error'),
+                                title: 'Error'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'Error deleting user',
+                            title: 'Error'
+                        });
                     });
                 }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    message: 'Error deleting user',
-                    title: 'Error'
-                });
             });
-        }
+        });
     });
-}
+});
 </script>
 {% endblock %}

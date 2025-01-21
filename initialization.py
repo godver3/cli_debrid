@@ -2,7 +2,7 @@ import logging
 import time
 from metadata.metadata import refresh_release_dates
 from database import update_media_item_state, get_all_media_items
-from settings import get_all_settings
+from settings import get_all_settings, get_setting
 
 # Progress ranges for each phase
 PROGRESS_RANGES = {
@@ -82,7 +82,7 @@ def update_initialization_step(step_name, substep_details='', error=None, is_sub
     if not is_substep:
         initialization_status['current_step_number'] += 1
     
-    logging.info(f"Initialization {'substep' if is_substep else 'step'} {initialization_status['current_step_number']}/{initialization_status['total_steps']}: {step_name}")
+    #logging.info(f"Initialization {'substep' if is_substep else 'step'} {initialization_status['current_step_number']}/{initialization_status['total_steps']}: {step_name}")
     if substep_details:
         logging.info(f"  Details: {substep_details}")
 
@@ -113,6 +113,7 @@ def reset_queued_item_status():
 
 def plex_collection_update(skip_initial_plex_update):
     from run_program import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex
+    from database import get_all_media_items
 
     update_initialization_step("Plex Update", "Starting Plex scan")
     logging.info("Updating Plex collection...")
@@ -127,7 +128,7 @@ def plex_collection_update(skip_initial_plex_update):
         else:
             result = get_and_add_all_collected_from_plex()
         
-        # Check if we got any content from Plex, even if some items were skipped
+        # First check if we got any content from Plex
         if result and isinstance(result, dict):
             movies = result.get('movies', [])
             episodes = result.get('episodes', [])
@@ -135,19 +136,27 @@ def plex_collection_update(skip_initial_plex_update):
                 update_initialization_step("Plex Update", 
                                         f"Found {len(movies)} movies and {len(episodes)} episodes",
                                         is_substep=True)
-                return True
+                return True, True  # Plex responded and had content
             
-        error_msg = "Plex scan returned no content - skipping collection update to prevent data loss"
-        update_initialization_step("Plex Update", error_msg, error=error_msg, is_substep=True)
-        logging.error(error_msg)
-        return False
+        # If Plex returned no items, check if we have any existing collected items
+        existing_collected = get_all_media_items(state='Collected')
+        if existing_collected:
+            msg = "Plex scan returned no new content but found existing collected items - skipping content sources to prevent data loss"
+            update_initialization_step("Plex Update", msg, error=msg, is_substep=True)
+            logging.warning(msg)
+            return True, False  # Plex responded but had no content, have existing items
+            
+        msg = "Plex scan returned no content and no existing collected items found - will proceed with content sources - this appears to be a new library"
+        update_initialization_step("Plex Update", msg, is_substep=True)
+        logging.info(msg)
+        return True, True  # Plex responded but had no content, no existing items
         
     except Exception as e:
         error_msg = f"Error during Plex collection update: {str(e)}"
         update_initialization_step("Plex Update", error_msg, error=error_msg, is_substep=True)
         logging.error(error_msg)
         logging.error("Skipping collection update to prevent data loss")
-        return False
+        return False, False  # Plex error occurred
 
 def get_all_wanted_from_enabled_sources():
     from routes.debug_routes import get_and_add_wanted_content
@@ -189,17 +198,25 @@ def initialize(skip_initial_plex_update=False):
     start_phase('reset', 'Reset Items', 'Starting item reset')
     reset_queued_item_status()
     complete_phase('reset')
+       
+    if get_setting('File Management ', 'file_collection_management') == 'Plex':
+        # Plex Update Phase (2 minutes)
+        start_phase('plex', 'Plex Update', 'Starting Plex scan')
+        plex_success, should_process_sources = plex_collection_update(skip_initial_plex_update)
+        complete_phase('plex')
     
-    # Plex Update Phase (2 minutes)
-    start_phase('plex', 'Plex Update', 'Starting Plex scan')
-    plex_result = plex_collection_update(skip_initial_plex_update)
-    complete_phase('plex')
-    
-    # Content Sources Phase (2 minutes)
-    if plex_result:
+        # Content Sources Phase (2 minutes)
+        if plex_success and should_process_sources:
+            start_phase('sources', 'Content Sources', 'Processing content sources')
+            get_all_wanted_from_enabled_sources()
+            complete_phase('sources')
+
+    else:
+        # Content Sources Phase (2 minutes)
         start_phase('sources', 'Content Sources', 'Processing content sources')
         get_all_wanted_from_enabled_sources()
         complete_phase('sources')
+        plex_success = True
     
     # Release Dates Phase (30 seconds)
     start_phase('release', 'Release Dates', 'Updating metadata for all items')
@@ -207,7 +224,7 @@ def initialize(skip_initial_plex_update=False):
     complete_phase('release')
     
     # Complete
-    final_status = "completed successfully" if plex_result else "completed with Plex update issues"
+    final_status = "completed successfully" if plex_success else "completed with Plex update issues"
     update_initialization_step("Complete", final_status)
     
-    return plex_result
+    return plex_success

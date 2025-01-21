@@ -1,308 +1,469 @@
 {% extends "base.html" %}
 
 {% block head %}
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
 <style>
-.video-card { 
-    transition: transform 0.2s; 
-    background-color: #1a1a1a; 
-    border: 1px solid #444;
-    color: #f4f4f4;
-    cursor: pointer;
-    height: auto;
-    padding: 1rem;
+/* Container */
+.container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    overflow-x: hidden;
 }
-.video-card:hover { 
-    transform: translateY(-5px); 
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3); 
+
+.mt-4 {
+    margin-top: 1.5rem;
 }
-.letter-nav { 
-    margin: 2rem 0; 
-    background-color: #1a1a1a; 
-    padding: 1rem; 
-    border-radius: 0.5rem; 
-    border: 1px solid #444;
+
+.mb-4 {
+    margin-bottom: 1.5rem;
 }
-.letter-nav .btn { 
-    padding: 0.5rem 1rem; 
-    margin: 0.2rem;
-    min-width: 2.5rem;
-}
-.card-title {
-    color: #f4f4f4;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 0;
-    font-size: 1.1rem;
-}
-.title-text {
-    flex-grow: 1;
-    margin-right: 10px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.version-count {
-    background-color: #2a2a2a;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 0.85rem;
-    color: #aaa;
-    min-width: 35px;
-    text-align: center;
-    flex-shrink: 0;
-}
-.btn-link {
-    text-align: left;
-    white-space: normal;
-    word-wrap: break-word;
-    height: auto;
-    min-height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 1rem;
-}
-.btn-link span:first-child {
-    flex-grow: 1;
-    margin-right: 10px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-}
-.badge {
-    flex-shrink: 0;
-}
-.version-item { 
-    padding: 0.75rem; 
-    margin-bottom: 0.5rem; 
-    background-color: #2a2a2a; 
-    border-radius: 0.25rem; 
-    border: 1px solid #444;
-    color: #f4f4f4;
-    cursor: pointer;
-}
-.version-item:hover {
-    background-color: #333;
-}
-.modal-content {
-    background-color: #1a1a1a;
-    color: #f4f4f4;
-    border: 1px solid #444;
-}
-.modal-header {
-    border-bottom: 1px solid #444;
-}
-.season-header {
-    color: #f4f4f4;
-    margin-top: 1rem;
-}
-.season-header h6 {
-    font-size: 1.1rem;
+
+.mb-2 {
     margin-bottom: 0.5rem;
 }
-.episode-number {
-    font-weight: 500;
+
+.mb-3 {
+    margin-bottom: 1rem;
 }
-.episode-title {
-    color: #aaa;
-    font-size: 0.9rem;
+
+.mb-1 {
+    margin-bottom: 0.25rem;
 }
-.nav-tabs {
-    border-bottom: 1px solid #444;
+
+.ms-2 {
+    margin-left: 0.5rem;
 }
-.nav-tabs .nav-link {
-    color: #f4f4f4;
+
+/* Alert styles */
+.alert {
+    padding: 1rem;
+    margin-bottom: 1rem;
     border: 1px solid transparent;
+    border-radius: 0.25rem;
 }
-.nav-tabs .nav-link:hover {
-    border-color: #444 #444 #444;
+
+.alert-warning {
+    background-color: #2c2c2c;
+    border-color: #444;
+    color: #f4f4f4;
+}
+
+/* Navigation tabs */
+.nav-tabs {
+    display: flex;
+    border-bottom: 1px solid #444;
+    margin-bottom: 1rem;
+    padding-left: 0;
+    list-style: none;
+}
+
+.nav-item {
+    margin-bottom: -1px;
+}
+
+.nav-link {
+    display: block;
+    padding: 0.5rem 1rem;
+    text-decoration: none;
+    color: #f4f4f4;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 0.25rem 0.25rem 0 0;
+}
+
+.nav-link:hover {
+    border-color: #444;
     background-color: #2a2a2a;
 }
-.nav-tabs .nav-link.active {
+
+.nav-link.active {
     color: #fff;
     background-color: #1a1a1a;
     border-color: #444 #444 transparent;
 }
-.video-card-header {
-    padding: 0.8rem 1.25rem;
+
+/* Letter navigation */
+.letter-nav {
+    margin: 2rem 0;
+    background-color: #1a1a1a;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid #444;
+    text-align: center;
+    overflow-x: auto;
 }
-.video-card-header:hover {
-    background-color: #2a2a2a;
+
+.letter-nav .d-flex {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0 1rem;
+    min-width: min-content;
 }
-.modal {
-    background: rgba(0, 0, 0, 0.5);
+
+.letter-nav .btn {
+    min-width: 2.5rem;
+    padding: 0.5rem;
 }
-.modal-dialog {
-    max-width: 600px;
-    margin: 1.75rem auto;
+
+.btn {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+    font-weight: 400;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-radius: 0.25rem;
+    transition: all 0.15s ease-in-out;
 }
-.modal-backdrop {
-    display: none;
-}
-.modal-header .close {
-    color: #f4f4f4;
-}
-.modal-title {
-    color: #f4f4f4;
-}
-.modal-body {
-    max-height: 70vh;
-    overflow-y: auto;
-    padding: 1.5rem;
-}
-.text-muted {
-    color: #aaa !important;
-}
+
 .btn-primary {
     background-color: #007bff;
     border-color: #0056b3;
+    color: #fff;
 }
+
 .btn-primary:hover {
     background-color: #0056b3;
     border-color: #004085;
 }
-.alert-info {
-    background-color: #1a1a1a;
-    border-color: #444;
+
+.btn-outline-light {
     color: #f4f4f4;
+    border-color: #f4f4f4;
+    background: transparent;
 }
+
+.btn-outline-light:hover {
+    background-color: #f4f4f4;
+    color: #1a1a1a;
+}
+
+/* Grid layout */
+.row {
+    display: grid;
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 0 auto;
+    max-width: 800px;
+    padding: 0 1rem;
+}
+
+@media (min-width: 768px) {
+    .row {
+        grid-template-columns: repeat(2, minmax(0, 400px));
+        justify-content: center;
+    }
+}
+
+@media (min-width: 992px) {
+    .row {
+        grid-template-columns: repeat(2, minmax(0, 400px));
+        max-width: 850px;
+    }
+}
+
+/* Card styles */
+.card {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 0.25rem;
+    overflow: hidden;
+    width: 100%;
+}
+
 .card-header {
     padding: 0.8rem 1.25rem;
-}
-.col {
-    margin-bottom: 1rem;
-}
-/* Override Bootstrap's default grid gutters */
-.row {
-    --bs-gutter-y: 1rem;
-    --bs-gutter-x: 1.5rem;
-}
-.season-header {
-    background-color: #2a2a2a;
-    padding: 0.5rem 1rem;
-    margin: 0.5rem 0;
-    border-radius: 0.25rem;
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.season-header:hover {
-    background-color: #333;
-}
-.episode-list {
-    padding: 0.5rem 1rem;
-}
-.episode-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0;
+    background-color: #1a1a1a;
     border-bottom: 1px solid #444;
 }
-.episode-item:last-child {
-    border-bottom: none;
+
+.btn-link {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: #f4f4f4;
+    text-decoration: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    min-width: 0;
 }
-.episode-title {
-    flex-grow: 1;
-    margin-right: 1rem;
+
+.btn-link span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 0.5rem;
 }
-.modal-lg {
+
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: 0.25rem;
+    background-color: #6c757d;
+    color: #fff;
+}
+
+/* Modal styles */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1050;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.modal.show {
+    display: block;
+}
+
+.modal-dialog {
+    position: relative;
+    width: auto;
+    margin: 3rem auto;
     max-width: 800px;
+    display: flex;
+    align-items: flex-start;
+    min-height: calc(100% - 6rem);
+}
+
+.modal-content {
+    position: relative;
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 0.3rem;
+    outline: 0;
+    width: 100%;
+    margin: auto;
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    border-bottom: 1px solid #444;
+}
+
+.modal-title {
+    margin: 0;
+    color: #f4f4f4;
+}
+
+.btn-close {
+    background: transparent;
+    border: 0;
+    color: #f4f4f4;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.modal-body {
+    position: relative;
+    padding: 1rem;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+/* Version items */
+.version-item {
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    background-color: #2a2a2a;
+    border-radius: 0.25rem;
+    border: 1px solid #444;
+    color: #f4f4f4;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+}
+
+.version-item:hover {
+    background-color: #333;
+}
+
+.text-muted {
+    color: #aaa;
+}
+
+/* Utility classes */
+.d-flex {
+    display: flex;
+}
+
+.justify-content-between {
+    justify-content: space-between;
+}
+
+.align-items-center {
+    align-items: center;
+}
+
+.w-100 {
+    width: 100%;
+}
+
+.text-light {
+    color: #f4f4f4;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.bg-dark {
+    background-color: #1a1a1a;
+}
+
+.bg-secondary {
+    background-color: #6c757d;
 }
 </style>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const modal = document.getElementById('versionsModal');
-    const modalTitle = modal.querySelector('.modal-title');
-    const modalBody = modal.querySelector('.modal-body');
-
-    modal.addEventListener('show.bs.modal', function(event) {
-        const card = event.relatedTarget;
-        const title = card.dataset.title;
-        const mediaType = card.dataset.mediaType;
-        const content = JSON.parse(card.dataset.content);
+class Modal {
+    constructor(modalId) {
+        this.modal = document.getElementById(modalId);
+        this.isOpen = false;
         
-        modalTitle.textContent = title;
-        modalBody.innerHTML = '';
+        // Close when clicking outside the modal
+        this.modal.addEventListener('click', (e) => {
+            if (e.target === this.modal) {
+                this.hide();
+            }
+        });
 
-        if (mediaType === 'movies') {
-            // Display movie versions
-            modalBody.innerHTML = '<h6 class="mb-3">Available Versions</h6>';
-            content.forEach(version => {
-                const versionItem = document.createElement('div');
-                versionItem.className = 'version-item';
-                versionItem.onclick = function() {
-                    window.location.href = "{{ url_for('video.play_video', video_id=0) }}".replace('0', version.id);
-                };
-                
-                const fileInfo = document.createElement('small');
-                fileInfo.textContent = version.filled_by_file || version.location_on_disk;
-                versionItem.appendChild(fileInfo);
-
-                if (version.version) {
-                    const badge = document.createElement('span');
-                    badge.className = 'badge bg-secondary ms-2';
-                    badge.textContent = version.version;
-                    versionItem.appendChild(badge);
-                }
-
-                modalBody.appendChild(versionItem);
-            });
-        } else {
-            // Display TV show seasons and episodes
-            const seasons = content.seasons;
-            Object.entries(seasons).sort(([a], [b]) => Number(a) - Number(b)).forEach(([seasonNum, episodes]) => {
-                const seasonHeader = document.createElement('div');
-                seasonHeader.className = 'season-header mb-2';
-                seasonHeader.innerHTML = `<h6>Season ${seasonNum}</h6>`;
-                modalBody.appendChild(seasonHeader);
-
-                episodes.sort((a, b) => a.episode_number - b.episode_number).forEach(episode => {
-                    const episodeItem = document.createElement('div');
-                    episodeItem.className = 'version-item';
-                    episodeItem.onclick = function() {
-                        window.location.href = "{{ url_for('video.play_video', video_id=0) }}".replace('0', episode.id);
-                    };
-
-                    const header = document.createElement('div');
-                    header.className = 'd-flex justify-content-between align-items-center mb-1';
-                    
-                    const episodeNum = document.createElement('span');
-                    episodeNum.className = 'episode-number';
-                    episodeNum.textContent = `E${episode.episode_number}`;
-                    header.appendChild(episodeNum);
-
-                    if (episode.version) {
-                        const badge = document.createElement('span');
-                        badge.className = 'badge bg-secondary';
-                        badge.textContent = episode.version;
-                        header.appendChild(badge);
-                    }
-                    episodeItem.appendChild(header);
-
-                    if (episode.episode_title) {
-                        const title = document.createElement('div');
-                        title.className = 'episode-title mb-1';
-                        title.textContent = episode.episode_title;
-                        episodeItem.appendChild(title);
-                    }
-
-                    const fileInfo = document.createElement('small');
-                    fileInfo.textContent = episode.filled_by_file || episode.location_on_disk;
-                    episodeItem.appendChild(fileInfo);
-
-                    modalBody.appendChild(episodeItem);
-                });
-            });
+        // Close when clicking close button
+        const closeBtn = this.modal.querySelector('.btn-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => this.hide());
         }
+    }
+
+    show() {
+        this.modal.classList.add('show');
+        document.body.style.overflow = 'hidden';
+        this.isOpen = true;
+    }
+
+    hide() {
+        this.modal.classList.remove('show');
+        document.body.style.overflow = '';
+        this.isOpen = false;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = new Modal('versionsModal');
+    const modalTitle = document.querySelector('.modal-title');
+    const modalBody = document.querySelector('.modal-body');
+
+    // Add click handlers to all buttons that open the modal
+    document.querySelectorAll('[data-modal-target]').forEach(button => {
+        button.addEventListener('click', (e) => {
+            const title = button.dataset.title;
+            const mediaType = button.dataset.mediaType;
+            const content = JSON.parse(button.dataset.content);
+            
+            modalTitle.textContent = title;
+            modalBody.innerHTML = '';
+
+            if (mediaType === 'movies') {
+                modalBody.innerHTML = '<h6 class="mb-3">Available Versions</h6>';
+                content.forEach(version => {
+                    const versionItem = document.createElement('div');
+                    versionItem.className = 'version-item';
+                    versionItem.onclick = function() {
+                        modal.hide();
+                        window.location.href = `/video/${version.id}`;
+                    };
+                    
+                    const fileInfo = document.createElement('small');
+                    fileInfo.textContent = version.filled_by_file || version.location_on_disk;
+                    versionItem.appendChild(fileInfo);
+
+                    if (version.version) {
+                        const badge = document.createElement('span');
+                        badge.className = 'badge bg-secondary ms-2';
+                        badge.textContent = version.version;
+                        versionItem.appendChild(badge);
+                    }
+
+                    modalBody.appendChild(versionItem);
+                });
+            } else {
+                // TV show content handling
+                const seasons = content.seasons;
+                Object.entries(seasons)
+                    .sort(([a], [b]) => Number(a) - Number(b))
+                    .forEach(([seasonNum, episodes]) => {
+                        const seasonHeader = document.createElement('div');
+                        seasonHeader.className = 'season-header mb-2';
+                        seasonHeader.innerHTML = `<h6>Season ${seasonNum}</h6>`;
+                        modalBody.appendChild(seasonHeader);
+
+                        episodes.sort((a, b) => a.episode_number - b.episode_number)
+                            .forEach(episode => {
+                                const episodeItem = document.createElement('div');
+                                episodeItem.className = 'version-item';
+                                episodeItem.onclick = function() {
+                                    modal.hide();
+                                    window.location.href = `/video/${episode.id}`;
+                                };
+
+                                const header = document.createElement('div');
+                                header.className = 'd-flex justify-content-between align-items-center mb-1';
+                                
+                                const episodeNum = document.createElement('span');
+                                episodeNum.className = 'episode-number';
+                                episodeNum.textContent = `E${episode.episode_number}`;
+                                header.appendChild(episodeNum);
+
+                                if (episode.version) {
+                                    const badge = document.createElement('span');
+                                    badge.className = 'badge bg-secondary';
+                                    badge.textContent = episode.version;
+                                    header.appendChild(badge);
+                                }
+                                episodeItem.appendChild(header);
+
+                                if (episode.episode_title) {
+                                    const title = document.createElement('div');
+                                    title.className = 'episode-title mb-1';
+                                    title.textContent = episode.episode_title;
+                                    episodeItem.appendChild(title);
+                                }
+
+                                const fileInfo = document.createElement('small');
+                                fileInfo.textContent = episode.filled_by_file || episode.location_on_disk;
+                                episodeItem.appendChild(fileInfo);
+
+                                modalBody.appendChild(episodeItem);
+                            });
+                    });
+            }
+            
+            modal.show();
+        });
     });
 });
 </script>
@@ -369,8 +530,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="card bg-dark">
                     <div class="card-header bg-dark">
                         <button class="btn btn-link w-100 text-light" 
-                                data-bs-toggle="modal"
-                                data-bs-target="#versionsModal"
+                                data-modal-target="versionsModal"
                                 data-title="{{ title }}"
                                 data-media-type="{{ media_type }}"
                                 data-content='{{ content|tojson }}'>
@@ -383,8 +543,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="card bg-dark">
                     <div class="card-header bg-dark">
                         <button class="btn btn-link w-100 text-light" 
-                                data-bs-toggle="modal"
-                                data-bs-target="#versionsModal"
+                                data-modal-target="versionsModal"
                                 data-title="{{ title }}"
                                 data-media-type="{{ media_type }}"
                                 data-content='{{ content|tojson }}'>

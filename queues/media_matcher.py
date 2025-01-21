@@ -6,8 +6,8 @@ Separates the media matching concerns from queue management.
 import logging
 import os
 from typing import Dict, Any, List, Tuple, Optional
-from scraper.functions.ptt_parser import parse_with_ptt
 from fuzzywuzzy import fuzz
+from PTT import parse_title
 
 class MediaMatcher:
     """Handles media content matching and validation"""
@@ -26,7 +26,6 @@ class MediaMatcher:
         Returns:
             List of matched files with their corresponding items
         """
-        logging.debug(f"Matching content for {item.get('title')} ({item.get('type')})")
         if item.get('type') == 'movie':
             return self._match_movie_content(files, item)
         elif item.get('type') == 'episode':
@@ -49,52 +48,167 @@ class MediaMatcher:
             video_files.append(file)
         
         if not video_files:
-            logging.debug("No video files found")
             return []
             
         # Sort by size descending and take the largest
         largest_file = max(video_files, key=lambda x: x.get('bytes', 0))
-        logging.debug(f"Selected largest video: {largest_file['path']}")
         
         # Get just the filename using os.path.basename
         file_path = os.path.basename(largest_file['path'])
         
         return [(file_path, item)]
 
+    def _extract_episode_from_filename(self, filename: str) -> Optional[int]:
+        """
+        Fallback method to extract episode numbers from filenames when PTT fails.
+        Handles cases like '999 1.mp4' or 'ep1.mp4'
+        """
+        import re
+        
+        # Remove the file extension
+        basename = os.path.splitext(os.path.basename(filename))[0]
+        
+        # Try various patterns
+        patterns = [
+            r'(?:^|\D)(\d{1,4})(?:\D|$)',  # Matches standalone numbers like "1" or "001"
+            r'(?:ep|episode)[.\s-]*(\d{1,4})',  # Matches "ep1" or "episode 1"
+            r'[eE](\d{1,4})',  # Matches "E1" or "e01"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, basename)
+            if match:
+                try:
+                    episode_num = int(match.group(1))
+                    if 0 < episode_num < 2000:  # Sanity check for reasonable episode numbers
+                        return episode_num
+                except ValueError:
+                    continue
+        
+        return None
+
     def _match_tv_content(self, files: List[Dict[str, Any]], item: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
         """
         Match TV show files against an episode item.
         Returns all matching files with their season/episode info.
+        Special handling for anime which may not include season numbers.
         """
         matches = []
         series_title = item.get('series_title', '') or item.get('title', '')
         item_season = item.get('season') or item.get('season_number')
         item_episode = item.get('episode') or item.get('episode_number')
+        # Handle both string and list genres
+        genres = item.get('genres', [])
+        if isinstance(genres, str):
+            genres = [genres]
+        is_anime = any('anime' in genre.lower() for genre in genres)
         
-        if not all([series_title, item_season is not None, item_episode is not None]):
-            logging.debug(f"Missing required TV info: title='{series_title}', S{item_season}E{item_episode}")
+        if not all([series_title, item_episode is not None]):
+            logging.debug(f"Missing required TV info for {series_title}")
             return []
-            
-        logging.debug(f"Matching TV: '{series_title}' S{item_season}E{item_episode}")
+        
+        if not is_anime and item_season is None:
+            logging.debug("Missing season number for non-anime content")
+            return []
         
         for file in files:
             if not self.is_video_file(file['path']):
                 continue
-                
+            
             # Skip sample files
             if 'sample' in file['path'].lower():
                 continue
-                
-            parsed = parse_with_ptt(file['path'])
+
+            if 'specials' in file['path'].lower():
+                continue
             
-            # Check if this file matches our season/episode
-            if (item_season in parsed.get('seasons', []) and 
-                item_episode in parsed.get('episodes', [])):
-                logging.debug(f"Matched: S{item_season}E{item_episode} in {os.path.basename(file['path'])}")
-                # Get just the filename using os.path.basename
-                file_path = os.path.basename(file['path'])
-                matches.append((file_path, item))
+            # Get the raw PTT parse result
+            ptt_result = parse_title(file['path'])
+            
+            # Create our result info, preserving all PTT fields
+            result_info = {
+                'title': ptt_result.get('title'),
+                'original_title': file['path'],
+                'type': 'movie',
+                'year': None,
+                'resolution': ptt_result.get('resolution'),
+                'source': ptt_result.get('quality'),
+                'audio': None,
+                'codec': ptt_result.get('codec'),
+                'group': ptt_result.get('group'),
+                'seasons': ptt_result.get('seasons', []),
+                'episodes': ptt_result.get('episodes', []),
+                'date': ptt_result.get('date'),  # Explicitly include the date field
+                'bit_depth': ptt_result.get('bit_depth'),  # Include other useful fields
+                'container': ptt_result.get('container')
+            }
+            
+            # For anime, we only need to match the episode number
+            if is_anime:
+                episode_match = False
                 
+                # First try PTT parsed episodes
+                if item_episode in result_info.get('episodes', []):
+                    episode_match = True
+                
+                # If PTT failed to find episodes, try our fallback method
+                if not episode_match and not result_info.get('episodes'):
+                    fallback_episode = self._extract_episode_from_filename(file['path'])
+                    if fallback_episode == item_episode:
+                        episode_match = True
+                
+                # Only check season if it's present in both the parsed result and the item
+                season_match = (not result_info.get('seasons') or  # If no season in filename, that's okay
+                              not item_season or  # If no season in item, that's okay
+                              item_season in result_info.get('seasons', []) or  # If both have season, they should match
+                              (is_anime and 0 in result_info.get('seasons', [])))  # For anime, season 0 matches any season
+                
+                if episode_match and season_match:
+                    file_path = os.path.basename(file['path'])
+                    matches.append((file_path, item))
+            else:
+                # Check if this is a date-based episode first
+                date_match = False
+                has_date = 'date' in result_info and result_info['date'] is not None
+                has_seasons = bool(result_info.get('seasons'))
+                has_episodes = bool(result_info.get('episodes'))
+                
+                if has_date and not has_seasons and not has_episodes:
+                    try:
+                        from web_scraper import get_tmdb_data
+                        episode_data = get_tmdb_data(int(item.get('tmdb_id')), 'tv', item.get('season_number'), item.get('episode_number'))
+                        
+                        if episode_data:
+                            expected_air_date = episode_data.get('air_date')
+                            if expected_air_date and result_info['date'] == expected_air_date:
+                                date_match = True
+                    except Exception as e:
+                        logging.error(f"Error checking air date: {str(e)}")
+                
+                # Only try season/episode matching if date matching failed
+                season_episode_match = False
+                if not date_match:
+                    season_episode_match = (item_season in result_info.get('seasons', []) and 
+                                          item_episode in result_info.get('episodes', []))
+                    
+                    # Try TMDB date lookup as last resort for season/episode files
+                    if not season_episode_match and result_info.get('date'):
+                        try:
+                            if item_season is not None and item_episode is not None:
+                                from web_scraper import get_tmdb_data
+                                episode_data = get_tmdb_data(int(item.get('tmdb_id')), 'tv', item_season, item_episode)
+                                
+                                if episode_data:
+                                    air_date = episode_data.get('air_date')
+                                    if air_date and result_info['date'] == air_date:
+                                        date_match = True
+                        except Exception as e:
+                            logging.error(f"Error checking air date: {str(e)}")
+
+                if season_episode_match or date_match:
+                    file_path = os.path.basename(file['path'])
+                    matches.append((file_path, item))
+        
         return matches
 
     def match_movie(self, parsed: Dict[str, Any], item: Dict[str, Any], filename: str) -> bool:
@@ -116,8 +230,6 @@ class MediaMatcher:
         if parsed.get('year') and item.get('year'):
             year_match = self._is_acceptable_year_mismatch(item, parsed)
         
-        logging.debug(f"Movie match: '{parsed.get('title')}' ({parsed.get('year')}) -> {title_match and year_match}")
-        
         # Match only if both title and year match
         return title_match and year_match
 
@@ -137,7 +249,6 @@ class MediaMatcher:
             'featurette', 'making of',
             'alternate'
         ]):
-            logging.debug(f"Skipping extras/special: {original_title}")
             return False
             
         # Get parsed title and queue title
@@ -160,12 +271,8 @@ class MediaMatcher:
         season_match = item_season in parsed.get('seasons', [])
         episode_match = item_episode in parsed.get('episodes', [])
         
-        match_result = title_match and season_match and episode_match
-        if match_result:
-            logging.debug(f"Matched episode: '{parsed.get('title')}' S{item_season}E{item_episode}")
-        
         # Match only if title, season, and episode all match
-        return match_result
+        return title_match and season_match and episode_match
 
     @staticmethod
     def is_video_file(filename: str) -> bool:
@@ -219,7 +326,6 @@ class MediaMatcher:
             # Try to match this item against the files
             matches = self._match_tv_content(files, item)
             if matches:
-                logging.debug(f"Found related: S{item.get('season_number')}E{item.get('episode_number')} ({item.get('version')})")
                 related_items.append(item)
                 
         return related_items

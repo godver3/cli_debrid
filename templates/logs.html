@@ -17,6 +17,7 @@
         border: 1px solid #555;
         border-radius: 5px;
         position: relative; /* Add this */
+        margin-top: 25px
     }
 
     /* Mobile-specific adjustments */
@@ -38,17 +39,40 @@
         #log-search {
             flex: 1;
             min-width: 120px;
+            margin-right: 0 !important;
+        }
+
+        .match-count {
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .bottom-button {
+            position: absolute !important;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 120px;
+            width: 90px;
+        }
+
+        #pause-indicator {
+            top: 124px !important;
+            right: 10px !important;
+        }
+
+        #goto-container {
+            width: 100%;
         }
     }
 
     .log-controls {
-        padding: 10px;
+        padding: 5px 10px;
         background-color: #333;
         border-bottom: 1px solid #555;
         display: flex;
         align-items: center;
         gap: 10px;
-        flex-wrap: wrap;
+        white-space: nowrap;
     }
 
     #log-level-filter {
@@ -158,8 +182,8 @@
 
     #pause-indicator {
         position: absolute;
-        top: 10px;
-        right: 10px;
+        top: 5px;
+        right: 8%;
         background-color: #444;
         color: #f4f4f4;
         padding: 5px 10px;
@@ -175,12 +199,6 @@
         0% { opacity: 0.7; }
         50% { opacity: 0; }
         100% { opacity: 0.7; }
-    }
-
-    @media screen and (max-width: 768px) {
-        #pause-indicator {
-            top: 55px;
-        }
     }
 
     /* Style for the new hidden div */
@@ -265,10 +283,160 @@
         height: 16px;
         vertical-align: middle;
     }
+
+    /* Add new syntax highlighting styles */
+    .log-component {
+        display: inline;
+    }
+
+    .log-timestamp {
+        color: #888;
+    }
+
+    .log-level.debug { color: #3498db; }
+    .log-level.info { color: #2ecc71; }
+    .log-level.warning { color: #f39c12; }
+    .log-level.error { color: #e74c3c; }
+    .log-level.critical { color: #9b59b6; }
+
+    .log-filename {
+        color: #e67e22;  /* Orange for files */
+        font-weight: bold;
+    }
+
+    .log-function {
+        color: #1abc9c;  /* Turquoise for functions */
+    }
+
+    .log-line-number {
+        color: #95a5a6;  /* Gray for line numbers */
+    }
+
+    .log-message {
+        color: #ecf0f1;  /* Light gray for the main message */
+    }
+
+    .log-duration {
+        color: #f1c40f;  /* Yellow for durations/timing */
+        font-weight: bold;
+    }
+
+    /* Update the log message colors to match their levels */
+    .log-message.debug { color: #3498db; }
+    .log-message.info { color: #2ecc71; }
+    .log-message.warning { color: #f39c12; }
+    .log-message.error { color: #e74c3c; }
+    .log-message.critical { color: #9b59b6; }
+
+    /* Remove the generic message color since we'll use level-specific colors */
+    .log-message {
+        opacity: 0.9;  /* Slightly reduce opacity to differentiate from level indicator */
+    }
+
+    /* Add styles for the goto search container */
+    .goto-container {
+        display: flex;
+        gap: 5px;
+    }
+
+    .goto-btn {
+        padding: 5px;
+        background-color: #444;
+        color: #f4f4f4;
+        border: 1px solid #666;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .goto-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .goto-btn:not(:disabled):hover {
+        background-color: #555;
+    }
+
+    .goto-nav-buttons {
+        display: flex;
+        gap: 2px;
+    }
+
+    .goto-nav-button {
+        padding: 5px;
+        background-color: #444;
+        color: #f4f4f4;
+        border: 1px solid #666;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+
+    .goto-nav-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .goto-nav-button:not(:disabled):hover {
+        background-color: #555;
+    }
+
+    .match-count {
+        color: #888;
+        font-size: 0.8em;
+        padding: 0 5px;
+        min-width: 45px;  /* Ensure consistent width for count */
+        text-align: left;
+    }
+
+    /* Update the existing search box style */
+    #log-search {
+        min-width: 200px;
+    }
+
+    /* Add styles for highlighted matches */
+    .highlight-match {
+        background-color: rgba(255, 255, 0, 0.2);
+        outline: 2px solid rgba(255, 255, 0, 0.3);
+    }
+
+    #goto-search {
+        padding: 5px;
+        background-color: #444;
+        color: #f4f4f4;
+        border: 1px solid #666;
+        border-radius: 3px;
+        width: 150px;
+    }
+
+    /* Add styles for the bottom button */
+    .bottom-button {
+        position: absolute;
+        top: 5px;
+        right: 10px;
+        padding: 5px 10px;
+        background-color: #444;
+        color: #f4f4f4;
+        border: 1px solid #666;
+        border-radius: 3px;
+        cursor: pointer;
+        z-index: 100;
+        display: none;  /* Hidden by default, shown when not at bottom */
+    }
+
+    .bottom-button:hover {
+        background-color: #555;
+    }
+
+    /* Show bottom button when not at bottom */
+    .bottom-button.visible {
+        display: block;
+    }
 </style>
 
 <div class="log-container">
     <div id="pause-indicator">Logging paused...</div>
+    <button class="bottom-button" onclick="scrollToBottomAndResume()">⭳ Bottom</button>
     <div class="log-controls">
         <select id="log-level-filter">
             <option value="all">All Levels</option>
@@ -278,7 +446,23 @@
             <option value="error">Error</option>
             <option value="critical">Critical</option>
         </select>
-        <input type="text" id="log-search" placeholder="Search logs...">
+        <div class="goto-container">
+            <button class="goto-btn" onclick="navigateToFirstMatch()">⭱ First</button>
+            <button class="goto-nav-button" id="prev-match" title="Previous match (Shift+Enter)" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+                </svg>
+            </button>
+            <input type="text" id="goto-search" placeholder="Go to... (Enter/Shift+Enter to navigate)" />
+            <button class="goto-nav-button" id="next-match" title="Next match (Enter)" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+            </button>
+            <button class="goto-btn" onclick="navigateToLastMatch()">⭳ Last</button>
+            <span class="match-count"></span>
+        </div>
+        <input type="text" id="log-search" placeholder="Filter logs...">
         <button id="share-logs-btn" title="Share logs via transfer.sh">
             Share Logs
             <div class="share-progress" style="width: 0%"></div>
@@ -308,11 +492,15 @@ let lastLogTimestamp = '';
 let currentLevel = 'all';
 let isPaused = false;
 let isScrolledToBottom = true;
-const MAX_LOGS = 500;
+let isSearchActive = false;
+let currentMatches = [];
+let currentMatchIndex = -1;
+const MAX_LOGS = 1500;
 
 function checkScrollPosition() {
     const logEntries = document.getElementById('log-entries');
     const previousScrolledToBottom = isScrolledToBottom;
+    const bottomButton = document.querySelector('.bottom-button');
     
     // Increase tolerance for mobile devices
     const tolerance = window.innerWidth <= 768 ? 50 : 2;
@@ -321,6 +509,13 @@ function checkScrollPosition() {
     clearTimeout(window.scrollTimeout);
     window.scrollTimeout = setTimeout(() => {
         isScrolledToBottom = Math.abs(logEntries.scrollHeight - logEntries.clientHeight - logEntries.scrollTop) < tolerance;
+        
+        // Show/hide bottom button based on scroll position
+        if (isScrolledToBottom) {
+            bottomButton.classList.remove('visible');
+        } else {
+            bottomButton.classList.add('visible');
+        }
         
         // Only update pause state if we've been in the new position for a moment
         if (isScrolledToBottom !== previousScrolledToBottom) {
@@ -358,73 +553,162 @@ function updateLogs(forceRefresh = false) {
             window.logStream = null;
         }
 
-        // Create new EventSource connection
-        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}`);
-        
-        window.logStream.onopen = function() {
-            console.log('Stream connected');
+        // Initialize performance tracking
+        window.lastPerformanceMetrics = {
+            interval: 0.1,  // Start at 100ms instead of 200ms
+            minInterval: 0.05,  // 50ms minimum
+            maxInterval: 2.0,   // 2 seconds maximum
+            lastLatency: 0,
+            errorCount: 0,
+            successiveGoodPerformance: 0,
+            lastAdjustment: Date.now(),
+            parser: new DOMParser()  // Pre-initialize parser
         };
-        
-        window.logStream.onmessage = function(event) {
-            try {
-                const data = JSON.parse(event.data);
-                if (!Array.isArray(data)) return;
-                
-                // Skip empty updates
-                if (data.length === 0) return;
-                
-                // Skip if paused
-                if (isPaused) return;
-                
-                const fragment = document.createDocumentFragment();
-                const searchTerm = document.getElementById('log-search').value.toLowerCase();
-                let addedLogs = false;
-                
-                data.forEach(log => {
-                    // Check if the log matches the search term
-                    const logText = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`.toLowerCase();
-                    if (!searchTerm || logText.includes(searchTerm)) {
-                        const div = document.createElement('div');
-                        div.className = `log-entry ${log.level}`;
-                        div.textContent = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`;
-                        fragment.appendChild(div);
-                        addedLogs = true;
-                    }
-                });
 
-                if (addedLogs) {
-                    // Append new logs to the end
-                    const logEntries = document.getElementById('log-entries');
-                    logEntries.appendChild(fragment);
-
-                    // Remove old logs if we're over the limit
-                    while (logEntries.children.length > MAX_LOGS) {
-                        logEntries.removeChild(logEntries.firstChild);
-                    }
-
-                    lastLogTimestamp = data[data.length - 1].timestamp;
+        // Store event handlers for reuse
+        window.streamHandlers = {
+            onMessage: function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (!data.logs || !data.logs.length) return;  // Skip empty updates
                     
-                    if (isScrolledToBottom) {
-                        scrollToBottom(logEntries);
+                    // Calculate latency
+                    const latency = Date.now() - (data.serverTime * 1000);
+                    window.lastPerformanceMetrics.lastLatency = latency;
+
+                    // Skip if paused
+                    if (isPaused) return;
+                    
+                    const fragment = document.createDocumentFragment();
+                    const searchTerm = document.getElementById('log-search').value.toLowerCase();
+                    const gotoTerm = document.getElementById('goto-search').value.toLowerCase();
+                    const logEntries = document.getElementById('log-entries');
+                    let addedLogs = false;
+                    
+                    // Process logs in chunks if there are many
+                    const CHUNK_SIZE = 50;
+                    for (let i = 0; i < data.logs.length; i += CHUNK_SIZE) {
+                        const chunk = data.logs.slice(i, i + CHUNK_SIZE);
+                        
+                        chunk.forEach(log => {
+                            // Check if the log matches the filter term
+                            const logText = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`.toLowerCase();
+                            if (!searchTerm || logText.includes(searchTerm)) {
+                                const div = createHighlightedLogEntry(log);
+                                
+                                // If we're in search mode and this log matches the search term
+                                if (isSearchActive && logText.includes(gotoTerm)) {
+                                    currentMatches.push(div);
+                                    // If this is a new match and we're at the end, highlight it
+                                    if (currentMatchIndex === currentMatches.length - 2) {
+                                        navigateToMatch(currentMatches.length - 1);
+                                    } else {
+                                        updateGotoNavButtons();
+                                    }
+                                }
+                                
+                                fragment.appendChild(div);
+                                addedLogs = true;
+                            }
+                        });
+
+                        // Append chunk and yield to main thread
+                        if (addedLogs) {
+                            logEntries.appendChild(fragment.cloneNode(true));
+                            // Remove old logs if we're over the limit
+                            while (logEntries.children.length > MAX_LOGS) {
+                                logEntries.removeChild(logEntries.firstChild);
+                                // Update matches array if we removed a match
+                                if (currentMatches.length > 0 && currentMatches[0].parentNode !== logEntries) {
+                                    currentMatches.shift();
+                                    if (currentMatchIndex > 0) {
+                                        currentMatchIndex--;
+                                    }
+                                    updateGotoNavButtons();
+                                }
+                            }
+                        }
                     }
+
+                    if (addedLogs) {
+                        lastLogTimestamp = data.logs[data.logs.length - 1].timestamp;
+                        
+                        if (isScrolledToBottom) {
+                            requestAnimationFrame(() => scrollToBottom(logEntries));
+                        }
+                    }
+
+                    // Only check performance metrics after successful data processing
+                    if (Date.now() - window.lastPerformanceMetrics.lastAdjustment > 5000) {
+                        const metrics = window.lastPerformanceMetrics;
+                        
+                        // More aggressive performance tuning
+                        if (latency < 50 && metrics.errorCount === 0) {  // Lower threshold to 50ms
+                            metrics.successiveGoodPerformance++;
+                            if (metrics.successiveGoodPerformance >= 2) {  // Require fewer good performances
+                                // Speed up by 20% instead of 10%
+                                metrics.interval = Math.max(
+                                    metrics.minInterval,
+                                    metrics.interval * 0.8
+                                );
+                                metrics.successiveGoodPerformance = 0;
+                                reconnectStream(levelFilter, metrics.interval);
+                            }
+                        } else if (latency > 200 || metrics.errorCount > 0) {  // Lower threshold to 200ms
+                            // Slow down by 50% instead of 20% when having issues
+                            metrics.interval = Math.min(
+                                metrics.maxInterval,
+                                metrics.interval * 1.5
+                            );
+                            metrics.successiveGoodPerformance = 0;
+                            reconnectStream(levelFilter, metrics.interval);
+                        }
+                        
+                        metrics.errorCount = 0;
+                        metrics.lastAdjustment = Date.now();
+                    }
+                } catch (error) {
+                    console.error('Error processing message:', error, 'Raw data:', event.data);
+                    window.lastPerformanceMetrics.errorCount++;
                 }
-            } catch (error) {
-                console.error('Error processing message:', error);
+            },
+            onError: function(error) {
+                console.error('EventSource failed:', error);
+                window.lastPerformanceMetrics.errorCount++;
+                // Attempt to reconnect after 2 seconds with a slower interval
+                setTimeout(() => {
+                    if (window.logStream) {
+                        const metrics = window.lastPerformanceMetrics;
+                        metrics.interval = Math.min(metrics.maxInterval, metrics.interval * 1.5);
+                        reconnectStream(levelFilter, metrics.interval);
+                    }
+                }, 2000);
             }
         };
+
+        // Create new EventSource connection with current interval
+        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&interval=${window.lastPerformanceMetrics.interval}`);
         
-        window.logStream.onerror = function(error) {
-            console.error('EventSource failed:', error);
-            // Attempt to reconnect after 2 seconds
-            setTimeout(() => {
-                if (window.logStream) {
-                    window.logStream.close();
-                    window.logStream = null;
-                    updateLogs(true);
-                }
-            }, 2000);
+        window.logStream.onopen = function() {
+            console.log('Stream connected, waiting for first message...');
         };
+        
+        window.logStream.onmessage = window.streamHandlers.onMessage;
+        window.logStream.onerror = window.streamHandlers.onError;
     }
+}
+
+// Helper function to reconnect the stream with a new interval
+function reconnectStream(levelFilter, interval) {
+    //console.log(`Adjusting refresh rate to ${interval.toFixed(3)}s`);
+    if (window.logStream) {
+        window.logStream.close();
+        window.logStream = null;
+    }
+    window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&interval=${interval}`);
+    // Reattach event handlers from stored handlers
+    window.logStream.onmessage = window.streamHandlers.onMessage;
+    window.logStream.onerror = window.streamHandlers.onError;
 }
 
 function filterLogs() {
@@ -579,5 +863,242 @@ window.addEventListener('beforeunload', () => {
         window.logStream.close();
     }
 });
+
+// Add a helper function to parse and highlight log components
+function createHighlightedLogEntry(log) {
+    const div = document.createElement('div');
+    div.className = `log-entry ${log.level}`;
+
+    // Parse timestamp
+    const timestamp = document.createElement('span');
+    timestamp.className = 'log-component log-timestamp';
+    timestamp.textContent = log.timestamp;
+    div.appendChild(timestamp);
+
+    // Add level
+    const level = document.createElement('span');
+    level.className = `log-component log-level ${log.level}`;
+    level.textContent = ` - ${log.level.toUpperCase()} - `;
+    div.appendChild(level);
+
+    // Parse the message for different components
+    const messageParts = log.message.split(' - ');
+    if (messageParts.length >= 2) {
+        // Parse file and function information
+        const fileInfo = messageParts[0];
+        const fileMatch = fileInfo.match(/([^:]+):([^:]+):(\d+)/);
+        
+        if (fileMatch) {
+            // File name
+            const filename = document.createElement('span');
+            filename.className = 'log-component log-filename';
+            filename.textContent = fileMatch[1];
+            div.appendChild(filename);
+            
+            div.appendChild(document.createTextNode(':'));
+            
+            // Function name
+            const funcname = document.createElement('span');
+            funcname.className = 'log-component log-function';
+            funcname.textContent = fileMatch[2];
+            div.appendChild(funcname);
+            
+            div.appendChild(document.createTextNode(':'));
+            
+            // Line number
+            const linenum = document.createElement('span');
+            linenum.className = 'log-component log-line-number';
+            linenum.textContent = fileMatch[3];
+            div.appendChild(linenum);
+            
+            div.appendChild(document.createTextNode(' - '));
+        }
+
+        // Parse the actual message and look for durations
+        const message = messageParts.slice(1).join(' - ');
+        const messageSpan = document.createElement('span');
+        messageSpan.className = `log-component log-message ${log.level}`;  // Add log level class
+        
+        // Highlight durations (e.g., "233.24ms", "1.5s", "100ms")
+        const durationRegex = /(\d+\.?\d*\s*(ms|s))/g;
+        let lastIndex = 0;
+        let match;
+        
+        while ((match = durationRegex.exec(message)) !== null) {
+            // Add text before the duration
+            messageSpan.appendChild(document.createTextNode(message.slice(lastIndex, match.index)));
+            
+            // Add highlighted duration
+            const duration = document.createElement('span');
+            duration.className = 'log-component log-duration';
+            duration.textContent = match[0];
+            messageSpan.appendChild(duration);
+            
+            lastIndex = match.index + match[0].length;
+        }
+        
+        // Add any remaining text
+        messageSpan.appendChild(document.createTextNode(message.slice(lastIndex)));
+        div.appendChild(messageSpan);
+    } else {
+        // If we can't parse the format, just add the message as is
+        const messageSpan = document.createElement('span');
+        messageSpan.className = `log-component log-message ${log.level}`;  // Add log level class
+        messageSpan.textContent = log.message;
+        div.appendChild(messageSpan);
+    }
+
+    return div;
+}
+
+// Add goto search functionality
+function performGotoSearch() {
+    const searchTerm = document.getElementById('goto-search').value.toLowerCase();
+    const logEntries = document.getElementById('log-entries');
+    currentMatches = [];
+    currentMatchIndex = -1;
+    isSearchActive = !!searchTerm;  // Set search active if we have a search term
+
+    // Clear previous highlights
+    logEntries.querySelectorAll('.highlight-match').forEach(el => {
+        el.classList.remove('highlight-match');
+    });
+
+    if (!searchTerm) {
+        updateGotoNavButtons();
+        return;
+    }
+
+    // Find all matching log entries
+    Array.from(logEntries.children).forEach((entry, index) => {
+        if (entry.textContent.toLowerCase().includes(searchTerm)) {
+            currentMatches.push(entry);
+        }
+    });
+
+    updateGotoNavButtons();
+    if (currentMatches.length > 0) {
+        navigateToMatch(0);
+    }
+}
+
+function updateGotoNavButtons() {
+    const prevButton = document.getElementById('prev-match');
+    const nextButton = document.getElementById('next-match');
+    const matchCount = document.querySelector('.match-count');
+    
+    prevButton.disabled = currentMatches.length === 0 || currentMatchIndex <= 0;
+    nextButton.disabled = currentMatches.length === 0 || currentMatchIndex >= currentMatches.length - 1;
+    
+    if (currentMatches.length > 0) {
+        matchCount.textContent = `${currentMatchIndex + 1}/${currentMatches.length}`;
+    } else {
+        matchCount.textContent = '';
+    }
+}
+
+function navigateToMatch(index) {
+    if (index < 0 || index >= currentMatches.length) return;
+
+    // Remove previous highlight
+    document.querySelectorAll('.highlight-match').forEach(el => {
+        el.classList.remove('highlight-match');
+    });
+
+    const match = currentMatches[index];
+    match.classList.add('highlight-match');
+    currentMatchIndex = index;
+    
+    // Scroll the match into view
+    match.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    updateGotoNavButtons();
+}
+
+function navigateToFirstMatch() {
+    if (currentMatches && currentMatches.length > 0) {
+        currentMatchIndex = 0;
+        navigateToMatch(currentMatchIndex);
+        updateGotoNavButtons();
+    }
+}
+
+function navigateToLastMatch() {
+    if (currentMatches && currentMatches.length > 0) {
+        currentMatchIndex = currentMatches.length - 1;
+        navigateToMatch(currentMatchIndex);
+        updateGotoNavButtons();
+    }
+}
+
+// Add event listeners for goto search
+document.getElementById('goto-search').addEventListener('input', (e) => {
+    if (e.target.value) {
+        isPaused = true;
+        document.getElementById('pause-indicator').style.display = 'block';
+    } else {
+        isPaused = false;
+        document.getElementById('pause-indicator').style.display = 'none';
+    }
+});
+
+document.getElementById('goto-search').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        if (e.shiftKey) {
+            // Shift+Enter for previous
+            if (currentMatchIndex > 0) {
+                navigateToMatch(currentMatchIndex - 1);
+            }
+        } else {
+            // Enter for next
+            if (currentMatches.length === 0) {
+                performGotoSearch();
+            } else if (currentMatchIndex < currentMatches.length - 1) {
+                navigateToMatch(currentMatchIndex + 1);
+            }
+        }
+    }
+});
+
+document.getElementById('prev-match').addEventListener('click', () => {
+    if (currentMatchIndex > 0) {
+        navigateToMatch(currentMatchIndex - 1);
+    }
+});
+
+document.getElementById('next-match').addEventListener('click', () => {
+    if (currentMatches.length === 0) {
+        performGotoSearch();
+    } else if (currentMatchIndex < currentMatches.length - 1) {
+        navigateToMatch(currentMatchIndex + 1);
+    }
+});
+
+// Update the goto search event listener to perform searches as user types
+document.getElementById('goto-search').addEventListener('input', (e) => {
+    if (!e.target.value) {
+        isSearchActive = false;
+        currentMatches = [];
+        currentMatchIndex = -1;
+        document.querySelectorAll('.highlight-match').forEach(el => {
+            el.classList.remove('highlight-match');
+        });
+        updateGotoNavButtons();
+    } else {
+        // Debounce the search to avoid too many searches while typing
+        clearTimeout(window.searchTimeout);
+        window.searchTimeout = setTimeout(() => {
+            performGotoSearch();
+        }, 300);  // Wait 300ms after typing stops before searching
+    }
+});
+
+// Add function to scroll to bottom and resume logging
+function scrollToBottomAndResume() {
+    const logEntries = document.getElementById('log-entries');
+    scrollToBottom(logEntries);
+    isPaused = false;
+    document.getElementById('pause-indicator').style.display = 'none';
+    document.querySelector('.bottom-button').classList.remove('visible');
+}
 </script>
 {% endblock %}

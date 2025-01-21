@@ -73,7 +73,10 @@ document.addEventListener('DOMContentLoaded', function() {
             return response.json();
         })
         .then(data => {
-
+            console.log('Raw search results:', data);  // Debug log for raw results
+            data.forEach(result => {
+                console.log('Result media type:', result.mediaType);  // Debug log for each result's media type
+            });
             displaySearchResults(data);
         })
         .catch(error => {
@@ -86,7 +89,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function displaySearchResults(results) {
-        console.log('Search results:', results);  // Debug log
+        console.log('Display search results called with:', results);  // Debug log
         const searchResultsElement = document.getElementById('search-results');
         searchResultsElement.innerHTML = '';
         
@@ -103,6 +106,8 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Process results and convert TMDB IDs to IMDB IDs if necessary
         const processedResults = results.map(result => {
+            console.log('Processing result:', result);  // Debug log
+            console.log('Result media type before processing:', result.mediaType);  // Debug log
             if (!result.imdbId || result.imdbId === 'N/A') {
                 return fetch(`/scraper/convert_tmdb_to_imdb/${result.id}`)
                     .then(response => response.json())
@@ -121,7 +126,7 @@ document.addEventListener('DOMContentLoaded', function() {
         Promise.all(processedResults).then(validResults => {
             validResults = validResults.filter(result => result.imdbId && result.imdbId !== 'N/A');
             
-            console.log(`Valid results: ${validResults.length} out of ${results.length}`);
+            console.log('Valid results after IMDB conversion:', validResults);  // Debug log
             
             if (validResults.length === 0) {
                 searchResultsElement.innerHTML = `
@@ -133,16 +138,18 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             validResults.forEach(result => {
-                console.log('Processing result:', result);  // Debug log
+                console.log('Processing valid result:', result);  // Debug log
+                console.log('Valid result media type:', result.mediaType);  // Debug log
                 const row = table.insertRow();
                 row.className = 'search-result';
                 
                 const title = result.title || 'N/A';
                 const year = result.year || 'N/A';
-                const mediaType = result.mediaType === 'tv' ? 'TV Show' : 'Movie';
+                const mediaType = result.mediaType === 'tv' || result.mediaType === 'show' ? 'TV Show' : 
+                                result.mediaType === 'movie' ? 'Movie' : 'N/A';
                 const imdbId = result.imdbId || 'N/A';
                 
-                console.log(`Title: ${title}, Year: ${year}, Type: ${mediaType}, IMDB ID: ${imdbId}`);  // Debug log
+                console.log(`Processed values - Title: ${title}, Year: ${year}, Type: ${mediaType}, IMDB ID: ${imdbId}`);  // Debug log
                 
                 [title, year, mediaType, imdbId].forEach(cellText => {
                     const cell = row.insertCell();
@@ -188,11 +195,14 @@ document.addEventListener('DOMContentLoaded', function() {
             const title = item.title || item.name;
             const year = item.year || (item.releaseDate ? item.releaseDate.substring(0, 4) : 
                          item.firstAirDate ? item.firstAirDate.substring(0, 4) : 'N/A');
-            const mediaType = item.mediaType === 'tv' ? 'TV Show' : 'Movie';
+            const isTV = item.mediaType === 'tv' || item.mediaType === 'show';
+            const mediaType = isTV ? 'TV Show' : 'Movie';
             const imdbId = item.imdbId || 'N/A';
             
             // Store the year in the currentItem object
             currentItem.year = year !== 'N/A' ? parseInt(year) : null;
+            // Ensure we store the correct media type
+            currentItem.mediaType = isTV ? 'tv' : 'movie';
             
             console.log(`Selected - Title: ${title}, Year: ${currentItem.year}, Type: ${mediaType}, IMDB ID: ${imdbId}`);  // Debug log
             
@@ -219,9 +229,22 @@ document.addEventListener('DOMContentLoaded', function() {
         // Show/hide TV controls
         const tvControls = document.getElementById('tv-controls');
         if (tvControls) {
-            tvControls.style.display = item.mediaType === 'tv' ? 'block' : 'none';
-            if (item.mediaType === 'tv') {
-                populateSeasonEpisodeSelects(item);
+            const isTV = item.mediaType === 'tv' || item.mediaType === 'show';
+            tvControls.style.display = isTV ? 'block' : 'none';
+            if (isTV) {
+                // Fetch season and episode data for the TV show
+                fetch(`/scraper/get_tv_details/${item.id}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            populateSeasonEpisodeSelects(data);
+                        } else {
+                            console.error('Failed to fetch TV show details:', data.error);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching TV show details:', error);
+                    });
             }
         }
     
@@ -229,7 +252,7 @@ document.addEventListener('DOMContentLoaded', function() {
         loadVersions();
     }
 
-    function populateSeasonEpisodeSelects(item) {
+    function populateSeasonEpisodeSelects(data) {
         const seasonSelect = document.getElementById('season-select');
         const episodeSelect = document.getElementById('episode-select');
     
@@ -237,36 +260,46 @@ document.addEventListener('DOMContentLoaded', function() {
         seasonSelect.innerHTML = '';
         episodeSelect.innerHTML = '';
     
-        if (item.seasonEpisodeCounts) {
+        if (data.seasons) {
             // Populate seasons
-            Object.keys(item.seasonEpisodeCounts).forEach(season => {
+            data.seasons.forEach(season => {
                 const option = document.createElement('option');
-                option.value = season;
-                option.textContent = `Season ${season}`;
+                option.value = season.season_number;
+                option.textContent = `Season ${season.season_number}`;
                 seasonSelect.appendChild(option);
             });
     
             // Add event listener to season select to update episodes
-            seasonSelect.addEventListener('change', () => updateEpisodeSelect(item, seasonSelect.value));
+            seasonSelect.addEventListener('change', () => {
+                const selectedSeason = data.seasons.find(s => s.season_number === parseInt(seasonSelect.value));
+                if (selectedSeason) {
+                    updateEpisodeSelect(selectedSeason);
+                }
+            });
     
-            // Initially populate episodes for the first season
-            updateEpisodeSelect(item, Object.keys(item.seasonEpisodeCounts)[0]);
+            // Set default season and trigger episode population
+            if (data.seasons.length > 0) {
+                seasonSelect.value = data.seasons[0].season_number;
+                updateEpisodeSelect(data.seasons[0]);
+            }
         }
     }
 
-    function updateEpisodeSelect(item, selectedSeason) {
+    function updateEpisodeSelect(season) {
         const episodeSelect = document.getElementById('episode-select');
         episodeSelect.innerHTML = '';
     
-        if (item.seasonEpisodeCounts && item.seasonEpisodeCounts[selectedSeason]) {
-            const episodeCount = item.seasonEpisodeCounts[selectedSeason];
-            for (let i = 1; i <= episodeCount; i++) {
+        if (season && season.episode_count) {
+            for (let i = 1; i <= season.episode_count; i++) {
                 const option = document.createElement('option');
                 option.value = i;
                 option.textContent = `Episode ${i}`;
                 episodeSelect.appendChild(option);
             }
         }
+        
+        // Set default to episode 1
+        episodeSelect.value = '1';
     }
 
     function loadVersions() {
@@ -572,21 +605,29 @@ document.addEventListener('DOMContentLoaded', function() {
         const version = document.getElementById('version-select').value;
         const modifiedSettings = getModifiedVersionSettings();
     
+        const isTV = currentItem.mediaType === 'tv' || currentItem.mediaType === 'show';
+        
         const scrapeData = {
             imdb_id: document.getElementById('imdbId').value || '',
             tmdb_id: currentItem.id,
             title: currentItem.title || currentItem.name,
             year: currentItem.year,
-            movie_or_episode: currentItem.mediaType === 'tv' ? 'episode' : 'movie',
+            movie_or_episode: isTV ? 'episode' : 'movie',
             version: version,
             modifiedSettings: modifiedSettings
         };
     
         // Add TV show specific information
-        if (currentItem.mediaType === 'tv') {
-            scrapeData.season = document.getElementById('season-select').value;
-            scrapeData.episode = document.getElementById('episode-select').value;
-            scrapeData.multi = document.getElementById('multi-checkbox').checked;
+        if (isTV) {
+            const seasonSelect = document.getElementById('season-select');
+            const episodeSelect = document.getElementById('episode-select');
+            const multiCheckbox = document.getElementById('multi-checkbox');
+            
+            if (seasonSelect && episodeSelect) {
+                scrapeData.season = parseInt(seasonSelect.value) || 1;
+                scrapeData.episode = parseInt(episodeSelect.value) || 1;
+                scrapeData.multi = multiCheckbox ? multiCheckbox.checked : false;
+            }
         }
     
         console.log('Scrape data:', scrapeData);

@@ -15,7 +15,7 @@ guessit==3.8.0
 MarkupSafe==2.1.5
 protobuf==5.28.1
 pykakasi==2.3.0
-requests==2.32.0
+requests==2.32.3
 SQLAlchemy==2.0.31
 tenacity==9.0.0
 urwid==2.6.15
@@ -40,3 +40,5 @@ pystray==0.19.5
 tzlocal==5.2
 APScheduler==3.10.4
 PyGithub==2.1.1
+nyaapy==0.7
+tld>=0.13

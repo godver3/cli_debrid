@@ -123,14 +123,14 @@ def setup_logging():
     
     # Debug file handler
     debug_handler = logging.handlers.RotatingFileHandler(
-        os.path.join(log_dir, 'debug.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8', errors='replace')
+        os.path.join(log_dir, 'debug.log'), maxBytes=50*1024*1024, backupCount=3, encoding='utf-8', errors='replace')
     debug_handler.setLevel(logging.DEBUG)
     debug_handler.setFormatter(formatter)
     root_logger.addHandler(debug_handler)
     
     # Info file handler
     info_handler = logging.handlers.RotatingFileHandler(
-        os.path.join(log_dir, 'info.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8', errors='replace')
+        os.path.join(log_dir, 'info.log'), maxBytes=50*1024*1024, backupCount=3, encoding='utf-8', errors='replace')
     info_handler.setLevel(logging.INFO)
     info_handler.setFormatter(formatter)
     root_logger.addHandler(info_handler)
@@ -168,7 +168,7 @@ def setup_logging():
 
     # Performance file handler
     performance_handler = logging.handlers.RotatingFileHandler(
-        os.path.join(log_dir, 'performance.log'), maxBytes=100*1024*1024, backupCount=5, encoding='utf-8', errors='replace')
+        os.path.join(log_dir, 'performance.log'), maxBytes=50*1024*1024, backupCount=0, encoding='utf-8', errors='replace')
     performance_handler.setLevel(logging.INFO)
     performance_handler.setFormatter(formatter)
     

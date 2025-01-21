@@ -80,6 +80,11 @@ def onboarding_step(step):
                     current_user.password = generate_password_hash(new_password)
                     current_user.is_default = False
                     db.session.commit()
+                    
+                    # Re-login the user with the new credentials to refresh the session
+                    from flask_login import login_user
+                    login_user(current_user)
+                    
                     return jsonify({'success': True})
                 except Exception as e:
                     return jsonify({'success': False, 'error': str(e)})

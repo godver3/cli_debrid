@@ -6,8 +6,8 @@ from initialization import initialize
 from settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
-from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
-from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist
+from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from database import add_collected_items, add_wanted_items
@@ -26,6 +26,7 @@ import ntplib
 from content_checkers.trakt import check_trakt_early_releases
 from debrid.base import TooManyDownloadsError, RateLimitError
 import tempfile
+from api_tracker import api  # Add this import for the api module
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -45,6 +46,10 @@ class ProgramRunner:
         self._initialized = True
         self.running = False
         self.initializing = False
+        self.currently_running_tasks = set()  # Track which tasks are currently running
+        self.pause_reason = None  # Track why the queue is paused
+        self.connectivity_failure_time = None  # Track when connectivity failed
+        self.connectivity_retry_count = 0  # Track number of retries
         
         from queue_manager import QueueManager
         
@@ -81,11 +86,13 @@ class ProgramRunner:
             'task_purge_not_wanted_magnets_file': 604800,
             'task_generate_airtime_report': 3600,
             'task_check_service_connectivity': 60,
-            'task_send_notifications': 300,  # Run every 5 minutes (300 seconds)
+            'task_send_notifications': 15,  # Run every 0.25 minutes (15 seconds)
             'task_sync_time': 3600,  # Run every hour
             'task_check_trakt_early_releases': 3600,  # Run every hour
             'task_reconcile_queues': 300,  # Run every 5 minutes
             'task_heartbeat': 120,  # Run every 2 minutes
+            'task_local_library_scan': 900,  # Run every 5 minutes
+            'task_refresh_download_stats': 300,  # Run every 5 minutes
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -107,10 +114,11 @@ class ProgramRunner:
             'task_sync_time',
             'task_check_trakt_early_releases',
             'task_reconcile_queues',
-            'task_heartbeat'
+            'task_heartbeat',
+            'task_refresh_download_stats'  # Add the new task
         }
 
-        if not get_setting('Debug', 'symlink_collected_files'):
+        if get_setting('File Management', 'file_collection_management') == 'Plex':
             self.enabled_tasks.add('task_plex_full_scan')
         else:
             self.enabled_tasks.add('task_local_library_scan')
@@ -138,9 +146,11 @@ class ProgramRunner:
                 'Overseerr': 900,
                 'MDBList': 900,
                 'Collected': 86400,
-                'Trakt Watchlist': 900,
+                'Trakt Watchlist': 30,
                 'Trakt Lists': 900,
-                'Plex Watchlist': 900
+                'Trakt Collection': 900,
+                'My Plex Watchlist': 30,
+                'Other Plex Watchlist': 900
             }
             
             for source, data in self.content_sources.items():
@@ -156,7 +166,8 @@ class ProgramRunner:
                 # Use custom check period if present, otherwise use default
                 custom_interval = custom_check_periods.get(source)
                 if custom_interval is not None:
-                    data['interval'] = int(custom_interval) * 60  # Convert minutes to seconds
+                    # Convert minutes to seconds, handling decimals
+                    data['interval'] = int(float(custom_interval) * 60)  # First multiply by 60, then convert to int
                 else:
                     data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
 
@@ -179,17 +190,18 @@ class ProgramRunner:
         return self.content_sources
         
     def should_run_task(self, task_name):
-        if task_name not in self.enabled_tasks:
+        if task_name not in self.enabled_tasks or task_name in self.currently_running_tasks:
             return False
         current_time = time.time()
         time_since_last_run = current_time - self.last_run_times[task_name]
         should_run = time_since_last_run >= self.task_intervals[task_name]
         if should_run:
             self.last_run_times[task_name] = current_time
+            self.currently_running_tasks.add(task_name)  # Mark task as running
         return should_run
 
     def task_check_service_connectivity(self):
-        logging.debug("Checking service connectivity")
+        # logging.debug("Checking service connectivity")
         from routes.program_operation_routes import check_service_connectivity
         if check_service_connectivity():
             logging.debug("Service connectivity check passed")
@@ -202,26 +214,50 @@ class ProgramRunner:
         from extensions import app  # Import the Flask app
 
         logging.warning("Pausing program queue due to connectivity failure")
+        self.pause_reason = "Connectivity failure - waiting for services to be available"
         self.pause_queue()
+        
+        # Set the initial failure time if not already set
+        if not self.connectivity_failure_time:
+            self.connectivity_failure_time = time.time()
+            self.connectivity_retry_count = 0
 
-        retry_count = 0
-        max_retries = 5  # 5 minutes (5 * 60 seconds)
+    def check_connectivity_status(self):
+        """Check connectivity status during normal program cycle"""
+        from routes.program_operation_routes import stop_program, check_service_connectivity
+        from extensions import app
 
-        while retry_count < max_retries:
-            time.sleep(60)  # Wait for 1 minute
-            retry_count += 1
+        if not self.connectivity_failure_time:
+            return
 
-            if check_service_connectivity():
-                logging.info("Service connectivity restored")
-                self.resume_queue()
-                return
+        current_time = time.time()
+        time_since_failure = current_time - self.connectivity_failure_time
+        
+        # Check every minute
+        if time_since_failure >= 60 * (self.connectivity_retry_count + 1):
+            self.connectivity_retry_count += 1
+            
+            try:
+                if check_service_connectivity():
+                    logging.info("Service connectivity restored")
+                    self.connectivity_failure_time = None
+                    self.connectivity_retry_count = 0
+                    self.resume_queue()
+                    return
+            except Exception as e:
+                logging.error(f"Error checking connectivity: {str(e)}")
 
-            logging.warning(f"Service connectivity check failed. Retry {retry_count}/{max_retries}")
+            logging.warning(f"Service connectivity check failed. Retry {self.connectivity_retry_count}/5")
+            self.pause_reason = f"Connectivity failure - waiting for services to be available (Retry {self.connectivity_retry_count}/5)"
 
-        logging.error("Service connectivity not restored after 5 minutes. Stopping the program.")
-        with app.app_context():
-            stop_result = stop_program()
-            logging.info(f"Program stop result: {stop_result}")
+            # After 5 minutes (5 retries), stop the program
+            if self.connectivity_retry_count >= 5:
+                logging.error("Service connectivity not restored after 5 minutes. Stopping the program.")
+                with app.app_context():
+                    stop_result = stop_program()
+                    logging.info(f"Program stop result: {stop_result}")
+                self.connectivity_failure_time = None
+                self.connectivity_retry_count = 0
 
     def pause_queue(self):
         from queue_manager import QueueManager
@@ -235,11 +271,15 @@ class ProgramRunner:
 
         QueueManager().resume_queue()
         self.queue_paused = False
+        self.pause_reason = None  # Clear pause reason on resume
         logging.info("Queue resumed")
 
     # Update this method to use the cached content sources
     def process_queues(self):
         try:
+            # Check connectivity status if we're in a failure state
+            self.check_connectivity_status()
+            
             # Remove excessive debug logging at start of cycle
             self.update_heartbeat()
             self.check_heartbeat()
@@ -272,6 +312,8 @@ class ProgramRunner:
                     except Exception as e:
                         logging.error(f"Error processing content source {source}: {str(e)}")
                         logging.error(traceback.format_exc())
+                    finally:
+                        self.currently_running_tasks.discard(task_name)
             
             # Process other enabled tasks
             for task_name in self.enabled_tasks:
@@ -286,6 +328,8 @@ class ProgramRunner:
                         except Exception as e:
                             logging.error(f"Error running task {task_name}: {str(e)}")
                             logging.error(traceback.format_exc())
+                        finally:
+                            self.currently_running_tasks.discard(task_name)
 
         except Exception as e:
             logging.error(f"Error in process_queues: {str(e)}")
@@ -319,14 +363,13 @@ class ProgramRunner:
             
             try:
                 result = process_method()
-            #except TooManyDownloadsError:
-            #    logging.warning("Pausing queue due to too many active downloads on Debrid")
-            #    self.queue_manager.pause_queue()
-            #    return None
             except RateLimitError:
                 logging.warning("Rate limit exceeded on Debrid API")
                 self.handle_rate_limit()
                 return None
+            finally:
+                # Always remove the task from currently_running_tasks
+                self.currently_running_tasks.discard(queue_name)
             
             queue_contents = self.queue_manager.queues[queue_name].get_contents()
             
@@ -338,6 +381,9 @@ class ProgramRunner:
             logging.error(f"Error processing {queue_name} queue: {str(e)}")
             logging.error(traceback.format_exc())
             return None
+        finally:
+            # Double ensure task is removed from currently_running_tasks
+            self.currently_running_tasks.discard(queue_name)
 
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()
@@ -358,16 +404,50 @@ class ProgramRunner:
                     mdblist_url = mdblist_url.strip()
                     wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
             elif source_type == 'Trakt Watchlist':
-                wanted_content = get_wanted_from_trakt_watchlist()
+                try:
+                    wanted_content = get_wanted_from_trakt_watchlist()
+                except (ValueError, api.exceptions.RequestException) as e:
+                    logging.error(f"Failed to fetch Trakt watchlist: {str(e)}")
+                    # Don't raise here - allow other content sources to be processed
+                    return
             elif source_type == 'Trakt Lists':
                 trakt_lists = data.get('trakt_lists', '').split(',')
                 for trakt_list in trakt_lists:
                     trakt_list = trakt_list.strip()
-                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+                    try:
+                        wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+                    except (ValueError, api.exceptions.RequestException) as e:
+                        logging.error(f"Failed to fetch Trakt list {trakt_list}: {str(e)}")
+                        # Continue to next list instead of failing completely
+                        continue
+            elif source_type == 'Trakt Collection':
+                wanted_content = get_wanted_from_trakt_collection()
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected()
-            elif source_type == 'Plex Watchlist':
+            elif source_type == 'My Plex Watchlist':
                 wanted_content = get_wanted_from_plex_watchlist(versions)
+            elif source_type == 'Other Plex Watchlist':
+                other_watchlists = []
+                for source_id, source_data in self.get_content_sources().items():
+                    if source_id.startswith('Other Plex Watchlist_') and source_data.get('enabled', False):
+                        other_watchlists.append({
+                            'username': source_data.get('username', ''),
+                            'token': source_data.get('token', ''),
+                            'versions': source_data.get('versions', versions)
+                        })
+                
+                for watchlist in other_watchlists:
+                    if watchlist['username'] and watchlist['token']:
+                        try:
+                            watchlist_content = get_wanted_from_other_plex_watchlist(
+                                username=watchlist['username'],
+                                token=watchlist['token'],
+                                versions=watchlist['versions']
+                            )
+                            wanted_content.extend(watchlist_content)
+                        except Exception as e:
+                            logging.error(f"Failed to fetch Other Plex watchlist for {watchlist['username']}: {str(e)}")
+                            continue
             else:
                 logging.warning(f"Unknown source type: {source_type}")
                 return
@@ -383,20 +463,26 @@ class ProgramRunner:
                             processed_items = process_metadata(items)
                             if processed_items:
                                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                                for item in all_items:
+                                    item['content_source'] = source
                                 add_wanted_items(all_items, item_versions or versions)
                                 total_items += len(all_items)
                         except Exception as e:
                             logging.error(f"Error processing items from {source}: {str(e)}")
+                            logging.error(traceback.format_exc())
                 else:
                     # Handle single list of items
                     try:
                         processed_items = process_metadata(wanted_content)
                         if processed_items:
                             all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                            for item in all_items:
+                                item['content_source'] = source
                             add_wanted_items(all_items, versions)
                             total_items += len(all_items)
                     except Exception as e:
                         logging.error(f"Error processing items from {source}: {str(e)}")
+                        logging.error(traceback.format_exc())
                 
                 logging.info(f"Added {total_items} wanted items from {source}")
             else:
@@ -405,6 +491,7 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error processing content source {source}: {str(e)}")
             logging.error(traceback.format_exc())
+            # Don't re-raise - allow other content sources to continue processing
 
     def task_refresh_release_dates(self):
         refresh_release_dates()
@@ -556,8 +643,9 @@ class ProgramRunner:
                     notifications = pickle.load(f)
                 
                 if notifications:
-                    # Fetch enabled notifications
-                    response = requests.get('http://localhost:5000/settings/notifications/enabled')
+                    # Fetch enabled notifications using CLI_DEBRID_PORT
+                    port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+                    response = requests.get(f'http://localhost:{port}/settings/notifications/enabled')
                     if response.status_code == 200:
                         enabled_notifications = response.json().get('enabled_notifications', {})
                         
@@ -572,7 +660,8 @@ class ProgramRunner:
                     else:
                         logging.error(f"Failed to fetch enabled notifications: {response.text}")
                 else:
-                    logging.debug("No notifications to send")
+                    # logging.debug("No notifications to send")
+                    pass
             except Exception as e:
                 logging.error(f"Error processing notifications: {str(e)}")
         else:
@@ -669,6 +758,7 @@ class ProgramRunner:
     def handle_rate_limit(self):
         """Handle rate limit by pausing the queue for 30 minutes"""
         logging.warning("Rate limit exceeded. Pausing queue for 30 minutes.")
+        self.pause_reason = "Rate limit exceeded - resuming in 30 minutes"
         self.pause_queue()
         
         # Schedule queue resume after 30 minutes
@@ -680,6 +770,40 @@ class ProgramRunner:
         
         logging.info("Rate limit pause period complete. Resuming queue.")
         self.resume_queue()
+
+    def task_local_library_scan(self):
+        """Run local library scan for symlinked files."""
+        logging.info("Disabled for now")
+        return
+        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            from database import get_all_media_items
+            from utilities.local_library_scan import local_library_scan
+            
+            # Get all items in Checking state
+            items = get_all_media_items(state="Checking")
+            if items:
+                logging.info(f"Running local library scan for {len(items)} items in Checking state")
+                found_items = local_library_scan(items)
+                if found_items:
+                    logging.info(f"Found {len(found_items)} items during local library scan")
+                    
+                    # Move found items to Collected state
+                    for item_id, found_info in found_items.items():
+                        item = found_info['item']
+                        from queue_manager import QueueManager
+                        queue_manager = QueueManager()
+                        queue_manager.move_to_collected(item, "Checking")
+            else:
+                logging.debug("No items in Checking state to scan for")
+
+    def task_refresh_download_stats(self):
+        """Task to refresh the download stats cache"""
+        from database.statistics import get_cached_download_stats
+        try:
+            get_cached_download_stats()  # This will refresh the cache if needed
+            logging.debug("Download stats cache refreshed")
+        except Exception as e:
+            logging.error(f"Error refreshing download stats cache: {str(e)}")
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
@@ -705,7 +829,15 @@ def process_overseerr_webhook(data):
         'media_type': media_type
     }
 
+    # Add requested_seasons if present in media data
+    if media_type == 'tv' and media.get('requested_seasons'):
+        wanted_item['requested_seasons'] = media['requested_seasons']
+        logging.info(f"Added requested seasons to wanted item: {media['requested_seasons']}")
+    else:
+        logging.debug(f"No requested seasons found in media data: {media}")
+
     wanted_content = [wanted_item]
+    logging.debug(f"Processing wanted content with item: {wanted_item}")
     wanted_content_processed = process_metadata(wanted_content)
     if wanted_content_processed:
         # Get the versions for Overseerr from settings
@@ -713,7 +845,11 @@ def process_overseerr_webhook(data):
         overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
         versions = overseerr_settings.get('versions', {})
         
+        logging.info(f"Versions: {versions}")
+
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
+        for item in all_items:
+            item['content_source'] = 'overseerr_webhook'
         add_wanted_items(all_items, versions)
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
 
@@ -846,11 +982,13 @@ def get_and_add_recent_collected_from_plex():
 
 def run_local_library_scan():
     from utilities.local_library_scan import local_library_scan
-    local_library_scan()
+    logging.info("Full library scan disabled for now")
+    #local_library_scan()
 
 def run_recent_local_library_scan():
     from utilities.local_library_scan import recent_local_library_scan
-    recent_local_library_scan()
+    logging.info("Recent library scan disabled for now")
+    #recent_local_library_scan()
 
 def run_program():
     global program_runner
@@ -858,7 +996,10 @@ def run_program():
 
     if program_runner is None or not program_runner.is_running():
         program_runner = ProgramRunner()
-        #program_runner.start()  # This will now run the main loop directly
+        # Update the program runner in program_operation_routes
+        from routes.program_operation_routes import program_operation_bp
+        program_operation_bp.program_runner = program_runner
+        program_runner.start()  # Start the program runner
     else:
         logging.info("Program is already running")
     return program_runner

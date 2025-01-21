@@ -10,36 +10,35 @@ VIDEO_EXTENSIONS = [
 def is_video_file(filename: str) -> bool:
     """Check if a file is a video file based on its extension"""
     result = any(filename.lower().endswith(f'.{ext}') for ext in VIDEO_EXTENSIONS)
-    logging.info(f"is_video_file check for {filename}: {result}")
+    #logging.info(f"is_video_file check for {filename}: {result}")
     return result
 
 def is_unwanted_file(filename: str) -> bool:
     """Check if a file is unwanted (e.g., sample files)"""
     result = 'sample' in filename.lower()
-    logging.info(f"is_unwanted_file check for {filename}: {result}")
+    #logging.info(f"is_unwanted_file check for {filename}: {result}")
     return result
 
 def extract_hash_from_magnet(magnet_link: str) -> str:
-    """Extract hash from a magnet link"""
+    """Extract hash from magnet link or download and extract from HTTP link."""
     try:
-        # Try exact btih format first
-        match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
-        if match:
-            return match.group(1).lower()
+        # If it's an HTTP link, download and extract hash
+        if magnet_link.startswith('http'):
+            from debrid.common import download_and_extract_hash
+            return download_and_extract_hash(magnet_link)
             
-        # Try xt=urn:btih: format
-        match = re.search(r'xt=urn:btih:([a-fA-F0-9]{40})', magnet_link)
-        if match:
-            return match.group(1).lower()
+        # For magnet links, extract hash directly
+        if not magnet_link.startswith('magnet:'):
+            raise ValueError("Invalid magnet link format")
             
-        # Try just finding any 40-char hex string
-        match = re.search(r'[a-fA-F0-9]{40}', magnet_link)
-        if match:
-            return match.group(0).lower()
+        # Extract hash from magnet link
+        hash_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
+        if not hash_match:
+            raise ValueError("Could not find valid hash in magnet link")
             
-        raise ValueError("Could not find valid hash in magnet link")
+        return hash_match.group(1).lower()
     except Exception as e:
-        logging.error(f"Error extracting hash from magnet link: {str(e)}")
+        logging.error(f"Error extracting hash: {str(e)}")
         raise ValueError("Invalid magnet link format")
 
 def is_valid_hash(hash_string: str) -> bool:

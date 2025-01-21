@@ -45,8 +45,8 @@ class TraktMetadata:
             self.request_times.popleft()
         
         # Check if we've hit the rate limit
-        if len(self.request_times) >= self.max_requests:
-            return False
+        # if len(self.request_times) >= self.max_requests:
+        #     return False
         
         # Add the current request time
         self.request_times.append(current_time)
@@ -93,15 +93,19 @@ class TraktMetadata:
             return None
 
     def get_metadata(self, imdb_id: str) -> Dict[str, Any]:
+        logger.debug(f"Getting metadata for {imdb_id}")
         show_data = self._get_show_data(imdb_id)
         if show_data:
+            logger.debug(f"Got show data for {imdb_id}")
             return {
                 'type': 'show',
                 'metadata': show_data
             }
 
+        logger.debug(f"No show data found, trying movie data for {imdb_id}")
         movie_data = self._get_movie_data(imdb_id)
         if movie_data:
+            logger.debug(f"Got movie data for {imdb_id}")
             movie_metadata = {
                 'type': 'movie',
                 'metadata': movie_data
@@ -112,6 +116,7 @@ class TraktMetadata:
                 movie_metadata['metadata']['release_dates'] = release_dates
             return movie_metadata
 
+        logger.warning(f"No metadata found for {imdb_id} (neither show nor movie)")
         return None
 
     def _search_by_imdb(self, imdb_id: str):
@@ -153,24 +158,59 @@ class TraktMetadata:
         url = f"{self.base_url}/movies/{slug}?extended=full"
         response = self._make_request(url)
         if response and response.status_code == 200:
-            return response.json()
+            movie_data = response.json()
+            
+            # Get aliases and add them to the movie data
+            aliases = self._get_movie_aliases(slug)
+            if aliases:
+                movie_data['aliases'] = aliases
+                
+            return movie_data
         return None
 
     def get_show_seasons_and_episodes(self, imdb_id):
-        url = f"{self.base_url}/shows/{imdb_id}/seasons?extended=full,episodes"
+        # First search to get the show's Trakt slug
+        logger.debug(f"Searching for show slug with IMDb ID: {imdb_id}")
+        search_result = self._search_by_imdb(imdb_id)
+        if not search_result or search_result['type'] != 'show':
+            logger.warning(f"Could not find show or invalid type for IMDb ID: {imdb_id}")
+            return None, None
+            
+        show = search_result['show']
+        slug = show['ids']['slug']
+        logger.debug(f"Found show slug: {slug}")
+        
+        # Now get the seasons data using the slug
+        url = f"{self.base_url}/shows/{slug}/seasons?extended=full,episodes"
+        logger.debug(f"Fetching seasons data from: {url}")
         response = self._make_request(url)
         if response and response.status_code == 200:
             seasons_data = response.json()
+            logger.debug(f"Raw seasons data received: {len(seasons_data)} seasons")
+            logger.debug(f"Raw seasons data structure: {json.dumps(seasons_data, indent=2)}")
+            
             processed_seasons = {}
             for season in seasons_data:
                 if season['number'] is not None and season['number'] > 0:
                     season_number = season['number']
+                    logger.debug(f"Processing season {season_number}")
+                    logger.debug(f"Season {season_number} raw data: {json.dumps(season, indent=2)}")
+                    
+                    episodes = season.get('episodes', [])
+                    logger.debug(f"Found {len(episodes)} episodes in season {season_number}")
+                    
                     processed_seasons[season_number] = {
                         'episode_count': season.get('episode_count', 0),
                         'episodes': {}
                     }
-                    for episode in season.get('episodes', []):
-                        episode_number = episode['number']
+                    
+                    for episode in episodes:
+                        episode_number = episode.get('number')
+                        if episode_number is None:
+                            logger.warning(f"Episode in season {season_number} has no number: {json.dumps(episode, indent=2)}")
+                            continue
+                            
+                        logger.debug(f"Processing S{season_number}E{episode_number}")
                         processed_seasons[season_number]['episodes'][episode_number] = {
                             'title': episode.get('title', ''),
                             'overview': episode.get('overview', ''),
@@ -178,15 +218,60 @@ class TraktMetadata:
                             'first_aired': episode.get('first_aired'),
                             'imdb_id': episode['ids'].get('imdb')
                         }
+                        logger.debug(f"Added episode S{season_number}E{episode_number}: {processed_seasons[season_number]['episodes'][episode_number]}")
+                    
+                    logger.debug(f"Completed season {season_number} with {len(processed_seasons[season_number]['episodes'])} episodes")
+            
+            logger.debug(f"Final processed seasons structure: {json.dumps(processed_seasons, indent=2)}")
             return processed_seasons, 'trakt'
+            
+        logger.warning(f"Failed to get seasons data. Status code: {response.status_code if response else 'No response'}")
         return None, None
+
+    def _get_show_aliases(self, slug):
+        """Get all aliases for a show using its Trakt slug"""
+        url = f"{self.base_url}/shows/{slug}/aliases"
+        response = self._make_request(url)
+        if response and response.status_code == 200:
+            aliases_data = response.json()
+            # Process aliases into a more usable format
+            aliases = defaultdict(list)
+            for alias in aliases_data:
+                country = alias.get('country', 'unknown')
+                title = alias.get('title')
+                if title:
+                    aliases[country].append(title)
+            return dict(aliases)
+        return None
 
     def get_show_metadata(self, imdb_id):
         url = f"{self.base_url}/shows/{imdb_id}?extended=full"
         response = self._make_request(url)
         if response and response.status_code == 200:
             show_data = response.json()
-            seasons_data, _ = self.get_show_seasons_and_episodes(imdb_id)
+            logger.debug(f"Initial show data received for {imdb_id}")
+            
+            # Get the show's slug and fetch aliases
+            slug = show_data['ids']['slug']
+            aliases = self._get_show_aliases(slug)
+            if aliases:
+                show_data['aliases'] = aliases
+                logger.debug(f"Added aliases for {imdb_id}")
+            
+            logger.debug(f"Fetching seasons data for {imdb_id}")
+            seasons_data, source = self.get_show_seasons_and_episodes(imdb_id)
+            logger.debug(f"Received seasons data for {imdb_id}: {seasons_data is not None}")
+            if seasons_data:
+                logger.debug(f"Season numbers received: {list(seasons_data.keys())}")
+                # Ensure seasons data is properly structured
+                for season_num in seasons_data:
+                    if 'episodes' not in seasons_data[season_num]:
+                        logger.warning(f"Season {season_num} missing episodes key")
+                        seasons_data[season_num]['episodes'] = {}
+                    if 'episode_count' not in seasons_data[season_num]:
+                        logger.warning(f"Season {season_num} missing episode_count key")
+                        seasons_data[season_num]['episode_count'] = len(seasons_data[season_num].get('episodes', {}))
+                logger.debug(f"Final seasons data structure: {json.dumps(seasons_data, indent=2)}")
             show_data['seasons'] = seasons_data
             return show_data
         return None
@@ -343,6 +428,22 @@ class TraktMetadata:
         
         return None, None
     
+    def _get_movie_aliases(self, slug):
+        """Get all aliases for a movie using its Trakt slug"""
+        url = f"{self.base_url}/movies/{slug}/aliases"
+        response = self._make_request(url)
+        if response and response.status_code == 200:
+            aliases_data = response.json()
+            # Process aliases into a more usable format
+            aliases = defaultdict(list)
+            for alias in aliases_data:
+                country = alias.get('country', 'unknown')
+                title = alias.get('title')
+                if title:
+                    aliases[country].append(title)
+            return dict(aliases)
+        return None
+
 # Add this to your MetadataManager class
 def refresh_trakt_metadata(self, imdb_id: str) -> None:
     trakt = TraktMetadata()
