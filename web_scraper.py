@@ -284,32 +284,47 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
 
     detailed_results = []
     for result in search_results:
-        if result['mediaType'] != 'person' and result['posterPath'] is not None:
+        if result['mediaType'] != 'person':
             tmdb_id = result['id']
             media_type = result['mediaType']
             logging.info(f"Processing media tmdb_id: {tmdb_id}")
             logging.info(f"Processing media type: {media_type}")
 
+            # Skip if no poster path or if it's a placeholder
+            if not result.get('posterPath') or 'placeholder' in result.get('posterPath', '').lower():
+                logging.info(f"Skipping {result['title']} - no poster path or placeholder image")
+                continue
+
             cached_poster_url = get_cached_poster_url(tmdb_id, media_type)
             cached_media_meta = get_cached_media_meta(tmdb_id, media_type)
 
             if cached_poster_url and cached_media_meta:
+                # Validate cached poster URL
+                if 'placeholder' in cached_poster_url.lower() or not cached_poster_url.startswith('https://image.tmdb.org/'):
+                    logging.info(f"Skipping {result['title']} - invalid cached poster URL")
+                    continue
                 logging.info(f"Using cached data for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
                 poster_path = cached_poster_url
                 media_meta = cached_media_meta
             else:
                 logging.info(f"Fetching data for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
                 media_meta = get_media_meta(tmdb_id, media_type)
-                if media_meta:
+                if media_meta and media_meta[0]:  # Check if media_meta exists and has a valid poster URL
                     poster_path = asyncio.run(fetch_poster_url(tmdb_id, media_type))
+                    if not poster_path or 'placeholder' in poster_path.lower() or not poster_path.startswith('https://image.tmdb.org/'):
+                        logging.info(f"Skipping {result['title']} - invalid or missing poster URL")
+                        continue
                     cache_poster_url(tmdb_id, media_type, poster_path)
                     cache_media_meta(tmdb_id, media_type, media_meta)
                     logging.info(f"Cached poster and metadata for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
                 else:
-                    poster_path = None
-                    media_meta = (None, '', [], 0, '')
+                    logging.info(f"Skipping {result['title']} - no valid metadata or poster")
+                    continue
 
-            #logging.info(f"Genres for {result['title']}: {media_meta[2]}")
+            # Skip if overview is empty (likely incomplete metadata)
+            if not media_meta[1].strip():
+                logging.info(f"Skipping {result['title']} - empty overview")
+                continue
 
             detailed_result = {
                 "id": tmdb_id,
@@ -399,7 +414,7 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
 
     # Now use the Trakt ID for further requests
     if season is not None:
-        search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons/{season}?extended=full,episodes"
+        search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons/{season}?extended=full"
     else:
         search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons?extended=full"
 

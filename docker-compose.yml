@@ -10,7 +10,7 @@ services:
       - /host/location/db_content:/user/db_content
       - /host/location/config:/user/config
       - /host/location/logs:/user/logs
-      - /media/mount:/media/mount # optional - used by video player
+      - /media/mount:/media/mount # optional - used for symlinking - must match the mount point that Plex uses
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped
