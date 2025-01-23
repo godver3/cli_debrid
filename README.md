@@ -3,7 +3,10 @@
 cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is designed to automatically manage and upgrade your media collection, leveraging various sources and services to ensure you always have the best quality content available.
 
 ## Version Information
+
+### Main Branch
 ![Main Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/main)
+### Dev Branch
 ![Dev Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/dev)
 
 ## Community
