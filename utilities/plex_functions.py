@@ -643,84 +643,105 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         
         sections = plex.library.sections()
         file_deleted = False
+        max_retries = 3
+        retry_delay = 1  # seconds
         
-        for section in sections:
+        for attempt in range(max_retries):
             try:
-                if section.type == 'show':
-                    # Extract show title from item_title (assuming format "Show Title_...")
-                    show_title = item_title.split('_')[0]
-                    
-                    # Search for the show
-                    shows = section.search(title=show_title)
-                    
-                    for show in shows:
-                        # Get all episodes for the show
-                        try:
-                            episodes = show.episodes()
-                        except Exception as e:
-                            logger.error(f"Error getting episodes for show {show.title}: {str(e)}")
-                            continue
-                        
-                        for episode in episodes:
-                            if hasattr(episode, 'media'):
-                                for media in episode.media:
-                                    for part in media.parts:
-                                        if os.path.basename(part.file) == os.path.basename(item_path):
-                                            logger.info(f"Found matching file in episode: {episode.title}")
-                                            # Refresh media before deletion
-                                            try:
-                                                episode.refresh()
-                                                logger.info(f"Refreshed episode: {episode.title}")
-                                            except Exception as e:
-                                                logger.error(f"Error refreshing episode: {str(e)}")
-                                            media.delete()
-                                            logger.info(f"Successfully deleted media containing file: {part.file}")
-                                            file_deleted = True
-                                            return True
-                            else:
-                                logger.warning(f"No media found for episode: {episode.title}")
-                else:
-                    # For movies and other types, use the existing search method
-                    items = section.search(title=item_title)
-                    
-                    for item in items:
-                        logger.info(f"Checking item: {item.title}")
-                        if hasattr(item, 'media'):
-                            for media in item.media:
-                                for part in media.parts:
-                                    logger.info(f"Checking file: {part.file}")
-                                    if os.path.basename(part.file) == os.path.basename(item_path):
-                                        logger.info(f"Found matching file in item: {item.title}")
-                                        # Refresh media before deletion
-                                        try:
-                                            item.refresh()
-                                            logger.info(f"Refreshed item: {item.title}")
-                                        except Exception as e:
-                                            logger.error(f"Error refreshing item: {str(e)}")
-                                        media.delete()
-                                        logger.info(f"Successfully deleted media containing file: {part.file} from item: {item.title}")
-                                        file_deleted = True
-                                        return True
+                if attempt > 0:
+                    logger.info(f"Retry attempt {attempt + 1}/{max_retries} for removing {item_title}")
+                    time.sleep(retry_delay)
+                
+                for section in sections:
+                    try:
+                        if section.type == 'show':
+                            # Extract show title from item_title (assuming format "Show Title_...")
+                            show_title = item_title.split('_')[0]
+                            
+                            # Search for the show
+                            shows = section.search(title=show_title)
+                            
+                            for show in shows:
+                                # Get all episodes for the show
+                                try:
+                                    episodes = show.episodes()
+                                except Exception as e:
+                                    logger.error(f"Error getting episodes for show {show.title}: {str(e)}")
+                                    continue
+                                
+                                for episode in episodes:
+                                    if hasattr(episode, 'media'):
+                                        for media in episode.media:
+                                            for part in media.parts:
+                                                if os.path.basename(part.file) == os.path.basename(item_path):
+                                                    logger.info(f"Found matching file in episode: {episode.title}")
+                                                    # Refresh media before deletion
+                                                    try:
+                                                        episode.refresh()
+                                                        logger.info(f"Refreshed episode: {episode.title}")
+                                                        # Wait for Plex to process the refresh
+                                                        time.sleep(1)
+                                                        media.delete()
+                                                        logger.info(f"Successfully deleted media containing file: {part.file}")
+                                                        file_deleted = True
+                                                        return True
+                                                    except Exception as e:
+                                                        logger.error(f"Error during episode refresh/delete: {str(e)}")
+                                                        if attempt == max_retries - 1:  # Last attempt
+                                                            raise  # Re-raise on final attempt
+                                                        continue
+                                    else:
+                                        logger.warning(f"No media found for episode: {episode.title}")
                         else:
-                            logger.warning(f"No media found for item: {item.title}")
+                            # For movies and other types, use the existing search method
+                            items = section.search(title=item_title)
+                            
+                            for item in items:
+                                logger.info(f"Checking item: {item.title}")
+                                if hasattr(item, 'media'):
+                                    for media in item.media:
+                                        for part in media.parts:
+                                            logger.info(f"Checking file: {part.file}")
+                                            if os.path.basename(part.file) == os.path.basename(item_path):
+                                                logger.info(f"Found matching file in item: {item.title}")
+                                                # Refresh media before deletion
+                                                try:
+                                                    item.refresh()
+                                                    logger.info(f"Refreshed item: {item.title}")
+                                                    # Wait for Plex to process the refresh
+                                                    time.sleep(1)
+                                                    media.delete()
+                                                    logger.info(f"Successfully deleted media containing file: {part.file} from item: {item.title}")
+                                                    file_deleted = True
+                                                    return True
+                                                except Exception as e:
+                                                    logger.error(f"Error during item refresh/delete: {str(e)}")
+                                                    if attempt == max_retries - 1:  # Last attempt
+                                                        raise  # Re-raise on final attempt
+                                                    continue
+                                else:
+                                    logger.warning(f"No media found for item: {item.title}")
+                    except Exception as e:
+                        logger.error(f"Error processing section {section.title}: {str(e)}")
+                        if attempt == max_retries - 1:  # Last attempt
+                            raise  # Re-raise on final attempt
+                        continue
                 
                 if not file_deleted:
-                    logger.warning(f"No matching files found in section {section.title} for title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
+                    logger.warning(f"No matching files found in section {section.title} for title: {item_title}, episode title: {episode_title}")
+                    if attempt < max_retries - 1:  # Not the last attempt
+                        continue
+                    
             except Exception as e:
-                logger.error(f"Unexpected error in section {section.title}: {str(e)}", exc_info=True)
-        
-        if not file_deleted:
-            logger.warning(f"No matching files found in any Plex library section for title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
-            return False
-        
-    except plexapi.exceptions.Unauthorized:
-        logger.error("Unauthorized: Please check your Plex token")
-        return False
-    except plexapi.exceptions.NotFound:
-        logger.error(f"Plex server not found at {plex_url}")
-        return False
+                logger.error(f"Error during attempt {attempt + 1}: {str(e)}")
+                if attempt == max_retries - 1:  # Last attempt
+                    raise  # Re-raise on final attempt
+                continue
+                
+        return file_deleted
+            
     except Exception as e:
-        logger.error(f"Unexpected error removing file from Plex: {str(e)}", exc_info=True)
+        logger.error(f"Error removing file from Plex: {str(e)}")
         return False
 
 def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str = None) -> bool:

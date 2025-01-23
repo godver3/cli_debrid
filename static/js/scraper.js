@@ -30,13 +30,12 @@ function searchMedia(event) {
 }
 
 function displaySearchResults(results, version) {
-    console.log('Displaying results:', results);  // Debugging line
+    console.log('Displaying results:', results);
     toggleResultsVisibility('displaySearchResults');
     const searchResultsDiv = document.getElementById('searchResult');
-    searchResultsDiv.innerHTML = '';
+    searchResultsDiv.innerHTML = '<div class="search-results-container"></div>';
     
-    // Create a container for the grid layout
-    const gridContainer = document.createElement('div');
+    const gridContainer = searchResultsDiv.querySelector('.search-results-container');
     gridContainer.style.display = 'flex';
     gridContainer.style.flexWrap = 'wrap';
     gridContainer.style.gap = '20px';
@@ -52,17 +51,22 @@ function displaySearchResults(results, version) {
     handleScreenChange(mediaQuery);
 
     results.forEach(item => {
+        console.log('Creating element for item:', item);  // Debug log
         const searchResDiv = document.createElement('div');
         searchResDiv.className = 'sresult';
+        const posterUrl = item.poster_path.startsWith('http') ? 
+            item.poster_path : 
+            `https://image.tmdb.org/t/p/w300${item.poster_path}`;
         searchResDiv.innerHTML = `
             <button>${item.media_type === 'show' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-            <img src="${item.poster_path ? 'https://image.tmdb.org/t/p/w600_and_h900_bestv2' + item.poster_path : '/static/image/placeholder-horizontal.png'}" 
+            <img src="${item.poster_path ? posterUrl : '/static/image/placeholder-horizontal.png'}" 
                 alt="${item.title}" 
                 class="${item.poster_path ? '' : 'placeholder-poster'}">
             <div class="searchresult-info">
                 <h2 class="searchresult-item">${item.title} (${item.year || 'N/A'})</h2>
             </div></button>                
-        `;        
+        `;
+        console.log('Created HTML:', searchResDiv.innerHTML);  // Debug log
         searchResDiv.onclick = function() {
             if (item.media_type === 'movie') {
                 selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
@@ -73,7 +77,6 @@ function displaySearchResults(results, version) {
         gridContainer.appendChild(searchResDiv);
     });
 
-    searchResultsDiv.appendChild(gridContainer);
 }
 
 function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path, genre_ids, vote_average, backdrop_path, show_overview) {

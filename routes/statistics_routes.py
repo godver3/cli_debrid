@@ -824,3 +824,108 @@ def usage_stats():
                 'error': 'failed'
             }
         })
+
+@statistics_bp.route('/api/index')
+@user_required
+def index_api():
+    """API endpoint that returns the same data as the index route but in JSON format"""
+    stats = {}
+    
+    # Get timezone and uptime info
+    timezone = get_setting('Debug', 'timezone_override', '')
+    if timezone:
+        local_tz = ZoneInfo(timezone)
+    else:
+        local_tz = get_localzone()
+    stats['timezone'] = str(local_tz)
+    stats['uptime'] = int(time.time() - app_start_time)
+    
+    # Get collection counts
+    counts = get_collected_counts()
+    stats['total_movies'] = counts['total_movies']
+    stats['total_shows'] = counts['total_shows']
+    stats['total_episodes'] = counts['total_episodes']
+    
+    # Get active downloads and usage stats
+    active_downloads = get_cached_active_downloads()
+    usage_stats = get_cached_user_traffic()
+    stats['active_downloads_data'] = active_downloads
+    stats['usage_stats_data'] = usage_stats
+    
+    # Get recently aired and upcoming shows
+    recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+    
+    # Get upcoming releases
+    upcoming_releases = get_upcoming_releases()
+    for release in upcoming_releases:
+        release['formatted_date'] = format_date(release['release_date'])
+    
+    # Get recently added and upgraded items
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        # Get recently added items
+        recently_added_data = loop.run_until_complete(get_recently_added_items())
+        recently_added = {
+            'movies': [],
+            'shows': []
+        }
+        
+        use_24hour_format = get_setting('UI Settings', 'use_24hour_format', True)
+        
+        # Process movies
+        if 'movies' in recently_added_data:
+            for movie in recently_added_data['movies']:
+                movie['formatted_date'] = format_datetime_preference(
+                    movie['collected_at'],
+                    use_24hour_format
+                )
+                recently_added['movies'].append(movie)
+        
+        # Process shows
+        if 'shows' in recently_added_data:
+            for show in recently_added_data['shows']:
+                show['formatted_date'] = format_datetime_preference(
+                    show['collected_at'],
+                    use_24hour_format
+                )
+                recently_added['shows'].append(show)
+        
+        # Get recently upgraded items
+        recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
+        for item in recently_upgraded:
+            item['formatted_date'] = format_datetime_preference(
+                item['last_updated'],
+                use_24hour_format
+            )
+    
+    finally:
+        loop.close()
+    
+    # Check if TMDB API key is set
+    tmdb_api_key = get_setting('TMDB', 'api_key', '')
+    stats['tmdb_api_key_set'] = bool(tmdb_api_key)
+    
+    # Format dates for recently aired and airing soon
+    for item in recently_aired:
+        item['formatted_datetime'] = format_datetime_preference(
+            item['air_datetime'],
+            use_24hour_format
+        )
+    
+    for item in airing_soon:
+        item['formatted_datetime'] = format_datetime_preference(
+            item['air_datetime'],
+            use_24hour_format
+        )
+    
+    return jsonify({
+        'stats': stats,
+        'recently_aired': recently_aired,
+        'airing_soon': airing_soon,
+        'upcoming_releases': upcoming_releases,
+        'recently_added': recently_added,
+        'recently_upgraded': recently_upgraded,
+        'use_24hour_format': use_24hour_format
+    })

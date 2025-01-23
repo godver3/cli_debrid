@@ -336,7 +336,13 @@
                 <div class="cards-container">
                     {% for movie in recently_added.movies %}
                     <div class="card">
-                        {% if not compact_view %}
+                        {% if compact_view %}
+                        <div class="file-details">
+                            <span class="title">{{ movie.title }} ({{ movie.year }})</span>
+                            <span class="metadata">Quality: {{ movie.version }}</span>
+                            <span class="filename">{{ movie.filled_by_file }}</span>
+                        </div>
+                        {% else %}
                         <div class="poster-container">
                             <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
@@ -345,71 +351,63 @@
                                 <span class="filename">{{ movie.filled_by_file }}</span>
                             </div>
                         </div>
-                        {% else %}
-                        <div class="file-details">
-                            <span class="title">{{ movie.title }} ({{ movie.year }})</span>
-                            <span class="metadata">Quality: {{ movie.version }}</span>
-                            <span class="filename">{{ movie.filled_by_file }}</span>
-                        </div>
                         {% endif %}
                     </div>
                     {% endfor %}
                 </div>
             </div>
-
+            
             <div class="stats-box recently-added-section-bottom" id="recently_added_shows">
                 <h3>Recently Added Shows</h3>
                 <div class="cards-container">
                     {% for show in recently_added.shows %}
                     <div class="card">
-                        {% if not compact_view %}
+                        {% if compact_view %}
+                        <div class="file-details">
+                            <span class="title">{{ show.title }}</span>
+                            <span class="metadata">S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
+                            <span class="filename">{{ show.filled_by_file }}</span>
+                        </div>
+                        {% else %}
                         <div class="poster-container">
                             <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ show.title }}</span>
-                                <span class="metadata">S{{ '%02d'|format(show.season_number|int) }}E{{ '%02d'|format(show.episode_number|int) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
+                                <span class="metadata">S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
                                 <span class="filename">{{ show.filled_by_file }}</span>
                             </div>
-                        </div>
-                        {% else %}
-                        <div class="file-details">
-                            <span class="title">{{ show.title }}</span>
-                            <span class="metadata">S{{ '%02d'|format(show.season_number|int) }}E{{ '%02d'|format(show.episode_number|int) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
-                            <span class="filename">{{ show.filled_by_file }}</span>
                         </div>
                         {% endif %}
                     </div>
                     {% endfor %}
                 </div>
             </div>
-
-            {% if recently_upgraded %}
+            
             <div class="stats-box recently-upgraded-section" id="recently_upgraded">
                 <h3>Recently Upgraded</h3>
                 <div class="cards-container">
                     {% for item in recently_upgraded %}
                     <div class="card">
-                        {% if not compact_view %}
+                        {% if compact_view %}
+                        <div class="file-details">
+                            <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
+                            <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
+                            <span class="filename">{{ item.filled_by_file }}</span>
+                        </div>
+                        {% else %}
                         <div class="poster-container">
                             <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                                <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number|int) }}E{{ '%02d'|format(item.episode_number|int) }} - {% endif %}Quality: {{ item.version }}</span>
+                                <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
                                 <span class="filename">{{ item.filled_by_file }}</span>
                             </div>
-                        </div>
-                        {% else %}
-                        <div class="file-details">
-                            <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                            <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number|int) }}E{{ '%02d'|format(item.episode_number|int) }} - {% endif %}Quality: {{ item.version }}</span>
-                            <span class="filename">{{ item.filled_by_file }}</span>
                         </div>
                         {% endif %}
                     </div>
                     {% endfor %}
                 </div>
             </div>
-            {% endif %}
         </div>
     </div>
 </div>

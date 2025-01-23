@@ -164,6 +164,11 @@ class TraktMetadata:
             aliases = self._get_movie_aliases(slug)
             if aliases:
                 movie_data['aliases'] = aliases
+
+            # Get release dates and add them to the movie data
+            release_dates = self.get_release_dates(imdb_id)
+            if release_dates:
+                movie_data['release_dates'] = release_dates
                 
             return movie_data
         return None
@@ -360,7 +365,15 @@ class TraktMetadata:
         return "Posters not available through Trakt API"
 
     def get_release_dates(self, imdb_id):
-        url = f"{self.base_url}/movies/{imdb_id}/releases"
+        # First search to get the movie's Trakt slug
+        search_result = self._search_by_imdb(imdb_id)
+        if not search_result or search_result['type'] != 'movie':
+            return None
+            
+        movie = search_result['movie']
+        slug = movie['ids']['slug']
+
+        url = f"{self.base_url}/movies/{slug}/releases"
         response = self._make_request(url)
         if response and response.status_code == 200:
             releases = response.json()

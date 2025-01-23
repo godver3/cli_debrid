@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}Magnet Assignment{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/magnet_assign.css') }}">
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const contentTypeSelect = document.getElementById('content_type');
+    const tvShowFields = document.querySelector('.tv-show-fields');
+    
+    if (contentTypeSelect && tvShowFields) {
+        contentTypeSelect.addEventListener('change', function() {
+            if (this.value === 'show') {
+                tvShowFields.style.display = 'block';
+            } else {
+                tvShowFields.style.display = 'none';
+            }
+        });
+    }
+
+    // Load versions from API
+    fetch('{{ url_for('magnet.get_versions') }}')
+        .then(response => response.json())
+        .then(versions => {
+            const versionSelects = document.querySelectorAll('select[name="version"]');
+            versionSelects.forEach(select => {
+                select.innerHTML = '<option value="">Select Version</option>';
+                versions.forEach(version => {
+                    const option = document.createElement('option');
+                    option.value = version;
+                    option.textContent = version;
+                    select.appendChild(option);
+                });
+            });
+        })
+        .catch(error => console.error('Error loading versions:', error));
+
+    // Add event listener to bypass the generic form handler for our forms
+    document.querySelectorAll('.direct-submit-form').forEach(form => {
+        form.addEventListener('submit', function(e) {
+            // Don't prevent default - let the form submit normally
+            e.stopPropagation(); // Prevent other handlers from catching this event
+        });
+    });
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="warning-banner">
+    <p>⚠️ Warning: This feature is currently under development and not yet functional.</p>
+</div>
+<div class="search-container">
+    {% if step == 'search' or not step %}
+    <div class="search-form">
+        <h3>Search for Media</h3>
+        <form method="POST" action="{{ url_for('magnet.assign_magnet') }}" class="mb-4 direct-submit-form">
+            <input type="hidden" name="action" value="search">
+            <div class="form-group mb-3">
+                <label for="search_term">Search for Movie/TV Show:</label>
+                <input type="text" class="form-control" id="search_term" name="search_term" required>
+            </div>
+            <div class="form-group mb-3">
+                <label for="content_type">Content Type:</label>
+                <select class="form-control" id="content_type" name="content_type">
+                    <option value="all">All</option>
+                    <option value="movie">Movie</option>
+                    <option value="show">TV Show</option>
+                </select>
+            </div>
+            <div class="tv-show-fields" style="display: none;">
+                <div class="form-group mb-3">
+                    <label for="season">Season Number:</label>
+                    <input type="number" class="form-control" id="season" name="season" min="1">
+                </div>
+                <div class="form-group mb-3">
+                    <label for="episode">Episode Number:</label>
+                    <input type="number" class="form-control" id="episode" name="episode" min="1">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Search</button>
+        </form>
+    </div>
+    {% endif %}
+
+    {% if step == 'results' and search_results %}
+    <div class="search-results">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3>Search Results for "{{ search_term }}"</h3>
+            <a href="{{ url_for('magnet.assign_magnet') }}" class="btn btn-secondary">New Search</a>
+        </div>
+        <div class="results-grid">
+            {% for result in search_results %}
+            <div class="media-card">
+                {% if result.posterPath %}
+                <img src="{{ result.posterPath }}" class="media-poster" alt="{{ result.title }}">
+                {% endif %}
+                <div class="media-info">
+                    <h6>{{ result.title }} ({{ result.year }})</h6>
+                    <p class="text-muted">{{ result.mediaType|title }}</p>
+                    {% if result.mediaType == 'show' %}
+                        {% if result.selected_season %}
+                            <p>Season: {{ result.selected_season }}
+                            {% if result.selected_episode %}
+                                , Episode: {{ result.selected_episode }}
+                            {% endif %}
+                            </p>
+                        {% endif %}
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('magnet.assign_magnet') }}" class="magnet-form direct-submit-form">
+                        <input type="hidden" name="action" value="assign">
+                        <input type="hidden" name="tmdb_id" value="{{ result.id }}">
+                        <input type="hidden" name="media_type" value="{{ result.mediaType }}">
+                        <input type="hidden" name="title" value="{{ result.title }}">
+                        <input type="hidden" name="year" value="{{ result.year }}">
+                        {% if result.selected_season %}
+                            <input type="hidden" name="season" value="{{ result.selected_season }}">
+                            {% if result.selected_episode %}
+                                <input type="hidden" name="episode" value="{{ result.selected_episode }}">
+                            {% endif %}
+                        {% endif %}
+                        <div class="form-group">
+                            <input type="text" class="form-control" id="magnet_link_{{ result.id }}" 
+                                   name="magnet_link" required placeholder="Enter magnet link">
+                        </div>
+                        <div class="form-group">
+                            <select class="form-control" name="version" required>
+                                <option value="">Select Version</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-success">Assign Magnet</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
