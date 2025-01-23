@@ -1,5 +1,5 @@
 from flask import jsonify, request, current_app, Blueprint, logging, render_template
-from routes import admin_required
+from routes import admin_required, user_required
 from .database_routes import perform_database_migration 
 from extensions import initialize_app 
 from config_manager import load_config 
@@ -403,7 +403,7 @@ def check_program_conditions():
     })
 
 @program_operation_bp.route('/api/task_timings', methods=['GET'])
-@login_required
+@user_required
 def get_task_timings():
     global program_runner
     
@@ -461,7 +461,6 @@ def get_task_timings():
     })
 
 @program_operation_bp.route('/task_timings')
-@login_required
-@admin_required
+@user_required
 def task_timings():
     return render_template('task_timings.html')

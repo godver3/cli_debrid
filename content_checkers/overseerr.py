@@ -138,11 +138,17 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
 
                     # Check cache for this item
                     cache_key = f"{wanted_item['tmdb_id']}_{wanted_item['media_type']}"
+                    if 'requested_seasons' in wanted_item:
+                        cache_key += f"_s{'_'.join(map(str, wanted_item['requested_seasons']))}"
+                    
                     cache_item = cache.get(cache_key)
                     
                     if cache_item:
                         last_processed = cache_item['timestamp']
-                        if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
+                        # For TV shows, only use cache if it's the same seasons
+                        if (current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS) and
+                            (wanted_item['media_type'] != 'tv' or
+                             wanted_item.get('requested_seasons') == cache_item['data'].get('requested_seasons'))):
                             cache_skipped += 1
                             continue
                     
