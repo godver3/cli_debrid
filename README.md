@@ -10,7 +10,7 @@ cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is desi
 
 *Dev Branch*
 
-![Dev Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/dev&logoColor=orange)
+![Dev Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/dev&color=orange&logoColor=orange)
 
 ## Community
 
