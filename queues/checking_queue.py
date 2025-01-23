@@ -134,6 +134,11 @@ class CheckingQueue:
         try:
             current_progress = self.get_torrent_progress(torrent_id)
             
+            # Handle case where progress couldn't be retrieved
+            if current_progress is None:
+                logging.info(f"Could not get progress for torrent {torrent_id}, returning unknown state")
+                return 'unknown'
+            
             # If progress is 100%, it's downloaded
             if current_progress == 100:
                 return 'downloaded'
@@ -147,7 +152,7 @@ class CheckingQueue:
                 last_progress = self.progress_checks[torrent_id]['last_progress']
                 if last_progress == 100:
                     return 'downloaded'
-                if current_progress > last_progress:
+                if last_progress is not None and current_progress > last_progress:
                     return 'downloading'
             
             return 'unknown'

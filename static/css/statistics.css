@@ -339,7 +339,9 @@ input:checked + .toggle-slider:before {
 .compact-view .stats-box.recently-aired .air-time,
 .compact-view .stats-box.airing-soon .air-time,
 .compact-view .stats-box.upcoming-releases .release-date {
-    margin-left: 10px;
+    margin-left: auto;
+    text-align: right;
+    min-width: 160px;
 }
 
 .compact-view .file-details {
@@ -357,6 +359,28 @@ input:checked + .toggle-slider:before {
 .compact-view .file-details .filename {
     font-size: 0.85em;
     word-break: break-word;
+}
+
+/* Bottom sections grid layout for compact view (desktop only) */
+@media screen and (min-width: 769px) {
+    .statistics-wrapper.compact-view .recently-added {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        width: 100%;
+    }
+
+    .statistics-wrapper.compact-view .recently-added-section-top,
+    .statistics-wrapper.compact-view .recently-added-section-bottom,
+    .statistics-wrapper.compact-view .recently-upgraded-section {
+        margin: 0;
+        height: auto;
+    }
+}
+
+/* Scrollable containers for both mobile and desktop */
+.statistics-wrapper.compact-view .cards-container {
+    overflow-y: visible;
 }
 
 .tmdb-info {

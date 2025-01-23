@@ -355,3 +355,33 @@ def add_media_item(item: dict) -> int:
         return None
     finally:
         conn.close()
+
+@retry_on_db_lock()
+def update_version_name(old_version: str, new_version: str) -> int:
+    """Update all media items with a specific version name to use a new version name.
+    
+    Args:
+        old_version: The current version name to update
+        new_version: The new version name to set
+        
+    Returns:
+        int: Number of items updated
+    """
+    conn = get_db_connection()
+    try:
+        conn.execute('BEGIN TRANSACTION')
+        cursor = conn.execute('''
+            UPDATE media_items
+            SET version = ?, last_updated = ?
+            WHERE version = ?
+        ''', (new_version, datetime.now(), old_version))
+        updated_count = cursor.rowcount
+        conn.commit()
+        logging.info(f"Updated version from '{old_version}' to '{new_version}' for {updated_count} media items")
+        return updated_count
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"Error updating version name from '{old_version}' to '{new_version}': {str(e)}")
+        return 0
+    finally:
+        conn.close()

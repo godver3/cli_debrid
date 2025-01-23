@@ -11,8 +11,12 @@ from utilities.anidb_functions import format_filename_with_anidb
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
-    # Only replace characters that are truly problematic for symlinks
-    filename = re.sub(r'[<>|?*]', '_', filename)  # Removed :"/\ from the list as they're valid in paths
+    # Convert Unicode characters to their ASCII equivalents where possible
+    import unicodedata
+    filename = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('ascii')
+    
+    # Replace problematic characters
+    filename = re.sub(r'[<>|?*:"\'\&/\\]', '_', filename)  # Added slashes and backslashes
     return filename.strip()  # Just trim whitespace, don't mess with dots
 
 def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
@@ -98,15 +102,21 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
             if i == len(path_parts) - 1:
                 if not sanitized_part.endswith(extension):
                     sanitized_part += extension
-                # Check if filename exceeds max length
-                max_filename_length = 247
-                filename_without_ext = os.path.splitext(sanitized_part)[0]
-                if len(sanitized_part) > max_filename_length:
-                    # Truncate the filename part only, preserving extension
-                    excess = len(sanitized_part) - max_filename_length
+                
+                # Check if full path would exceed max length (260 chars for Windows)
+                max_path_length = 255
+                dir_path = os.path.join(symlinked_path, *parts)
+                full_path = os.path.join(dir_path, sanitized_part)
+                
+                if len(full_path) > max_path_length:
+                    # Calculate how much we need to truncate
+                    excess = len(full_path) - max_path_length
+                    filename_without_ext = os.path.splitext(sanitized_part)[0]
+                    # Add 3 more chars for the "..." we'll add
                     truncated = filename_without_ext[:-excess-3] + "..."
                     sanitized_part = truncated + extension
-                    logging.debug(f"Truncated filename from {len(filename_without_ext + extension)} to {len(sanitized_part)} chars: {sanitized_part}")
+                    logging.debug(f"Truncated full path from {len(full_path)} to {len(os.path.join(dir_path, sanitized_part))} chars")
+                
                 # For the final part (filename), we'll add it later
                 final_filename = sanitized_part
             else:
@@ -295,18 +305,18 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 if old_dest and os.path.lexists(old_dest):
                     try:
                         os.unlink(old_dest)
-                        logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")                                            
+                        logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+                        # Wait for Plex to detect the removed symlink
+                        time.sleep(1)
+                        # Remove the old file from Plex
+                        from utilities.plex_functions import remove_file_from_plex
+                        # Sleep for 0.5 seconds to give plex time to remove the file
+                        remove_file_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
                     except Exception as e:
                         logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
                 else:
                     logging.debug(f"[UPGRADE] No old symlink found at {old_dest}")
-
-                # Remove the old file from Plex
-                from utilities.plex_functions import remove_file_from_plex
-                # Sleep for 0.5 seconds to give plex time to remove the file
-                # time.sleep(0.5)
-                remove_file_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
-
+            
             if not os.path.exists(dest_file):
                 success = create_symlink(source_file, dest_file)
                 logging.debug(f"[UPGRADE] Created new symlink: {success}")

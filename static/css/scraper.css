@@ -139,8 +139,10 @@ form#search-form input:-ms-input-placeholder {
 
 
 .sresult {
+    flex: 0 0 auto;
     transition: transform 0.3s ease;
     width: 200px;
+    margin-bottom: 20px;
 }
 
 .sresult:hover {
@@ -171,14 +173,30 @@ h2.searchresult-item {
     object-fit: cover;
 }
 
-.searchresult-info {
-    flex: 1;
+.search-results-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: center;
+}
+
+#searchResult {
+    width: 100%;
+    padding: 20px;
+    box-sizing: border-box;
 }
 
 #searchResult > div {
     padding-top: 30px;
-    width: 1600px; /* (300px * 5) + (20px * 4) for gaps */
-    margin: 0 auto; /* Centers the container if it's narrower than its parent */
+    max-width: 1600px;
+    width: 100%;
+    margin: 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: center;
 }
 
 .close-btn {

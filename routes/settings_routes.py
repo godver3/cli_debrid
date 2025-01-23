@@ -603,8 +603,15 @@ def rename_version():
     if 'Scraping' in config and 'versions' in config['Scraping']:
         versions = config['Scraping']['versions']
         if old_name in versions:
+            # Update version name in config
             versions[new_name] = versions.pop(old_name)
             save_config(config)
+            
+            # Update version name in database
+            from database.database_writing import update_version_name
+            updated_count = update_version_name(old_name, new_name)
+            logging.info(f"Updated {updated_count} media items in database from version '{old_name}' to '{new_name}'")
+            
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'Version not found'}), 404
