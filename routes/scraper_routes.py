@@ -205,8 +205,9 @@ def add_torrent_to_debrid():
         if isinstance(debrid_provider, RealDebridProvider):
             # For Real Debrid, use the torrent ID directly
             torrent_info = debrid_provider.get_torrent_info(torrent_id)
+        '''
+        #tb
         else:
-            # For TorBox, extract and use the hash
             hash_value = extract_hash_from_magnet(magnet_link) if magnet_link.startswith('magnet:') else None
             if not hash_value and temp_file:
                 # If we have a torrent file, extract hash from it
@@ -219,6 +220,7 @@ def add_torrent_to_debrid():
                 logging.error(error_message)
                 return jsonify({'error': error_message}), 500
             torrent_info = debrid_provider.get_torrent_info(hash_value)
+        '''
 
         if not torrent_info:
             error_message = "Failed to get torrent info"

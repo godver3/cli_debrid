@@ -303,7 +303,7 @@
                             {{ key|replace('_', ' ')|title }}
                         </label>
                     {% elif key == 'max_resolution' %}
-                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">Resolution Value:</label>
                         <select id="scraping-{{ version }}-{{ key }}" 
                                 name="Scraping.versions.{{ version }}.{{ key }}" 
                                 class="settings-input"
@@ -314,7 +314,7 @@
                             {% endfor %}
                         </select>
                     {% elif key == 'resolution_wanted' %}
-                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">Resolution Requirement:</label>
                         <select id="scraping-{{ version }}-{{ key }}" 
                                 name="Scraping.versions.{{ version }}.{{ key }}" 
                                 class="settings-input"

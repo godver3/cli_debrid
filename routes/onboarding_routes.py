@@ -123,8 +123,6 @@ def onboarding_step(step):
                 provider = request.form.get('debrid_provider', 'RealDebrid')
                 if provider == 'RealDebrid':
                     api_key = request.form.get('realdebrid_api_key', '')
-                else:
-                    api_key = request.form.get('torbox_api_key', '')
                 
                 config['Debrid Provider'] = {
                     'provider': provider,

@@ -12,8 +12,10 @@ from threading import Timer, Lock
 # Global notification buffer
 notification_buffer = []
 notification_timer = None
+safety_valve_timer = None
 buffer_lock = Lock()
 BUFFER_TIMEOUT = 10  # seconds to wait before sending notifications
+SAFETY_VALVE_TIMEOUT = 60  # seconds maximum to wait before forcing send
 
 def safe_format_date(date_value):
     if not date_value:
@@ -136,12 +138,18 @@ def format_notification_content(notifications, notification_type, notification_c
 
     def format_episode(item):
         """Format episode information"""
-        season = item.get('season_number')
-        episode = item.get('episode_number')
-        if season is not None and episode is not None:
-            version = item.get('version', '')
-            version_str = f" [{version}]" if version else ""
-            return f"    S{season:02d}E{episode:02d}{version_str}"
+        try:
+            season = item.get('season_number')
+            episode = item.get('episode_number')
+            if season is not None and episode is not None:
+                # Convert to integers and handle potential string inputs
+                season = int(season)
+                episode = int(episode)
+                version = item.get('version', '')
+                version_str = f" [{version}]" if version else ""
+                return f"    S{season:02d}E{episode:02d}{version_str}"
+        except (ValueError, TypeError) as e:
+            logging.warning(f"Invalid season/episode format: {str(e)} - S:{season} E:{episode}")
         return None
 
     # Group items by show/movie
@@ -177,33 +185,84 @@ def format_notification_content(notifications, notification_type, notification_c
     # Join with single newlines between items
     return "\n".join(content)
 
+def start_safety_valve_timer(enabled_notifications, notification_category):
+    global safety_valve_timer
+    
+    if safety_valve_timer is not None:
+        try:
+            safety_valve_timer.cancel()
+        except Exception as e:
+            logging.error(f"Error cancelling safety valve timer: {str(e)}")
+    
+    safety_valve_timer = Timer(SAFETY_VALVE_TIMEOUT, force_flush_notification_buffer, args=[enabled_notifications, notification_category])
+    safety_valve_timer.daemon = True  # Make it a daemon thread so it doesn't prevent program exit
+    safety_valve_timer.start()
+
+def force_flush_notification_buffer(enabled_notifications, notification_category):
+    """Force flush the notification buffer regardless of normal buffering logic"""
+    global notification_buffer, safety_valve_timer
+    
+    try:
+        with buffer_lock:
+            if notification_buffer:
+                logging.info("Safety valve triggered - forcing notification flush")
+                try:
+                    _send_notifications(notification_buffer, enabled_notifications, notification_category)
+                    notification_buffer = []
+                except Exception as e:
+                    logging.error(f"Failed to send notifications in safety valve: {str(e)}")
+    except Exception as e:
+        logging.error(f"Error in force_flush_notification_buffer: {str(e)}")
+    finally:
+        # Restart the safety valve timer
+        start_safety_valve_timer(enabled_notifications, notification_category)
+
 def buffer_notifications(notifications, enabled_notifications, notification_category='collected'):
     global notification_timer, notification_buffer
     
-    with buffer_lock:
-        # Add new notifications to buffer
-        notification_buffer.extend(notifications)
-        
-        # Cancel existing timer if there is one
-        if notification_timer is not None:
-            notification_timer.cancel()
-        
-        # Set new timer
-        notification_timer = Timer(BUFFER_TIMEOUT, flush_notification_buffer, args=[enabled_notifications, notification_category])
-        notification_timer.start()
+    try:
+        with buffer_lock:
+            # Add new notifications to buffer
+            notification_buffer.extend(notifications)
+            
+            # Cancel existing timer if there is one
+            if notification_timer is not None:
+                try:
+                    notification_timer.cancel()
+                except Exception as e:
+                    logging.error(f"Error cancelling timer: {str(e)}")
+            
+            # Set new timer
+            notification_timer = Timer(BUFFER_TIMEOUT, flush_notification_buffer, args=[enabled_notifications, notification_category])
+            notification_timer.start()
+            
+            # Ensure safety valve timer is running
+            start_safety_valve_timer(enabled_notifications, notification_category)
+    except Exception as e:
+        logging.error(f"Error in buffer_notifications: {str(e)}")
+        # Try to send immediately if buffering fails
+        _send_notifications(notifications, enabled_notifications, notification_category)
 
 def flush_notification_buffer(enabled_notifications, notification_category):
     global notification_buffer
     
-    with buffer_lock:
-        if notification_buffer:
-            # Send all buffered notifications
-            _send_notifications(notification_buffer, enabled_notifications, notification_category)
-            # Clear the buffer
-            notification_buffer = []
+    try:
+        with buffer_lock:
+            if notification_buffer:
+                try:
+                    # Send all buffered notifications
+                    _send_notifications(notification_buffer, enabled_notifications, notification_category)
+                    # Only clear if sending was successful
+                    notification_buffer = []
+                except Exception as e:
+                    logging.error(f"Failed to send notifications: {str(e)}")
+                    # Don't clear buffer on error to allow retry
+    except Exception as e:
+        logging.error(f"Error in flush_notification_buffer: {str(e)}")
 
 def _send_notifications(notifications, enabled_notifications, notification_category='collected'):
-    # Original send_notifications logic moved here
+    successful = True  # Track if all notifications were sent successfully
+    
     for notification_id, notification_config in enabled_notifications.items():
         if not notification_config.get('enabled', False):
             continue
@@ -214,8 +273,14 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
             continue
 
         notification_type = notification_config['type']
-        content = format_notification_content(notifications, notification_type, notification_category)
         
+        try:
+            content = format_notification_content(notifications, notification_type, notification_category)
+        except Exception as e:
+            logging.error(f"Failed to format notification content for {notification_type}: {str(e)}")
+            successful = False
+            continue
+
         try:
             if notification_type == 'Discord':
                 webhook_url = notification_config.get('webhook_url')
@@ -249,82 +314,40 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     continue
                 send_ntfy_notification(host, api_key, priority, topic, content)
             
+            else:
+                logging.warning(f"Unknown notification type: {notification_type}")
+                successful = False
+                continue
+
         except Exception as e:
             logging.error(f"Failed to send {notification_type} notification: {str(e)}")
+            successful = False
+            continue
+
+    return successful
 
 def send_notifications(notifications, enabled_notifications, notification_category='collected'):
     """Buffer notifications and send them after a short delay to allow for batching."""
     buffer_notifications(notifications, enabled_notifications, notification_category)
 
 def send_discord_notification(webhook_url, content):
-    MAX_LENGTH = 1900  # Leave some room for formatting
     MAX_RETRIES = 3
-    BASE_DELAY = 0.5  # Base delay in seconds
-
-    # Check for empty content
-    if not content or not content.strip():
-        logging.warning("Skipping Discord notification: content is empty")
-        return
-
-    def send_chunk(chunk, attempt=1):
-        # Check for empty chunk
-        if not chunk or not chunk.strip():
-            logging.warning("Skipping empty chunk in Discord notification")
-            return
-
+    RETRY_DELAY = 1  # seconds
+    
+    for attempt in range(MAX_RETRIES):
         try:
-            payload = {"content": chunk}
-            response = requests.post(webhook_url, json=payload)
-            
-            if response.status_code == 429:  # Rate limit hit
-                retry_after = float(response.json().get('retry_after', BASE_DELAY))
-                if attempt < MAX_RETRIES:
-                    logging.warning(f"Discord rate limit hit, waiting {retry_after} seconds before retry {attempt}/{MAX_RETRIES}")
-                    time.sleep(retry_after)
-                    return send_chunk(chunk, attempt + 1)
-                else:
-                    raise Exception("Max retries reached for rate limit")
-            
+            response = requests.post(webhook_url, json={'content': content})
             response.raise_for_status()
-            logging.info(f"Discord notification chunk sent successfully")
+            if attempt > 0:
+                logging.info(f"Discord notification sent successfully after {attempt + 1} attempts")
+            return True
         except requests.exceptions.RequestException as e:
-            if attempt < MAX_RETRIES:
-                delay = BASE_DELAY * (2 ** (attempt - 1))  # Exponential backoff
-                logging.warning(f"Discord request failed, retrying in {delay} seconds (attempt {attempt}/{MAX_RETRIES})")
-                time.sleep(delay)
-                return send_chunk(chunk, attempt + 1)
-            raise
-
-    try:
-        if len(content) <= MAX_LENGTH:
-            send_chunk(content)
-        else:
-            chunks = []
-            current_chunk = ""
-            for line in content.split('\n'):
-                if len(current_chunk) + len(line) + 1 > MAX_LENGTH:
-                    if current_chunk:
-                        chunks.append(current_chunk)
-                        current_chunk = ""
-                current_chunk += line + '\n'
-            if current_chunk:
-                chunks.append(current_chunk)
-
-            for i, chunk in enumerate(chunks, 1):
-                if chunk.strip():  # Only send non-empty chunks
-                    chunk_content = f"Message part {i}/{len(chunks)}:\n\n{chunk}"
-                    send_chunk(chunk_content)
-                    # Add a small delay between chunks to help avoid rate limits
-                    if i < len(chunks):
-                        time.sleep(BASE_DELAY)
-
-        logging.info(f"Discord notification sent successfully")
-    except Exception as e:
-        logging.error(f"Failed to send Discord notification: {str(e)}")
-        if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response content: {e.response.content}")
-            if e.response.status_code == 400 and 'empty message' in str(e.response.content).lower():
-                logging.warning("Attempted to send empty message to Discord - skipping")
+            if attempt < MAX_RETRIES - 1:
+                logging.warning(f"Discord notification attempt {attempt + 1} failed: {str(e)}. Retrying...")
+                time.sleep(RETRY_DELAY * (attempt + 1))  # Exponential backoff
+            else:
+                logging.error(f"Discord notification failed after {MAX_RETRIES} attempts: {str(e)}")
+                raise
 
 def send_email_notification(smtp_config, content):
     try:
@@ -361,18 +384,24 @@ def send_ntfy_notification(host, api_key, priority, topic, content):
         logging.error(f"Failed to send NTFY notification: {str(e)}")
 
 def send_telegram_notification(bot_token, chat_id, content):
-    try:
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": content,
-            "parse_mode": "html"
-        }
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-        logging.info(f"Telegram notification sent successfully")
-    except Exception as e:
-        logging.error(f"Failed to send Telegram notification: {str(e)}")
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1  # seconds
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            response = requests.post(url, json={'chat_id': chat_id, 'text': content, 'parse_mode': 'HTML'})
+            response.raise_for_status()
+            if attempt > 0:
+                logging.info(f"Telegram notification sent successfully after {attempt + 1} attempts")
+            return True
+        except requests.exceptions.RequestException as e:
+            if attempt < MAX_RETRIES - 1:
+                logging.warning(f"Telegram notification attempt {attempt + 1} failed: {str(e)}. Retrying...")
+                time.sleep(RETRY_DELAY * (attempt + 1))  # Exponential backoff
+            else:
+                logging.error(f"Telegram notification failed after {MAX_RETRIES} attempts: {str(e)}")
+                raise
 
 def verify_notification_config(notification_type, config):
     schema = SETTINGS_SCHEMA['Notifications']['schema'][notification_type]

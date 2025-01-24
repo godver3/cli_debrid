@@ -13,6 +13,9 @@
     .stat-item p[data-label="Daily Usage"].critical {
         color: #ff4444;
     }
+    .stats-box.recently-aired .show-title.uncollected {
+        color: #ff4444;
+    }
 </style>
 
 <script>
@@ -105,7 +108,7 @@
             if (recentlyAiredList && data.recently_aired) {
                 recentlyAiredList.innerHTML = data.recently_aired.map(item => `
                     <li>
-                        <span class="show-title">${item.title}</span>
+                        <span class="show-title${item.is_collected ? '' : ' uncollected'}">${item.title}</span>
                         <span class="air-time">${item.formatted_datetime}</span>
                     </li>
                 `).join('');
@@ -292,7 +295,7 @@
                 <ul>
                     {% for item in recently_aired %}
                     <li>
-                        <span class="show-title">{{ item.title }}</span>
+                        <span class="show-title{% if not item.is_collected %} uncollected{% endif %}">{{ item.title }}</span>
                         <span class="air-time">{{ item.formatted_datetime }}</span>
                     </li>
                     {% endfor %}

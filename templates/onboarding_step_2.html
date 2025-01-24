@@ -82,7 +82,6 @@
         <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
         <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">
             <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
-            <option value="Torbox" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Torbox' %}selected{% endif %}>Torbox</option>
         </select>
 
         <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
@@ -137,8 +136,6 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (provider === 'RealDebrid') {
             formData.set('realdebrid_api_key', apiKey);
-        } else if (provider === 'Torbox') {
-            formData.set('torbox_api_key', apiKey);
         }
         
         fetch('{{ url_for("onboarding.onboarding_step", step=2) }}', {
