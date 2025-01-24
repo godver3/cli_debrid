@@ -205,7 +205,7 @@ cli_debrid maintains a local database of your media collection, keeping track of
 - Docker and Docker Compose installed on your system
 - A Plex server
 - An Overseerr instance
-- A Real-Debrid or Torbox account
+- A Real-Debrid or account
 
 ### Setup Instructions
 

@@ -317,7 +317,7 @@ export function updateSettings() {
     }
 
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torbox', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -752,17 +752,6 @@ export function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Blacklist Duration input element not found!");
-    }
-
-    const torboxAPIKey = document.getElementById('torbox-api_key');
-    console.log("Torbox API Key element:", torboxAPIKey);
-    
-    if (torboxAPIKey) {
-        settingsData['Torbox']['api_key'] = torboxAPIKey.value;
-    
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Torbox API Key input element not found!");
     }
 
     const plexWatchlistRemoval = document.getElementById('scraping-plex_watchlist_removal');

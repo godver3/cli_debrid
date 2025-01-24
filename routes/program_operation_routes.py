@@ -265,13 +265,6 @@ def check_service_connectivity():
         except RequestException as e:
             logging.error(f"Failed to connect to Real-Debrid API: {str(e)}")
             services_reachable = False
-    elif debrid_provider.lower() == 'torbox':
-        try:
-            response = api.get("https://torbox.app/api/v1/user", headers={"Authorization": f"Bearer {debrid_api_key}"}, timeout=5)
-            response.raise_for_status()
-        except RequestException as e:
-            logging.error(f"Failed to connect to Torbox API: {str(e)}")
-            services_reachable = False
     else:
         logging.error(f"Unknown debrid provider: {debrid_provider}")
         services_reachable = False

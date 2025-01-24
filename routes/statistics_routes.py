@@ -151,19 +151,35 @@ def get_recently_aired_and_airing_soon():
     two_days_ago = now - timedelta(days=2)
     
     query = """
-    WITH RankedEpisodes AS (
-        SELECT 
+    WITH CollectedEpisodes AS (
+        -- First get all episodes that are collected/upgrading
+        SELECT DISTINCT 
             title,
             season_number,
-            episode_number,
-            release_date,
-            airtime,
-            imdb_id,
-            ROW_NUMBER() OVER (PARTITION BY title, season_number, episode_number ORDER BY release_date DESC, airtime DESC) as rn
+            episode_number
         FROM media_items
-        WHERE type = 'episode' 
-        AND release_date >= ? 
-        AND release_date <= ?
+        WHERE type = 'episode'
+        AND state IN ('Collected', 'Upgrading')
+    ),
+    RankedEpisodes AS (
+        -- Then get our main episode data with collection status
+        SELECT 
+            m.title,
+            m.season_number,
+            m.episode_number,
+            m.release_date,
+            m.airtime,
+            m.imdb_id,
+            CASE WHEN c.title IS NOT NULL THEN 1 ELSE 0 END as is_collected,
+            ROW_NUMBER() OVER (PARTITION BY m.title, m.season_number, m.episode_number ORDER BY m.release_date DESC, m.airtime DESC) as rn
+        FROM media_items m
+        LEFT JOIN CollectedEpisodes c ON 
+            c.title = m.title 
+            AND c.season_number = m.season_number 
+            AND c.episode_number = m.episode_number
+        WHERE m.type = 'episode' 
+        AND m.release_date >= ? 
+        AND m.release_date <= ?
     )
     SELECT DISTINCT 
         title,
@@ -171,7 +187,8 @@ def get_recently_aired_and_airing_soon():
         episode_number,
         release_date,
         airtime,
-        imdb_id
+        imdb_id,
+        is_collected
     FROM RankedEpisodes
     WHERE rn = 1
     ORDER BY release_date, airtime, title, season_number, episode_number
@@ -189,7 +206,7 @@ def get_recently_aired_and_airing_soon():
     shows = {}
     
     for result in results:
-        title, season, episode, release_date, airtime, imdb_id = result
+        title, season, episode, release_date, airtime, imdb_id, is_collected = result
         try:
             release_date = datetime.fromisoformat(release_date)
             
@@ -220,7 +237,8 @@ def get_recently_aired_and_airing_soon():
                     'season': season,
                     'episodes': set(),
                     'air_datetime': air_datetime,
-                    'release_date': release_date.date()
+                    'release_date': release_date.date(),
+                    'is_collected': bool(is_collected)  # Convert from SQLite int to Python bool
                 }
             
             shows[show_key]['episodes'].add(episode)
@@ -258,7 +276,8 @@ def get_recently_aired_and_airing_soon():
             'title': f"{show['title']} S{show['season']:02d}{episode_range}",
             'air_datetime': show['air_datetime'],
             'sort_key': show['air_datetime'].isoformat(),
-            'formatted_datetime': format_datetime_preference(show['air_datetime'], session.get('use_24hour_format', False))
+            'formatted_datetime': format_datetime_preference(show['air_datetime'], session.get('use_24hour_format', False)),
+            'is_collected': show['is_collected']
         }
         
         if show['air_datetime'] <= now:
