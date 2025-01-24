@@ -3,8 +3,14 @@
 cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is designed to automatically manage and upgrade your media collection, leveraging various sources and services to ensure you always have the best quality content available.
 
 ## Version Information
-![Main Version](https://img.shields.io/badge/dynamic/plain?color=blue&label=main&query=%2A&url=https%3A%2F%2Fraw.githubusercontent.com%2Fgodver3%2Fcli_debrid%2Fmain%2Fversion.txt)
-![Dev Version](https://img.shields.io/badge/dynamic/plain?color=orange&label=dev&query=%2A&url=https%3A%2F%2Fraw.githubusercontent.com%2Fgodver3%2Fcli_debrid%2Fdev%2Fversion.txt)
+
+*Main Branch*
+
+![Main Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/main)
+
+*Dev Branch*
+
+![Dev Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/dev&color=orange&logoColor=orange)
 
 ## Community
 
