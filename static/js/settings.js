@@ -76,6 +76,19 @@ function togglePlexSection() {
     }
 }
 
+// Function to validate content sources
+function validateContentSources(contentSources) {
+    for (const [sourceId, source] of Object.entries(contentSources)) {
+        if (source.enabled && (!source.versions || source.versions.length === 0)) {
+            return {
+                valid: false,
+                message: `Content source "${sourceId}" is enabled but has no versions enabled. Please enable at least one version or disable the content source.`
+            };
+        }
+    }
+    return { valid: true };
+}
+
 // Export the updateSettings function
 export function updateSettings() {
     const settingsData = {};
@@ -254,6 +267,16 @@ export function updateSettings() {
                 delete settingsData['Content Sources'][key];
             }
         });
+    }
+
+    // Validate content sources before saving
+    const contentSourceValidation = validateContentSources(settingsData['Content Sources']);
+    if (!contentSourceValidation.valid) {
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            message: contentSourceValidation.message
+        });
+        return;
     }
 
     // Debug: Log all tabs

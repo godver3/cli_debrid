@@ -199,7 +199,7 @@ def initialize(skip_initial_plex_update=False):
     reset_queued_item_status()
     complete_phase('reset')
        
-    if get_setting('File Management ', 'file_collection_management') == 'Plex':
+    if get_setting('File Management', 'file_collection_management') == 'Plex':
         # Plex Update Phase (2 minutes)
         start_phase('plex', 'Plex Update', 'Starting Plex scan')
         plex_success, should_process_sources = plex_collection_update(skip_initial_plex_update)
