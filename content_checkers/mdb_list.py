@@ -1,7 +1,7 @@
 import logging
 from api_tracker import api
 from typing import List, Dict, Any, Tuple
-from settings import get_all_settings
+from settings import get_all_settings, get_setting
 from database import get_media_item_presence
 import os
 import pickle
@@ -72,13 +72,15 @@ def assign_media_type(item: Dict[str, Any]) -> str:
 
 def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
-    cache = load_mdblist_cache()
+    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    cache = {} if disable_caching else load_mdblist_cache()
     current_time = datetime.now()
     
     items = fetch_items_from_mdblist(mdblist_url)
     processed_items = []
     
     skipped_count = 0
+    cache_skipped = 0
     for item in items:
         imdb_id = item.get('imdb_id')
         if not imdb_id:
@@ -91,29 +93,35 @@ def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> Lis
             'media_type': media_type,
         }
         
-        # Check cache for this item
-        cache_key = f"{imdb_id}_{media_type}"
-        cache_item = cache.get(cache_key)
-        
-        if cache_item:
-            last_processed = cache_item['timestamp']
-            if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                continue
-        
-        # Add or update cache entry
-        cache[cache_key] = {
-            'timestamp': current_time,
-            'data': wanted_item
-        }
+        if not disable_caching:
+            # Check cache for this item
+            cache_key = f"{imdb_id}_{media_type}"
+            cache_item = cache.get(cache_key)
+            
+            if cache_item:
+                last_processed = cache_item['timestamp']
+                if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
+                    cache_skipped += 1
+                    continue
+            
+            # Add or update cache entry
+            cache[cache_key] = {
+                'timestamp': current_time,
+                'data': wanted_item
+            }
         
         processed_items.append(wanted_item)
 
     if skipped_count > 0:
         logging.info(f"Skipped {skipped_count} items due to missing IMDB IDs")
     
-    logging.info(f"Found {len(processed_items)} new items from MDBList")
+    if not disable_caching:
+        logging.info(f"Found {len(processed_items)} new items from MDBList. Skipped {cache_skipped} items in cache.")
+    else:
+        logging.info(f"Found {len(processed_items)} items from MDBList. Caching disabled.")
     all_wanted_items.append((processed_items, versions))
     
-    # Save updated cache
-    save_mdblist_cache(cache)
+    # Save updated cache only if caching is enabled
+    if not disable_caching:
+        save_mdblist_cache(cache)
     return all_wanted_items

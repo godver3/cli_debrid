@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any, Tuple
 from database import get_all_media_items
-from settings import get_all_settings
+from settings import get_all_settings, get_setting
 import os
 import pickle
 from datetime import datetime, timedelta
@@ -36,8 +36,9 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
         logging.info("No enabled Collected sources found in settings.")
         return []
 
+    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
     all_wanted_items = []
-    cache = load_collected_cache()
+    cache = {} if disable_caching else load_collected_cache()
     current_time = datetime.now()
 
     for source in collected_sources:
@@ -48,27 +49,30 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
         
         all_items = wanted_items + collected_items
         consolidated_items = {}
+        cache_skipped = 0
 
         for item in all_items:
             imdb_id = item['imdb_id']
             if imdb_id not in consolidated_items:
-                # Check cache for this item
-                cache_key = f"{imdb_id}_tv"  # All collected items are TV shows
-                cache_item = cache.get(cache_key)
-                
-                if cache_item:
-                    last_processed = cache_item['timestamp']
-                    if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                        continue
-                
-                # Add or update cache entry
-                cache[cache_key] = {
-                    'timestamp': current_time,
-                    'data': {
-                        'imdb_id': imdb_id,
-                        'media_type': 'tv'
+                if not disable_caching:
+                    # Check cache for this item
+                    cache_key = f"{imdb_id}_tv"  # All collected items are TV shows
+                    cache_item = cache.get(cache_key)
+                    
+                    if cache_item:
+                        last_processed = cache_item['timestamp']
+                        if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
+                            cache_skipped += 1
+                            continue
+                    
+                    # Add or update cache entry
+                    cache[cache_key] = {
+                        'timestamp': current_time,
+                        'data': {
+                            'imdb_id': imdb_id,
+                            'media_type': 'tv'
+                        }
                     }
-                }
                 
                 consolidated_items[imdb_id] = {
                     'imdb_id': imdb_id,
@@ -76,11 +80,15 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                 }
 
         result = list(consolidated_items.values())
-        logging.info(f"Found {len(result)} unique TV shows from local database")
+        if not disable_caching:
+            logging.info(f"Found {len(result)} unique TV shows from local database. Skipped {cache_skipped} items in cache.")
+        else:
+            logging.info(f"Found {len(result)} unique TV shows from local database. Caching disabled.")
         logging.debug(f"Processing batch of {len(result)} items")
 
         all_wanted_items.append((result, versions))
 
-    # Save updated cache
-    save_collected_cache(cache)
+    # Save updated cache only if caching is enabled
+    if not disable_caching:
+        save_collected_cache(cache)
     return all_wanted_items

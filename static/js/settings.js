@@ -585,6 +585,18 @@ export function updateSettings() {
         console.warn("Rescrape Missing Files checkbox element not found!");
     }
 
+    // Handle Disable Content Source Caching
+    const disableContentSourceCaching = document.getElementById('debug-disable_content_source_caching'); 
+    console.log("Disable Content Source Caching element:", disableContentSourceCaching);
+    
+    if (disableContentSourceCaching) {
+        settingsData['Debug']['disable_content_source_caching'] = disableContentSourceCaching.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Disable Content Source Caching checkbox element not found!");
+    }
+
     const enableUpgrading = document.getElementById('scraping-enable_upgrading'); 
     console.log("Enable Upgrading element:", enableUpgrading);
     
