@@ -104,32 +104,37 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             
             if not imdb_id:
                 skipped_count += 1
+                logging.debug(f"Skipping item '{item.title}' - no IMDB ID found")
                 continue
             
             media_type = 'movie' if item.type == 'movie' else 'tv'
+            logging.debug(f"Processing {media_type} '{item.title}' (IMDB: {imdb_id})")
             
             # Check if the item is already collected
             item_state = get_media_item_presence(imdb_id=imdb_id)
             if item_state == "Collected" and should_remove:
                 if media_type == 'tv':
                     if keep_series:
-                        logging.debug(f"Keeping TV series: {imdb_id}")
+                        logging.debug(f"Keeping TV series: {imdb_id} ('{item.title}') - keep_series is enabled")
                         continue
                     else:
                         # Check if the show has ended before removing
                         show_status = get_show_status(imdb_id)
                         if show_status != 'ended':
-                            logging.debug(f"Keeping ongoing TV series: {imdb_id} (status: {show_status})")
+                            logging.debug(f"Keeping ongoing TV series: {imdb_id} ('{item.title}') - status: {show_status}")
                             continue
-                        logging.debug(f"Removing ended TV series: {imdb_id} (status: {show_status})")
+                        logging.debug(f"Removing ended TV series: {imdb_id} ('{item.title}') - status: {show_status}")
+                else:
+                    logging.debug(f"Removing collected {media_type}: {imdb_id} ('{item.title}')")
                 
                 # Remove from watchlist using the PlexAPI object directly
                 try:
                     account.removeFromWatchlist([item])
                     removed_count += 1
+                    logging.info(f"Successfully removed {media_type} '{item.title}' (IMDB: {imdb_id}) from watchlist")
                     continue
                 except Exception as e:
-                    logging.error(f"Failed to remove {imdb_id} from watchlist: {e}")
+                    logging.error(f"Failed to remove {imdb_id} ('{item.title}') from watchlist: {e}")
                     continue
             
             # Check cache for this item
@@ -138,8 +143,14 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             
             if cache_item:
                 last_processed = cache_item['timestamp']
-                if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
+                cache_age = current_time - last_processed
+                if cache_age < timedelta(days=CACHE_EXPIRY_DAYS):
+                    logging.debug(f"Skipping {media_type} '{item.title}' (IMDB: {imdb_id}) - cached {cache_age.days} days ago")
                     continue
+                else:
+                    logging.debug(f"Cache expired for {media_type} '{item.title}' (IMDB: {imdb_id}) - last processed {cache_age.days} days ago")
+            else:
+                logging.debug(f"New item found: {media_type} '{item.title}' (IMDB: {imdb_id})")
             
             # Add or update cache entry
             cache[cache_key] = {
@@ -154,6 +165,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                 'imdb_id': imdb_id,
                 'media_type': media_type
             })
+            logging.debug(f"Added {media_type} '{item.title}' (IMDB: {imdb_id}) to processed items")
 
         if skipped_count > 0:
             logging.info(f"Skipped {skipped_count} items due to missing IMDB IDs")
