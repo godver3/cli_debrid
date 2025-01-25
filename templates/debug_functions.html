@@ -30,6 +30,7 @@
         </div>
         <div class="debug_item">
             <h3>Delete Database</h3>
+            <p class="description">This will delete the database and all cache files (*.cache*.pkl) from the db_content directory.</p>
             <form action="{{ url_for('debug.delete_database') }}" method="POST" id="delete-database-form">
                 <div class="form-group">
                     <label for="confirm_delete">Type DELETE to confirm:</label>

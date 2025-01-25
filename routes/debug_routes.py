@@ -21,6 +21,7 @@ from content_checkers.mdb_list import get_wanted_from_mdblists
 from metadata.metadata import process_metadata
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 import os
+import glob
 from api_tracker import api 
 import time
 from metadata.metadata import get_metadata, get_tmdb_id_and_media_type, refresh_release_dates
@@ -157,9 +158,21 @@ def delete_database():
         # Recreate tables
         create_tables()
         
+        # Delete cache files
+        db_content_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'db_content')
+        cache_files = glob.glob(os.path.join(db_content_dir, '*cache*.pkl'))
+        for cache_file in cache_files:
+            try:
+                os.remove(cache_file)
+                logging.info(f"Deleted cache file: {cache_file}")
+            except Exception as e:
+                logging.warning(f"Failed to delete cache file {cache_file}: {str(e)}")
+        
         message = 'Database deleted successfully'
         if retain_blacklist:
             message += f' (retained {len(blacklisted_items)} blacklisted items)'
+        if cache_files:
+            message += f' and removed {len(cache_files)} cache files'
         
         return jsonify({'success': True, 'message': message})
         
