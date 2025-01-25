@@ -71,7 +71,8 @@ def get_show_status(imdb_id: str) -> str:
 def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
     processed_items = []
-    cache = load_plex_cache(PLEX_WATCHLIST_CACHE_FILE)
+    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    cache = {} if disable_caching else load_plex_cache(PLEX_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
     
     account = get_plex_client()
@@ -92,6 +93,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         watchlist = account.watchlist()
         skipped_count = 0
         removed_count = 0
+        cache_skipped = 0
         
         # Process each item in the watchlist
         for item in watchlist:
@@ -137,29 +139,31 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                     logging.error(f"Failed to remove {imdb_id} ('{item.title}') from watchlist: {e}")
                     continue
             
-            # Check cache for this item
-            cache_key = f"{imdb_id}_{media_type}"
-            cache_item = cache.get(cache_key)
-            
-            if cache_item:
-                last_processed = cache_item['timestamp']
-                cache_age = current_time - last_processed
-                if cache_age < timedelta(days=CACHE_EXPIRY_DAYS):
-                    logging.debug(f"Skipping {media_type} '{item.title}' (IMDB: {imdb_id}) - cached {cache_age.days} days ago")
-                    continue
+            if not disable_caching:
+                # Check cache for this item
+                cache_key = f"{imdb_id}_{media_type}"
+                cache_item = cache.get(cache_key)
+                
+                if cache_item:
+                    last_processed = cache_item['timestamp']
+                    cache_age = current_time - last_processed
+                    if cache_age < timedelta(days=CACHE_EXPIRY_DAYS):
+                        logging.debug(f"Skipping {media_type} '{item.title}' (IMDB: {imdb_id}) - cached {cache_age.days} days ago")
+                        cache_skipped += 1
+                        continue
+                    else:
+                        logging.debug(f"Cache expired for {media_type} '{item.title}' (IMDB: {imdb_id}) - last processed {cache_age.days} days ago")
                 else:
-                    logging.debug(f"Cache expired for {media_type} '{item.title}' (IMDB: {imdb_id}) - last processed {cache_age.days} days ago")
-            else:
-                logging.debug(f"New item found: {media_type} '{item.title}' (IMDB: {imdb_id})")
-            
-            # Add or update cache entry
-            cache[cache_key] = {
-                'timestamp': current_time,
-                'data': {
-                    'imdb_id': imdb_id,
-                    'media_type': media_type
+                    logging.debug(f"New item found: {media_type} '{item.title}' (IMDB: {imdb_id})")
+                
+                # Add or update cache entry
+                cache[cache_key] = {
+                    'timestamp': current_time,
+                    'data': {
+                        'imdb_id': imdb_id,
+                        'media_type': media_type
+                    }
                 }
-            }
             
             processed_items.append({
                 'imdb_id': imdb_id,
@@ -172,11 +176,15 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         if removed_count > 0:
             logging.info(f"Removed {removed_count} collected items from watchlist")
         
-        logging.info(f"Found {len(processed_items)} new items from Plex watchlist")
+        if not disable_caching:
+            logging.info(f"Found {len(processed_items)} new items from Plex watchlist. Skipped {cache_skipped} items in cache.")
+        else:
+            logging.info(f"Found {len(processed_items)} items from Plex watchlist. Caching disabled.")
         all_wanted_items.append((processed_items, versions))
         
-        # Save updated cache
-        save_plex_cache(cache, PLEX_WATCHLIST_CACHE_FILE)
+        # Save updated cache only if caching is enabled
+        if not disable_caching:
+            save_plex_cache(cache, PLEX_WATCHLIST_CACHE_FILE)
         return all_wanted_items
         
     except Exception as e:
@@ -186,8 +194,10 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
 def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
     processed_items = []
-    cache = load_plex_cache(OTHER_PLEX_WATCHLIST_CACHE_FILE)
+    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    cache = {} if disable_caching else load_plex_cache(OTHER_PLEX_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
+    cache_skipped = 0
 
     try:
         # Connect to Plex using the provided token
@@ -219,24 +229,26 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
             
             media_type = 'movie' if item.type == 'movie' else 'tv'
             
-            # Check cache for this item
-            cache_key = f"{username}_{imdb_id}_{media_type}"  # Include username in cache key
-            cache_item = cache.get(cache_key)
-            
-            if cache_item:
-                last_processed = cache_item['timestamp']
-                if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                    logging.debug(f"Skipping recently processed item: {cache_key}")
-                    continue
-            
-            # Add or update cache entry
-            cache[cache_key] = {
-                'timestamp': current_time,
-                'data': {
-                    'imdb_id': imdb_id,
-                    'media_type': media_type
+            if not disable_caching:
+                # Check cache for this item
+                cache_key = f"{username}_{imdb_id}_{media_type}"  # Include username in cache key
+                cache_item = cache.get(cache_key)
+                
+                if cache_item:
+                    last_processed = cache_item['timestamp']
+                    if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
+                        logging.debug(f"Skipping recently processed item: {cache_key}")
+                        cache_skipped += 1
+                        continue
+                
+                # Add or update cache entry
+                cache[cache_key] = {
+                    'timestamp': current_time,
+                    'data': {
+                        'imdb_id': imdb_id,
+                        'media_type': media_type
+                    }
                 }
-            }
             
             wanted_item = {
                 'imdb_id': imdb_id,
@@ -245,13 +257,17 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
             
             processed_items.append(wanted_item)
             
-        logging.info(f"Retrieved {len(processed_items)} total items from {username}'s Plex watchlist")
+        if not disable_caching:
+            logging.info(f"Retrieved {len(processed_items)} items from {username}'s Plex watchlist. Skipped {cache_skipped} items in cache.")
+        else:
+            logging.info(f"Retrieved {len(processed_items)} items from {username}'s Plex watchlist. Caching disabled.")
         
     except Exception as e:
         logging.error(f"Error fetching {username}'s Plex watchlist: {str(e)}")
         return [([], versions)]
     
-    # Save updated cache
-    save_plex_cache(cache, OTHER_PLEX_WATCHLIST_CACHE_FILE)
+    # Save updated cache only if caching is enabled
+    if not disable_caching:
+        save_plex_cache(cache, OTHER_PLEX_WATCHLIST_CACHE_FILE)
     all_wanted_items.append((processed_items, versions))
     return all_wanted_items

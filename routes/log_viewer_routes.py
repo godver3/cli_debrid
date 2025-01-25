@@ -163,10 +163,24 @@ def get_all_logs_for_upload(level='all', max_lines=500000):
             
             current_file_logs = []
             with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    parsed_line = parse_log_line(line.strip())
-                    if parsed_line and should_include_log(parsed_line, since='', level=level):
-                        current_file_logs.append(parsed_line)
+                lines = deque(f, maxlen=max_lines)
+                current_log = None
+                for line in lines:
+                    line = line.strip()
+                    parsed_line = parse_log_line(line)
+                    
+                    if parsed_line:
+                        # If we have a current log, append it before starting new one
+                        if current_log and should_include_log(current_log, since='', level=level):
+                            current_file_logs.append(current_log)
+                        current_log = parsed_line
+                    elif current_log:
+                        # This is a continuation line - append to current message
+                        current_log['message'] += '\n' + line
+                
+                # Don't forget to append the last log if it exists
+                if current_log and should_include_log(current_log, since='', level=level):
+                    current_file_logs.append(current_log)
             
             # Add this file's logs to the end of all_logs
             all_logs.extend(current_file_logs)
@@ -206,13 +220,28 @@ def get_recent_logs(n, since='', level='all'):
         with open(log_path, 'r', encoding='utf-8') as f:
             lines = deque(f, maxlen=max_lines)
         
+        current_log = None
         for line in lines:
-            parsed_line = parse_log_line(line.strip())
-            if parsed_line and should_include_log(parsed_line, since, level):
-                parsed_logs.append(parsed_line)
-                # Once we have enough logs of the desired level, we can stop
-                if len(parsed_logs) >= n:
-                    break
+            line = line.strip()
+            parsed_line = parse_log_line(line)
+            
+            if parsed_line:
+                # If we have a current log, append it before starting new one
+                if current_log and should_include_log(current_log, since, level):
+                    parsed_logs.append(current_log)
+                current_log = parsed_line
+            elif current_log:
+                # This is a continuation line - append to current message
+                current_log['message'] += '\n' + line
+        
+        # Don't forget to append the last log if it exists
+        if current_log and should_include_log(current_log, since, level):
+            parsed_logs.append(current_log)
+            
+        # Trim to the desired number of logs
+        if len(parsed_logs) > n:
+            parsed_logs = parsed_logs[-n:]
+            
     except Exception as e:
         logging.error(f"Error reading current log file: {str(e)}")
         return []
@@ -241,18 +270,32 @@ def should_include_log(parsed_line, since='', level='all'):
     return True
 
 def parse_log_line(line):
-    parts = line.split(' - ', 3)
-    if len(parts) >= 4:
-        timestamp, module, level, message = parts[:4]
-        try:
-            # Validate the timestamp
-            datetime.fromisoformat(timestamp)
-        except ValueError:
-            return None  # Invalid timestamp
-        level = level.strip().lower()
-        return {'timestamp': timestamp, 'level': level, 'message': f"{module} - {message}"}
-    else:
+    # First split to get timestamp
+    parts = line.split(' - ', 1)
+    if len(parts) < 2:
         return None  # Invalid log line format
+        
+    timestamp, remainder = parts
+    
+    try:
+        # Validate the timestamp
+        datetime.fromisoformat(timestamp)
+    except ValueError:
+        return None  # Invalid timestamp
+        
+    # Split the remainder to get module and level
+    parts = remainder.split(' - ', 2)
+    if len(parts) < 3:
+        return None  # Invalid log line format
+        
+    module, level, message = parts
+    level = level.strip().lower()
+    
+    return {
+        'timestamp': timestamp,
+        'level': level,
+        'message': f"{module} - {message}"
+    }
 
 @logs_bp.route('/api/logs/stream')
 @admin_required

@@ -15,6 +15,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         items_added = 0
         items_updated = 0
         items_skipped = 0
+        skip_stats = {
+            'existing_movie_imdb': 0,
+            'existing_movie_tmdb': 0,
+            'existing_episode_imdb': 0,
+            'existing_episode_tmdb': 0,
+            'missing_ids': 0,
+            'blacklisted': 0
+        }
         airtime_cache = {}
 
         if isinstance(versions_input, str):
@@ -130,8 +138,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             if item_type == 'movie':
                 skip = False
                 if imdb_id and imdb_id in existing_movies:
+                    skip_stats['existing_movie_imdb'] += 1
                     skip = True
                 if tmdb_id and tmdb_id in existing_movies:
+                    skip_stats['existing_movie_tmdb'] += 1
                     skip = True
                 if skip:
                     items_skipped += 1
@@ -141,8 +151,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 episode_number = item.get('episode_number')
                 skip = False
                 if imdb_id and (imdb_id, season_number, episode_number) in existing_episodes:
+                    skip_stats['existing_episode_imdb'] += 1
                     skip = True
                 if tmdb_id and (tmdb_id, season_number, episode_number) in existing_episodes:
+                    skip_stats['existing_episode_tmdb'] += 1
                     skip = True
                 if skip:
                     items_skipped += 1
@@ -154,11 +166,12 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
         for item in media_items_batch:
             if not item.get('imdb_id') and not item.get('tmdb_id'):
-                logging.warning(f"Skipping item without valid IMDb ID or TMDb ID: {item.get('title', 'Unknown')}")
+                skip_stats['missing_ids'] += 1
                 items_skipped += 1
                 continue
 
             if is_blacklisted(item.get('imdb_id', '')) or is_blacklisted(item.get('tmdb_id', '')):
+                skip_stats['blacklisted'] += 1
                 items_skipped += 1
                 continue
 
@@ -215,7 +228,25 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     items_added += 1
 
         conn.commit()
-        logging.info(f"Wanted items processing complete. Added: {items_added}, Updated: {items_updated}, Skipped: {items_skipped}")
+        
+        # Generate skip summary report
+        skip_report = []
+        if skip_stats['existing_movie_imdb'] > 0:
+            skip_report.append(f"- {skip_stats['existing_movie_imdb']} movies already exist (by IMDb ID)")
+        if skip_stats['existing_movie_tmdb'] > 0:
+            skip_report.append(f"- {skip_stats['existing_movie_tmdb']} movies already exist (by TMDb ID)")
+        if skip_stats['existing_episode_imdb'] > 0:
+            skip_report.append(f"- {skip_stats['existing_episode_imdb']} episodes already exist (by IMDb ID)")
+        if skip_stats['existing_episode_tmdb'] > 0:
+            skip_report.append(f"- {skip_stats['existing_episode_tmdb']} episodes already exist (by TMDb ID)")
+        if skip_stats['missing_ids'] > 0:
+            skip_report.append(f"- {skip_stats['missing_ids']} items skipped due to missing IMDb/TMDb IDs")
+        if skip_stats['blacklisted'] > 0:
+            skip_report.append(f"- {skip_stats['blacklisted']} items skipped due to blacklist")
+        
+        if skip_report:
+            logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))
+        logging.info(f"Final stats - Added: {items_added}, Updated: {items_updated}, Total Skipped: {items_skipped}")
     except Exception as e:
         logging.error(f"Error adding wanted items: {str(e)}", exc_info=True)
         conn.rollback()

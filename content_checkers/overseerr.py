@@ -97,10 +97,11 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
     content_sources = get_all_settings().get('Content Sources', {})
     overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
     allow_partial = get_setting('Debug', 'allow_partial_overseerr_requests', 'False')
-    logging.info(f"allow_partial: {allow_partial}")
+    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    logging.info(f"allow_partial: {allow_partial}, disable_caching: {disable_caching}")
     
     all_wanted_items = []
-    cache = load_overseerr_cache()
+    cache = {} if disable_caching else load_overseerr_cache()
     current_time = datetime.now()
     
     for source in overseerr_sources:
@@ -134,39 +135,43 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                                 requested_seasons.append(season.get('seasonNumber'))
                         if requested_seasons:
                             wanted_item['requested_seasons'] = requested_seasons
-                            #logging.info(f"TV show {media.get('tmdbId')} has specific season requests: {requested_seasons}")
 
-                    # Check cache for this item
-                    cache_key = f"{wanted_item['tmdb_id']}_{wanted_item['media_type']}"
-                    if 'requested_seasons' in wanted_item:
-                        cache_key += f"_s{'_'.join(map(str, wanted_item['requested_seasons']))}"
-                    
-                    cache_item = cache.get(cache_key)
-                    
-                    if cache_item:
-                        last_processed = cache_item['timestamp']
-                        # For TV shows, only use cache if it's the same seasons
-                        if (current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS) and
-                            (wanted_item['media_type'] != 'tv' or
-                             wanted_item.get('requested_seasons') == cache_item['data'].get('requested_seasons'))):
-                            cache_skipped += 1
-                            continue
-                    
-                    # Add or update cache entry
-                    cache[cache_key] = {
-                        'timestamp': current_time,
-                        'data': wanted_item
-                    }
+                    if not disable_caching:
+                        # Check cache for this item
+                        cache_key = f"{wanted_item['tmdb_id']}_{wanted_item['media_type']}"
+                        if 'requested_seasons' in wanted_item:
+                            cache_key += f"_s{'_'.join(map(str, wanted_item['requested_seasons']))}"
+                        
+                        cache_item = cache.get(cache_key)
+                        
+                        if cache_item:
+                            last_processed = cache_item['timestamp']
+                            # For TV shows, only use cache if it's the same seasons
+                            if (current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS) and
+                                (wanted_item['media_type'] != 'tv' or
+                                 wanted_item.get('requested_seasons') == cache_item['data'].get('requested_seasons'))):
+                                cache_skipped += 1
+                                continue
+                        
+                        # Add or update cache entry
+                        cache[cache_key] = {
+                            'timestamp': current_time,
+                            'data': wanted_item
+                        }
                     
                     wanted_items.append(wanted_item)
 
             all_wanted_items.append((wanted_items, versions))
-            logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source. Skipped {cache_skipped} items in cache.")
+            if not disable_caching:
+                logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source. Skipped {cache_skipped} items in cache.")
+            else:
+                logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source. Caching disabled.")
         except Exception as e:
             logging.error(f"Unexpected error while processing Overseerr source: {e}")
 
-    # Save updated cache
-    save_overseerr_cache(cache)
+    # Save updated cache only if caching is enabled
+    if not disable_caching:
+        save_overseerr_cache(cache)
     logging.info(f"Retrieved items from {len(all_wanted_items)} Overseerr sources.")
     
     return all_wanted_items

@@ -371,6 +371,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Check for updates and display update indicator in header",
             "default": True
+        },
+        "disable_content_source_caching": {
+            "type": "boolean",
+            "description": "Disable content source caching",
+            "default": False
         }
     },
     "Scrapers": {
