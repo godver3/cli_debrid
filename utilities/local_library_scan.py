@@ -209,12 +209,31 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             original_path = get_setting('File Management', 'original_files_path')
             logging.info(f"Original files path from settings: {original_path}")
             
-            # Normalize path separators and case for Windows compatibility
-            original_path = os.path.normpath(original_path)
-            # Convert drive letter to uppercase for Windows
-            if len(original_path) >= 2 and original_path[1] == ':':
-                original_path = original_path[0].upper() + original_path[1:]
+            # Special handling for Windows drive paths
+            def normalize_windows_path(path):
+                # Normalize path separators
+                path = os.path.normpath(path)
+                # Handle drive letter
+                if len(path) >= 2 and path[1] == ':':
+                    # Convert drive letter to uppercase and ensure it has a trailing backslash
+                    path = path[0].upper() + ':\\' + path[3:].lstrip('\\')
+                return path
+                
+            def check_path_exists(path):
+                try:
+                    # For Windows drive paths, check if we can list the directory
+                    if len(path) >= 2 and path[1] == ':':
+                        try:
+                            os.listdir(path)
+                            return True
+                        except Exception:
+                            return False
+                    return os.path.exists(path)
+                except Exception:
+                    return False
             
+            # Normalize path separators and case for Windows compatibility
+            original_path = normalize_windows_path(original_path)
             filled_by_title = item.get('filled_by_title', '')
             filled_by_file = item['filled_by_file']
             
@@ -223,15 +242,12 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             logging.info(f"In subdirectory: {filled_by_title}")
             
             # First try the original path construction
-            source_file = os.path.normpath(os.path.join(original_path, filled_by_title, filled_by_file))
-            # Convert drive letter to uppercase for Windows
-            if len(source_file) >= 2 and source_file[1] == ':':
-                source_file = source_file[0].upper() + source_file[1:]
-                
+            source_file = normalize_windows_path(os.path.join(original_path, filled_by_title, filled_by_file))
             logging.info(f"Full normalized source path: {source_file}")
-            logging.info(f"Path exists check result: {os.path.exists(source_file)}")
+            exists = check_path_exists(source_file)
+            logging.info(f"Path exists check result: {exists}")
             
-            if not os.path.exists(source_file):
+            if not exists:
                 parent_dir = os.path.dirname(source_file)
                 logging.info(f"Checking if parent directory exists: {parent_dir}")
                 
@@ -239,7 +255,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 try:
                     root_dir = os.path.dirname(parent_dir)
                     logging.info(f"Checking root directory: {root_dir}")
-                    if not os.path.exists(root_dir):
+                    if not check_path_exists(root_dir):
                         logging.error(f"Root directory does not exist: {root_dir}")
                     else:
                         actual_dirs = [d for d in os.listdir(root_dir) 
