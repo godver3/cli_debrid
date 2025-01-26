@@ -234,6 +234,33 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             if not os.path.exists(source_file):
                 parent_dir = os.path.dirname(source_file)
                 logging.info(f"Checking if parent directory exists: {parent_dir}")
+                
+                # Add detailed path comparison
+                try:
+                    actual_dirs = [d for d in os.listdir(os.path.dirname(parent_dir)) 
+                                 if os.path.isdir(os.path.join(os.path.dirname(parent_dir), d))]
+                    target_dir = os.path.basename(parent_dir)
+                    
+                    logging.info("Path comparison details:")
+                    logging.info(f"Looking for directory: '{target_dir}'")
+                    
+                    # Find closest matching directory
+                    closest_match = None
+                    for d in actual_dirs:
+                        if d.lower() == target_dir.lower():
+                            closest_match = d
+                            break
+                    
+                    if closest_match:
+                        logging.info(f"Found exact match (ignoring case): '{closest_match}'")
+                        if closest_match != target_dir:
+                            logging.info("Case mismatch detected!")
+                            logging.info(f"Expected: '{target_dir}'")
+                            logging.info(f"Actual:   '{closest_match}'")
+                            # Update the path with correct case
+                            parent_dir = os.path.join(os.path.dirname(parent_dir), closest_match)
+                            source_file = os.path.join(parent_dir, item['filled_by_file'])
+                
                 if os.path.exists(parent_dir):
                     logging.info(f"Parent directory exists, listing contents:")
                     try:
