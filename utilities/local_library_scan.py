@@ -220,17 +220,41 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 return path
                 
             def check_path_exists(path):
-                try:
-                    # For Windows drive paths, check if we can list the directory
-                    if len(path) >= 2 and path[1] == ':':
-                        try:
-                            os.listdir(path)
-                            return True
-                        except Exception:
-                            return False
-                    return os.path.exists(path)
-                except Exception:
-                    return False
+                """Check if a path exists with special handling for rclone mounts."""
+                max_retries = 3
+                retry_delay = 1  # seconds
+                
+                for attempt in range(max_retries):
+                    try:
+                        # For Windows drive paths
+                        if len(path) >= 2 and path[1] == ':':
+                            try:
+                                # First try a simple path.exists check which is faster
+                                if os.path.exists(path):
+                                    return True
+                                    
+                                # If that fails, try to access the parent directory
+                                parent = os.path.dirname(path)
+                                if parent and os.path.exists(parent):
+                                    return True
+                                    
+                                # As a last resort, try listing the directory
+                                os.listdir(os.path.dirname(path))
+                                return True
+                            except Exception as e:
+                                logging.debug(f"Path check attempt {attempt + 1} failed: {str(e)}")
+                                if attempt < max_retries - 1:
+                                    time.sleep(retry_delay)
+                                    continue
+                                return False
+                        return os.path.exists(path)
+                    except Exception as e:
+                        logging.debug(f"Path existence check failed on attempt {attempt + 1}: {str(e)}")
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            continue
+                        return False
+                return False
             
             # Normalize path separators and case for Windows compatibility
             original_path = normalize_windows_path(original_path)
