@@ -260,6 +260,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             # Update the path with correct case
                             parent_dir = os.path.join(os.path.dirname(parent_dir), closest_match)
                             source_file = os.path.join(parent_dir, item['filled_by_file'])
+                except Exception as e:
+                    logging.error(f"Error during path comparison: {e}")
                 
                 if os.path.exists(parent_dir):
                     logging.info(f"Parent directory exists, listing contents:")
@@ -271,7 +273,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         else:
                             logging.info("  Directory is empty")
                     except Exception as e:
-                        logging.error(f"Error listing directory: {str(e)}")
+                        logging.error(f"Error listing directory: {e}")
                 else:
                     logging.info("Parent directory does not exist")
                     # Try listing the root directory to see what's available
@@ -302,7 +304,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             if total > shown:
                                 logging.info(f"  ... and {total - shown} more folders")
                         except Exception as e:
-                            logging.error(f"Error listing root directory: {str(e)}")
+                            logging.error(f"Error listing root directory: {e}")
             if not os.path.exists(source_file):
                 if is_webhook and attempt < max_retries - 1:
                     logging.info(f"File not found, attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay} second...")
@@ -350,7 +352,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             progress = torrent_info.get('progress', 0)
                             is_downloading = progress > 0 and progress < 100
                     except Exception as e:
-                        logging.debug(f"Failed to check torrent status: {str(e)}")
+                        logging.debug(f"Failed to check torrent status: {e}")
 
                 # Only perform cleanup if not downloading
                 if not is_downloading:
@@ -362,7 +364,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             debrid_provider.remove_torrent(item['upgrading_from_torrent_id'])
                             logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
                         except Exception as e:
-                            logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
+                            logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {e}")
                 
                 # Remove old symlink if it exists
                 # Use the old file's name to get the old symlink path
@@ -389,7 +391,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         # Sleep for 0.5 seconds to give plex time to remove the file
                         remove_file_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
                     except Exception as e:
-                        logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
+                        logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {e}")
                 else:
                     logging.debug(f"[UPGRADE] No old symlink found at {old_dest}")
             
@@ -466,10 +468,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
         except Exception as e:
             if is_webhook and attempt < max_retries - 1:
-                logging.warning(f"[UPGRADE] Attempt {attempt + 1}/{max_retries} failed: {str(e)}. Retrying in {retry_delay} second...")
+                logging.warning(f"[UPGRADE] Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay} second...")
                 time.sleep(retry_delay)
                 continue
-            logging.error(f"[UPGRADE] Error checking local file for item: {str(e)}")
+            logging.error(f"[UPGRADE] Error checking local file for item: {e}")
             return False
             
     return False
@@ -558,7 +560,7 @@ def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
                             update_media_item(item['id'], location_on_disk=dest_file, collected_at=datetime.now())
                             
                     except Exception as e:
-                        logging.error(f"Error processing file {file}: {str(e)}")
+                        logging.error(f"Error processing file {file}: {e}")
                         continue
                         
         logging.info(f"Local library scan found {len(found_items)} matching items")
@@ -708,7 +710,7 @@ def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
             }
 
     except Exception as e:
-        logging.error(f"Error converting item to symlink: {str(e)}")
+        logging.error(f"Error converting item to symlink: {e}")
         return {
             'success': False,
             'error': str(e),
@@ -808,7 +810,7 @@ def scan_for_broken_symlinks(library_path: str = None) -> Dict[str, Any]:
         return result
         
     except Exception as e:
-        logging.error(f"Error scanning for broken symlinks: {str(e)}", exc_info=True)
+        logging.error(f"Error scanning for broken symlinks: {e}", exc_info=True)
         return {
             'total_symlinks': 0,
             'broken_symlinks': [],
@@ -881,7 +883,7 @@ def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dic
         }
         
     except Exception as e:
-        logging.error(f"Error repairing symlink: {str(e)}")
+        logging.error(f"Error repairing symlink: {e}")
         return {
             'success': False,
             'message': str(e),
