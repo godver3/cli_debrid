@@ -207,158 +207,40 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 return False
                 
             original_path = get_setting('File Management', 'original_files_path')
-            logging.info(f"Original files path from settings: {original_path}")
-            
-            # Special handling for Windows drive paths
-            def normalize_windows_path(path):
-                # Normalize path separators
-                path = os.path.normpath(path)
-                # Handle drive letter
-                if len(path) >= 2 and path[1] == ':':
-                    # Convert drive letter to uppercase and ensure it has a trailing backslash
-                    path = path[0].upper() + ':\\' + path[3:].lstrip('\\')
-                return path
-                
-            def check_path_exists(path):
-                """Check if a path exists with special handling for rclone mounts."""
-                max_retries = 3
-                retry_delay = 1  # seconds
-                
-                for attempt in range(max_retries):
-                    try:
-                        # For Windows drive paths
-                        if len(path) >= 2 and path[1] == ':':
-                            try:
-                                # First try a simple path.exists check which is faster
-                                if os.path.exists(path):
-                                    return True
-                                    
-                                # If that fails, try to access the parent directory
-                                parent = os.path.dirname(path)
-                                if parent and os.path.exists(parent):
-                                    return True
-                                    
-                                # As a last resort, try listing the directory
-                                os.listdir(os.path.dirname(path))
-                                return True
-                            except Exception as e:
-                                logging.debug(f"Path check attempt {attempt + 1} failed: {str(e)}")
-                                if attempt < max_retries - 1:
-                                    time.sleep(retry_delay)
-                                    continue
-                                return False
-                        return os.path.exists(path)
-                    except Exception as e:
-                        logging.debug(f"Path existence check failed on attempt {attempt + 1}: {str(e)}")
-                        if attempt < max_retries - 1:
-                            time.sleep(retry_delay)
-                            continue
-                        return False
-                return False
-            
-            # Normalize path separators and case for Windows compatibility
-            original_path = normalize_windows_path(original_path)
-            filled_by_title = item.get('filled_by_title', '')
-            filled_by_file = item['filled_by_file']
-            
-            logging.info(f"Normalized original path: {original_path}")
-            logging.info(f"Looking for file: {filled_by_file}")
-            logging.info(f"In subdirectory: {filled_by_title}")
             
             # First try the original path construction
-            source_file = normalize_windows_path(os.path.join(original_path, filled_by_title, filled_by_file))
-            logging.info(f"Full normalized source path: {source_file}")
-            exists = check_path_exists(source_file)
-            logging.info(f"Path exists check result: {exists}")
+            source_file = os.path.join(original_path, item.get('filled_by_title', ''), item['filled_by_file'])
+            logging.debug(f"Trying original source file path: {source_file}")
             
-            if not exists:
-                parent_dir = os.path.dirname(source_file)
-                logging.info(f"Checking if parent directory exists: {parent_dir}")
+            if extended_search:
+                # Only do extended search if item is not in a downloading state
+                torrent_id = item.get('filled_by_torrent_id')
+                is_downloading = False
                 
-                # Add detailed path comparison
-                try:
-                    root_dir = os.path.dirname(parent_dir)
-                    logging.info(f"Checking root directory: {root_dir}")
-                    if not check_path_exists(root_dir):
-                        logging.error(f"Root directory does not exist: {root_dir}")
-                    else:
-                        actual_dirs = [d for d in os.listdir(root_dir) 
-                                     if os.path.isdir(os.path.join(root_dir, d))]
-                        target_dir = os.path.basename(parent_dir)
-                        
-                        logging.info("Path comparison details:")
-                        logging.info(f"Looking for directory: '{target_dir}'")
-                        logging.info(f"Found {len(actual_dirs)} directories in root")
-                        
-                        # Log a few directories for context
-                        logging.info("Sample of existing directories:")
-                        for d in sorted(actual_dirs)[:5]:
-                            logging.info(f"  - '{d}'")
-                        
-                        # Find closest matching directory
-                        closest_match = None
-                        for d in actual_dirs:
-                            logging.debug(f"Comparing '{d}' with '{target_dir}'")
-                            if d.lower() == target_dir.lower():
-                                closest_match = d
-                                break
-                        
-                        if closest_match:
-                            logging.info(f"Found exact match (ignoring case): '{closest_match}'")
-                            if closest_match != target_dir:
-                                logging.info("Case mismatch detected!")
-                                logging.info(f"Expected: '{target_dir}'")
-                                logging.info(f"Actual:   '{closest_match}'")
-                                # Update the path with correct case
-                                parent_dir = os.path.join(root_dir, closest_match)
-                                source_file = os.path.join(parent_dir, item['filled_by_file'])
-                        else:
-                            logging.info("No matching directory found")
-                except Exception as e:
-                    logging.error(f"Error during path comparison: {e}", exc_info=True)
-                
-                if os.path.exists(parent_dir):
-                    logging.info(f"Parent directory exists, listing contents:")
+                if torrent_id:
                     try:
-                        dir_contents = os.listdir(parent_dir)
-                        if dir_contents:
-                            for f in dir_contents:
-                                logging.info(f"  - {f}")
-                        else:
-                            logging.info("  Directory is empty")
+                        from debrid import get_debrid_provider
+                        debrid_provider = get_debrid_provider()
+                        torrent_info = debrid_provider.get_torrent_info(torrent_id)
+                        if torrent_info:
+                            progress = torrent_info.get('progress', 0)
+                            is_downloading = progress > 0 and progress < 100
                     except Exception as e:
-                        logging.error(f"Error listing directory: {e}")
-                else:
-                    logging.info("Parent directory does not exist")
-                    # Try listing the root directory to see what's available
-                    root_dir = os.path.dirname(parent_dir)
-                    if os.path.exists(root_dir):
-                        try:
-                            root_contents = os.listdir(root_dir)
-                            target_name = os.path.basename(parent_dir)
-                            logging.info(f"Listing up to 5 folders from root directory {root_dir}:")
-                            shown = 0
-                            # First show any folders that start with the same letter as our target
-                            for f in sorted(root_contents):
-                                if shown >= 5:
-                                    break
-                                if os.path.isdir(os.path.join(root_dir, f)) and f[0].lower() == target_name[0].lower():
-                                    logging.info(f"  - {f}")
-                                    shown += 1
-                            # Then show other folders if we haven't shown 5 yet
-                            if shown < 5:
-                                logging.info("Other folders:")
-                                for f in sorted(root_contents):
-                                    if shown >= 5:
-                                        break
-                                    if os.path.isdir(os.path.join(root_dir, f)) and f[0].lower() != target_name[0].lower():
-                                        logging.info(f"  - {f}")
-                                        shown += 1
-                            total = sum(1 for f in root_contents if os.path.isdir(os.path.join(root_dir, f)))
-                            if total > shown:
-                                logging.info(f"  ... and {total - shown} more folders")
-                        except Exception as e:
-                            logging.error(f"Error listing root directory: {e}")
+                        logging.debug(f"Failed to check torrent status: {str(e)}")
+
+                # Only perform extended search if not downloading
+                if not is_downloading:
+                    # If file doesn't exist at the original path, search for it using find command
+                    found_path = None
+                    if not os.path.exists(source_file):
+                        logging.debug(f"File not found at original path, searching in {original_path}")
+                        found_path = find_file(item['filled_by_file'], original_path)
+                        if found_path:
+                            source_file = found_path
+                            # Update the filled_by_title to match the actual folder structure
+                            item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
+                            logging.info(f"Found file at alternate location: {source_file}")
+            
             if not os.path.exists(source_file):
                 if is_webhook and attempt < max_retries - 1:
                     logging.info(f"File not found, attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay} second...")
@@ -401,24 +283,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     try:
                         from debrid import get_debrid_provider
                         debrid_provider = get_debrid_provider()
-                        torrent_info = debrid_provider.get_torrent_info(torrent_id)
-                        if torrent_info:
-                            progress = torrent_info.get('progress', 0)
-                            is_downloading = progress > 0 and progress < 100
+                        debrid_provider.remove_torrent(item['upgrading_from_torrent_id'])
+                        logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
                     except Exception as e:
-                        logging.debug(f"Failed to check torrent status: {e}")
-
-                # Only perform cleanup if not downloading
-                if not is_downloading:
-                    # Remove old torrent from debrid service if we have the ID
-                    if item.get('filled_by_torrent_id'):
-                        try:
-                            from debrid import get_debrid_provider
-                            debrid_provider = get_debrid_provider()
-                            debrid_provider.remove_torrent(item['upgrading_from_torrent_id'])
-                            logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
-                        except Exception as e:
-                            logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {e}")
+                        logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
                 
                 # Remove old symlink if it exists
                 # Use the old file's name to get the old symlink path
@@ -445,7 +313,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         # Sleep for 0.5 seconds to give plex time to remove the file
                         remove_file_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
                     except Exception as e:
-                        logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {e}")
+                        logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
                 else:
                     logging.debug(f"[UPGRADE] No old symlink found at {old_dest}")
             
@@ -522,10 +390,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
         except Exception as e:
             if is_webhook and attempt < max_retries - 1:
-                logging.warning(f"[UPGRADE] Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay} second...")
+                logging.warning(f"[UPGRADE] Attempt {attempt + 1}/{max_retries} failed: {str(e)}. Retrying in {retry_delay} second...")
                 time.sleep(retry_delay)
                 continue
-            logging.error(f"[UPGRADE] Error checking local file for item: {e}")
+            logging.error(f"[UPGRADE] Error checking local file for item: {str(e)}")
             return False
             
     return False
@@ -614,7 +482,7 @@ def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
                             update_media_item(item['id'], location_on_disk=dest_file, collected_at=datetime.now())
                             
                     except Exception as e:
-                        logging.error(f"Error processing file {file}: {e}")
+                        logging.error(f"Error processing file {file}: {str(e)}")
                         continue
                         
         logging.info(f"Local library scan found {len(found_items)} matching items")
@@ -764,7 +632,7 @@ def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
             }
 
     except Exception as e:
-        logging.error(f"Error converting item to symlink: {e}")
+        logging.error(f"Error converting item to symlink: {str(e)}")
         return {
             'success': False,
             'error': str(e),
@@ -864,7 +732,7 @@ def scan_for_broken_symlinks(library_path: str = None) -> Dict[str, Any]:
         return result
         
     except Exception as e:
-        logging.error(f"Error scanning for broken symlinks: {e}", exc_info=True)
+        logging.error(f"Error scanning for broken symlinks: {str(e)}", exc_info=True)
         return {
             'total_symlinks': 0,
             'broken_symlinks': [],
@@ -897,7 +765,7 @@ def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dic
                 'old_target': None,
                 'new_target': None
             }
-
+            
         old_target = os.path.realpath(symlink_path)
         
         # If no new target specified, try to find the file
@@ -937,7 +805,7 @@ def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dic
         }
         
     except Exception as e:
-        logging.error(f"Error repairing symlink: {e}")
+        logging.error(f"Error repairing symlink: {str(e)}")
         return {
             'success': False,
             'message': str(e),
