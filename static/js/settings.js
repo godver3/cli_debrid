@@ -895,7 +895,9 @@ function updateContentSourceCheckPeriods() {
         'Trakt Lists': 900,
         'Trakt Collection': 900,
         'My Plex Watchlist': 900,
-        'Other Plex Watchlist': 900
+        'Other Plex Watchlist': 900,
+        'My Plex RSS Watchlist': 900,
+        'My Friends Plex RSS Watchlist': 900
     };
 
     const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);

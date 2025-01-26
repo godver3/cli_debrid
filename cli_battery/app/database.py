@@ -13,6 +13,7 @@ import os
 import time
 import random
 from functools import wraps
+from typing import Optional
 
 def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2):
     def decorator(func):
@@ -156,6 +157,14 @@ class TMDBToIMDBMapping(Base):
     tmdb_id = Column(String, unique=True, index=True)
     imdb_id = Column(String, unique=True, index=True)
 
+class TVDBToIMDBMapping(Base):
+    __tablename__ = 'tvdb_to_imdb_mapping'
+
+    id = Column(Integer, primary_key=True)
+    tvdb_id = Column(String, unique=True, index=True)
+    imdb_id = Column(String, unique=True, index=True)
+    media_type = Column(String)  # 'show' or 'movie'
+
 class DatabaseManager:
     @staticmethod
     @retry_on_db_lock()
@@ -293,3 +302,33 @@ class DatabaseManager:
                 logger.error(f"Error removing metadata for IMDB ID {imdb_id}: {str(e)}")
                 session.rollback()
                 return False
+
+    @staticmethod
+    def add_tvdb_to_imdb_mapping(tvdb_id: str, imdb_id: str, media_type: str = 'show') -> bool:
+        """Add or update a TVDB to IMDB mapping."""
+        with Session() as session:
+            try:
+                mapping = session.query(TVDBToIMDBMapping).filter_by(tvdb_id=tvdb_id).first()
+                if not mapping:
+                    mapping = TVDBToIMDBMapping(tvdb_id=tvdb_id, imdb_id=imdb_id, media_type=media_type)
+                    session.add(mapping)
+                else:
+                    mapping.imdb_id = imdb_id
+                    mapping.media_type = media_type
+                session.commit()
+                return True
+            except Exception as e:
+                logger.error(f"Error adding TVDB to IMDB mapping: {str(e)}")
+                session.rollback()
+                return False
+
+    @staticmethod
+    def get_imdb_from_tvdb(tvdb_id: str) -> Optional[str]:
+        """Get IMDB ID from TVDB ID."""
+        with Session() as session:
+            try:
+                mapping = session.query(TVDBToIMDBMapping).filter_by(tvdb_id=tvdb_id).first()
+                return mapping.imdb_id if mapping else None
+            except Exception as e:
+                logger.error(f"Error getting IMDB ID from TVDB ID: {str(e)}")
+                return None

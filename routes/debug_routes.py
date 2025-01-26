@@ -18,6 +18,7 @@ from content_checkers.collected import get_wanted_from_collected
 from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from content_checkers.mdb_list import get_wanted_from_mdblists
+from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
 from metadata.metadata import process_metadata
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 import os
@@ -374,6 +375,18 @@ def get_and_add_wanted_content(source_id):
         wanted_content = get_wanted_from_overseerr()
     elif source_type == 'My Plex Watchlist':
         wanted_content = get_wanted_from_plex_watchlist(versions)
+    elif source_type == 'My Plex RSS Watchlist':
+        plex_rss_url = source_data.get('url', '')
+        if not plex_rss_url:
+            logging.error(f"Missing URL for source: {source_id}")
+            return
+        wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions)
+    elif source_type == 'My Friends Plex RSS Watchlist':
+        plex_rss_url = source_data.get('url', '')
+        if not plex_rss_url:
+            logging.error(f"Missing URL for source: {source_id}")
+            return
+        wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions)
     elif source_type == 'Other Plex Watchlist':
         wanted_content = get_wanted_from_other_plex_watchlist(
             username=source_data.get('username', ''),
