@@ -170,9 +170,17 @@ class MetadataManager:
             if item:
                 seasons = session.query(Season).filter_by(item_id=item.id).options(selectinload(Season.episodes)).all()
                 if seasons:
-                    # Check if the seasons data is stale
-                    if MetadataManager.is_metadata_stale(item.updated_at):
-                        return MetadataManager.refresh_seasons(imdb_id, session)
+                    # Check if any metadata is stale
+                    metadata = session.query(Metadata).filter_by(item_id=item.id, key='seasons').first()
+                    if metadata and MetadataManager.is_metadata_stale(metadata.last_updated):
+                        logger.debug(f"Seasons metadata is stale for {imdb_id}, refreshing from Trakt")
+                        # Fetch fresh data from Trakt
+                        trakt = TraktMetadata()
+                        seasons_data, source = trakt.get_show_seasons_and_episodes(imdb_id)
+                        if seasons_data:
+                            # Update the database with new data
+                            MetadataManager.add_or_update_seasons_and_episodes(imdb_id, seasons_data)
+                            return seasons_data, "trakt"
                     else:
                         seasons_data = MetadataManager.format_seasons_data(seasons)
                         return seasons_data, "battery"
@@ -211,41 +219,58 @@ class MetadataManager:
     @staticmethod
     def add_or_update_seasons_and_episodes(imdb_id, seasons_data):
         with DbSession() as session:
-            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-            if not item:
-                logger.error(f"Item with IMDB ID {imdb_id} not found when adding seasons and episodes.")
-                return False
+            try:
+                item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                if not item:
+                    logger.error(f"Item with IMDB ID {imdb_id} not found when adding seasons and episodes.")
+                    return False
 
-            for season_number, season_info in seasons_data.items():
-                season = session.query(Season).filter_by(item_id=item.id, season_number=season_number).first()
-                if not season:
-                    season = Season(item_id=item.id, season_number=season_number, episode_count=season_info['episode_count'])
-                    session.add(season)
-                else:
-                    season.episode_count = season_info['episode_count']
+                # Update item's timestamp
+                item.updated_at = datetime.now(timezone.utc)
 
-                for episode_number, episode_info in season_info['episodes'].items():
-                    episode = session.query(Episode).filter_by(season_id=season.id, episode_number=episode_number).first()
-                    if not episode:
-                        episode = Episode(
-                            season_id=season.id,
-                            episode_number=episode_number,
-                            title=episode_info['title'],
-                            overview=episode_info['overview'],
-                            runtime=episode_info['runtime'],
-                            first_aired=iso8601.parse_date(episode_info['first_aired']) if episode_info['first_aired'] else None,
-                            imdb_id=episode_info['imdb_id']
-                        )
-                        session.add(episode)
+                # Update metadata timestamp
+                metadata = session.query(Metadata).filter_by(item_id=item.id, key='seasons').first()
+                if not metadata:
+                    metadata = Metadata(item_id=item.id, key='seasons')
+                    session.add(metadata)
+                metadata.value = json.dumps(seasons_data)
+                metadata.provider = 'trakt'
+                metadata.last_updated = datetime.now(timezone.utc)
+
+                for season_number, season_info in seasons_data.items():
+                    season = session.query(Season).filter_by(item_id=item.id, season_number=season_number).first()
+                    if not season:
+                        season = Season(item_id=item.id, season_number=season_number, episode_count=season_info['episode_count'])
+                        session.add(season)
                     else:
-                        episode.title = episode_info['title']
-                        episode.overview = episode_info['overview']
-                        episode.runtime = episode_info['runtime']
-                        episode.first_aired = iso8601.parse_date(episode_info['first_aired']) if episode_info['first_aired'] else None
-                        episode.imdb_id = episode_info['imdb_id']
+                        season.episode_count = season_info['episode_count']
 
-            session.commit()
-            return True
+                    for episode_number, episode_info in season_info['episodes'].items():
+                        episode = session.query(Episode).filter_by(season_id=season.id, episode_number=episode_number).first()
+                        if not episode:
+                            episode = Episode(
+                                season_id=season.id,
+                                episode_number=episode_number,
+                                title=episode_info['title'],
+                                overview=episode_info['overview'],
+                                runtime=episode_info['runtime'],
+                                first_aired=iso8601.parse_date(episode_info['first_aired']) if episode_info['first_aired'] else None,
+                                imdb_id=episode_info['imdb_id']
+                            )
+                            session.add(episode)
+                        else:
+                            episode.title = episode_info['title']
+                            episode.overview = episode_info['overview']
+                            episode.runtime = episode_info['runtime']
+                            episode.first_aired = iso8601.parse_date(episode_info['first_aired']) if episode_info['first_aired'] else None
+                            episode.imdb_id = episode_info['imdb_id']
+
+                session.commit()
+                return True
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error in add_or_update_seasons_and_episodes: {str(e)}")
+                return False
 
     @staticmethod
     def _process_trakt_seasons(imdb_id, seasons_data, episodes_data):
