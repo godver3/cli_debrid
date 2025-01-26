@@ -211,6 +211,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
             # Normalize path separators and case for Windows compatibility
             original_path = os.path.normpath(original_path)
+            # Convert drive letter to uppercase for Windows
+            if len(original_path) >= 2 and original_path[1] == ':':
+                original_path = original_path[0].upper() + original_path[1:]
+            
             filled_by_title = item.get('filled_by_title', '')
             filled_by_file = item['filled_by_file']
             
@@ -220,48 +224,58 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
             # First try the original path construction
             source_file = os.path.normpath(os.path.join(original_path, filled_by_title, filled_by_file))
+            # Convert drive letter to uppercase for Windows
+            if len(source_file) >= 2 and source_file[1] == ':':
+                source_file = source_file[0].upper() + source_file[1:]
+                
             logging.info(f"Full normalized source path: {source_file}")
             logging.info(f"Path exists check result: {os.path.exists(source_file)}")
             
             if not os.path.exists(source_file):
-                logging.info(f"Checking if parent directory exists: {os.path.dirname(source_file)}")
-                if os.path.exists(os.path.dirname(source_file)):
+                parent_dir = os.path.dirname(source_file)
+                logging.info(f"Checking if parent directory exists: {parent_dir}")
+                if os.path.exists(parent_dir):
                     logging.info(f"Parent directory exists, listing contents:")
                     try:
-                        for f in os.listdir(os.path.dirname(source_file)):
-                            logging.info(f"  - {f}")
+                        dir_contents = os.listdir(parent_dir)
+                        if dir_contents:
+                            for f in dir_contents:
+                                logging.info(f"  - {f}")
+                        else:
+                            logging.info("  Directory is empty")
                     except Exception as e:
                         logging.error(f"Error listing directory: {str(e)}")
-                
-                if extended_search:
-                    # Only do extended search if item is not in a downloading state
-                    torrent_id = item.get('filled_by_torrent_id')
-                    is_downloading = False
-                    
-                    if torrent_id:
+                else:
+                    logging.info("Parent directory does not exist")
+                    # Try listing the root directory to see what's available
+                    root_dir = os.path.dirname(parent_dir)
+                    if os.path.exists(root_dir):
                         try:
-                            from debrid import get_debrid_provider
-                            debrid_provider = get_debrid_provider()
-                            torrent_info = debrid_provider.get_torrent_info(torrent_id)
-                            if torrent_info:
-                                progress = torrent_info.get('progress', 0)
-                                is_downloading = progress > 0 and progress < 100
+                            root_contents = os.listdir(root_dir)
+                            target_name = os.path.basename(parent_dir)
+                            logging.info(f"Listing up to 5 folders from root directory {root_dir}:")
+                            shown = 0
+                            # First show any folders that start with the same letter as our target
+                            for f in sorted(root_contents):
+                                if shown >= 5:
+                                    break
+                                if os.path.isdir(os.path.join(root_dir, f)) and f[0].lower() == target_name[0].lower():
+                                    logging.info(f"  - {f}")
+                                    shown += 1
+                            # Then show other folders if we haven't shown 5 yet
+                            if shown < 5:
+                                logging.info("Other folders:")
+                                for f in sorted(root_contents):
+                                    if shown >= 5:
+                                        break
+                                    if os.path.isdir(os.path.join(root_dir, f)) and f[0].lower() != target_name[0].lower():
+                                        logging.info(f"  - {f}")
+                                        shown += 1
+                            total = sum(1 for f in root_contents if os.path.isdir(os.path.join(root_dir, f)))
+                            if total > shown:
+                                logging.info(f"  ... and {total - shown} more folders")
                         except Exception as e:
-                            logging.debug(f"Failed to check torrent status: {str(e)}")
-
-                    # Only perform extended search if not downloading
-                    if not is_downloading:
-                        # If file doesn't exist at the original path, search for it using find command
-                        found_path = None
-                        if not os.path.exists(source_file):
-                            logging.debug(f"File not found at original path, searching in {original_path}")
-                            found_path = find_file(item['filled_by_file'], original_path)
-                            if found_path:
-                                source_file = found_path
-                                # Update the filled_by_title to match the actual folder structure
-                                item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
-                                logging.info(f"Found file at alternate location: {source_file}")
-            
+                            logging.error(f"Error listing root directory: {str(e)}")
             if not os.path.exists(source_file):
                 if is_webhook and attempt < max_retries - 1:
                     logging.info(f"File not found, attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay} second...")
