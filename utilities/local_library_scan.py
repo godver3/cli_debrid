@@ -207,39 +207,60 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 return False
                 
             original_path = get_setting('File Management', 'original_files_path')
+            logging.info(f"Original files path from settings: {original_path}")
+            
+            # Normalize path separators and case for Windows compatibility
+            original_path = os.path.normpath(original_path)
+            filled_by_title = item.get('filled_by_title', '')
+            filled_by_file = item['filled_by_file']
+            
+            logging.info(f"Normalized original path: {original_path}")
+            logging.info(f"Looking for file: {filled_by_file}")
+            logging.info(f"In subdirectory: {filled_by_title}")
             
             # First try the original path construction
-            source_file = os.path.join(original_path, item.get('filled_by_title', ''), item['filled_by_file'])
-            logging.debug(f"Trying original source file path: {source_file}")
+            source_file = os.path.normpath(os.path.join(original_path, filled_by_title, filled_by_file))
+            logging.info(f"Full normalized source path: {source_file}")
+            logging.info(f"Path exists check result: {os.path.exists(source_file)}")
             
-            if extended_search:
-                # Only do extended search if item is not in a downloading state
-                torrent_id = item.get('filled_by_torrent_id')
-                is_downloading = False
-                
-                if torrent_id:
+            if not os.path.exists(source_file):
+                logging.info(f"Checking if parent directory exists: {os.path.dirname(source_file)}")
+                if os.path.exists(os.path.dirname(source_file)):
+                    logging.info(f"Parent directory exists, listing contents:")
                     try:
-                        from debrid import get_debrid_provider
-                        debrid_provider = get_debrid_provider()
-                        torrent_info = debrid_provider.get_torrent_info(torrent_id)
-                        if torrent_info:
-                            progress = torrent_info.get('progress', 0)
-                            is_downloading = progress > 0 and progress < 100
+                        for f in os.listdir(os.path.dirname(source_file)):
+                            logging.info(f"  - {f}")
                     except Exception as e:
-                        logging.debug(f"Failed to check torrent status: {str(e)}")
+                        logging.error(f"Error listing directory: {str(e)}")
+                
+                if extended_search:
+                    # Only do extended search if item is not in a downloading state
+                    torrent_id = item.get('filled_by_torrent_id')
+                    is_downloading = False
+                    
+                    if torrent_id:
+                        try:
+                            from debrid import get_debrid_provider
+                            debrid_provider = get_debrid_provider()
+                            torrent_info = debrid_provider.get_torrent_info(torrent_id)
+                            if torrent_info:
+                                progress = torrent_info.get('progress', 0)
+                                is_downloading = progress > 0 and progress < 100
+                        except Exception as e:
+                            logging.debug(f"Failed to check torrent status: {str(e)}")
 
-                # Only perform extended search if not downloading
-                if not is_downloading:
-                    # If file doesn't exist at the original path, search for it using find command
-                    found_path = None
-                    if not os.path.exists(source_file):
-                        logging.debug(f"File not found at original path, searching in {original_path}")
-                        found_path = find_file(item['filled_by_file'], original_path)
-                        if found_path:
-                            source_file = found_path
-                            # Update the filled_by_title to match the actual folder structure
-                            item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
-                            logging.info(f"Found file at alternate location: {source_file}")
+                    # Only perform extended search if not downloading
+                    if not is_downloading:
+                        # If file doesn't exist at the original path, search for it using find command
+                        found_path = None
+                        if not os.path.exists(source_file):
+                            logging.debug(f"File not found at original path, searching in {original_path}")
+                            found_path = find_file(item['filled_by_file'], original_path)
+                            if found_path:
+                                source_file = found_path
+                                # Update the filled_by_title to match the actual folder structure
+                                item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
+                                logging.info(f"Found file at alternate location: {source_file}")
             
             if not os.path.exists(source_file):
                 if is_webhook and attempt < max_retries - 1:
@@ -283,10 +304,24 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     try:
                         from debrid import get_debrid_provider
                         debrid_provider = get_debrid_provider()
-                        debrid_provider.remove_torrent(item['upgrading_from_torrent_id'])
-                        logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
+                        torrent_info = debrid_provider.get_torrent_info(torrent_id)
+                        if torrent_info:
+                            progress = torrent_info.get('progress', 0)
+                            is_downloading = progress > 0 and progress < 100
                     except Exception as e:
-                        logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
+                        logging.debug(f"Failed to check torrent status: {str(e)}")
+
+                # Only perform cleanup if not downloading
+                if not is_downloading:
+                    # Remove old torrent from debrid service if we have the ID
+                    if item.get('filled_by_torrent_id'):
+                        try:
+                            from debrid import get_debrid_provider
+                            debrid_provider = get_debrid_provider()
+                            debrid_provider.remove_torrent(item['upgrading_from_torrent_id'])
+                            logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
+                        except Exception as e:
+                            logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
                 
                 # Remove old symlink if it exists
                 # Use the old file's name to get the old symlink path
@@ -765,7 +800,7 @@ def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dic
                 'old_target': None,
                 'new_target': None
             }
-            
+
         old_target = os.path.realpath(symlink_path)
         
         # If no new target specified, try to find the file
