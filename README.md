@@ -2,16 +2,6 @@
 
 cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is designed to automatically manage and upgrade your media collection, leveraging various sources and services to ensure you always have the best quality content available.
 
-## Version Information
-
-*Main Branch*
-
-![Main Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/main)
-
-*Dev Branch*
-
-![Dev Branch Version](https://img.shields.io/endpoint?url=https://version.godver3.xyz/version/dev&color=orange&logoColor=orange)
-
 ## Community
 
 - [Discord](https://discord.gg/jAmqZJCZJ4)
@@ -59,6 +49,7 @@ Supports either a Plex or Symlinked library:
 
 - Plex: Uses Plex's API to get your library and track what you have.
 - Symlinked: Uses a local folder structure to track your library.
+- *Important - if running on Windows, Developer Mode must be enabled to allow symlinking!*
 
 ### Settings
 
@@ -211,7 +202,7 @@ cli_debrid maintains a local database of your media collection, keeping track of
 - Docker and Docker Compose installed on your system
 - A Plex server
 - An Overseerr instance
-- A Real-Debrid or account
+- A Real-Debrid or Torbox account
 
 ### Setup Instructions
 
