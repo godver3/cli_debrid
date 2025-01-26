@@ -6,6 +6,7 @@ from initialization import initialize
 from settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
+from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
 from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime
@@ -146,11 +147,13 @@ class ProgramRunner:
                 'Overseerr': 900,
                 'MDBList': 900,
                 'Collected': 86400,
-                'Trakt Watchlist': 30,
+                'Trakt Watchlist': 900,
                 'Trakt Lists': 900,
                 'Trakt Collection': 900,
-                'My Plex Watchlist': 30,
-                'Other Plex Watchlist': 900
+                'My Plex Watchlist': 900,
+                'Other Plex Watchlist': 900,
+                'My Plex RSS Watchlist': 900,
+                'My Friends Plex RSS Watchlist': 900
             }
             
             for source, data in self.content_sources.items():
@@ -426,6 +429,10 @@ class ProgramRunner:
                 wanted_content = get_wanted_from_collected()
             elif source_type == 'My Plex Watchlist':
                 wanted_content = get_wanted_from_plex_watchlist(versions)
+            elif source_type == 'My Plex RSS Watchlist':
+                wanted_content = get_wanted_from_plex_rss(versions)
+            elif source_type == 'My Friends Plex RSS Watchlist':
+                wanted_content = get_wanted_from_friends_plex_rss(versions)
             elif source_type == 'Other Plex Watchlist':
                 other_watchlists = []
                 for source_id, source_data in self.get_content_sources().items():

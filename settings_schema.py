@@ -458,6 +458,18 @@ SETTINGS_SCHEMA = {
                 "token": {"type": "string", "default": "", "sensitive": True},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "display_name": {"type": "string", "default": "Other Plex Watchlist"}
+            },
+            "My Plex RSS Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "url": {"type": "string", "default": "", "validate": "url"},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "My Plex RSS Watchlist"}
+            },
+            "My Friends Plex RSS Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "url": {"type": "string", "default": "", "validate": "url"},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "My Friends Plex RSS Watchlist"}
             }
         }
     },
