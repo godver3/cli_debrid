@@ -430,9 +430,11 @@ class ProgramRunner:
             elif source_type == 'My Plex Watchlist':
                 wanted_content = get_wanted_from_plex_watchlist(versions)
             elif source_type == 'My Plex RSS Watchlist':
-                wanted_content = get_wanted_from_plex_rss(versions)
+                plex_rss_url = data.get('url', '')
+                wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions)
             elif source_type == 'My Friends Plex RSS Watchlist':
-                wanted_content = get_wanted_from_friends_plex_rss(versions)
+                plex_rss_url = data.get('url', '')
+                wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions)
             elif source_type == 'Other Plex Watchlist':
                 other_watchlists = []
                 for source_id, source_data in self.get_content_sources().items():

@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Scraper{% endblock %}
 {% block content %}
+<meta name="theme-color" content="#333333">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <style>
     @import url('{{ url_for('static', filename='css/scraper.css') }}');
     @import url('{{ url_for('static', filename='css/scraper_trending.css') }}');
+    @import url('{{ url_for('static', filename='css/scraper-mobile.css') }}');
 
     .trending-container p {
         font-style: italic;
@@ -159,7 +163,10 @@
         </div>
         <div id="seasonResults" style="display: none;">
             <div id="season-info"></div>
-            <select id="seasonDropdown"></select><button id="seasonPackButton">Season Pack</button>
+            <div class="season-controls">
+                <select id="seasonDropdown"></select>
+                <button id="seasonPackButton">Season Pack</button>
+            </div>
             <div id="episodeResults"></div>
         </div>
         <div id="overlay" class="overlay">
