@@ -8,7 +8,7 @@ from run_program import (
     run_local_library_scan, 
     run_recent_local_library_scan
 )
-from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist
+from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, save_manual_blacklist
 from settings import get_all_settings, get_setting, set_setting
 from config_manager import load_config
 import logging
@@ -19,13 +19,14 @@ from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
-from metadata.metadata import process_metadata
+from metadata.metadata import process_metadata, get_metadata
+from cli_battery.app.direct_api import DirectAPI
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 import os
 import glob
 from api_tracker import api 
 import time
-from metadata.metadata import get_metadata, get_tmdb_id_and_media_type, refresh_release_dates
+from metadata.metadata import get_tmdb_id_and_media_type, refresh_release_dates
 from datetime import datetime
 from notifications import send_notifications
 import requests
@@ -231,76 +232,87 @@ def manual_blacklist():
     if request.method == 'POST':
         action = request.form.get('action')
         imdb_id = request.form.get('imdb_id')
-
-        if action == 'add':
-            details = None
-            media_type = None
-            tmdb_id = None
-
-            # Try to get TMDB ID and media type
-            try:
-                tmdb_id, media_type = get_tmdb_id_and_media_type(imdb_id)
-                logging.info(f"Retrieved TMDB ID: {tmdb_id}, Media Type: {media_type}")
-            except Exception as e:
-                logging.error(f"Error in get_tmdb_id_and_media_type: {str(e)}")
-
-            # If we have media_type, try to fetch metadata
-            if media_type:
-                try:
-                    details = get_metadata(imdb_id=imdb_id, tmdb_id=tmdb_id, item_media_type=media_type)
-                except Exception as e:
-                    logging.error(f"Error fetching metadata for {imdb_id}: {str(e)}")
-
-            # If we still don't have details, try a basic IMDB lookup
-            if not details:
-                try:
-                    from imdb import IMDb
-                    ia = IMDb()
-                    movie = ia.get_movie(imdb_id[2:])  # Remove 'tt' prefix
-                    details = {
-                        'title': movie.get('title'),
-                        'year': movie.get('year'),
-                    }
-                    logging.info(f"Retrieved basic details from IMDb: {details}")
-                except Exception as e:
-                    logging.error(f"Error fetching basic details from IMDb: {str(e)}")
-
-            # If we still don't have details, log an error and flash a message
-            if not details:
-                error_msg = f"Could not fetch details for IMDb ID: {imdb_id}"
-                logging.error(error_msg)
-                flash(error_msg, 'error')
-                return redirect(url_for('debug.manual_blacklist'))
-
-            # Process the details and add to blacklist
-            title = details.get('title')
-            year = details.get('year')
-                        
-            # After retrieving tmdb_id and media_type
-            if media_type is None or media_type == 'None' or media_type.lower() == 'none':
-                media_type = 'TV Show'
-                logging.info(f"Media type was None or 'None', setting to 'TV Show' for IMDb ID: {imdb_id}")
-
-            # Then proceed with fetching metadata and adding to blacklist
-            if media_type:
-                try:
-                    details = get_metadata(imdb_id=imdb_id, tmdb_id=tmdb_id, item_media_type=media_type)
-                except Exception as e:
-                    logging.error(f"Error fetching metadata for {imdb_id}: {str(e)}")
-                    details = None
-
-            if title and year:
-                add_to_manual_blacklist(imdb_id, media_type, title, str(year))
-                flash(f'Added {imdb_id}: {title} ({year}) to manual blacklist as {media_type or "unknown"}', 'success')
-            else:
-                flash(f'Incomplete details for {imdb_id}. Title: {title}, Year: {year}', 'error')
         
-        elif action == 'remove':
-            remove_from_manual_blacklist(imdb_id)
-            flash(f'Removed {imdb_id} from manual blacklist', 'success')
+        if not imdb_id:
+            flash('IMDb ID is required', 'error')
+            return redirect(url_for('debug.manual_blacklist'))
 
+        blacklist = get_manual_blacklist()
+        
+        if action == 'add':
+            try:
+                # Try TV show metadata first
+                direct_api = DirectAPI()
+                show_data, _ = direct_api.get_show_metadata(imdb_id)
+                if show_data:
+                    if isinstance(show_data, str):
+                        show_data = json.loads(show_data)
+                        
+                    add_to_manual_blacklist(
+                        imdb_id=imdb_id,
+                        media_type='episode',
+                        title=show_data.get('title', 'Unknown Title'),
+                        year=str(show_data.get('year', '')),
+                        season=None  # Initially add with no seasons selected
+                    )
+                    flash('Successfully added to blacklist', 'success')
+                else:
+                    # If not a TV show, try movie metadata
+                    movie_data, _ = direct_api.get_movie_metadata(imdb_id)
+                    if movie_data:
+                        if isinstance(movie_data, str):
+                            movie_data = json.loads(movie_data)
+                        add_to_manual_blacklist(
+                            imdb_id=imdb_id,
+                            media_type='movie',
+                            title=movie_data.get('title', 'Unknown Title'),
+                            year=str(movie_data.get('year', '')),
+                        )
+                        flash('Successfully added to blacklist', 'success')
+                    else:
+                        flash('Unable to fetch metadata for IMDb ID', 'error')
+            except Exception as e:
+                flash(f'Error adding to blacklist: {str(e)}', 'error')
+                logging.error(f"Error adding to blacklist: {str(e)}", exc_info=True)
+                
+        elif action == 'update_seasons':
+            try:
+                if imdb_id in blacklist:
+                    item = blacklist[imdb_id]
+                    if item['media_type'] == 'episode':
+                        # Check if all seasons is selected
+                        all_seasons = request.form.get('all_seasons') == 'on'
+                        
+                        if all_seasons:
+                            item['seasons'] = []  # Empty list means all seasons
+                        else:
+                            # Get selected seasons from form
+                            selected_seasons = request.form.getlist('seasons')
+                            # Convert to integers and sort
+                            item['seasons'] = sorted([int(s) for s in selected_seasons])
+                            
+                        save_manual_blacklist(blacklist)
+                        flash('Successfully updated seasons', 'success')
+                    else:
+                        flash('Only TV shows can have seasons updated', 'error')
+                else:
+                    flash('Show not found in blacklist', 'error')
+            except Exception as e:
+                flash(f'Error updating seasons: {str(e)}', 'error')
+                logging.error(f"Error updating seasons: {str(e)}", exc_info=True)
+                
+        elif action == 'remove':
+            try:
+                remove_from_manual_blacklist(imdb_id)
+                flash('Successfully removed from blacklist', 'success')
+            except Exception as e:
+                flash(f'Error removing from blacklist: {str(e)}', 'error')
+    
+    # Get blacklist and sort by title
     blacklist = get_manual_blacklist()
-    return render_template('manual_blacklist.html', blacklist=blacklist)
+    sorted_blacklist = dict(sorted(blacklist.items(), key=lambda x: x[1]['title'].lower()))
+                
+    return render_template('manual_blacklist.html', blacklist=sorted_blacklist)
 
 @debug_bp.route('/api/get_title_year', methods=['GET'])
 def get_title_year():

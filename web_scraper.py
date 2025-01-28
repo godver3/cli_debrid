@@ -19,6 +19,8 @@ from debrid import get_debrid_provider
 
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     trakt_client_id = get_setting('Trakt', 'client_id')
+    tmdb_api_key = get_setting('TMDB', 'api_key')
+    has_tmdb = bool(tmdb_api_key)
     
     if not trakt_client_id:
         logging.error("Trakt Client ID not set. Please configure in settings.")
@@ -95,16 +97,21 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                         cache_media_meta(tmdb_id, media_type, media_meta)
                         logging.info(f"Cached poster and metadata for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
                     else:
-                        filter_stats['no_poster'] += 1
-                        logging.debug(f"No poster found for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
-                        continue  # Skip items without posters
+                        if has_tmdb:
+                            filter_stats['no_poster'] += 1
+                            logging.debug(f"No poster found for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
+                            continue  # Skip items without posters only if we have TMDB API key
+                        else:
+                            # Use placeholder if no TMDB API key
+                            poster_path = "static/images/placeholder.png"
+                            media_meta = (poster_path, "No overview available", [], 0.0, "")
 
                 if not item.get('year'):
                     filter_stats['no_year'] += 1
                     logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to no year")
                     continue
 
-                if not item.get('posterPath') and not poster_path:
+                if has_tmdb and not item.get('posterPath') and not poster_path:
                     filter_stats['no_poster'] += 1
                     logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to no poster")
                     continue
@@ -115,7 +122,7 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                     'title': item['title'],
                     'year': item['year'],
                     'posterPath': poster_path,
-                    'overview': media_meta[1],
+                    'show_overview' if media_type == 'show' else 'overview': media_meta[1],
                     'genres': media_meta[2],
                     'voteAverage': media_meta[3],
                     'backdropPath': media_meta[4],
@@ -149,8 +156,12 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
     tmdb_api_key = get_setting('TMDB', 'api_key')
     
     if not tmdb_api_key:
-        logging.error("TMDb API key not set. Please configure in settings.")
-        return None
+        logging.warning("TMDb API key not set. Using placeholder data.")
+        placeholder_path = "static/images/placeholder.png"
+        logging.info(f"Using placeholder path: {placeholder_path}")
+        # Return tuple with placeholder values: (poster_url, overview, genres, vote_average, backdrop_path)
+        # Use relative path for placeholder
+        return (placeholder_path, "No overview available", [], 0.0, "")
 
     cached_poster_url = get_cached_poster_url(tmdb_id, media_type)
     cached_media_meta = get_cached_media_meta(tmdb_id, media_type)
@@ -280,7 +291,8 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
         logging.warning(f"No results found for search term: {base_title} ({year if year else 'no year specified'})")
         return {"error": "No results found"}
 
-    #logging.info(f"Found results: {search_results}")
+    tmdb_api_key = get_setting('TMDB', 'api_key')
+    has_tmdb = bool(tmdb_api_key)
 
     detailed_results = []
     for result in search_results:
@@ -290,17 +302,19 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
             logging.info(f"Processing media tmdb_id: {tmdb_id}")
             logging.info(f"Processing media type: {media_type}")
 
-            # Skip if no poster path or if it's a placeholder
-            if not result.get('posterPath') or 'placeholder' in result.get('posterPath', '').lower():
-                logging.info(f"Skipping {result['title']} - no poster path or placeholder image")
-                continue
+            # Skip poster validation when we have no TMDB API key
+            if has_tmdb:
+                # Skip if no poster path or if it's a placeholder when we have TMDB
+                if not result.get('posterPath') or 'placeholder' in result.get('posterPath', '').lower():
+                    logging.info(f"Skipping {result['title']} - no poster path or placeholder image")
+                    continue
 
             cached_poster_url = get_cached_poster_url(tmdb_id, media_type)
             cached_media_meta = get_cached_media_meta(tmdb_id, media_type)
 
             if cached_poster_url and cached_media_meta:
-                # Validate cached poster URL
-                if 'placeholder' in cached_poster_url.lower() or not cached_poster_url.startswith('https://image.tmdb.org/'):
+                # Only validate cached poster URL if we have TMDB API key
+                if has_tmdb and ('placeholder' in cached_poster_url.lower() or not cached_poster_url.startswith('https://image.tmdb.org/')):
                     logging.info(f"Skipping {result['title']} - invalid cached poster URL")
                     continue
                 logging.info(f"Using cached data for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
@@ -311,18 +325,23 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 media_meta = get_media_meta(tmdb_id, media_type)
                 if media_meta and media_meta[0]:  # Check if media_meta exists and has a valid poster URL
                     poster_path = asyncio.run(fetch_poster_url(tmdb_id, media_type))
-                    if not poster_path or 'placeholder' in poster_path.lower() or not poster_path.startswith('https://image.tmdb.org/'):
+                    if has_tmdb and (not poster_path or 'placeholder' in poster_path.lower() or not poster_path.startswith('https://image.tmdb.org/')):
                         logging.info(f"Skipping {result['title']} - invalid or missing poster URL")
                         continue
                     cache_poster_url(tmdb_id, media_type, poster_path)
                     cache_media_meta(tmdb_id, media_type, media_meta)
                     logging.info(f"Cached poster and metadata for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
                 else:
-                    logging.info(f"Skipping {result['title']} - no valid metadata or poster")
-                    continue
+                    if has_tmdb:
+                        logging.info(f"Skipping {result['title']} - no valid metadata or poster")
+                        continue
+                    else:
+                        # Use placeholder if no TMDB API key
+                        poster_path = "static/images/placeholder.png"
+                        media_meta = (poster_path, "No overview available", [], 0.0, "")
 
-            # Skip if overview is empty (likely incomplete metadata)
-            if not media_meta[1].strip():
+            # Skip if overview is empty (likely incomplete metadata) - only if we have TMDB API
+            if has_tmdb and not media_meta[1].strip():
                 logging.info(f"Skipping {result['title']} - empty overview")
                 continue
 

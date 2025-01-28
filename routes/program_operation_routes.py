@@ -18,6 +18,7 @@ import signal
 import psutil
 import sys
 import subprocess
+import xml.etree.ElementTree as ET
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -248,13 +249,80 @@ def check_service_connectivity():
 
     services_reachable = True
 
-    # Check Plex connectivity
+    # Check Plex connectivity and libraries
     if get_setting('File Management', 'file_collection_management') == 'Plex':
         try:
+            # First check basic connectivity
             response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
             response.raise_for_status()
+
+            # Then check library existence
+            libraries_response = api.get(f"{plex_url}/library/sections?X-Plex-Token={plex_token}", timeout=5)
+            libraries_response.raise_for_status()
+            
+            # Get configured library names
+            movie_libraries = [lib.strip() for lib in get_setting('Plex', 'movie_libraries', '').split(',') if lib.strip()]
+            show_libraries = [lib.strip() for lib in get_setting('Plex', 'shows_libraries', '').split(',') if lib.strip()]
+            
+            logging.info("Configured Plex libraries:")
+            logging.info(f"Movie libraries: {movie_libraries}")
+            logging.info(f"TV Show libraries: {show_libraries}")
+            
+            try:
+                # Get actual library names from Plex (XML format)
+                available_libraries = []
+                library_id_to_title = {}  # Map to store ID -> Title mapping
+                root = ET.fromstring(libraries_response.text)
+                for directory in root.findall('.//Directory'):
+                    library_title = directory.get('title')
+                    library_key = directory.get('key')
+                    if library_title and library_key:
+                        available_libraries.append(library_title)
+                        library_id_to_title[library_key] = library_title
+                        logging.info(f"Found Plex library: ID={library_key}, Title='{library_title}', Type={directory.get('type')}")
+                
+                logging.info("Available Plex libraries:")
+                logging.info(f"Found libraries: {available_libraries}")
+                logging.info(f"Library ID mapping: {library_id_to_title}")
+                        
+                if not available_libraries:
+                    logging.error("No libraries found in Plex response")
+                    services_reachable = False
+                    return services_reachable
+
+                # Verify all configured libraries exist (check both IDs and names)
+                missing_libraries = []
+                for lib in movie_libraries + show_libraries:
+                    # Check if the library exists either as a title or an ID
+                    if lib not in available_libraries and lib not in library_id_to_title:
+                        # If it's a number, try to show the expected title
+                        if lib.isdigit() and lib in library_id_to_title:
+                            logging.info(f"Library ID {lib} refers to library '{library_id_to_title[lib]}'")
+                        else:
+                            missing_libraries.append(lib)
+                            logging.warning(f"Library '{lib}' not found in available libraries")
+
+                if missing_libraries:
+                    error_msg = "Cannot start program: The following Plex libraries were not found:<ul>"
+                    for lib in missing_libraries:
+                        error_msg += f"<li>{lib}</li>"
+                    error_msg += "</ul>Available libraries are:<ul>"
+                    for title in available_libraries:
+                        error_msg += f"<li>{title}</li>"
+                    error_msg += "</ul>Please verify your Plex library names in settings."
+                    logging.error(error_msg)
+                    services_reachable = False
+                    return services_reachable
+
+            except ET.ParseError as e:
+                error_msg = f"Failed to parse Plex libraries response (XML): {str(e)}"
+                logging.error(error_msg)
+                services_reachable = False
+                return services_reachable
+
         except RequestException as e:
-            logging.error(f"Failed to connect to Plex server: {str(e)}")
+            error_msg = f"Cannot start program: Failed to connect to Plex server. Error: {str(e)}"
+            logging.error(error_msg)
             services_reachable = False
 
     # Check Debrid Provider connectivity
@@ -306,8 +374,18 @@ def start_program():
         time.sleep(1)  # 1 second delay for auto-start
 
     # Check service connectivity before starting the program
-    if not check_service_connectivity():
-        return jsonify({"status": "error", "message": "Failed to connect to Plex, Debrid Provider, or Metadata Battery. Check logs for details."})
+    check_result = check_service_connectivity()
+    if not check_result:
+        # Get the last error message from the logs
+        error_message = "Failed to connect to required services. Check the logs for details."
+        for handler in logging.getLogger().handlers:
+            if isinstance(handler, logging.StreamHandler):
+                try:
+                    # Get the last error message if available
+                    error_message = handler.stream.getvalue().strip().split('\n')[-1]
+                except:
+                    pass
+        return jsonify({"status": "error", "message": error_message})
 
     program_runner = ProgramRunner()
     # Start the program runner in a separate thread to avoid blocking the Flask server

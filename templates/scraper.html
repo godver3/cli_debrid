@@ -117,6 +117,7 @@
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
         <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">
+            <input type="hidden" id="tmdb_api_key_set" value="{{ 'True' if tmdb_api_key_set else 'False' }}">
             <input type="text" name="search_term" placeholder="Enter search term" required>
             <select name="version" id="version-select">
                 {% for version in versions %}
@@ -184,5 +185,5 @@
     </div>
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/notifications.js')}}"></script>
+    <script src="{{ url_for('static', filename='js/notifications.js') }} "></script>
 {% endblock %}

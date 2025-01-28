@@ -9,6 +9,7 @@ from datetime import datetime
 from debrid import reset_provider
 from utilities.file_lock import FileLock
 import importlib
+from poster_cache import CACHE_FILE
 
 # Get the base config directory from an environment variable, with a fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
@@ -49,19 +50,33 @@ def load_config():
     if not os.path.exists(CONFIG_FILE):
         return {}
     with open(CONFIG_FILE, 'r') as file:
-        with FileLock(file):
-            return json.load(file)
+        return json.load(file)
 
 def save_config(config):
-    with open(CONFIG_FILE, 'w') as file:
-        with FileLock(file):
-            json.dump(config, file, indent=4)
+    # Load previous config to check for TMDB API key changes
+    previous_config = load_config()
+    previous_tmdb_key = previous_config.get('TMDB', {}).get('api_key')
+    new_tmdb_key = config.get('TMDB', {}).get('api_key')
+
+    # Check if TMDB API key has changed
+    if previous_tmdb_key != new_tmdb_key:
+        # Delete poster cache if it exists
+        if os.path.exists(CACHE_FILE):
             try:
-                from routes.base_routes import clear_cache
-                clear_cache()  # Clear the update check cache when settings are saved
-                #logging.debug("Cleared update check cache after saving settings")
+                os.remove(CACHE_FILE)
+                logging.info("Deleted poster cache due to TMDB API key change")
             except Exception as e:
-                logging.error(f"Error clearing update check cache: {str(e)}")
+                logging.error(f"Failed to delete poster cache: {e}")
+
+    # Save the new config
+    with open(CONFIG_FILE, 'w') as file:
+        json.dump(config, file, indent=4, default=json_serializer)
+    try:
+        from routes.base_routes import clear_cache
+        clear_cache()  # Clear the update check cache when settings are saved
+        #logging.debug("Cleared update check cache after saving settings")
+    except Exception as e:
+        logging.error(f"Error clearing update check cache: {str(e)}")
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]

@@ -93,10 +93,10 @@
             <option value="Zurg" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Zurg' %}selected{% endif %}>Zurg</option>
         </select> -->
 
-        <p class="settings-description">Enter your Client ID and Client Secret. These can be retrieved by creating an app at
-        <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a></p>
+        <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
+        <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
 
-        <label for="trakt_client_id" class="onboarding-label">Trakt Client ID:</label>
+        <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>
         <input type="text" id="trakt_client_id" name="trakt_client_id" required class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">
 
         <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret:</label>

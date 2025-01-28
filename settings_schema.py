@@ -78,6 +78,11 @@ SETTINGS_SCHEMA = {
             "description": "Plex authentication token (optional)",
             "default": "",
             "sensitive": True
+        },
+        "disable_symlinking": {
+            "type": "boolean",
+            "description": "Disable symlinking",
+            "default": False
         }
     },
     "Debrid Provider": {

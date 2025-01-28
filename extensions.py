@@ -262,6 +262,10 @@ def add_security_headers(response):
 def bad_request(error):
     return jsonify({"error": "Bad request", "message": str(error)}), 400
 
+@app.route('/scraper/static/images/placeholder.png')
+def redirect_placeholder():
+    return redirect('/static/images/placeholder.png')
+
 class SimpleTaskQueue:
     def __init__(self):
         self.tasks = {}

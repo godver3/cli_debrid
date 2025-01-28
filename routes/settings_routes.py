@@ -430,6 +430,27 @@ def update_settings():
     try:
         new_settings = request.json
         config = load_config()
+        
+        logging.info("Received settings update:")
+        logging.info(f"File Management: {json.dumps(new_settings.get('File Management', {}), indent=2)}")
+        logging.info(f"Plex: {json.dumps(new_settings.get('Plex', {}), indent=2)}")
+
+        # Validate Plex libraries if Plex is selected
+        file_management = new_settings.get('File Management', {})
+        if file_management.get('file_collection_management') == 'Plex':
+            plex_settings = new_settings.get('Plex', {})
+            movie_libraries = plex_settings.get('movie_libraries', '').strip()
+            show_libraries = plex_settings.get('shows_libraries', '').strip()
+            
+            logging.info(f"Validating Plex libraries - Movie: '{movie_libraries}', Shows: '{show_libraries}'")
+            
+            if not movie_libraries or not show_libraries:
+                error_msg = "When using Plex as your library management system, you must specify both a movie library and a TV show library."
+                logging.error(f"Settings validation failed: {error_msg}")
+                return jsonify({
+                    "status": "error",
+                    "message": error_msg
+                }), 400
 
         def update_nested_dict(current, new):
             for key, value in new.items():

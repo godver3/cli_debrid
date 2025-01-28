@@ -126,6 +126,7 @@ class AddingQueue:
                 filename_filter_out_list = get_setting('Debug', 'filename_filter_out_list', '')
                 if filename_filter_out_list:
                     filters = [f.strip().lower() for f in filename_filter_out_list.split(',') if f.strip()]
+                    logging.info(f"Applying filename filters: {filters}")
                     filtered_files = []
                     for file in files:
                         file_path = file['path'].lower()
@@ -134,11 +135,13 @@ class AddingQueue:
                         for filter_term in filters:
                             if filter_term in file_path:
                                 should_keep = False
+                                logging.debug(f"Filtering out file: {file['path']} (matched filter: {filter_term})")
                                 break
                                 
                         if should_keep:
                             filtered_files.append(file)
                             
+                    logging.info(f"Filtered {len(files) - len(filtered_files)} files out of {len(files)} total files")
                     files = filtered_files
 
                 torrent_title = self.debrid_provider.get_cached_torrent_title(torrent_info.get('hash'))

@@ -628,19 +628,76 @@ class ProgramRunner:
         check_trakt_early_releases()
 
     def update_heartbeat(self):
+        """Update the heartbeat file atomically."""
+        import tempfile
+        import os
+
         heartbeat_file = os.path.join(tempfile.gettempdir(), 'program_heartbeat')
-        with open(heartbeat_file, 'w') as f:
-            f.write(str(int(time.time())))
+        temp_file = f"{heartbeat_file}.tmp"
+        
+        try:
+            # Write to temporary file first
+            with open(temp_file, 'w') as f:
+                f.write(str(int(time.time())))
+                f.flush()  # Ensure content is written to disk
+                os.fsync(f.fileno())  # Force write to disk
+            
+            # Atomic rename to final location
+            os.replace(temp_file, heartbeat_file)
+        except (IOError, OSError) as e:
+            logging.error(f"Failed to update heartbeat file: {e}")
+        finally:
+            # Clean up temp file if it still exists
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+            except OSError:
+                pass
 
     def check_heartbeat(self):
+        """Check heartbeat file with proper error handling."""
+        import tempfile
+        import os
+
         heartbeat_file = os.path.join(tempfile.gettempdir(), 'program_heartbeat')
-        if os.path.exists(heartbeat_file):
+        
+        if not os.path.exists(heartbeat_file):
+            logging.warning("Heartbeat file does not exist - creating new one")
+            self.update_heartbeat()
+            return
+
+        try:
             with open(heartbeat_file, 'r') as f:
-                last_heartbeat = int(f.read())
-            if time.time() - last_heartbeat > 300:  # 5 minutes
-                logging.error("Program heartbeat is stale. Restarting.")
-                self.stop()
-                self.start()
+                content = f.read().strip()
+                
+                # Validate content
+                if not content:
+                    logging.warning("Empty heartbeat file detected - recreating")
+                    self.update_heartbeat()
+                    return
+                    
+                try:
+                    last_heartbeat = int(content)
+                except ValueError:
+                    logging.warning(f"Invalid heartbeat content: {content} - recreating")
+                    self.update_heartbeat()
+                    return
+
+                current_time = time.time()
+                time_diff = current_time - last_heartbeat
+                
+                if time_diff > 300:  # 5 minutes
+                    logging.error(f"Program heartbeat is stale (last update {time_diff:.1f}s ago). Restarting.")
+                    self.stop()
+                    self.start()
+                elif time_diff < 0:
+                    logging.warning("Heartbeat time is in the future - recreating")
+                    self.update_heartbeat()
+                    
+        except (IOError, OSError) as e:
+            logging.error(f"Error reading heartbeat file: {e}")
+            # Try to recreate the file
+            self.update_heartbeat()
 
     def task_send_notifications(self):
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content/')
