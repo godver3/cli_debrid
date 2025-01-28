@@ -95,11 +95,6 @@ form#search-form input:-ms-input-placeholder {
     object-fit: cover !important;
 }
 
-.placeholder-episode {
-    width: 300px !important;
-    height: 169px !important;
-    object-fit: cover !important;
-}
 
 .media-title {
     position: absolute;
@@ -276,11 +271,12 @@ button#seasonPackButton {
     object-fit: cover;
     margin-right: 20px;
     flex-shrink: 0;
+    margin-left: 10px;
 }
 
 .season-details {
     flex: 1;
-    max-width: 700px;
+    max-width: 950px;
     background-color: rgba(0, 0, 0, 0.3);
     padding: 1rem;
     border-radius: 4px;
@@ -301,7 +297,7 @@ button#seasonPackButton {
     margin: 0;
     position: absolute;
     width: 100%;
-    max-width: 700px;
+    max-width: 900px;
     max-height: 7em;
     display: -webkit-box;
     -webkit-line-clamp: 4;
@@ -333,15 +329,27 @@ button#seasonPackButton {
 
 #episodeResults > div {
     position: relative;
-    width: 1600px;
+    width: 95%;
+    max-width: 1600px;
     margin: 0 auto;
     top: 140px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    justify-items: center;
+    margin-top: 190px;
 }
 
-
 .episode {
-    width: 300px;
+    width: 100%;
+    max-width: 300px;
     transition: transform 0.3s ease;
+}
+
+.episode button {
+    border-radius: 12px;
+    background-color: rgba(22, 21, 21, 0.66);
+    padding: 8px;
 }
 
 .episode:hover {
@@ -349,35 +357,10 @@ button#seasonPackButton {
     cursor: pointer;
 }
 
-/* Custom scrollbar styles */
-#episodeResults > div::-webkit-scrollbar {
-    height: 8px;
-}
-
-#episodeResults > div::-webkit-scrollbar-track {
-    background: #f1f1f1;
-}
-
-#episodeResults > div::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 4px;
-}
-
-#episodeResults > div::-webkit-scrollbar-thumb:hover {
-    background: #555;
-}
-
-.episode button {
-    background-color: #100a0a17;
-    border-radius: 20px;
-    border: solid;
-    border-color: #2220;
-    padding: 0px;
-}
-
 .episode img {
-    width: 300px;
-    height: 169px;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16/9;
     object-fit: cover;
     border-radius: 8px;
 }
@@ -420,6 +403,11 @@ h2.episode-title {
     color: rgb(191 191 190);
     margin-block-end: -10px;
     padding-top: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+    max-width: 280px;
 }
 
 .overlay {
@@ -588,4 +576,9 @@ p.torresult-title {
     border-radius: 11px;
     background-color: rgb(0 0 0 / 72%);
     z-index: 1;
+}
+
+/* Override base.css background gradient */
+body {
+    background: linear-gradient(to bottom, #333 0%, #333 50%, #000 70%) fixed !important;
 }

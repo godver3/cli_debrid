@@ -50,18 +50,36 @@ function displaySearchResults(results, version) {
     mediaQuery.addListener(handleScreenChange);
     handleScreenChange(mediaQuery);
 
+    // Get TMDB API key status
+    const tmdb_api_key_set = document.getElementById('tmdb_api_key_set').value === 'True';
+
     results.forEach(item => {
         console.log('Creating element for item:', item);  // Debug log
         const searchResDiv = document.createElement('div');
         searchResDiv.className = 'sresult';
-        const posterUrl = item.poster_path.startsWith('http') ? 
-            item.poster_path : 
-            `https://image.tmdb.org/t/p/w300${item.poster_path}`;
+        let posterUrl;
+        // Remove leading slash if present for checking
+        const normalizedPath = item.poster_path.replace(/^\//, '');
+        console.log('Raw poster_path:', item.poster_path);
+        console.log('Normalized path:', normalizedPath);
+        console.log('Starts with static?', normalizedPath.startsWith('static/'));
+        console.log('Starts with http?', normalizedPath.startsWith('http'));
+        if (normalizedPath.startsWith('static/')) {
+            posterUrl = `/${normalizedPath}`;  // Add leading slash back for URL
+            console.log('Using static path:', posterUrl);
+        } else if (normalizedPath.startsWith('http')) {
+            posterUrl = item.poster_path;  // Use original path for full URLs
+            console.log('Using full URL:', posterUrl);
+        } else {
+            posterUrl = `https://image.tmdb.org/t/p/w300${item.poster_path}`;
+            console.log('Using TMDB URL:', posterUrl);
+        }
+        console.log('Final poster URL:', posterUrl);
         searchResDiv.innerHTML = `
             <button>${item.media_type === 'show' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-            <img src="${item.poster_path ? posterUrl : '/static/image/placeholder-horizontal.png'}" 
+            <img src="${posterUrl}" 
                 alt="${item.title}" 
-                class="${item.poster_path ? '' : 'placeholder-poster'}">
+                class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
             <div class="searchresult-info">
                 <h2 class="searchresult-item">${item.title} (${item.year || 'N/A'})</h2>
             </div></button>                
@@ -71,7 +89,7 @@ function displaySearchResults(results, version) {
             if (item.media_type === 'movie') {
                 selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
             } else {
-                selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview);
+                selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, tmdb_api_key_set);
             }
         };
         gridContainer.appendChild(searchResDiv);
@@ -573,7 +591,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                         <span class="cache-status ${cacheStatusClass}">${cacheStatus}</span>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                        <button onclick='addToRealDebrid("${torrent.magnet}", ${JSON.stringify({
+                        <button onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
                             ...torrent,
                             year,
                             version: torrent.version || version,
@@ -583,7 +601,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             episode: episode || null,
                             tmdb_id: torrent.tmdb_id || mediaId,
                             genres: genre_ids
-                        }).replace(/'/g, "\\'")})'>Add to Account</button>
+                        }).replace(/"/g, '&quot;')})">Add to Account</button>
                     </td>
                 `;
                 tbody.appendChild(row);

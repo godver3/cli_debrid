@@ -36,6 +36,10 @@ def add_to_not_wanted(hash_value, item_identifier=None, item=None):
 
 def get_base_filename(url):
     """Extract the base filename from a URL or magnet link."""
+    if url is None:
+        logging.warning("Received None value for URL/magnet in get_base_filename")
+        return None
+        
     if url.startswith('magnet:'):
         # For magnet links, extract the hash
         import re
@@ -52,15 +56,22 @@ def get_base_filename(url):
 
 def is_magnet_not_wanted(magnet):
     if get_setting('Debug','disable_not_wanted_check', False):
-        logging.debug(f"Not wanted check is disabled, allowing magnet: {magnet[:60]}...")
+        logging.debug(f"Not wanted check is disabled, allowing magnet: {magnet[:60] if magnet else 'None'}...")
         return False
+        
+    if magnet is None:
+        logging.warning("Received None value for magnet in is_magnet_not_wanted")
+        return False
+        
     not_wanted = load_not_wanted_magnets()
     
     # Extract hash from magnet link
     magnet_hash = get_base_filename(magnet)
-    
+    if magnet_hash is None:
+        return False
+        
     # Check if the hash exists in not_wanted
-    is_not_wanted = magnet_hash in [get_base_filename(nw) for nw in not_wanted]
+    is_not_wanted = magnet_hash in [get_base_filename(nw) for nw in not_wanted if nw is not None]
     if is_not_wanted:
         logging.info(f"Filtering out magnet {magnet[:60]}... as it is in not_wanted_magnets list")
     return is_not_wanted
@@ -113,3 +124,28 @@ def purge_not_wanted_magnets_file():
     with open(NOT_WANTED_MAGNETS_FILE, 'wb') as f:
         pickle.dump(set(), f)
     print("The 'not_wanted_magnets.pkl' file has been purged.")
+
+def validate_not_wanted_entries():
+    """Validate the not wanted magnets and URLs files on boot."""
+    logging.info("Validating not wanted entries...")
+    
+    # Validate magnets
+    magnets = load_not_wanted_magnets()
+    if magnets:
+        logging.info(f"Found {len(magnets)} not wanted magnets")
+        logging.info("First 5 magnet entries:")
+        for i, magnet in enumerate(list(magnets)[:5]):
+            if magnet is None:
+                logging.error(f"Entry {i} is None - removing invalid entry")
+                magnets.remove(None)
+                continue
+            logging.info(f"  {i+1}. {magnet[:60]}...")
+    
+    # Save cleaned magnets if any None values were removed
+    if None in magnets:
+        magnets.remove(None)
+        save_not_wanted_magnets(magnets)
+        logging.info("Cleaned up not wanted magnets list by removing None values")
+
+if __name__ == '__main__':
+    validate_not_wanted_entries()

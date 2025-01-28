@@ -840,6 +840,7 @@ def main():
     from settings import ensure_settings_file, get_setting, set_setting
     from database import verify_database
     from database.statistics import get_cached_download_stats
+    from not_wanted_magnets import validate_not_wanted_entries
 
     # Add check for Hybrid uncached management setting
     if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':
@@ -859,6 +860,7 @@ def main():
 
     ensure_settings_file()
     verify_database()
+    validate_not_wanted_entries()
 
     # Initialize download stats cache
     try:

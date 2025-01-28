@@ -48,7 +48,7 @@
     <div class="settings-section-content">
         {% for key, value in settings_schema['File Management'].items() %}
             {% if key != 'tab' and key != 'symlink_organize_by_type' %}
-            <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink'] %}symlink-plex-setting{% endif %}">
+            <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink', 'disable_symlinking'] %}symlink-plex-setting{% endif %}">
                 <label for="file management-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
                     <input type="checkbox" id="file management-{{ key }}" name="File Management.{{ key }}"
@@ -76,12 +76,53 @@
     </div>
 </div>
 
+<!-- Always include Plex section but initially hidden -->
+<div class="settings-section" id="plex-settings-section" style="display: none;">
+    <div class="settings-section-header">
+        <h4>Plex</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% for key, value in settings_schema['Plex'].items() %}
+            {% if key != 'tab' %}
+            <div class="settings-form-group">
+                <label for="plex-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="plex-{{ key }}" name="Plex.{{ key }}"
+                           data-section="Plex" data-key="{{ key }}"
+                           {% if settings.get('Plex', {}).get(key) %}checked{% endif %}>
+                {% elif value.choices %}
+                    <select id="plex-{{ key }}" name="Plex.{{ key }}" class="settings-input"
+                            data-section="Plex" data-key="{{ key }}">
+                        {% for choice in value.choices %}
+                            <option value="{{ choice }}" {% if settings.get('Plex', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type }}" id="plex-{{ key }}" name="Plex.{{ key }}"
+                           value="{{ settings.get('Plex', {}).get(key, '') }}" class="settings-input"
+                           data-section="Plex" data-key="{{ key }}"
+                           {% if key in ['movie_libraries', 'shows_libraries'] %}data-plex-required="true"{% endif %}
+                           {% if value.sensitive %}type="password"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    <p class="settings-description">{{ value.description }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
 <div class="settings-section">
     <div class="settings-section-header">
         <h4>Trakt</h4>
         <span class="settings-toggle-icon">+</span>
     </div>
     <div class="settings-section-content">
+        <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
+        <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
+        <br>
         {% for key, value in settings_schema['Trakt'].items() %}
             {% if key != 'tab' %}
             <div class="settings-form-group">
@@ -119,52 +160,13 @@
         <span class="settings-toggle-icon">+</span>
     </div>
     <div class="settings-section-content">
-        <p class="settings-description">Click the button below to authorize Trakt. You must first enter your Client ID and Client Secret. These can be retrieved by creating an app at 
-            <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a>
-        </p>
+        <p class="settings-description">Click the button below to authorize Trakt. You must first have entered your Client ID and Client Secret above (after creating an application).</p>
         <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
         <div id="trakt-auth-status" class="trakt-status"></div>
         <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
             <p>Your authorization code is: <strong id="trakt-code"></strong></p>
             <p>Please visit <a id="trakt-activate-link" href="https://trakt.tv/activate" target="_blank">https://trakt.tv/activate</a> to enter this code and complete the authorization process.</p>
         </div>
-    </div>
-</div>
-
-<!-- Always include Plex section but initially hidden -->
-<div class="settings-section" id="plex-settings-section" style="display: none;">
-    <div class="settings-section-header">
-        <h4>Plex</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        {% for key, value in settings_schema['Plex'].items() %}
-            {% if key != 'tab' %}
-            <div class="settings-form-group">
-                <label for="plex-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="plex-{{ key }}" name="Plex.{{ key }}"
-                           data-section="Plex" data-key="{{ key }}"
-                           {% if settings.get('Plex', {}).get(key) %}checked{% endif %}>
-                {% elif value.choices %}
-                    <select id="plex-{{ key }}" name="Plex.{{ key }}" class="settings-input"
-                            data-section="Plex" data-key="{{ key }}">
-                        {% for choice in value.choices %}
-                            <option value="{{ choice }}" {% if settings.get('Plex', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
-                        {% endfor %}
-                    </select>
-                {% else %}
-                    <input type="{{ value.type }}" id="plex-{{ key }}" name="Plex.{{ key }}"
-                           value="{{ settings.get('Plex', {}).get(key, '') }}" class="settings-input"
-                           data-section="Plex" data-key="{{ key }}"
-                           {% if value.sensitive %}type="password"{% endif %}>
-                {% endif %}
-                {% if value.description %}
-                    <p class="settings-description">{{ value.description }}</p>
-                {% endif %}
-            </div>
-            {% endif %}
-        {% endfor %}
     </div>
 </div>
 

@@ -2,8 +2,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
-from database import get_all_media_items, get_db_connection
+from database import get_all_media_items, get_db_connection, remove_from_media_items
 from settings import get_setting
+from manual_blacklist import is_blacklisted
 
 class WantedQueue:
     def __init__(self):
@@ -11,6 +12,8 @@ class WantedQueue:
 
     def update(self):
         self.items = [dict(row) for row in get_all_media_items(state="Wanted")]
+        # Move any blacklisted items to blacklisted state before calculating scrape times
+        self.move_blacklisted_items()
         self._calculate_scrape_times()
 
     def _calculate_scrape_times(self):
@@ -155,3 +158,44 @@ class WantedQueue:
             return False
 
         return True
+
+    def move_blacklisted_items(self):
+        """
+        Check all items in the Wanted queue against the blacklist and move any that are blacklisted
+        to the Blacklisted state.
+        """
+        items_to_remove = []
+        blacklisted_count = 0
+
+        for item in self.items:
+            season_number = item.get('season_number') if item.get('type') == 'episode' else None
+            is_item_blacklisted = (
+                is_blacklisted(item.get('imdb_id', ''), season_number) or 
+                is_blacklisted(item.get('tmdb_id', ''), season_number)
+            )
+
+            if is_item_blacklisted:
+                items_to_remove.append(item)
+                try:
+                    # Update the item's state to Blacklisted and set the blacklisted date
+                    with get_db_connection() as conn:
+                        conn.execute("""
+                            UPDATE media_items 
+                            SET state = 'Blacklisted', blacklisted_date = ? 
+                            WHERE id = ?
+                        """, (datetime.now(), item['id']))
+                    blacklisted_count += 1
+                    logging.info(f"Moved item to blacklisted state: {item.get('title', 'Unknown')} "
+                               f"(ID: {item['id']}, IMDb: {item.get('imdb_id', 'N/A')}, "
+                               f"TMDB: {item.get('tmdb_id', 'N/A')})")
+                except Exception as e:
+                    logging.error(f"Error updating blacklist state for item {item['id']}: {str(e)}")
+
+        # Remove items from the wanted queue
+        for item in items_to_remove:
+            self.remove_item(item)
+
+        if blacklisted_count > 0:
+            logging.info(f"Moved {blacklisted_count} items to blacklisted state")
+
+        return blacklisted_count

@@ -63,17 +63,35 @@ class CheckingQueue:
     def get_contents(self):
         # Add progress and state information to each item
         items_with_info = []
+        
+        # Group items by torrent ID to reduce API calls
+        torrent_groups = {}
         for item in self.items:
-            item_info = dict(item)  # Create a copy of the item
             torrent_id = item.get('filled_by_torrent_id')
-            progress = None
-            state = 'unknown'  # Initialize state with default value
             if torrent_id:
-                progress = self.get_torrent_progress(torrent_id)
-                state = self.get_torrent_state(torrent_id)  # Get state regardless of progress
+                if torrent_id not in torrent_groups:
+                    torrent_groups[torrent_id] = []
+                torrent_groups[torrent_id].append(item)
+        
+        # Process items in batches by torrent ID
+        for torrent_id, items in torrent_groups.items():
+            progress = self.get_torrent_progress(torrent_id)
+            state = self.get_torrent_state(torrent_id)
+            
+            for item in items:
+                item_info = dict(item)
                 item_info['progress'] = progress
-            item_info['state'] = state
-            items_with_info.append(item_info)
+                item_info['state'] = state
+                items_with_info.append(item_info)
+        
+        # Handle items without torrent IDs
+        for item in self.items:
+            if not item.get('filled_by_torrent_id'):
+                item_info = dict(item)
+                item_info['progress'] = None
+                item_info['state'] = 'unknown'
+                items_with_info.append(item_info)
+                
         return items_with_info
 
     def handle_missing_torrent(self, torrent_id: str, queue_manager) -> None:
@@ -115,7 +133,7 @@ class CheckingQueue:
             # Remove from checking queue
             self.remove_item(item)
 
-    @timed_lru_cache(seconds=30)
+    @timed_lru_cache(seconds=60)  # Increase cache time to 5 minutes
     def get_torrent_progress(self, torrent_id: str) -> Optional[int]:
         """Get the current progress percentage for a torrent"""
         try:

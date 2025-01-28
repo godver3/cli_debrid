@@ -170,7 +170,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 items_skipped += 1
                 continue
 
-            if is_blacklisted(item.get('imdb_id', '')) or is_blacklisted(item.get('tmdb_id', '')):
+            # Check for blacklisting, considering season number for TV shows
+            season_number = item.get('season_number')
+            is_item_blacklisted = (
+                is_blacklisted(item.get('imdb_id', ''), season_number) or 
+                is_blacklisted(item.get('tmdb_id', ''), season_number)
+            )
+            if is_item_blacklisted:
                 skip_stats['blacklisted'] += 1
                 items_skipped += 1
                 continue
