@@ -8,6 +8,7 @@ import threading
 import cProfile
 import pstats
 import io
+from performance_monitor import monitor
 
 # Global profiler
 global_profiler = cProfile.Profile()
@@ -75,27 +76,8 @@ class DynamicConsoleHandler(logging.StreamHandler):
             self.handleError(record)
 
 def log_system_stats():
-    performance_logger = logging.getLogger('performance_logger')
-    while True:
-        try:
-            process = psutil.Process(os.getpid())
-            cpu_percent = process.cpu_percent(interval=1)
-            memory_info = process.memory_info()
-            
-            performance_logger.info(f"CPU Usage: {cpu_percent}% | "
-                                    f"Memory Usage: {memory_info.rss / 1024 / 1024:.2f} MB | "
-                                    f"Virtual Memory: {memory_info.vms / 1024 / 1024:.2f} MB")
-            
-            # Log top CPU-consuming functions
-            global global_profiler
-            s = io.StringIO()
-            ps = pstats.Stats(global_profiler, stream=s).sort_stats('cumulative')
-            ps.print_stats(20)  # Print top 10 time-consuming functions
-            performance_logger.info(f"Top CPU-consuming functions:\n{s.getvalue()}")
-        except Exception as e:
-            performance_logger.error(f"Error logging system stats: {e}")
-        
-        time.sleep(6)  # Log every 60 seconds
+    """Start the performance monitoring system"""
+    monitor.start_monitoring()
 
 def setup_logging():
     # Get log directory from environment variable with fallback
@@ -167,10 +149,11 @@ def setup_logging():
     root_logger.addFilter(ExcludeFilter())
 
     # Performance file handler
+    performance_formatter = logging.Formatter('%(message)s')
     performance_handler = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, 'performance.log'), maxBytes=50*1024*1024, backupCount=0, encoding='utf-8', errors='replace')
     performance_handler.setLevel(logging.INFO)
-    performance_handler.setFormatter(formatter)
+    performance_handler.setFormatter(performance_formatter)
     
     # Create a separate logger for performance logs
     performance_logger = logging.getLogger('performance_logger')
