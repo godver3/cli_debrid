@@ -79,6 +79,16 @@
         <label for="shows_libraries" class="onboarding-label">TV Libraries:</label>
         <input type="text" id="shows_libraries" name="shows_libraries" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}">
 
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <label for="update_plex_on_file_discovery" class="onboarding-label" style="margin-bottom: 0;">Update Plex on file discovery:</label>
+            <input type="checkbox" id="update_plex_on_file_discovery" name="update_plex_on_file_discovery" {% if settings.get('Plex', {}).get('update_plex_on_file_discovery', False) %}checked{% endif %}>
+        </div>
+        <div class="settings-description">Update Plex on file discovery (cli_debrid must be able to access mount at the below location)</div>
+
+        <label for="plex_file_location" class="onboarding-label">Plex file location:</label>
+        <input type="text" id="plex_file_location" name="plex_file_location" class="onboarding-input" value="{{ settings.get('Plex', {}).get('plex_file_location', '/mnt/zurg/__all__') }}">
+        <div class="settings-description">Plex file location (in Zurg use the /__all__ folder)</div>
+
         <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
         <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">
             <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>

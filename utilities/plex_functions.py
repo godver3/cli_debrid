@@ -482,7 +482,8 @@ def filter_genres(genres):
     if not isinstance(genres, list):
         genres = [genres]
     
-    filtered = ['anime'] if any(str(genre).strip().lower() == 'anime' for genre in genres) else []
+    # Convert all genres to lowercase strings and remove duplicates
+    filtered = list(set(str(genre).strip().lower() for genre in genres if genre))
     return filtered
 
 async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -73,8 +73,13 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             
             # Title similarity check
             normalized_result_title = normalize_title(parsed_info.get('title', original_title)).lower()
-            title_sim = fuzz.ratio(normalized_result_title, normalized_query_title) / 100.0
-            #logging.debug(f"Title similarity: {title_sim:.2f} ({normalized_result_title} vs {normalized_query_title})")
+            normalized_query = normalized_query_title
+            
+            # If this is a documentary, add it back to the result title for comparison
+            if parsed_info.get('documentary', False):
+                normalized_result_title = f"{normalized_result_title} documentary"
+            
+            title_sim = fuzz.ratio(normalized_result_title, normalized_query) / 100.0
             
             # Check against main title and aliases
             if title_sim < similarity_threshold:
@@ -84,10 +89,13 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 
                 if best_alias_sim >= similarity_threshold:
                     title_sim = best_alias_sim  # Use the best alias similarity
-                    #logging.debug(f"✓ Passed title similarity check via alias with score {title_sim:.2f}")
+                    logging.debug(f"✓ Passed title similarity check via alias with score {title_sim:.2f}")
                 else:
-                    result['filter_reason'] = f"Low title similarity: {title_sim:.2f} (best alias: {best_alias_sim:.2f})"
-                    logging.debug(f"❌ Failed: Title similarity {title_sim:.2f} below threshold {similarity_threshold}, best alias match: {best_alias_sim:.2f}")
+                    result['filter_reason'] = f"Title similarity too low (main={title_sim:.2f}, best_alias={best_alias_sim:.2f})"
+                    logging.debug(f"❌ Failed: Title similarity {title_sim:.2f} below threshold {similarity_threshold}")
+                    logging.debug(f"  - Main title comparison: '{normalized_result_title}' vs '{normalized_query_title}'")
+                    if normalized_aliases:
+                        logging.debug(f"  - Best alias comparison: '{normalized_result_title}' vs '{normalized_aliases[alias_similarities.index(best_alias_sim)]}'")
                     continue
             #logging.debug("✓ Passed title similarity check")
             

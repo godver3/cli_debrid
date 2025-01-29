@@ -254,3 +254,26 @@ def get_media_country_code(tmdb_id: str) -> str:
         return None
     finally:
         conn.close()
+
+def get_episode_details(imdb_id: str, season: int, episode: int) -> dict:
+    """
+    Get episode details including release date by IMDB ID, season, and episode number.
+    Returns None if no episode is found.
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT * FROM media_items 
+            WHERE imdb_id = ? 
+            AND season_number = ? 
+            AND episode_number = ?
+            AND type = 'episode'
+            LIMIT 1
+        ''', (imdb_id, season, episode))
+        result = cursor.fetchone()
+        return dict(result) if result else None
+    except Exception as e:
+        logging.error(f"Error retrieving episode details (IMDB ID: {imdb_id}, S{season:02d}E{episode:02d}): {str(e)}")
+        return None
+    finally:
+        conn.close()

@@ -42,6 +42,16 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Comma-separated list of Plex TV show library names",
             "default": ""
+        },
+        "update_plex_on_file_discovery": {
+            "type": "boolean",
+            "description": "Update Plex on file discovery (cli_debrid must be able to access mount at the below location)",
+            "default": False
+        },
+        "plex_file_location": {
+            "type": "string",
+            "description": "Plex file location (in Zurg use the /__all__ folder)",
+            "default": "/mnt/zurg/__all__"
         }
     },
     "File Management": {

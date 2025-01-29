@@ -264,9 +264,9 @@ def check_service_connectivity():
             movie_libraries = [lib.strip() for lib in get_setting('Plex', 'movie_libraries', '').split(',') if lib.strip()]
             show_libraries = [lib.strip() for lib in get_setting('Plex', 'shows_libraries', '').split(',') if lib.strip()]
             
-            logging.info("Configured Plex libraries:")
-            logging.info(f"Movie libraries: {movie_libraries}")
-            logging.info(f"TV Show libraries: {show_libraries}")
+            #logging.info("Configured Plex libraries:")
+            #logging.info(f"Movie libraries: {movie_libraries}")
+            #logging.info(f"TV Show libraries: {show_libraries}")
             
             try:
                 # Get actual library names from Plex (XML format)
@@ -281,9 +281,9 @@ def check_service_connectivity():
                         library_id_to_title[library_key] = library_title
                         logging.info(f"Found Plex library: ID={library_key}, Title='{library_title}', Type={directory.get('type')}")
                 
-                logging.info("Available Plex libraries:")
-                logging.info(f"Found libraries: {available_libraries}")
-                logging.info(f"Library ID mapping: {library_id_to_title}")
+                #logging.info("Available Plex libraries:")
+                #logging.info(f"Found libraries: {available_libraries}")
+                #logging.info(f"Library ID mapping: {library_id_to_title}")
                         
                 if not available_libraries:
                     logging.error("No libraries found in Plex response")

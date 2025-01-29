@@ -23,18 +23,39 @@
         font-size: 28px;
     }
 
+    /* Prevent horizontal scrolling */
+    html, body {
+        overflow-x: hidden;
+        width: 100%;
+        position: relative;
+    }
+
     /* Search Results Styles */
+    #searchResult {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+
     #searchResult > div {
         width: 100%;
         padding-top: 15px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
     }
 
     .sresult {
         width: 150px;
+        max-width: calc(50% - 10px);
+        margin: 0;
     }
 
     .sresult img {
-        width: 150px;
+        width: 100%;
+        height: auto;
+        max-width: 100%;
     }
 
     h2.searchresult-item {
@@ -69,10 +90,10 @@
         height: 600px;
         width: 100%;
         z-index: -1;
-        background-size: 150% auto;
+        background-size: cover;
         background-position: center 20%;
         background-repeat: no-repeat;
-        transform: scale(1.2);
+        transform: none;
         margin-top: -95px;
     }
 
@@ -111,43 +132,51 @@
         max-width: 100% !important;
         top: 50px;
         display: grid !important;
-        grid-template-columns: repeat(1, 1fr) !important;
-        gap: 10px;
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px;
         padding: 10px;
         margin: 0 !important;
+        box-sizing: border-box;
     }
 
     .episode {
         width: 100% !important;
         margin: 0;
+        display: flex;
+        flex-direction: column;
+        min-width: 0; /* Prevents flex items from overflowing */
     }
 
     .episode img {
         width: 100% !important;
         height: auto !important;
         object-fit: cover;
-    }
-
-    .episode-rating {
-        display: none;
+        aspect-ratio: 16/9;
     }
 
     .episode button {
         width: 100% !important;
+        font-size: 0.9rem;
+        padding: 8px;
+        border: 1px solid #2b2b2b;
     }
 
     h2.episode-title {
         font-size: 0.8rem;
         line-height: 1.1rem;
-    }
-
-    h3 {
-        margin-top: 30px;
+        margin: 4px 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     p.episode-sub {
         font-size: 0.7rem;
-        line-height: 2rem;
+        line-height: 1.2rem;
+        margin: 2px 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     /* Season Controls */
@@ -156,6 +185,7 @@
         position: relative;
         z-index: 2;
         margin-left: 10px;
+        margin-top: 120px;
     }
 
     select#seasonDropdown,
@@ -206,6 +236,10 @@
         display: none;
     }
 
+    .episode-rating {
+        display: none;
+    }
+
     .season-overview {
         display: none;
     }
@@ -224,7 +258,7 @@
     form#search-form {
         flex-direction: column;
     }
-
+    
     form#search-form input {
         min-height: 35px;
     }
