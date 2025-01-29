@@ -7,6 +7,7 @@ from .mediafusion import scrape_mediafusion_instance
 from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
+from .old_nyaa import scrape_nyaa_instance as scrape_old_nyaa_instance
 from settings import get_setting
 
 class ScraperManager:
@@ -18,7 +19,8 @@ class ScraperManager:
             'Prowlarr': scrape_prowlarr_instance,
             'Torrentio': scrape_torrentio_instance,
             'Zilean': scrape_zilean_instance,
-            'Nyaa': scrape_nyaa
+            'Nyaa': scrape_nyaa,
+            'OldNyaa': scrape_old_nyaa_instance
         }
 
     def get_scraper_settings(self, scraper_type):
@@ -74,25 +76,49 @@ class ScraperManager:
         # For anime episodes, use ONLY Nyaa if enabled
         if is_anime and is_episode:
             nyaa_settings = self.get_scraper_settings('Nyaa')
+            old_nyaa_settings = self.get_scraper_settings('OldNyaa')
             nyaa_enabled = nyaa_settings.get('enabled', False) if nyaa_settings else False
+            old_nyaa_enabled = old_nyaa_settings.get('enabled', False) if old_nyaa_settings else False
             
-            if nyaa_enabled:
-                logging.info(f"Using Nyaa exclusively for anime episode: {title}")
-                try:
-                    results = self.scrapers['Nyaa'](
-                        title=title,
-                        year=year,
-                        content_type=content_type,
-                        season=season,
-                        episode=episode,
-                        episode_formats=episode_formats,
-                        tmdb_id=tmdb_id
-                    )
-                    if results:
-                        logging.info(f"Found {len(results)} results from Nyaa")
-                        all_results.extend(results)
-                except Exception as e:
-                    logging.error(f"Error scraping with Nyaa: {str(e)}")
+            if nyaa_enabled or old_nyaa_enabled:
+                logging.info(f"Using Nyaa/OldNyaa exclusively for anime episode: {title}")
+                
+                if old_nyaa_enabled:
+                    try:
+                        results = self.scrapers['OldNyaa'](
+                            instance='OldNyaa',
+                            settings=old_nyaa_settings,
+                            imdb_id=imdb_id,
+                            title=title,
+                            year=year,
+                            content_type=content_type,
+                            season=season,
+                            episode=episode,
+                            multi=multi
+                        )
+                        if results:
+                            logging.info(f"Found {len(results)} results from OldNyaa")
+                            all_results.extend(results)
+                    except Exception as e:
+                        logging.error(f"Error scraping with OldNyaa: {str(e)}")
+                
+                if nyaa_enabled:
+                    try:
+                        results = self.scrapers['Nyaa'](
+                            title=title,
+                            year=year,
+                            content_type=content_type,
+                            season=season,
+                            episode=episode,
+                            episode_formats=episode_formats if is_anime and content_type.lower() == 'episode' else None,
+                            tmdb_id=tmdb_id
+                        )
+                        if results:
+                            logging.info(f"Found {len(results)} results from Nyaa")
+                            all_results.extend(results)
+                    except Exception as e:
+                        logging.error(f"Error scraping with Nyaa: {str(e)}")
+                        
             return all_results
 
         # For all other cases (anime movies or non-anime content), proceed with appropriate scrapers
@@ -108,22 +134,35 @@ class ScraperManager:
                 continue
 
             # Skip Nyaa for non-anime content
-            if scraper_type == 'Nyaa' and not is_anime:
+            if scraper_type in ['Nyaa', 'OldNyaa'] and not is_anime:
                 continue
 
             scrape_func = self.scrapers[scraper_type]
             try:
-                if scraper_type == 'Nyaa':
+                if scraper_type in ['Nyaa', 'OldNyaa']:
                     # Nyaa has a different function signature
-                    results = scrape_func(
-                        title=title,
-                        year=year,
-                        content_type=content_type,
-                        season=season,
-                        episode=episode,
-                        episode_formats=episode_formats if is_anime and content_type.lower() == 'episode' else None,
-                        tmdb_id=tmdb_id
-                    )
+                    if scraper_type == 'Nyaa':
+                        results = scrape_func(
+                            title=title,
+                            year=year,
+                            content_type=content_type,
+                            season=season,
+                            episode=episode,
+                            episode_formats=episode_formats if is_anime and content_type.lower() == 'episode' else None,
+                            tmdb_id=tmdb_id
+                        )
+                    else:  # OldNyaa
+                        results = scrape_func(
+                            instance=instance,
+                            settings=current_settings,
+                            imdb_id=imdb_id,
+                            title=title,
+                            year=year,
+                            content_type=content_type,
+                            season=season,
+                            episode=episode,
+                            multi=multi
+                        )
                 else:
                     # Only Jackett accepts genres parameter
                     if scraper_type == 'Jackett':

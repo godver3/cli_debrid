@@ -416,6 +416,9 @@ SETTINGS_SCHEMA = {
             "Nyaa": {
                 "enabled": {"type": "boolean", "default": False}
             },
+            "OldNyaa": {
+                "enabled": {"type": "boolean", "default": False}
+            },
             "MediaFusion": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"},

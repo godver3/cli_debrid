@@ -160,21 +160,39 @@ def delete_database():
         # Recreate tables
         create_tables()
         
-        # Delete cache files
-        db_content_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'db_content')
+        # Delete cache files and not wanted files
+        db_content_dir = os.environ['USER_DB_CONTENT']
+        
+        # Delete cache files and not wanted files
         cache_files = glob.glob(os.path.join(db_content_dir, '*cache*.pkl'))
+        not_wanted_files = ['not_wanted_magnets.pkl', 'not_wanted_urls.pkl']
+        deleted_files = []
+
+        # Delete cache files
         for cache_file in cache_files:
             try:
                 os.remove(cache_file)
+                deleted_files.append(os.path.basename(cache_file))
                 logging.info(f"Deleted cache file: {cache_file}")
             except Exception as e:
                 logging.warning(f"Failed to delete cache file {cache_file}: {str(e)}")
         
+        # Delete not wanted files
+        for not_wanted_file in not_wanted_files:
+            file_path = os.path.join(db_content_dir, not_wanted_file)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    deleted_files.append(not_wanted_file)
+                    logging.info(f"Deleted not wanted file: {file_path}")
+                except Exception as e:
+                    logging.warning(f"Failed to delete not wanted file {file_path}: {str(e)}")
+        
         message = 'Database deleted successfully'
         if retain_blacklist:
             message += f' (retained {len(blacklisted_items)} blacklisted items)'
-        if cache_files:
-            message += f' and removed {len(cache_files)} cache files'
+        if deleted_files:
+            message += f' and removed {len(deleted_files)} files: {", ".join(deleted_files)}'
         
         return jsonify({'success': True, 'message': message})
         

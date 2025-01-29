@@ -137,7 +137,7 @@ def parse_nyaa_results(content: bytes) -> List[Dict[str, Any]]:
                 result = {
                     'title': title,
                     'size': size_gb,
-                    'source': 'Nyaa',
+                    'source': 'OldNyaa',
                     'magnet': magnet_link,
                     'seeders': seeders
                 }
