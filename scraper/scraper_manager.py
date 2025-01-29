@@ -125,8 +125,11 @@ class ScraperManager:
                         tmdb_id=tmdb_id
                     )
                 else:
-                    # Other scrapers use the original signature
-                    results = scrape_func(instance, current_settings, imdb_id, title, year, content_type, season, episode, multi)
+                    # Only Jackett accepts genres parameter
+                    if scraper_type == 'Jackett':
+                        results = scrape_func(instance, current_settings, imdb_id, title, year, content_type, season, episode, multi, genres)
+                    else:
+                        results = scrape_func(instance, current_settings, imdb_id, title, year, content_type, season, episode, multi)
                     
                 logging.info(f"Found {len(results)} results from {instance}")
 

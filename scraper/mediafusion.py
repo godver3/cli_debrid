@@ -177,5 +177,5 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             logging.error(f"Error parsing result: {str(e)}", exc_info=True)
             continue
     
-    logging.debug(f"MediaFusion parsing stats for {instance}: processed={stats['total_processed']}, success={len(results)}, errors={stats['parse_error_count']}")
+    #logging.debug(f"MediaFusion parsing stats for {instance}: processed={stats['total_processed']}, success={len(results)}, errors={stats['parse_error_count']}")
     return results

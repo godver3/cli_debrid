@@ -28,6 +28,7 @@ from content_checkers.trakt import check_trakt_early_releases
 from debrid.base import TooManyDownloadsError, RateLimitError
 import tempfile
 from api_tracker import api  # Add this import for the api module
+from plexapi.server import PlexServer
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -94,6 +95,8 @@ class ProgramRunner:
             'task_heartbeat': 120,  # Run every 2 minutes
             'task_local_library_scan': 900,  # Run every 5 minutes
             'task_refresh_download_stats': 300,  # Run every 5 minutes
+            'task_check_plex_files': 60,  # Run every 60 seconds
+            #'task_update_show_ids': 3600,  # Run every hour
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -116,13 +119,17 @@ class ProgramRunner:
             'task_check_trakt_early_releases',
             'task_reconcile_queues',
             'task_heartbeat',
-            'task_refresh_download_stats'  # Add the new task
+            'task_refresh_download_stats' 
+            #'task_update_show_ids'
         }
 
         if get_setting('File Management', 'file_collection_management') == 'Plex':
             self.enabled_tasks.add('task_plex_full_scan')
         else:
             self.enabled_tasks.add('task_local_library_scan')
+
+        if get_setting('Plex', 'update_plex_on_file_discovery'):
+            self.enabled_tasks.add('task_check_plex_files')
         
         # Add this line to store content sources
         self.content_sources = None
@@ -471,7 +478,7 @@ class ProgramRunner:
                         try:
                             processed_items = process_metadata(items)
                             if processed_items:
-                                all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                                all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
                                 for item in all_items:
                                     item['content_source'] = source
                                 add_wanted_items(all_items, item_versions or versions)
@@ -484,7 +491,7 @@ class ProgramRunner:
                     try:
                         processed_items = process_metadata(wanted_content)
                         if processed_items:
-                            all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                            all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
                             for item in all_items:
                                 item['content_source'] = source
                             add_wanted_items(all_items, versions)
@@ -628,76 +635,53 @@ class ProgramRunner:
         check_trakt_early_releases()
 
     def update_heartbeat(self):
-        """Update the heartbeat file atomically."""
-        import tempfile
+        """Update the heartbeat file directly."""
         import os
 
-        heartbeat_file = os.path.join(tempfile.gettempdir(), 'program_heartbeat')
-        temp_file = f"{heartbeat_file}.tmp"
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        heartbeat_file = os.path.join(db_content_dir, 'program_heartbeat')
         
         try:
-            # Write to temporary file first
-            with open(temp_file, 'w') as f:
-                f.write(str(int(time.time())))
-                f.flush()  # Ensure content is written to disk
-                os.fsync(f.fileno())  # Force write to disk
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(heartbeat_file), exist_ok=True)
             
-            # Atomic rename to final location
-            os.replace(temp_file, heartbeat_file)
+            # Write directly to the heartbeat file
+            with open(heartbeat_file, 'w') as f:
+                f.write(str(int(time.time())))
+                f.flush()
+                os.fsync(f.fileno())
         except (IOError, OSError) as e:
             logging.error(f"Failed to update heartbeat file: {e}")
-        finally:
-            # Clean up temp file if it still exists
-            try:
-                if os.path.exists(temp_file):
-                    os.unlink(temp_file)
-            except OSError:
-                pass
 
     def check_heartbeat(self):
         """Check heartbeat file with proper error handling."""
-        import tempfile
         import os
 
-        heartbeat_file = os.path.join(tempfile.gettempdir(), 'program_heartbeat')
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        heartbeat_file = os.path.join(db_content_dir, 'program_heartbeat')
         
         if not os.path.exists(heartbeat_file):
             logging.warning("Heartbeat file does not exist - creating new one")
             self.update_heartbeat()
-            return
+            return True
 
         try:
             with open(heartbeat_file, 'r') as f:
-                content = f.read().strip()
-                
-                # Validate content
-                if not content:
-                    logging.warning("Empty heartbeat file detected - recreating")
-                    self.update_heartbeat()
-                    return
-                    
-                try:
-                    last_heartbeat = int(content)
-                except ValueError:
-                    logging.warning(f"Invalid heartbeat content: {content} - recreating")
-                    self.update_heartbeat()
-                    return
-
-                current_time = time.time()
+                last_heartbeat = int(f.read().strip())
+                current_time = int(time.time())
                 time_diff = current_time - last_heartbeat
+
+                #logging.debug(f"Time since last heartbeat: {time_diff} seconds")
                 
-                if time_diff > 300:  # 5 minutes
-                    logging.error(f"Program heartbeat is stale (last update {time_diff:.1f}s ago). Restarting.")
-                    self.stop()
-                    self.start()
-                elif time_diff < 0:
-                    logging.warning("Heartbeat time is in the future - recreating")
-                    self.update_heartbeat()
-                    
-        except (IOError, OSError) as e:
-            logging.error(f"Error reading heartbeat file: {e}")
-            # Try to recreate the file
-            self.update_heartbeat()
+                # If more than 5 minutes have passed since last heartbeat
+                if time_diff > 300:
+                    logging.warning(f"Stale heartbeat detected - {time_diff} seconds since last update")
+                    return False
+                
+                return True
+        except (IOError, OSError, ValueError) as e:
+            logging.error(f"Error checking heartbeat: {e}")
+            return False
 
     def task_send_notifications(self):
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content/')
@@ -738,7 +722,7 @@ class ProgramRunner:
 
     def task_reconcile_queues(self):
         """Task to reconcile items in Checking state with matching filled_by_file items"""
-        from database.core import get_db_connection
+        import sqlite3
         import logging
         import os
         from datetime import datetime
@@ -754,14 +738,17 @@ class ProgramRunner:
             reconciliation_logger.addHandler(handler)
             reconciliation_logger.setLevel(logging.INFO)
 
-        conn = get_db_connection()
+        db_path = os.path.join('/user/db_content', 'media_items.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
         try:
             # Get all items in Checking state
-            cursor = conn.execute('''
+            cursor.execute("""
                 SELECT * FROM media_items 
                 WHERE state = 'Checking' 
                 AND filled_by_file IS NOT NULL
-            ''')
+            """)
             checking_items = cursor.fetchall()
             
             for checking_item in checking_items:
@@ -769,12 +756,12 @@ class ProgramRunner:
                     continue
 
                 # Find matching items with the same filled_by_file
-                cursor = conn.execute('''
+                cursor.execute("""
                     SELECT * FROM media_items 
                     WHERE filled_by_file = ? 
                     AND id != ? 
                     AND state != 'Checking'
-                ''', (checking_item['filled_by_file'], checking_item['id']))
+                """, (checking_item['filled_by_file'], checking_item['id']))
                 matching_items = cursor.fetchall()
 
                 for matching_item in matching_items:
@@ -788,15 +775,15 @@ class ProgramRunner:
                     )
 
                     # Update the checking item to Collected state with timestamp
-                    conn.execute('''
+                    cursor.execute("""
                         UPDATE media_items 
                         SET state = 'Collected', 
                             collected_at = ? 
                         WHERE id = ?
-                    ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), checking_item['id']))
+                    """, (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), checking_item['id']))
 
                     # Delete the matching item
-                    conn.execute('DELETE FROM media_items WHERE id = ?', (matching_item['id'],))
+                    cursor.execute('DELETE FROM media_items WHERE id = ?', (matching_item['id'],))
                     
                     reconciliation_logger.info(
                         f"Updated checking item (ID={checking_item['id']}) to Collected state and "
@@ -871,6 +858,157 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error refreshing download stats cache: {str(e)}")
 
+    def task_check_plex_files(self):
+        """Check for new files in Plex location and update libraries"""
+        if not get_setting('Plex', 'update_plex_on_file_discovery'):
+            return
+
+        plex_file_location = get_setting('Plex', 'plex_file_location', default='/mnt/zurg/__all__')
+        if not os.path.exists(plex_file_location):
+            logging.warning(f"Plex file location does not exist: {plex_file_location}")
+            return
+
+        if not get_setting('Plex', 'url', default=False):
+            return
+
+        try:
+            plex_url = get_setting('Plex', 'url', default='')
+            plex_token = get_setting('Plex', 'token', default='')
+            
+            if not plex_url or not plex_token:
+                logging.warning("Plex URL or token not configured")
+                return
+
+            # Get all media items from database that are in Checking state
+            db_path = os.path.join('/user/db_content', 'media_items.db')
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            items = cursor.execute('SELECT id, filled_by_title, filled_by_file FROM media_items WHERE state = "Checking"').fetchall()
+            conn.close()
+            logging.info(f"Found {len(items)} media items in Checking state to verify")
+
+            # Connect to Plex server
+            plex = PlexServer(plex_url, plex_token)
+            sections = plex.library.sections()
+            logging.info(f"Connected to Plex server, found {len(sections)} library sections")
+
+            updated_sections = set()  # Track which sections we've updated
+            updated_items = 0
+            skipped_items = 0
+            not_found_items = 0
+
+            for item in items:
+                filled_by_title = item['filled_by_title']
+                filled_by_file = item['filled_by_file']
+                
+                if not filled_by_title or not filled_by_file:
+                    continue
+
+                # Check if the file exists in the expected location
+                file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
+                if not os.path.exists(file_path):
+                    not_found_items += 1
+                    logging.debug(f"File not found on disk: {file_path}")
+                    continue
+
+                logging.info(f"Found file on disk: {file_path}")
+                updated_items += 1
+
+                # Update all Plex sections using their root directories
+                for section in sections:
+                    if section in updated_sections:
+                        continue
+                        
+                    try:
+                        for location in section.locations:
+                            specific_path = os.path.join(location, filled_by_title)
+                            if os.path.exists(specific_path):
+                                logging.info(f"Updating Plex section '{section.title}' for path: {specific_path}")
+                                section.update(path=specific_path)
+                                updated_sections.add(section)
+                                break
+                    except Exception as e:
+                        logging.error(f"Failed to update Plex section '{section.title}': {str(e)}")
+
+            logging.info(f"Plex update summary: {updated_items} items updated, {skipped_items} items skipped (cached), {not_found_items} items not found")
+            if len(updated_sections) > 0:
+                logging.info("Updated Plex sections:")
+                for section in updated_sections:
+                    logging.info(f"  - {section.title}")
+
+        except Exception as e:
+            logging.error(f"Error in task_check_plex_files: {str(e)}")
+
+    def task_update_show_ids(self):
+        """Update show IDs (imdb_id and tmdb_id) in the database if they don't match the direct API."""
+        import sqlite3
+        from cli_battery.app.direct_api import DirectAPI
+        import os
+
+        logging.info("Starting show ID update task (DRY RUN)")
+        api = DirectAPI()
+
+        # Connect to media_items.db
+        db_path = os.path.join('/user/db_content', 'media_items.db')
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        try:
+            # Get all unique shows by grouping episodes
+            cursor.execute("""
+                SELECT 
+                    title,
+                    imdb_id,
+                    GROUP_CONCAT(id) as episode_ids,
+                    COUNT(*) as episode_count
+                FROM media_items 
+                WHERE type='episode'
+                GROUP BY title, imdb_id
+            """)
+            shows = cursor.fetchall()
+            
+            logging.info(f"Found {len(shows)} shows to check")
+
+            for show in shows:
+                try:
+                    show_title = show['title']
+                    show_imdb_id = show['imdb_id']
+                    episode_ids = show['episode_ids'].split(',')
+
+                    # Get show metadata from direct API
+                    metadata, source = api.get_show_metadata(show_imdb_id)
+                    if not metadata:
+                        logging.warning(f"No metadata found in API for show {show_title} (imdb_id: {show_imdb_id})")
+                        continue
+
+                    api_imdb_id = metadata.get('imdb_id')
+                    api_tmdb_id = metadata.get('tmdb_id')
+
+                    if api_imdb_id and api_imdb_id != show_imdb_id:
+                        logging.info(f"[DRY RUN] Would update show {show_title}:")
+                        logging.info(f"  IMDB ID: {show_imdb_id} -> {api_imdb_id}")
+                        if api_tmdb_id:
+                            logging.info(f"  TMDB ID: (updating to {api_tmdb_id})")
+                        # When ready to make actual changes, uncomment these lines:
+                        # cursor.execute("""
+                        #     UPDATE media_items
+                        #     SET imdb_id = ?, tmdb_id = ?
+                        #     WHERE id IN ({})
+                        # """.format(','.join('?' * len(episode_ids))), 
+                        # [api_imdb_id, api_tmdb_id] + episode_ids)
+                        # conn.commit()
+
+                except Exception as e:
+                    logging.error(f"Error processing show {show_title}: {str(e)}")
+                    continue
+
+        except Exception as e:
+            logging.error(f"Error in task_update_show_ids: {str(e)}")
+        finally:
+            cursor.close()
+            conn.close()
+
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
 
@@ -921,7 +1059,8 @@ def process_overseerr_webhook(data):
 
 def generate_airtime_report():
     logging.info("Generating airtime report for wanted and unreleased items...")
-    conn = get_db_connection()
+    db_path = os.path.join('/user/db_content', 'media_items.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     # Fetch all wanted and unreleased items

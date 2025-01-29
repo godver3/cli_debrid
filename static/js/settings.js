@@ -855,6 +855,28 @@ export function updateSettings() {
         console.warn("Debrid Provider select element not found!");
     }
 
+    const updatePlexOnFileDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
+    console.log("Update Plex on File Discovery element:", updatePlexOnFileDiscovery);
+    
+    if (updatePlexOnFileDiscovery) {
+        settingsData['Plex']['update_plex_on_file_discovery'] = updatePlexOnFileDiscovery.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Update Plex on File Discovery checkbox element not found!");
+    }
+
+    const plexFileLocation = document.getElementById('file management-plex_file_location');
+    console.log("Plex File Location element:", plexFileLocation);
+    
+    if (plexFileLocation) {
+        settingsData['File Management']['plex_file_location'] = plexFileLocation.value;
+    
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Plex File Location input element not found!");
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {

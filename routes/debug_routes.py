@@ -311,6 +311,33 @@ def manual_blacklist():
     # Get blacklist and sort by title
     blacklist = get_manual_blacklist()
     sorted_blacklist = dict(sorted(blacklist.items(), key=lambda x: x[1]['title'].lower()))
+    
+    # Fetch season information for TV shows
+    direct_api = DirectAPI()
+    for imdb_id, item in sorted_blacklist.items():
+        if item['media_type'] == 'episode':
+            try:
+                seasons_data, _ = direct_api.get_show_seasons(imdb_id)
+                if seasons_data:
+                    logging.debug(f"Seasons data for {imdb_id}: {seasons_data}")
+                    if isinstance(seasons_data, str):
+                        seasons_data = json.loads(seasons_data)
+                    # Handle the new format where seasons are direct keys
+                    if isinstance(seasons_data, dict) and all(str(k).isdigit() for k in seasons_data.keys()):
+                        item['available_seasons'] = sorted([int(season) for season in seasons_data.keys()])
+                        # Also store episode counts
+                        item['season_episodes'] = {int(season): data.get('episode_count', 0) for season, data in seasons_data.items()}
+                    # Keep backward compatibility for the old format
+                    else:
+                        item['available_seasons'] = sorted([int(s['season_number']) for s in seasons_data.get('seasons', [])])
+                        item['season_episodes'] = {}
+                else:
+                    item['available_seasons'] = []
+                    item['season_episodes'] = {}
+            except Exception as e:
+                logging.error(f"Error fetching seasons for {imdb_id}: {str(e)}")
+                item['available_seasons'] = []
+                item['season_episodes'] = {}
                 
     return render_template('manual_blacklist.html', blacklist=sorted_blacklist)
 
@@ -695,6 +722,8 @@ def run_task():
         'task_send_notifications': program_runner.task_send_notifications,
         'task_check_trakt_early_releases': program_runner.task_check_trakt_early_releases,
         'task_reconcile_queues': program_runner.task_reconcile_queues,
+        'task_check_plex_files': program_runner.task_check_plex_files,
+        'task_update_show_ids': program_runner.task_update_show_ids
     }
 
     if task_name not in tasks:
@@ -715,7 +744,8 @@ def get_available_tasks():
         'pending_uncached', 'upgrading', 'task_plex_full_scan', 'task_debug_log',
         'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
         'task_generate_airtime_report', 'task_check_service_connectivity', 'task_send_notifications',
-        'task_check_trakt_early_releases', 'task_reconcile_queues'
+        'task_check_trakt_early_releases', 'task_reconcile_queues', 'task_check_plex_files',
+        'task_update_show_ids'
     ]
     return jsonify({'tasks': tasks}), 200
 

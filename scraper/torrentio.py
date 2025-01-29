@@ -65,7 +65,7 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 no_title_count += 1
                 continue
                 
-            logging.debug(f"Processing stream with raw title: {title}")
+            #logging.debug(f"Processing stream with raw title: {title}")
             title_parts = title.split('\n')
             
             # First line is always the main title
@@ -108,7 +108,7 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 'seeders': seeders
             }
             results.append(result)
-            logging.debug(f"Successfully parsed result: {result}")
+            #logging.debug(f"Successfully parsed result: {result}")
             
         except Exception as e:
             parse_error_count += 1
