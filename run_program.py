@@ -131,7 +131,7 @@ class ProgramRunner:
         else:
             self.enabled_tasks.add('task_local_library_scan')
 
-        if get_setting('Plex', 'update_plex_on_file_discovery'):
+        if get_setting('File Management', 'file_collection_management') == 'Plex' and get_setting('Plex', 'update_plex_on_file_discovery'):
             self.enabled_tasks.add('task_check_plex_files')
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
@@ -744,8 +744,7 @@ class ProgramRunner:
             reconciliation_logger.addHandler(handler)
             reconciliation_logger.setLevel(logging.INFO)
 
-        db_path = os.path.join('/user/db_content', 'media_items.db')
-        conn = sqlite3.connect(db_path)
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         try:
@@ -1160,8 +1159,8 @@ def process_overseerr_webhook(data):
 
 def generate_airtime_report():
     logging.info("Generating airtime report for wanted and unreleased items...")
-    db_path = os.path.join('/user/db_content', 'media_items.db')
-    conn = sqlite3.connect(db_path)
+
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     # Fetch all wanted and unreleased items
