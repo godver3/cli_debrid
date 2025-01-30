@@ -710,8 +710,10 @@ document.addEventListener('DOMContentLoaded', function() {
         // Add click event listeners to result items
         document.querySelectorAll('.result-item').forEach(item => {
             item.addEventListener('click', function() {
-                const resultIndex = Array.from(this.parentNode.children).indexOf(this);
-                const result = this.parentNode.id === 'original-results' 
+                // Get all result items in the same table and find this item's index among them
+                const resultItems = this.parentNode.querySelectorAll('.result-item');
+                const resultIndex = Array.from(resultItems).indexOf(this);
+                const result = this.closest('table').parentNode.id === 'original-results' 
                     ? data.originalResults[resultIndex] 
                     : data.adjustedResults[resultIndex];
                 displayScoreBreakdown(result);
@@ -871,4 +873,3 @@ document.addEventListener('DOMContentLoaded', function() {
 document.getElementById('modifiedSettings').addEventListener('input', updateSaveButtonState);
 document.getElementById('modifiedSettings').addEventListener('change', updateSaveButtonState);
 });
-

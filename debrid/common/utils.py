@@ -1,6 +1,6 @@
 import re
 import logging
-from typing import List, Union
+from typing import List, Union, Dict, Tuple
 
 # Common video file extensions
 VIDEO_EXTENSIONS = [
@@ -52,3 +52,49 @@ def process_hashes(hashes: Union[str, List[str]], batch_size: int = 100) -> List
     
     # Remove duplicates and invalid hashes
     return list(set(h.lower() for h in hashes if is_valid_hash(h)))
+
+def format_torrent_status(active_torrents: List[Dict], download_stats: Tuple[int, int]) -> str:
+    """
+    Format torrent status information into a human-readable string.
+    Shows both active downloads and recently completed downloads.
+    
+    Args:
+        active_torrents: List of dictionaries containing torrent information
+        download_stats: Tuple of (active_count, max_downloads)
+    
+    Returns:
+        Formatted string containing torrent status information
+    """
+    active_count, max_downloads = download_stats
+    status_lines = [f"Active Downloads: {active_count}/{max_downloads}"]
+    
+    # Split torrents into active and completed
+    downloading_torrents = []
+    completed_torrents = []
+    
+    for torrent in active_torrents:
+        if torrent.get('progress', 0) == 100 and torrent.get('status', '').lower() == 'downloaded':
+            completed_torrents.append(torrent)
+        else:
+            downloading_torrents.append(torrent)
+    
+    # Show active downloads
+    if not downloading_torrents:
+        status_lines.append("\nNo active downloads")
+    else:
+        status_lines.append("\nActive Downloads:")
+        for torrent in downloading_torrents:
+            filename = torrent.get('filename', 'Unknown')
+            progress = torrent.get('progress', 0)
+            status = torrent.get('status', 'unknown')
+            status_lines.append(f"- {filename}")
+            status_lines.append(f"  Progress: {progress}%, Status: {status}")
+    
+    # Show completed downloads
+    if completed_torrents:
+        status_lines.append("\nRecently Completed:")
+        for torrent in completed_torrents:
+            filename = torrent.get('filename', 'Unknown')
+            status_lines.append(f"- {filename}")
+    
+    return "\n".join(status_lines)

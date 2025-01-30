@@ -5,7 +5,7 @@ import bencodepy
 import hashlib
 import tempfile
 import os
-from .utils import extract_hash_from_magnet, is_valid_hash, file_matches_item
+from ..common.utils import extract_hash_from_magnet, is_valid_hash, process_hashes
 from .api import make_request
 from ..status import TorrentStatus, get_status_flags
 

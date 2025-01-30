@@ -1,13 +1,23 @@
 {% extends "base.html" %}
 
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/performance.css') }}">
+{% endblock %}
+
 {% block content %}
-<div class="container mt-4">
-    <h2>Performance Dashboard</h2>
+<div class="container">
+    <div class="header">
+        <h2>Performance Dashboard</h2>
+        <button id="export-btn">
+            <i class="fas fa-download"></i> Export Data
+        </button>
+    </div>
     
     <div class="row">
         <!-- System Resources -->
         <div class="col-md-6">
-            <div class="card mb-4">
+            <div class="card">
                 <div class="card-header">
                     <i class="fas fa-microchip"></i> System Resources
                 </div>
@@ -16,17 +26,17 @@
                         <div class="mb-3">
                             <h5><i class="fas fa-tachometer-alt"></i> CPU Usage</h5>
                             <div class="progress mb-2">
-                                <div id="cpu-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                <div id="cpu-progress" class="progress-bar" role="progressbar" style="width: 0%">0%</div>
                             </div>
-                            <div id="cpu-details" class="small text-muted"></div>
+                            <div id="cpu-details" class="metric-details"></div>
                         </div>
                         
                         <div class="mb-3">
                             <h5><i class="fas fa-memory"></i> Memory Usage</h5>
                             <div class="progress mb-2">
-                                <div id="memory-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                <div id="memory-progress" class="progress-bar" role="progressbar" style="width: 0%">0%</div>
                             </div>
-                            <div id="memory-details" class="small text-muted"></div>
+                            <div id="memory-details" class="metric-details"></div>
                         </div>
                     </div>
                 </div>
@@ -35,17 +45,17 @@
         
         <!-- Memory Analysis -->
         <div class="col-md-6">
-            <div class="card mb-4">
+            <div class="card">
                 <div class="card-header">
                     <i class="fas fa-chart-bar"></i> Memory Analysis
                 </div>
                 <div class="card-body">
                     <div id="memory-analysis">
                         <h6>Top Memory Users by Type</h6>
-                        <div id="memory-by-type" class="small"></div>
+                        <div id="memory-by-type" class="memory-analysis"></div>
                         
                         <h6 class="mt-3">Top Memory Users by Module</h6>
-                        <div id="memory-by-module" class="small"></div>
+                        <div id="memory-by-module" class="memory-analysis"></div>
                     </div>
                 </div>
             </div>
@@ -55,24 +65,50 @@
     <div class="row">
         <!-- Memory Growth -->
         <div class="col-md-6">
-            <div class="card mb-4">
+            <div class="card">
                 <div class="card-header">
                     <i class="fas fa-chart-line"></i> Memory Growth
                 </div>
                 <div class="card-body">
-                    <div id="memory-growth" class="small"></div>
+                    <div id="memory-growth" class="memory-analysis"></div>
                 </div>
             </div>
         </div>
         
         <!-- Resource Handles -->
         <div class="col-md-6">
-            <div class="card mb-4">
+            <div class="card">
                 <div class="card-header">
                     <i class="fas fa-plug"></i> Resource Handles
                 </div>
                 <div class="card-body">
-                    <div id="resource-handles" class="small"></div>
+                    <div id="resource-handles" class="resource-handles">
+                        <div><strong>Open Files:</strong> <span id="open-files-count">0</span></div>
+                        <div><strong>File Types:</strong> <span id="file-types">None</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- CPU Profile -->
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-chart-pie"></i> CPU Profile
+                </div>
+                <div class="card-body">
+                    <div id="cpu-profile">
+                        <h6>Time Distribution</h6>
+                        <div>
+                            <span id="total-time">0.0s</span> Total Time
+                            <span id="active-time">0.0s</span> Active Time
+                            <span id="idle-time">0.0s</span> Idle Time
+                        </div>
+                        <h6 class="mt-3">Top Files</h6>
+                        <div id="cpu-top-files"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -88,87 +124,148 @@ function formatBytes(bytes, decimals = 2) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
 }
 
+let currentPerformanceData = null;  // Store the current data globally
+
+function downloadJson(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+}
+
 function updateDashboard() {
     fetch('/performance/api/performance/log')
         .then(response => response.json())
         .then(data => {
-            if (data.sections) {
-                // Update System Resources
-                const systemResources = data.sections['📊 SYSTEM RESOURCES'] || [];
-                systemResources.forEach(line => {
-                    if (line.includes('CPU')) {
-                        const cpuMatch = line.match(/Current Usage:\s*([\d.]+)%/);
-                        if (cpuMatch) {
-                            const cpuPercent = parseFloat(cpuMatch[1]);
-                            document.getElementById('cpu-progress').style.width = `${cpuPercent}%`;
-                            document.getElementById('cpu-details').innerHTML = line.replace('Current Usage:', '<strong>Current Usage:</strong>');
-                        }
-                    }
-                    if (line.includes('MEMORY')) {
-                        const memoryMatch = line.match(/System Used:\s*([\d.]+)%/);
-                        if (memoryMatch) {
-                            const memoryPercent = parseFloat(memoryMatch[1]);
-                            document.getElementById('memory-progress').style.width = `${memoryPercent}%`;
-                            document.getElementById('memory-details').innerHTML = line.replace('System Used:', '<strong>System Used:</strong>');
-                        }
-                    }
-                });
-
-                // Update Memory Analysis
-                const memoryAnalysis = data.sections['🔍 MEMORY ANALYSIS'] || [];
-                let byTypeHtml = '';
-                let byModuleHtml = '';
+            // Store the current data globally
+            currentPerformanceData = data;
+            
+            if (data.entries && data.entries.length > 0) {
+                // Get latest entries by type
+                const entries = data.entries;
+                const basicMetrics = entries.findLast(entry => entry.type === 'basic_metrics');
+                const detailedMemory = entries.findLast(entry => entry.type === 'detailed_memory');
+                const memoryGrowth = entries.filter(entry => entry.type === 'basic_metrics').slice(-10);
+                const cpuProfile = entries.findLast(entry => entry.type === 'cpu_profile');
+                const resourceHandles = entries.findLast(entry => entry.type === 'file_descriptors');
                 
-                memoryAnalysis.forEach(line => {
-                    if (line.includes('Top Memory Users by Type')) {
-                        const nextIndex = memoryAnalysis.indexOf(line) + 1;
-                        for (let i = nextIndex; i < memoryAnalysis.length && !memoryAnalysis[i].includes('Top Memory Users by Module'); i++) {
-                            if (memoryAnalysis[i].trim()) {
-                                byTypeHtml += `<div>${memoryAnalysis[i]}</div>`;
-                            }
-                        }
-                    }
-                    if (line.includes('Top Memory Users by Module')) {
-                        const nextIndex = memoryAnalysis.indexOf(line) + 1;
-                        for (let i = nextIndex; i < memoryAnalysis.length && !memoryAnalysis[i].includes('Top Memory Users by Function'); i++) {
-                            if (memoryAnalysis[i].trim()) {
-                                byModuleHtml += `<div>${memoryAnalysis[i]}</div>`;
-                            }
-                        }
-                    }
-                });
-                
-                document.getElementById('memory-by-type').innerHTML = byTypeHtml;
-                document.getElementById('memory-by-module').innerHTML = byModuleHtml;
+                if (basicMetrics) {
+                    const metrics = basicMetrics.metrics;
+                    // Update CPU Usage
+                    const cpuPercent = metrics.cpu_percent || 0;
+                    document.getElementById('cpu-progress').style.width = `${cpuPercent}%`;
+                    document.getElementById('cpu-progress').textContent = `${cpuPercent.toFixed(1)}%`;
+                    document.getElementById('cpu-details').innerHTML = 
+                        `<strong>System Time:</strong> ${metrics.cpu_system_time.toFixed(2)}s ` +
+                        `<strong>User Time:</strong> ${metrics.cpu_user_time.toFixed(2)}s`;
+                    
+                    // Update Memory Usage
+                    const memoryRssMB = metrics.memory_rss || 0;
+                    const memoryVmsMB = metrics.memory_vms || 0;
+                    document.getElementById('memory-progress').style.width = `${metrics.system_memory_used}%`;
+                    document.getElementById('memory-progress').textContent = `${metrics.system_memory_used.toFixed(1)}%`;
+                    document.getElementById('memory-details').innerHTML = 
+                        `<strong>RSS Memory:</strong> ${memoryRssMB.toFixed(2)} MB ` +
+                        `<strong>Virtual Memory:</strong> ${memoryVmsMB.toFixed(2)} MB ` +
+                        `<strong>Swap Used:</strong> ${metrics.swap_used.toFixed(2)} MB`;
+                }
 
-                // Update Memory Growth
-                const memoryGrowth = data.sections['📈 MEMORY GROWTH'] || [];
-                let growthHtml = '';
-                memoryGrowth.forEach(line => {
-                    if (line.includes('Top Memory Allocations by Location')) {
-                        const nextIndex = memoryGrowth.indexOf(line) + 1;
-                        for (let i = nextIndex; i < memoryGrowth.length; i++) {
-                            if (memoryGrowth[i].trim()) {
-                                growthHtml += `<div>${memoryGrowth[i]}</div>`;
-                            }
-                        }
-                    }
-                });
-                document.getElementById('memory-growth').innerHTML = growthHtml;
+                // Memory Analysis
+                if (detailedMemory) {
+                    const metrics = detailedMemory.metrics;
+                    
+                    // Memory by Type
+                    const byTypeHtml = metrics.top_types
+                        .map(item => `<div><strong>${item.type}:</strong> ${formatBytes(item.size)} (${item.count.toLocaleString()} objects)</div>`)
+                        .join('');
+                    document.getElementById('memory-by-type').innerHTML = byTypeHtml;
+                    
+                    // Memory by Module
+                    const byModuleHtml = metrics.top_files
+                        .map(item => `<div><strong>${item.module}:</strong> ${formatBytes(item.size)} (${item.count.toLocaleString()} objects)</div>`)
+                        .join('');
+                    document.getElementById('memory-by-module').innerHTML = byModuleHtml;
+                }
 
-                // Update Resource Handles
-                const resourceHandles = data.sections['🔌 RESOURCE HANDLES'] || [];
-                let handlesHtml = '';
-                resourceHandles.forEach(line => {
-                    if (line.trim()) {
-                        handlesHtml += `<div>${line}</div>`;
+                // Memory Growth over time
+                if (memoryGrowth.length > 0) {
+                    const growthHtml = memoryGrowth.reverse()
+                        .map(entry => {
+                            const timestamp = new Date(entry.timestamp).toLocaleTimeString();
+                            const rss = entry.metrics.memory_rss;
+                            const vms = entry.metrics.memory_vms;
+                            return `<div>
+                                <strong>${timestamp}:</strong> 
+                                RSS: ${rss.toFixed(2)} MB, 
+                                VMS: ${vms.toFixed(2)} MB
+                            </div>`;
+                        })
+                        .join('');
+                    document.getElementById('memory-growth').innerHTML = growthHtml;
+                }
+
+                // Resource Handles
+                if (resourceHandles) {
+                    const metrics = resourceHandles.metrics;
+                    document.getElementById('open-files-count').textContent = metrics.open_files_count || 0;
+                    
+                    // Format file types as "extension: count" pairs
+                    const fileTypesText = metrics.file_types ? 
+                        Object.entries(metrics.file_types)
+                            .map(([ext, count]) => `${ext}: ${count}`)
+                            .join(', ') 
+                        : 'None';
+                    document.getElementById('file-types').textContent = fileTypesText;
+                }
+
+                // CPU Profile
+                if (cpuProfile) {
+                    const metrics = cpuProfile.metrics;
+                    console.log('CPU Profile metrics:', metrics); // Add logging for debugging
+                    
+                    // Update time distribution
+                    document.getElementById('total-time').textContent = metrics.total_time.toFixed(3);
+                    document.getElementById('active-time').textContent = metrics.active_time.toFixed(3);
+                    document.getElementById('idle-time').textContent = metrics.sleep_time.toFixed(3);
+                    
+                    // Update top files
+                    if (metrics.top_files && metrics.top_files.length > 0) {
+                        const topFilesHtml = metrics.top_files
+                            .map(file => {
+                                const functionsList = file.top_functions
+                                    .map(fn => `<div class="ml-4">
+                                        <strong>${fn.function}:</strong> ${fn.time.toFixed(3)}s
+                                    </div>`)
+                                    .join('');
+                                
+                                return `<div class="mb-3">
+                                    <div><strong>${file.file}:</strong> ${file.time.toFixed(3)}s (${file.calls.toLocaleString()} calls)</div>
+                                    ${functionsList}
+                                </div>`;
+                            })
+                            .join('');
+                        document.getElementById('cpu-top-files').innerHTML = topFilesHtml;
+                    } else {
+                        document.getElementById('cpu-top-files').innerHTML = '<div>No CPU profile data available</div>';
                     }
-                });
-                document.getElementById('resource-handles').innerHTML = handlesHtml;
+                }
             }
         })
         .catch(error => console.error('Error fetching performance log:', error));
 }
+
+// Add click handler for export button
+document.getElementById('export-btn').addEventListener('click', () => {
+    if (currentPerformanceData) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        downloadJson(currentPerformanceData, `performance-data-${timestamp}.json`);
+    }
+});
 
 // Update dashboard every 5 seconds
 setInterval(updateDashboard, 5000);

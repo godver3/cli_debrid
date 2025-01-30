@@ -25,7 +25,7 @@ def get_next_onboarding_step():
         ('Plex', 'shows_libraries'),
         ('Plex', 'movie_libraries'),
         ('Plex', 'update_plex_on_file_discovery'),
-        ('Plex', 'plex_file_location'),
+        ('Plex', 'mounted_file_location'),
         ('Debrid Provider', 'provider'),
         ('Debrid Provider', 'api_key'),
         ('Trakt', 'client_id'),
@@ -106,7 +106,7 @@ def onboarding_step(step):
             ('Plex', 'shows_libraries'),
             ('Plex', 'movie_libraries'),
             ('Plex', 'update_plex_on_file_discovery'),
-            ('Plex', 'plex_file_location'),
+            ('Plex', 'mounted_file_location'),
             ('Debrid Provider', 'provider'),
             ('Debrid Provider', 'api_key'),
             ('Trakt', 'client_id'),
@@ -122,7 +122,7 @@ def onboarding_step(step):
                     'shows_libraries': request.form['shows_libraries'],
                     'movie_libraries': request.form['movie_libraries'],
                     'update_plex_on_file_discovery': request.form.get('update_plex_on_file_discovery', 'false'),
-                    'plex_file_location': request.form.get('plex_file_location', '')
+                    'mounted_file_location': request.form.get('mounted_file_location', '')
                 }
                 
                 # Handle debrid provider selection

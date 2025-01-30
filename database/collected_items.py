@@ -16,6 +16,11 @@ def add_collected_items(media_items_batch, recent=False):
     from settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
 
+    # Check if Plex library checks are disabled
+    if get_setting('Plex', 'disable_plex_library_checks', default=False):
+        logging.info("Plex library checks disabled - using simplified collection process")
+        return plex_collection_disabled(media_items_batch)
+
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
@@ -300,6 +305,203 @@ def add_collected_items(media_items_batch, recent=False):
         raise
     finally:
         conn.close()
+
+def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
+    """
+    Simplified collection process when Plex library checks are disabled.
+    This function handles the basic database operations needed for collecting items
+    without Plex library integration.
+
+    Process:
+    1. Get versions from config
+    2. Check if version is in filename (from location or filled_by_file)
+    3. If not, use parser_approximation
+    4. Check for existing items with same version
+    5. Add to database if new
+
+    Args:
+        media_items_batch (List[Dict[str, Any]]): List of media items to process
+
+    Returns:
+        bool: True if all operations were successful, False otherwise
+    """
+    if not media_items_batch:
+        return True
+
+    from settings import load_config
+    from reverse_parser import parser_approximation
+    
+    # Get versions from config
+    config = load_config()
+    version_list = list(config.get('Scraping', {}).get('versions', {}).keys())
+    if not version_list:
+        logging.warning("No versions configured in Scraping config, using empty list")
+        version_list = []
+
+    conn = get_db_connection()
+    try:
+        conn.execute('BEGIN TRANSACTION')
+        
+        for item in media_items_batch:
+            # Get filename from either location or filled_by_file
+            filename = None
+            filename_source = None
+            locations = item.get('location', [])
+            if isinstance(locations, str):
+                locations = [locations]
+            
+            # Try to get filename from locations first
+            for location in locations:
+                if location:
+                    filename = os.path.basename(location)
+                    if filename:
+                        filename_source = 'location'
+                        break
+            
+            # If no filename found in locations, try filled_by_file
+            if not filename and item.get('filled_by_file'):
+                filename = item['filled_by_file']
+                filename_source = 'filled_by_file'
+
+            # If we still don't have a filename, use the title as fallback
+            if not filename and item.get('title'):
+                filename = item['title']
+                if item.get('year'):
+                    filename += f" ({item['year']})"
+                filename_source = 'title'
+
+            if not filename:
+                logging.warning(f"Could not determine filename for item (Title: {item.get('title', 'Unknown')}, Type: {item.get('type', 'Unknown')})")
+                continue
+
+            logging.debug(f"Using filename from {filename_source}: {filename}")
+            found_version = None
+
+            # Check if any version from the list is in the filename
+            for version in version_list:
+                if version.lower() in filename.lower():
+                    found_version = version
+                    logging.debug(f"Found version {version} in filename")
+                    break
+
+            # If no version found, try parser_approximation
+            if not found_version:
+                parsed_result = parser_approximation(filename)
+                found_version = parsed_result.get('version')
+                if found_version:
+                    logging.debug(f"Found version {found_version} using parser_approximation")
+
+            if not found_version:
+                logging.warning(f"Could not determine version for {filename_source}: {filename}")
+                continue
+
+            # Check if item with this version already exists
+            cursor = conn.cursor()
+            query_params = []
+            
+            # Build query conditions based on available IDs
+            id_conditions = []
+            if item.get('imdb_id'):
+                id_conditions.append('imdb_id = ?')
+                query_params.append(item['imdb_id'])
+            if item.get('tmdb_id'):
+                id_conditions.append('tmdb_id = ?')
+                query_params.append(item['tmdb_id'])
+            
+            if not id_conditions:
+                logging.warning(f"No IMDb or TMDb ID available for {filename}")
+                continue
+                
+            id_query = ' OR '.join(id_conditions)
+            query_params.append(found_version)
+            
+            if item.get('type') == 'episode':
+                query = f'''
+                    SELECT id FROM media_items 
+                    WHERE ({id_query})
+                    AND version = ? 
+                    AND state = 'Collected'
+                    AND type = 'episode'
+                    AND season_number = ?
+                    AND episode_number = ?
+                '''
+                query_params.extend([item.get('season_number'), item.get('episode_number')])
+            else:
+                # Movie case
+                query = f'''
+                    SELECT id FROM media_items 
+                    WHERE ({id_query})
+                    AND version = ? 
+                    AND state = 'Collected'
+                    AND type = 'movie'
+                '''
+            
+            cursor.execute(query, query_params)
+            existing_item = cursor.fetchone()
+            if existing_item:
+                item_desc = f"S{item.get('season_number')}E{item.get('episode_number')}" if item.get('type') == 'episode' else "movie"
+                logging.info(f"Item already exists ({item_desc}) with version {found_version} (from {filename_source}): {filename}")
+                continue
+
+            # Add new item to database
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            collected_at = item.get('collected_at', now)  # Use item's collected_at if available, fallback to now
+            
+            if item.get('type') == 'episode':
+                cursor.execute('''
+                    INSERT INTO media_items 
+                    (imdb_id, tmdb_id, title, type, season_number, episode_number, version, collected_at, state, filled_by_file,
+                     year, release_date, last_updated, metadata_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Collected', ?, ?, ?, ?, ?)
+                ''', (
+                    item.get('imdb_id'),
+                    item.get('tmdb_id'),
+                    item.get('title'),
+                    item.get('type'),
+                    item.get('season_number'),
+                    item.get('episode_number'),
+                    found_version,
+                    collected_at,  # Use collected_at from item
+                    filename,
+                    item.get('year'),
+                    item.get('release_date'),
+                    now,
+                    now
+                ))
+            else:
+                cursor.execute('''
+                    INSERT INTO media_items 
+                    (imdb_id, tmdb_id, title, type, version, collected_at, state, filled_by_file,
+                     year, release_date, last_updated, metadata_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, 'Collected', ?, ?, ?, ?, ?)
+                ''', (
+                    item.get('imdb_id'),
+                    item.get('tmdb_id'),
+                    item.get('title'),
+                    item.get('type'),
+                    found_version,
+                    collected_at,  # Use collected_at from item
+                    filename,
+                    item.get('year'),
+                    item.get('release_date'),
+                    now,
+                    now
+                ))
+            
+            logging.info(f"Added new item to collection with version {found_version} (from {filename_source}): {filename}")
+
+        conn.commit()
+        return True
+
+    except Exception as e:
+        logging.error(f"Error in plex_collection_disabled: {str(e)}")
+        if conn:
+            conn.rollback()
+        return False
+
+    finally:
+        if conn:
+            conn.close()
 
 def generate_identifier(item: Dict[str, Any]) -> str:
     if item.get('type') == 'movie':

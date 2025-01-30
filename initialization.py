@@ -114,9 +114,20 @@ def reset_queued_item_status():
 def plex_collection_update(skip_initial_plex_update):
     from run_program import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex
     from database import get_all_media_items
+    from utilities.plex_watch_history_functions import sync_get_watch_history_from_plex
+    from settings import get_setting
 
     update_initialization_step("Plex Update", "Starting Plex scan")
     logging.info("Updating Plex collection...")
+
+    # Check if we should pull watch history
+    if get_setting('Debug', 'do_not_add_plex_watch_history_items_to_queue', False):
+        update_initialization_step("Pulling Plex Watch History", "Retrieving watch history from Plex", is_substep=True)
+        try:
+            sync_get_watch_history_from_plex()
+            logging.info("Successfully retrieved Plex watch history")
+        except Exception as e:
+            logging.error(f"Error retrieving Plex watch history: {str(e)}")
 
     try:
         update_initialization_step("Plex Update", 

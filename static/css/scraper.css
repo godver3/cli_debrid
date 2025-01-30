@@ -3,6 +3,7 @@ html, body {
     height: auto;
     margin: 0;
     padding: 0;
+    padding-top: 45px;
     background-color: black;
 }
 

@@ -157,6 +157,33 @@ class DebridProvider(ABC):
         """Clean up any resources or stale torrents"""
         self._status.clear()
 
+    @abstractmethod
     def get_cached_torrent_id(self, hash_value: str) -> Optional[str]:
         """Get stored torrent ID for a cached hash"""
-        return self._cached_torrent_ids.get(hash_value)
+        pass
+
+    @abstractmethod
+    def list_active_torrents(self) -> List[Dict]:
+        """
+        List all active torrents.
+        
+        Returns:
+            List of dictionaries containing torrent information with at least:
+            - filename: str
+            - progress: float
+            - status: str
+        """
+        pass
+
+    def get_torrent_status(self) -> Tuple[List[Dict], Tuple[int, int]]:
+        """
+        Get a comprehensive view of active torrents and download limits.
+        
+        Returns:
+            Tuple containing:
+            - List of dictionaries with torrent details
+            - Tuple of (active_count, max_downloads)
+        """
+        active_torrents = self.list_active_torrents()
+        active_count, max_downloads = self.get_active_downloads()
+        return active_torrents, (active_count, max_downloads)

@@ -48,10 +48,15 @@ SETTINGS_SCHEMA = {
             "description": "Update Plex on file discovery (cli_debrid must be able to access mount at the below location)",
             "default": False
         },
-        "plex_file_location": {
+        "mounted_file_location": {
             "type": "string",
-            "description": "Plex file location (in Zurg use the /__all__ folder)",
+            "description": "Mounted file location (in Zurg use the /__all__ folder)",
             "default": "/mnt/zurg/__all__"
+        },
+        "disable_plex_library_checks": {
+            "type": "boolean",
+            "description": "Disable Plex library checks - if enabled use the mounted_file_location above to confirm file presence for Collection. If no file location indicated, immediately mark as Collected on addition. This setting is essentially a Local-Only mode, to allow for third party symlinking",
+            "default": False
         }
     },
     "File Management": {
@@ -88,11 +93,6 @@ SETTINGS_SCHEMA = {
             "description": "Plex authentication token (optional)",
             "default": "",
             "sensitive": True
-        },
-        "disable_symlinking": {
-            "type": "boolean",
-            "description": "Disable symlinking",
-            "default": False
         }
     },
     "Debrid Provider": {
@@ -390,6 +390,11 @@ SETTINGS_SCHEMA = {
         "disable_content_source_caching": {
             "type": "boolean",
             "description": "Disable content source caching",
+            "default": False
+        },
+        "do_not_add_plex_watch_history_items_to_queue": {
+            "type": "boolean",
+            "description": "Do not add Plex watch history items to queue",
             "default": False
         }
     },
