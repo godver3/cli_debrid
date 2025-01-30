@@ -3,7 +3,7 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Dict, Any, List
 
-from database import update_media_item_state, get_media_item_by_id
+from database import update_media_item_state, get_media_item_by_id, update_media_item
 from queues.wanted_queue import WantedQueue
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
@@ -212,7 +212,49 @@ class QueueManager:
     def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Checking: {item_identifier}")
-           
+        
+        from settings import get_setting
+
+        '''
+        # Check if Plex library checks are disabled
+        if get_setting('Plex', 'disable_plex_library_checks') and not get_setting('Plex', 'mounted_file_location'):
+            logging.info(f"Plex library checks disabled and no file location set. Moving {item_identifier} directly to Collected")
+            # Update item state to Collected
+            update_media_item_state(item['id'], 'Collected', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
+            update_media_item(item['id'], collected_at= datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            
+            try:
+                from notifications import send_notifications
+                from routes.settings_routes import get_enabled_notifications_for_category
+                from extensions import app
+
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('collected')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            notification_data = {
+                                'id': item['id'],
+                                'title': item.get('title', 'Unknown Title'),
+                                'type': item.get('type', 'unknown'),
+                                'year': item.get('year', ''),
+                                'version': item.get('version', ''),
+                                'season_number': item.get('season_number'),
+                                'episode_number': item.get('episode_number'),
+                                'new_state': 'Collected'
+                            }
+                            send_notifications([notification_data], enabled_notifications, notification_category='collected')
+            except Exception as e:
+                logging.error(f"Failed to send collected notification: {str(e)}")
+            
+            # Remove from source queue
+            if from_queue in ["Adding", "Wanted"]:
+                self.queues[from_queue].remove_item(item)
+            logging.info(f"Moved item {item_identifier} to Collected state")
+            return
+        '''
+
+        # Normal flow - move to checking
         update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:

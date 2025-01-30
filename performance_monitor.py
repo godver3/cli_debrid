@@ -5,13 +5,15 @@ import sys
 import tracemalloc
 import logging
 import threading
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from datetime import datetime, timedelta
 import time
 import cProfile
 import pstats
 import io
 import re
+import json
+import platform
 
 class PerformanceMonitor:
     def __init__(self):
@@ -42,6 +44,33 @@ class PerformanceMonitor:
         # Start monitoring in a separate thread
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
+        
+        # Initialize JSON logger
+        self.json_logger = logging.getLogger('json_performance_logger')
+        self.json_logger.propagate = False
+        log_dir = os.environ.get('USER_LOGS', '/user/logs')
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        self.log_file = os.path.join(log_dir, 'performance_log.json')
+        
+        # Maximum number of entries to keep in the log
+        self.max_entries = 1440  # 24 hours worth of entries at 1 per minute
+        
+        # Initialize with empty structured data
+        self.performance_data = {
+            "metadata": {
+                "start_time": datetime.now().isoformat(),
+                "system": platform.system(),
+                "python_version": platform.python_version()
+            },
+            "entries": []
+        }
+        
+        # Load existing data if available
+        self._load_json()
+        
+        # Write initial empty structure
+        self._write_json()
     
     def start_monitoring(self):
         """Start comprehensive performance monitoring"""
@@ -109,6 +138,29 @@ class PerformanceMonitor:
             size_bytes /= 1024
         return f"{size_bytes:.1f} TB"
     
+    def _write_json(self):
+        """Write the current performance data to JSON file"""
+        try:
+            # Keep only the most recent entries
+            if len(self.performance_data["entries"]) > self.max_entries:
+                self.performance_data["entries"] = self.performance_data["entries"][-self.max_entries:]
+            
+            with open(self.log_file, 'w') as f:
+                json.dump(self.performance_data, f, indent=2)
+        except Exception as e:
+            logging.error(f"Error writing performance JSON: {e}")
+    
+    def _load_json(self):
+        """Load existing performance data from JSON file"""
+        try:
+            if os.path.exists(self.log_file):
+                with open(self.log_file, 'r') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and "entries" in data:
+                        self.performance_data = data
+        except Exception as e:
+            logging.error(f"Error loading performance JSON: {e}")
+    
     def _log_basic_metrics(self):
         """Log basic CPU and memory metrics"""
         try:
@@ -156,6 +208,25 @@ class PerformanceMonitor:
                 virtual_memory.percent,
                 psutil.swap_memory().used / 1024 / 1024
             ))
+            
+            # Create log entry
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "type": "basic_metrics",
+                "metrics": {
+                    "cpu_percent": cpu_percent,
+                    "cpu_user_time": cpu_times.user,
+                    "cpu_system_time": cpu_times.system,
+                    "memory_rss": memory_info.rss / 1024 / 1024,
+                    "memory_vms": memory_info.vms / 1024 / 1024,
+                    "system_memory_used": virtual_memory.percent,
+                    "swap_used": psutil.swap_memory().used / 1024 / 1024
+                }
+            }
+            
+            # Add entry and write JSON
+            self.performance_data['entries'].append(log_entry)
+            self._write_json()
         except Exception as e:
             self.performance_logger.error(f"Error logging basic metrics: {e}")
     
@@ -230,6 +301,23 @@ class PerformanceMonitor:
                 '\n'.join(f"   {f[0]:<40} {self._format_size(f[1]):>10}"
                          for f in top_functions)
             ))
+            
+            # Create log entry
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "type": "detailed_memory",
+                "metrics": {
+                    "gc_counts": list(gc_counts),
+                    "total_objects": gc_objects,
+                    "top_types": [{"type": t[0], "size": t[1], "count": type_counts[t[0]]} for t in top_types],
+                    "top_files": [{"module": f[0], "size": f[1], "count": file_objects[f[0]]} for f in top_files],
+                    "top_functions": [{"function": f[0], "size": f[1]} for f in top_functions]
+                }
+            }
+            
+            # Add entry and write JSON
+            self.performance_data['entries'].append(log_entry)
+            self._write_json()
         except Exception as e:
             self.performance_logger.error(f"Error logging detailed memory: {e}")
     
@@ -250,6 +338,26 @@ Top Memory Allocations by Location:
                 '\n'.join(f"   {stat.count:,} objects: {self._format_size(stat.size)} - {os.path.basename(stat.traceback[0].filename)}:{stat.traceback[0].lineno}"
                          for stat in top_stats[:10])
             ))
+            
+            # Create log entry
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "type": "memory_growth",
+                "metrics": {
+                    "top_allocations": [
+                        {
+                            "count": stat.count,
+                            "size": stat.size,
+                            "file": os.path.basename(stat.traceback[0].filename),
+                            "line": stat.traceback[0].lineno
+                        } for stat in top_stats[:10]
+                    ]
+                }
+            }
+            
+            # Add entry and write JSON
+            self.performance_data['entries'].append(log_entry)
+            self._write_json()
         except Exception as e:
             self.performance_logger.error(f"Error logging memory growth: {e}")
     
@@ -282,6 +390,22 @@ Top Memory Allocations by Location:
                 len(open_connections),
                 ', '.join(f"{status}: {count}" for status, count in conn_status.items()) if conn_status else "None"
             ))
+            
+            # Create log entry
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "type": "file_descriptors",
+                "metrics": {
+                    "open_files_count": len(open_files),
+                    "file_types": {ext: count for ext, count in file_types.items()},
+                    "network_connections_count": len(open_connections),
+                    "connection_statuses": {str(status): count for status, count in conn_status.items()}
+                }
+            }
+            
+            # Add entry and write JSON
+            self.performance_data['entries'].append(log_entry)
+            self._write_json()
         except Exception as e:
             self.performance_logger.error(f"Error logging file descriptors: {e}")
     
@@ -345,6 +469,32 @@ Top Memory Allocations by Location:
             
             self._setup_profiler()
             
+            # Create log entry
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "type": "cpu_profile",
+                "metrics": {
+                    "total_time": total_time,
+                    "active_time": active_time,
+                    "sleep_time": sleep_time,
+                    "top_files": [
+                        {
+                            "file": os.path.basename(str(file)) if file else "Unknown",
+                            "time": data['time'],
+                            "calls": data['calls'],
+                            "top_functions": [
+                                {"function": func, "time": time}
+                                for func, time in sorted(data['funcs'].items(), key=lambda x: x[1], reverse=True)[:3]
+                            ]
+                        } for file, data in sorted_files[:10] if file != '~'
+                    ]
+                }
+            }
+            
+            # Add entry and write JSON
+            self.performance_data['entries'].append(log_entry)
+            self._write_json()
+            
         except Exception as e:
             self.performance_logger.error(f"Error in CPU profiling: {e}")
             self._setup_profiler()
@@ -382,6 +532,25 @@ Memory Growth Since Last Snapshot (Top 10):
 {}""".format(
                     '\n'.join(f"   {stat}" for stat in diff_stats[:10])
                 ))
+                
+                # Create log entry
+                log_entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    "type": "memory_snapshot",
+                    "metrics": {
+                        "memory_growth": [
+                            {
+                                "size": stat.size,
+                                "count": stat.count,
+                                "traceback": str(stat.traceback)
+                            } for stat in diff_stats[:10]
+                        ]
+                    }
+                }
+                
+                # Add entry and write JSON
+                self.performance_data['entries'].append(log_entry)
+                self._write_json()
         except Exception as e:
             self.performance_logger.error(f"Error taking memory snapshot: {e}")
 

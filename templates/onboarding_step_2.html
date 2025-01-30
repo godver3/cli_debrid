@@ -85,9 +85,9 @@
         </div>
         <div class="settings-description">Update Plex on file discovery (cli_debrid must be able to access mount at the below location)</div>
 
-        <label for="plex_file_location" class="onboarding-label">Plex file location:</label>
-        <input type="text" id="plex_file_location" name="plex_file_location" class="onboarding-input" value="{{ settings.get('Plex', {}).get('plex_file_location', '/mnt/zurg/__all__') }}">
-        <div class="settings-description">Plex file location (in Zurg use the /__all__ folder)</div>
+        <label for="mounted_file_location" class="onboarding-label">Mounted file location:</label>
+        <input type="text" id="mounted_file_location" name="mounted_file_location" class="onboarding-input" value="{{ settings.get('Plex', {}).get('mounted_file_location', '/mnt/zurg/__all__') }}">
+        <div class="settings-description">Mounted file location (in Zurg use the /__all__ folder)</div>
 
         <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
         <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">

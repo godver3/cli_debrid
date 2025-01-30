@@ -48,7 +48,7 @@
     <div class="settings-section-content">
         {% for key, value in settings_schema['File Management'].items() %}
             {% if key != 'tab' and key != 'symlink_organize_by_type' %}
-            <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink', 'disable_symlinking'] %}symlink-plex-setting{% endif %}">
+            <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink'] %}symlink-plex-setting{% endif %}">
                 <label for="file management-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
                     <input type="checkbox" id="file management-{{ key }}" name="File Management.{{ key }}"
@@ -103,6 +103,7 @@
                            value="{{ settings.get('Plex', {}).get(key, '') }}" class="settings-input"
                            data-section="Plex" data-key="{{ key }}"
                            {% if key in ['movie_libraries', 'shows_libraries'] %}data-plex-required="true"{% endif %}
+                           {% if key == 'disable_plex_library_checks' %}data-plex-required="true"{% endif %}
                            {% if value.sensitive %}type="password"{% endif %}>
                 {% endif %}
                 {% if value.description %}
@@ -170,3 +171,29 @@
     </div>
 </div>
 
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Get the elements
+    const updatePlexOnDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
+    const disablePlexChecks = document.getElementById('plex-disable_plex_library_checks');
+
+    // Function to handle mutual exclusivity
+    function handlePlexSettingsChange(event) {
+        if (event.target === disablePlexChecks) {
+            if (disablePlexChecks.checked) {
+                // If disable checks is enabled, disable the other one
+                updatePlexOnDiscovery.checked = false;
+            }
+        } else {
+            // If either of the first two are modified
+            if (updatePlexOnDiscovery.checked) {
+                disablePlexChecks.checked = false;
+            }
+        }
+    }
+
+    // Add event listeners
+    updatePlexOnDiscovery.addEventListener('change', handlePlexSettingsChange);
+    disablePlexChecks.addEventListener('change', handlePlexSettingsChange);
+});
+</script>

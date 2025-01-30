@@ -8,10 +8,11 @@ import logging
 import time
 import random
 
-def get_db_connection():
-    # Get db_content directory from environment variable with fallback
-    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-    db_path = os.path.join(db_content_dir, 'media_items.db')
+def get_db_connection(db_path=None):
+    if db_path is None:
+        # Get db_content directory from environment variable with fallback
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        db_path = os.path.join(db_content_dir, 'media_items.db')
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute('PRAGMA journal_mode=WAL')  # Enable WAL mode

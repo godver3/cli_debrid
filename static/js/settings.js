@@ -866,15 +866,26 @@ export function updateSettings() {
         console.warn("Update Plex on File Discovery checkbox element not found!");
     }
 
-    const plexFileLocation = document.getElementById('file management-plex_file_location');
-    console.log("Plex File Location element:", plexFileLocation);
+    const mountedFileLocation = document.getElementById('plex-mounted_file_location');
+    console.log("Plex File Location element:", mountedFileLocation);
     
-    if (plexFileLocation) {
-        settingsData['File Management']['plex_file_location'] = plexFileLocation.value;
+    if (mountedFileLocation) {
+        settingsData['Plex']['mounted_file_location'] = mountedFileLocation.value;
     
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Plex File Location input element not found!");
+    }
+
+    const doNotAddPlexWatchHistoryItemsToQueue = document.getElementById('scraping-do_not_add_plex_watch_history_items_to_queue');
+    console.log("Do Not Add Plex Watch History Items To Queue element:", doNotAddPlexWatchHistoryItemsToQueue);
+    
+    if (doNotAddPlexWatchHistoryItemsToQueue) {
+        settingsData['Scraping']['do_not_add_plex_watch_history_items_to_queue'] = doNotAddPlexWatchHistoryItemsToQueue.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Do Not Add Plex Watch History Items To Queue checkbox element not found!");
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));

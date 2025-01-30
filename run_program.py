@@ -2,6 +2,7 @@ import logging
 import random
 import time
 import os
+import sqlite3
 from initialization import initialize
 from settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
@@ -29,6 +30,7 @@ from debrid.base import TooManyDownloadsError, RateLimitError
 import tempfile
 from api_tracker import api  # Add this import for the api module
 from plexapi.server import PlexServer
+from database.core import get_db_connection
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -97,6 +99,7 @@ class ProgramRunner:
             'task_refresh_download_stats': 300,  # Run every 5 minutes
             'task_check_plex_files': 60,  # Run every 60 seconds
             #'task_update_show_ids': 3600,  # Run every hour
+            'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -130,6 +133,9 @@ class ProgramRunner:
 
         if get_setting('Plex', 'update_plex_on_file_discovery'):
             self.enabled_tasks.add('task_check_plex_files')
+
+        if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
+            self.enabled_tasks.add('task_get_plex_watch_history')
         
         # Add this line to store content sources
         self.content_sources = None
@@ -849,6 +855,15 @@ class ProgramRunner:
             else:
                 logging.debug("No items in Checking state to scan for")
 
+    def task_get_plex_watch_history(self):
+        """Task to get Plex watch history"""
+        from utilities.plex_watch_history_functions import sync_get_watch_history_from_plex
+        try:
+            sync_get_watch_history_from_plex()
+            logging.info("Successfully retrieved Plex watch history")
+        except Exception as e:
+            logging.error(f"Error retrieving Plex watch history: {str(e)}")
+
     def task_refresh_download_stats(self):
         """Task to refresh the download stats cache"""
         from database.statistics import get_cached_download_stats
@@ -860,13 +875,85 @@ class ProgramRunner:
 
     def task_check_plex_files(self):
         """Check for new files in Plex location and update libraries"""
-        if not get_setting('Plex', 'update_plex_on_file_discovery'):
+        if not get_setting('Plex', 'update_plex_on_file_discovery') and not get_setting('Plex', 'disable_plex_library_checks'):
+            logging.debug("Skipping Plex file check")
             return
 
-        plex_file_location = get_setting('Plex', 'plex_file_location', default='/mnt/zurg/__all__')
+        plex_file_location = get_setting('Plex', 'mounted_file_location', default='/mnt/zurg/__all__')
         if not os.path.exists(plex_file_location):
             logging.warning(f"Plex file location does not exist: {plex_file_location}")
             return
+
+        # Get all media items from database that are in Checking state
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        items = cursor.execute('SELECT id, filled_by_title, filled_by_file FROM media_items WHERE state = "Checking"').fetchall()
+        conn.close()
+        logging.info(f"Found {len(items)} media items in Checking state to verify")
+
+        # Check if Plex library checks are disabled
+        if get_setting('Plex', 'disable_plex_library_checks', default=False):
+            logging.info("Plex library checks disabled - marking found files as Collected")
+            updated_items = 0
+            not_found_items = 0
+
+            for item in items:
+                filled_by_title = item['filled_by_title']
+                filled_by_file = item['filled_by_file']
+                
+                if not filled_by_title or not filled_by_file:
+                    continue
+
+                # Check if the file exists in the expected location
+                file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
+                if not os.path.exists(file_path):
+                    not_found_items += 1
+                    logging.debug(f"File not found on disk: {file_path}")
+                    continue
+
+                logging.info(f"Found file on disk, marking as Collected: {file_path}")
+                # Update item state to Collected
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ?', (now, item['id']))
+                conn.commit()
+                conn.close()
+                updated_items += 1
+
+                # Send notification for collected item
+                try:
+                    from notifications import send_notifications
+                    from routes.settings_routes import get_enabled_notifications_for_category
+                    from extensions import app
+
+                    with app.app_context():
+                        response = get_enabled_notifications_for_category('collected')
+                        if response.json['success']:
+                            enabled_notifications = response.json['enabled_notifications']
+                            if enabled_notifications:
+                                # Get full item details for notification
+                                from database.database_reading import get_media_item_by_id
+                                item_details = get_media_item_by_id(item['id'])
+                                notification_data = {
+                                    'id': item['id'],
+                                    'title': item_details.get('title', 'Unknown Title'),
+                                    'type': item_details.get('type', 'unknown'),
+                                    'year': item_details.get('year', ''),
+                                    'version': item_details.get('version', ''),
+                                    'season_number': item_details.get('season_number'),
+                                    'episode_number': item_details.get('episode_number'),
+                                    'new_state': 'Collected'
+                                }
+                                send_notifications([notification_data], enabled_notifications, notification_category='collected')
+                except Exception as e:
+                    logging.error(f"Failed to send collected notification: {str(e)}")
+
+            logging.info(f"Plex check disabled summary: {updated_items} items marked as Collected, {not_found_items} items not found")
+            if get_setting('Plex', 'disable_plex_library_checks'):
+                logging.info(f"Plex library checks disabled, skipping Plex scans")
+                return
+
 
         if not get_setting('Plex', 'url', default=False):
             return
@@ -878,14 +965,6 @@ class ProgramRunner:
             if not plex_url or not plex_token:
                 logging.warning("Plex URL or token not configured")
                 return
-
-            # Get all media items from database that are in Checking state
-            db_path = os.path.join('/user/db_content', 'media_items.db')
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            items = cursor.execute('SELECT id, filled_by_title, filled_by_file FROM media_items WHERE state = "Checking"').fetchall()
-            conn.close()
-            logging.info(f"Found {len(items)} media items in Checking state to verify")
 
             # Connect to Plex server
             plex = PlexServer(plex_url, plex_token)
@@ -935,6 +1014,28 @@ class ProgramRunner:
                 logging.info("Updated Plex sections:")
                 for section in updated_sections:
                     logging.info(f"  - {section.title}")
+
+                # Send notification for Plex library update
+                try:
+                    from notifications import send_notifications
+                    from routes.settings_routes import get_enabled_notifications_for_category
+                    from extensions import app
+
+                    with app.app_context():
+                        response = get_enabled_notifications_for_category('plex')
+                        if response.json['success']:
+                            enabled_notifications = response.json['enabled_notifications']
+                            if enabled_notifications:
+                                notification_data = {
+                                    'updated_items': updated_items,
+                                    'skipped_items': skipped_items,
+                                    'not_found_items': not_found_items,
+                                    'updated_sections': [section.title for section in updated_sections],
+                                    'new_state': 'PlexUpdated'
+                                }
+                                send_notifications([notification_data], enabled_notifications, notification_category='plex')
+                except Exception as e:
+                    logging.error(f"Failed to send Plex update notification: {str(e)}")
 
         except Exception as e:
             logging.error(f"Error in task_check_plex_files: {str(e)}")

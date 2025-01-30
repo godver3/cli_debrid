@@ -267,5 +267,6 @@
     body {
         background: linear-gradient(to bottom, #333 0px, #333 450px, #000 650px) !important;
         background-attachment: initial !important;
+        padding-top: 35px;
     }
 }

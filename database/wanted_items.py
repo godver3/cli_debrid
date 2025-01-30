@@ -6,9 +6,12 @@ import json
 from datetime import datetime, timezone
 from metadata.metadata import get_tmdb_id_and_media_type
 import random
+import os
 
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
     from metadata.metadata import get_show_airtime_by_imdb_id
+    from settings import get_setting
+
 
     conn = get_db_connection()
     try:
@@ -21,9 +24,19 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'existing_episode_imdb': 0,
             'existing_episode_tmdb': 0,
             'missing_ids': 0,
-            'blacklisted': 0
+            'blacklisted': 0,
+            'already_watched': 0
         }
         airtime_cache = {}
+
+        # Check if we should skip watched content
+        do_not_add_watched = get_setting('Debug','do_not_add_plex_watch_history_items_to_queue', False)
+        watch_history_conn = None
+        if do_not_add_watched:
+            db_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+            watch_db_path = os.path.join(db_dir, 'watch_history.db')
+            if os.path.exists(watch_db_path):
+                watch_history_conn = get_db_connection(watch_db_path)
 
         if isinstance(versions_input, str):
             try:
@@ -135,6 +148,52 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             tmdb_id = item.get('tmdb_id')
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
+            # Check watch history if enabled
+            if do_not_add_watched and watch_history_conn:
+                if item_type == 'movie':
+                    # Check if movie exists in watch history
+                    if imdb_id or tmdb_id:
+                        query = "SELECT 1 FROM watch_history WHERE type = 'movie' AND "
+                        params = []
+                        conditions = []
+                        if imdb_id:
+                            conditions.append("imdb_id = ?")
+                            params.append(imdb_id)
+                        if tmdb_id:
+                            conditions.append("tmdb_id = ?")
+                            params.append(tmdb_id)
+                        query += " OR ".join(conditions)
+                        if watch_history_conn.execute(query, params).fetchone():
+                            skip_stats['already_watched'] += 1
+                            items_skipped += 1
+                            continue
+                else:
+                    # Check if episode exists in watch history
+                    season = item.get('season_number')
+                    episode = item.get('episode_number')
+                    if (imdb_id or tmdb_id) and season is not None and episode is not None:
+                        query = """
+                            SELECT 1 FROM watch_history 
+                            WHERE type = 'episode' 
+                            AND season = ? 
+                            AND episode = ? 
+                            AND (
+                        """
+                        params = [season, episode]
+                        conditions = []
+                        if imdb_id:
+                            conditions.append("imdb_id = ?")
+                            params.append(imdb_id)
+                        if tmdb_id:
+                            conditions.append("tmdb_id = ?")
+                            params.append(tmdb_id)
+                        query += " OR ".join(conditions) + ")"
+                        if watch_history_conn.execute(query, params).fetchone():
+                            skip_stats['already_watched'] += 1
+                            items_skipped += 1
+                            continue
+
+            # Continue with existing checks
             if item_type == 'movie':
                 skip = False
                 if imdb_id and imdb_id in existing_movies:
@@ -249,6 +308,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             skip_report.append(f"- {skip_stats['missing_ids']} items skipped due to missing IMDb/TMDb IDs")
         if skip_stats['blacklisted'] > 0:
             skip_report.append(f"- {skip_stats['blacklisted']} items skipped due to blacklist")
+        if skip_stats['already_watched'] > 0:
+            skip_report.append(f"- {skip_stats['already_watched']} items skipped due to watch history")
         
         if skip_report:
             logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))
@@ -259,3 +320,5 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         raise
     finally:
         conn.close()
+        if watch_history_conn:
+            watch_history_conn.close()
