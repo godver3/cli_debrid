@@ -71,16 +71,18 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     enabled_indexers = settings.get('enabled_indexers', '').lower()
     seeders_only = settings.get('seeders_only', False)
 
+    search_queries = []
+
     if "UFC" in title.upper():
         ufc_number = title.upper().split("UFC")[-1].strip()
         params = f"UFC {ufc_number}"
+        search_queries = [params]
         logging.info(f"UFC event detected. Using search term: {params}")
     elif content_type.lower() == 'movie':
         params = f"{title} {year}"
+        search_queries = [params]
     else:
         params = f"{title}"
-        search_queries = []
-
         if season is not None:
             # Add standard season/episode format
             standard_query = f"{params}.s{season:02d}"

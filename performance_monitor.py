@@ -231,93 +231,137 @@ class PerformanceMonitor:
             self.performance_logger.error(f"Error logging basic metrics: {e}")
     
     def _log_detailed_memory(self):
-        """Log detailed memory information including garbage collector stats"""
+        """Log detailed memory metrics"""
         try:
-            gc.collect()  # Run garbage collection
+            process = psutil.Process(os.getpid())
             
-            # Get garbage collector stats
-            gc_counts = gc.get_count()
-            gc_objects = len(gc.get_objects())
+            # Get memory maps
+            memory_maps = process.memory_maps(grouped=True)
+            anon_maps = [m for m in memory_maps if not m.path]
+            file_maps = [m for m in memory_maps if m.path]
             
-            # Get memory by type
-            type_sizes = defaultdict(int)
-            type_counts = defaultdict(int)
+            # Calculate total sizes
+            total_anon = sum(int(m.rss) for m in anon_maps)
+            total_file = sum(int(m.rss) for m in file_maps)
             
-            # Track memory by module/file
+            # Get open files
+            open_files = process.open_files()
             file_sizes = defaultdict(int)
-            file_objects = defaultdict(int)
-            
-            # Track memory by function (for function objects)
-            function_sizes = defaultdict(int)
-            
-            for obj in gc.get_objects():
-                obj_type = type(obj).__name__
-                obj_size = sys.getsizeof(obj)
-                type_sizes[obj_type] += obj_size
-                type_counts[obj_type] += 1
-                
-                # Track memory by module/file
+            for f in open_files:
                 try:
-                    if hasattr(obj, '__module__') and obj.__module__:
-                        file_sizes[obj.__module__] += obj_size
-                        file_objects[obj.__module__] += 1
-                except Exception:
-                    pass
-                
-                # Track function memory usage
-                try:
-                    if callable(obj) and hasattr(obj, '__code__'):
-                        func_key = f"{obj.__module__}.{obj.__qualname__}"
-                        function_sizes[func_key] += obj_size
-                except Exception:
+                    file_sizes[f.path] = os.path.getsize(f.path)
+                except (OSError, IOError):
                     pass
             
-            # Sort by size and get top entries
-            top_types = sorted(type_sizes.items(), key=lambda x: x[1], reverse=True)[:10]
-            top_files = sorted(file_sizes.items(), key=lambda x: x[1], reverse=True)[:10]
-            top_functions = sorted(function_sizes.items(), key=lambda x: x[1], reverse=True)[:10]
+            # Get network connections
+            connections = process.connections()
+            conn_states = defaultdict(int)
+            for conn in connections:
+                conn_states[conn.status] += 1
             
-            self.performance_logger.info("""
-🔍 MEMORY ANALYSIS
------------------
-♻️  Garbage Collector
-   Generation Counts: {}
-   Total Objects: {:,}
-
-📦 Top Memory Users by Type
-{}
-
-📂 Top Memory Users by Module
-{}
-
-⚡️ Top Memory Users by Function
-{}""".format(
-                gc_counts,
-                gc_objects,
-                '\n'.join(f"   {t[0]:<20} {self._format_size(t[1]):>10} | {type_counts[t[0]]:,} objects" 
-                         for t in top_types),
-                '\n'.join(f"   {f[0]:<30} {self._format_size(f[1]):>10} | {file_objects[f[0]]:,} objects"
-                         for f in top_files),
-                '\n'.join(f"   {f[0]:<40} {self._format_size(f[1]):>10}"
-                         for f in top_functions)
-            ))
+            # Get thread information
+            threads = process.threads()
+            thread_stats = []
+            for thread in threads:
+                thread_stats.append({
+                    'id': thread.id,
+                    'user_time': thread.user_time,
+                    'system_time': thread.system_time
+                })
             
-            # Create log entry
-            log_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "type": "detailed_memory",
-                "metrics": {
-                    "gc_counts": list(gc_counts),
-                    "total_objects": gc_objects,
-                    "top_types": [{"type": t[0], "size": t[1], "count": type_counts[t[0]]} for t in top_types],
-                    "top_files": [{"module": f[0], "size": f[1], "count": file_objects[f[0]]} for f in top_files],
-                    "top_functions": [{"function": f[0], "size": f[1]} for f in top_functions]
+            # Get tracemalloc statistics if enabled
+            if self.tracemalloc_enabled:
+                snapshot = tracemalloc.take_snapshot()
+                stats = snapshot.statistics('lineno')
+                top_stats = stats[:10]  # Get top 10 memory allocations
+                
+                trace_stats = []
+                for stat in top_stats:
+                    frame = stat.traceback[0]
+                    trace_stats.append({
+                        'file': frame.filename,
+                        'line': frame.lineno,
+                        'size': stat.size
+                    })
+            
+            # Create entry for JSON log
+            entry = {
+                'timestamp': datetime.now().isoformat(),
+                'memory': {
+                    'anonymous': {
+                        'total_size': total_anon,
+                        'count': len(anon_maps),
+                        'formatted_size': self._format_size(total_anon)
+                    },
+                    'file_backed': {
+                        'total_size': total_file,
+                        'count': len(file_maps),
+                        'formatted_size': self._format_size(total_file)
+                    },
+                    'open_files': {
+                        'count': len(open_files),
+                        'total_size': sum(file_sizes.values()),
+                        'files': [{'path': k, 'size': v} for k, v in file_sizes.items()]
+                    },
+                    'network': {
+                        'total_connections': len(connections),
+                        'states': dict(conn_states)
+                    },
+                    'threads': {
+                        'count': len(threads),
+                        'stats': thread_stats
+                    }
                 }
             }
             
-            # Add entry and write JSON
-            self.performance_data['entries'].append(log_entry)
+            if self.tracemalloc_enabled:
+                entry['memory']['tracemalloc'] = {
+                    'top_allocations': trace_stats
+                }
+            
+            # Add to performance data
+            self.performance_data['entries'].append(entry)
             self._write_json()
+            
+            # Log to performance logger
+            self.performance_logger.info("""
+💾 DETAILED MEMORY ANALYSIS
+-------------------------
+Anonymous Memory:
+    Total Size: {}
+    Number of Mappings: {}
+
+File-backed Memory:
+    Total Size: {}
+    Number of Mappings: {}
+
+Open Files: {}
+    Total Size: {}
+
+Network Connections:
+    Total: {}
+    States: {}
+
+Threads:
+    Count: {}
+    Active: {}""".format(
+                self._format_size(total_anon),
+                len(anon_maps),
+                self._format_size(total_file),
+                len(file_maps),
+                len(open_files),
+                self._format_size(sum(file_sizes.values())),
+                len(connections),
+                dict(conn_states),
+                len(threads),
+                sum(1 for t in threads if t.user_time > 0 or t.system_time > 0)
+            ))
+            
+            if self.tracemalloc_enabled:
+                self.performance_logger.info("\nTop Memory Allocations:")
+                for stat in trace_stats:
+                    self.performance_logger.info(f"  {stat['file']}:{stat['line']} - {self._format_size(stat['size'])}")
+            
         except Exception as e:
             self.performance_logger.error(f"Error logging detailed memory: {e}")
     
