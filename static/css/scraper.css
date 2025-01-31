@@ -292,6 +292,15 @@ button#seasonPackButton {
     max-height: 200px;
 }
 
+.season-details > p {
+    font-style: italic;
+    font-size: 0.9rem;
+}
+
+.season-details .season-overview p {
+    font-style: normal;
+}
+
 .season-overview {
     height: 7em; /* Approximately 2 lines of text */
     overflow: hidden;
@@ -350,7 +359,7 @@ body {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 20px;
-    justify-items: center;
+    justify-items: center !important;
     margin-top: 190px;
 }
 

@@ -474,7 +474,12 @@ class ProgramRunner:
                 logging.warning(f"Unknown source type: {source_type}")
                 return
 
-            logging.debug(f"Retrieved wanted content from {source}: {len(wanted_content)} items")
+            if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
+                # For tuple-based content sources (like Plex), count actual items in tuples
+                total_items_found = sum(len(items) for items, _ in wanted_content)
+                logging.debug(f"Retrieved wanted content from {source}: {total_items_found} items")
+            else:
+                logging.debug(f"Retrieved wanted content from {source}: {len(wanted_content)} items")
 
             if wanted_content:
                 total_items = 0

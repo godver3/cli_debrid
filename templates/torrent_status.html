@@ -45,11 +45,7 @@
         border: 1px solid #404040;
         border-radius: 4px;
         padding: 15px;
-        margin-bottom: 10px;
-    }
-    
-    .download-item:last-child {
-        margin-bottom: 0;
+        margin: 10px 0;
     }
     
     .download-name {
@@ -57,11 +53,16 @@
         margin: 0 0 8px 0;
         font-weight: 500;
         color: #fff;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
+        line-height: 1.4;
     }
     
     .download-progress {
         color: #aaa;
         font-size: 0.9em;
+        margin-top: 5px;
     }
     
     .empty-message {
@@ -74,9 +75,10 @@
     }
 
     #active-downloads-count {
-        color: #fff;
-        margin-bottom: 20px;
-        font-size: 1.1em;
+        color: #aaa;
+        font-size: 0.9em;
+        margin-bottom: 15px;
+        display: none;
     }
 
     .expand-button {
@@ -108,6 +110,7 @@
     }
 
     .completed-count {
+        display: none;
         color: #aaa;
         font-size: 0.9em;
     }
@@ -119,11 +122,10 @@
     <h2>Torrent Status</h2>
     <div id="status-container">
         <div class="status-card">
-            <div id="active-downloads-count"></div>
-            
             <!-- Active Downloads Section -->
             <div id="active-downloads-section">
                 <h4 class="section-title active-title">Active Downloads</h4>
+                <div id="active-downloads-count"></div>
                 <div id="active-downloads-content" class="download-list">
                     <!-- Will be populated by JavaScript -->
                 </div>
@@ -157,28 +159,44 @@ function updateTorrentStatus() {
         .then(data => {
             if (data.success) {
                 // Update active downloads count
+                const activeDownloadsCount = document.getElementById('active-downloads-count');
                 if (data.sections['Active Downloads']) {
-                    document.getElementById('active-downloads-count').textContent = 
-                        data.sections['Active Downloads'][0];
+                    const count = data.sections['Active Downloads'][0];
+                    activeDownloadsCount.textContent = count ? count.trim() : 'No active downloads';
+                } else {
+                    activeDownloadsCount.textContent = 'No active downloads';
                 }
                 
                 // Update active downloads
                 const activeContent = document.getElementById('active-downloads-content');
                 activeContent.innerHTML = '';
                 
-                if (data.sections['Active Downloads'] && data.sections['Active Downloads'].length > 1) {
-                    // Skip first line (count) and process downloads
-                    for (let i = 1; i < data.sections['Active Downloads'].length; i += 2) {
-                        const filename = data.sections['Active Downloads'][i];
-                        const progress = data.sections['Active Downloads'][i + 1];
+                if (data.sections['Active Downloads'] && data.sections['Active Downloads'].length > 0) {
+                    const downloads = data.sections['Active Downloads'];
+                    console.log('Active downloads data:', downloads);
+                    
+                    // Skip any entries that appear before "Active Downloads:" in the raw status
+                    const activeDownloadsIndex = data.raw_status.indexOf('Active Downloads:');
+                    const priorText = data.raw_status.substring(0, activeDownloadsIndex);
+                    const priorFilenames = priorText.split('\n')
+                        .filter(line => line.trim().startsWith('- '))
+                        .map(line => line.replace('- ', '').trim());
+                    
+                    // Process downloads in pairs (name and progress)
+                    for (let i = 0; i < downloads.length - 1; i += 2) {
+                        const filename = downloads[i];
+                        const progressInfo = downloads[i + 1];
                         
-                        const item = document.createElement('div');
-                        item.className = 'download-item';
-                        item.innerHTML = `
-                            <div class="download-name">${filename.replace('- ', '')}</div>
-                            <div class="download-progress">${progress.trim()}</div>
-                        `;
-                        activeContent.appendChild(item);
+                        // Only create card if this isn't a duplicate of a prior filename
+                        if (filename && filename.trim() && !priorFilenames.includes(filename.replace('- ', '').trim())) {
+                            const item = document.createElement('div');
+                            item.className = 'download-item';
+                            item.innerHTML = `
+                                <div class="download-name">${filename.replace('- ', '')}</div>
+                                <div class="download-progress">${progressInfo.trim()}</div>
+                            `;
+                            activeContent.appendChild(item);
+                        }
                     }
                 } else {
                     activeContent.innerHTML = '<div class="empty-message">No active downloads</div>';

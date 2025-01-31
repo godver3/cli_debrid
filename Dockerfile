@@ -19,7 +19,7 @@ COPY . .
 
 # Create necessary directories and files
 RUN mkdir -p /user/db_content /user/config /user/logs && \
-    touch /user/logs/debug.log /user/logs/info.log /user/logs/queue.log
+    touch /user/logs/debug.log
 
 # Set the TERM environment variable for proper terminal attachment
 ENV TERM=xterm

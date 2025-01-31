@@ -11,7 +11,6 @@ import os
 
 def setup_api_logging():
     print("Setting up API logging")
-    # Setup logging for API calls
     global api_logger
     api_logger = logging.getLogger('api_calls')
     api_logger.setLevel(logging.INFO)
@@ -21,10 +20,34 @@ def setup_api_logging():
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
     log_path = os.path.join(log_dir, 'api_calls.log')
     
+    # Setup rotating file handler with compression
     handler = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=50*1024*1024, backupCount=0, encoding='utf-8', errors='replace')
-    formatter = logging.Formatter('%(asctime)s - %(message)s')
+        log_path,
+        maxBytes=10*1024*1024,  # 10MB per file
+        backupCount=5,  # Keep 5 backup files
+        encoding='utf-8',
+        errors='replace'
+    )
+    
+    # Use a more compact log format
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', 
+                                datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(formatter)
+    
+    # Compress old log files on rotation
+    def namer(name):
+        return name + ".gz"
+        
+    def rotator(source, dest):
+        import gzip
+        with open(source, 'rb') as f_in:
+            with gzip.open(dest, 'wb') as f_out:
+                f_out.writelines(f_in)
+        os.remove(source)
+        
+    handler.rotator = rotator
+    handler.namer = namer
+    
     api_logger.addHandler(handler)
 
 def log_api_call(func):
@@ -32,9 +55,15 @@ def log_api_call(func):
     def wrapper(self, *args, **kwargs):
         try:
             url = args[0] if args else kwargs.get('url')
+            if not isinstance(url, str):
+                return func(self, *args, **kwargs)
+                
             method = func.__name__.upper()
-            domain = urlparse(url).netloc if isinstance(url, str) else 'Unknown'
-            api_logger.info(f"API Call: {method} {url} - Domain: {domain}")
+            parsed = urlparse(url)
+            # Only log domain and path, skip query parameters
+            domain = parsed.netloc
+            path = parsed.path
+            api_logger.info(f"{method} {domain}{path}")
         except Exception as e:
             api_logger.error(f"Error in log_api_call: {str(e)}")
         return func(self, *args, **kwargs)
@@ -134,16 +163,14 @@ class APITracker:
             self.rate_limiter.check_limits(domain)
         
         try:
-            api_logger.debug(f"Attempting GET request to: {url}")
-            self.current_url = url  # Store the current URL
-            self._args = None  # Reset args
+            self.current_url = url
+            self._args = None
             response = self.session.get(url, **kwargs)
             response.raise_for_status()
-            api_logger.debug(f"Successful GET request to: {url}. Status code: {response.status_code}")
             return response
         except RequestException as e:
-            api_logger.error(f"Error in GET request to {url}: {str(e)}")
-            raise  # Re-raise the exception after logging
+            api_logger.error(f"Error: {domain} - {str(e)}")
+            raise
 
     @log_api_call
     def post(self, url, **kwargs):
@@ -152,16 +179,14 @@ class APITracker:
             self.rate_limiter.check_limits(domain)
         
         try:
-            api_logger.debug(f"Attempting POST request to: {url}")
-            self.current_url = url  # Store the current URL
-            self._args = None  # Reset args
+            self.current_url = url
+            self._args = None
             response = self.session.post(url, **kwargs)
             response.raise_for_status()
-            api_logger.debug(f"Successful POST request to: {url}. Status code: {response.status_code}")
             return response
         except RequestException as e:
-            api_logger.error(f"Error in POST request to {url}: {str(e)}")
-            raise  # Re-raise the exception after logging
+            api_logger.error(f"Error: {domain} - {str(e)}")
+            raise
 
     @log_api_call
     def put(self, url, **kwargs):
@@ -170,16 +195,14 @@ class APITracker:
             self.rate_limiter.check_limits(domain)
         
         try:
-            api_logger.debug(f"Attempting PUT request to: {url}")
-            self.current_url = url  # Store the current URL
-            self._args = None  # Reset args
+            self.current_url = url
+            self._args = None
             response = self.session.put(url, **kwargs)
             response.raise_for_status()
-            api_logger.debug(f"Successful PUT request to: {url}. Status code: {response.status_code}")
             return response
         except RequestException as e:
-            api_logger.error(f"Error in PUT request to {url}: {str(e)}")
-            raise  # Re-raise the exception after logging
+            api_logger.error(f"Error: {domain} - {str(e)}")
+            raise
 
     @log_api_call
     def delete(self, url, **kwargs):
@@ -188,16 +211,14 @@ class APITracker:
             self.rate_limiter.check_limits(domain)
         
         try:
-            api_logger.debug(f"Attempting DELETE request to: {url}")
-            self.current_url = url  # Store the current URL
-            self._args = None  # Reset args
+            self.current_url = url
+            self._args = None
             response = self.session.delete(url, **kwargs)
             response.raise_for_status()
-            api_logger.debug(f"Successful DELETE request to: {url}. Status code: {response.status_code}")
             return response
         except RequestException as e:
-            api_logger.error(f"Error in DELETE request to {url}: {str(e)}")
-            raise  # Re-raise the exception after logging
+            api_logger.error(f"Error: {domain} - {str(e)}")
+            raise
 
     # Add other HTTP methods as needed
 
