@@ -2,48 +2,47 @@ import psutil
 import os
 import gc
 import sys
-import tracemalloc
 import logging
 import threading
 from collections import defaultdict, OrderedDict
 from datetime import datetime, timedelta
 import time
-import cProfile
-import pstats
-import io
-import re
 import json
 import platform
+from settings import get_setting
 
 class PerformanceMonitor:
+    """Monitor system performance metrics"""
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
     def __init__(self):
         """Initialize the performance monitor"""
+        # Only initialize once
+        if hasattr(self, 'initialized'):
+            return
+        self.initialized = True
+        
         # Initialize performance logger
         self.performance_logger = logging.getLogger('performance_logger')
         self.performance_logger.propagate = False  # Don't propagate to root logger
         
-        # Initialize tracemalloc if not already started
-        self.tracemalloc_enabled = False
-        try:
-            if not tracemalloc.is_tracing():
-                tracemalloc.start()
-                self.tracemalloc_enabled = True
-        except Exception as e:
-            self.performance_logger.error(f"Failed to start tracemalloc: {e}")
-        
-        # Initialize profiler
-        self.profiler = cProfile.Profile()
-        self.profiler.enable()
+        # Store CPU metrics
+        self.cpu_times = defaultdict(list)  # Store CPU times per process
+        self.cpu_percent_history = defaultdict(list)  # Store CPU % history
+        self.process = psutil.Process()
+        self.last_cpu_measure_time = None
+        self.cpu_measure_interval = 1.0  # seconds
         
         # Store memory snapshots (timestamp, snapshot)
         self.memory_snapshots = []
         
         # Store last memory info for delta calculation
         self._last_memory_info = None
-        
-        # Start monitoring in a separate thread
-        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.monitor_thread.start()
         
         # Initialize JSON logger
         self.json_logger = logging.getLogger('json_performance_logger')
@@ -53,46 +52,34 @@ class PerformanceMonitor:
             os.makedirs(log_dir)
         self.log_file = os.path.join(log_dir, 'performance_log.json')
         
-        # Maximum number of entries to keep in the log
+        # Maximum number of entries to keep in the log file
         self.max_entries = 1440  # 24 hours worth of entries at 1 per minute
         
-        # Initialize with empty structured data
-        self.performance_data = {
-            "metadata": {
-                "start_time": datetime.now().isoformat(),
-                "system": platform.system(),
-                "python_version": platform.python_version()
-            },
-            "entries": []
-        }
+        # Polling intervals (in seconds)
+        self.basic_metrics_interval = 15  # Poll basic metrics every 15 seconds
+        self.detailed_metrics_interval = 60  # Poll detailed metrics every minute
+        self.snapshot_interval = 1800  # Take memory snapshots every 30 minutes
+        self.log_cleanup_interval = 3600  # Clean up logs every hour
         
-        # Load existing data if available
-        self._load_json()
+        # Timestamps for last operations
+        self.last_detailed_check = datetime.now()
+        self.last_snapshot = datetime.now()
+        self.last_cleanup = datetime.now()
         
-        # Write initial empty structure
-        self._write_json()
+        # Write initial metadata
+        self._write_metadata()
     
     def start_monitoring(self):
         """Start comprehensive performance monitoring"""
-        try:
-            if not self.tracemalloc_enabled:
-                tracemalloc.start()
-                self.tracemalloc_enabled = True
-            self._setup_profiler()
-            if not self.monitor_thread.is_alive():
-                self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-                self.monitor_thread.start()
-        except Exception as e:
-            self.performance_logger.error(f"Error starting performance monitoring: {e}")
+        if not hasattr(self, 'monitor_thread') or not self.monitor_thread.is_alive():
+            self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+            self.monitor_thread.start()
+            self.performance_logger.info("Started performance monitoring")
     
     def stop_monitoring(self):
         """Stop performance monitoring"""
         try:
-            if self.tracemalloc_enabled:
-                tracemalloc.stop()
-                self.tracemalloc_enabled = False
-            if hasattr(self, 'profiler'):
-                self.profiler.disable()
+            pass
         except Exception as e:
             self.performance_logger.error(f"Error stopping performance monitoring: {e}")
     
@@ -100,35 +87,45 @@ class PerformanceMonitor:
         """Main monitoring loop that collects various performance metrics"""
         while True:
             try:
-                self.performance_logger.info("\n")  # Start with a blank line
-                self.performance_logger.info("=" * 100)
-                self.performance_logger.info(" " * 40 + "PERFORMANCE REPORT" + " " * 40)
-                self.performance_logger.info("=" * 100 + "\n")
-                
+                # Always collect basic metrics at higher frequency
                 self._log_basic_metrics()
-                self.performance_logger.info("\n" + "-" * 100 + "\n")
                 
-                self._log_detailed_memory()
-                self.performance_logger.info("\n" + "-" * 100 + "\n")
+                current_time = datetime.now()
                 
-                self._log_memory_growth()
-                self.performance_logger.info("\n" + "-" * 100 + "\n")
+                # Check if it's time for detailed metrics
+                if (current_time - self.last_detailed_check).seconds >= self.detailed_metrics_interval:
+                    self.performance_logger.info("\n" + "=" * 100)
+                    self.performance_logger.info(" " * 40 + "DETAILED PERFORMANCE REPORT" + " " * 40)
+                    self.performance_logger.info("=" * 100 + "\n")
+                    
+                    self._log_detailed_memory()
+                    self.performance_logger.info("\n" + "-" * 100 + "\n")
+                    
+                    self._log_memory_growth()
+                    self.performance_logger.info("\n" + "-" * 100 + "\n")
+                    
+                    self._log_file_descriptors()
+                    self.performance_logger.info("\n" + "-" * 100 + "\n")
+                    
+                    self._log_cpu_metrics()
+                    self.performance_logger.info("\n" + "-" * 100 + "\n")
+                    
+                    self.last_detailed_check = current_time
                 
-                self._log_file_descriptors()
-                self.performance_logger.info("\n" + "-" * 100 + "\n")
-                
-                self._log_cpu_profile()
-                self.performance_logger.info("\n" + "=" * 100 + "\n")
-                
-                # Take memory snapshot every 30 minutes
-                if len(self.memory_snapshots) == 0 or \
-                   (datetime.now() - self.memory_snapshots[-1][0]).seconds > 1800:
+                # Check if it's time for a memory snapshot
+                if (current_time - self.last_snapshot).seconds >= self.snapshot_interval:
                     self._take_memory_snapshot()
+                    self.last_snapshot = current_time
+
+                # Check if it's time to clean up old log entries
+                if (current_time - self.last_cleanup).seconds >= self.log_cleanup_interval:
+                    self._cleanup_old_logs()
+                    self.last_cleanup = current_time
                 
             except Exception as e:
                 self.performance_logger.error(f"Error in performance monitoring: {str(e)}")
             
-            time.sleep(60)  # Run every minute
+            time.sleep(self.basic_metrics_interval)  # Sleep for basic metrics interval
     
     def _format_size(self, size_bytes):
         """Format size in bytes to human readable format"""
@@ -138,28 +135,21 @@ class PerformanceMonitor:
             size_bytes /= 1024
         return f"{size_bytes:.1f} TB"
     
-    def _write_json(self):
-        """Write the current performance data to JSON file"""
-        try:
-            # Keep only the most recent entries
-            if len(self.performance_data["entries"]) > self.max_entries:
-                self.performance_data["entries"] = self.performance_data["entries"][-self.max_entries:]
-            
-            with open(self.log_file, 'w') as f:
-                json.dump(self.performance_data, f, indent=2)
-        except Exception as e:
-            logging.error(f"Error writing performance JSON: {e}")
+    def _write_metadata(self):
+        """Write metadata to the log file"""
+        # Just ensure the file exists and is empty
+        with open(self.log_file, 'w') as f:
+            pass
     
-    def _load_json(self):
-        """Load existing performance data from JSON file"""
+    def _write_entry(self, entry):
+        """Append a single entry to the log file"""
         try:
-            if os.path.exists(self.log_file):
-                with open(self.log_file, 'r') as f:
-                    data = json.load(f)
-                    if isinstance(data, dict) and "entries" in data:
-                        self.performance_data = data
+            # Append entry directly without reading the file
+            with open(self.log_file, 'a') as f:
+                f.write(json.dumps(entry) + '\n')
+                
         except Exception as e:
-            logging.error(f"Error loading performance JSON: {e}")
+            self.performance_logger.error(f"Error writing entry: {e}")
     
     def _log_basic_metrics(self):
         """Log basic CPU and memory metrics"""
@@ -184,8 +174,26 @@ class PerformanceMonitor:
             
             self._last_memory_info = memory_info.rss
             
+            # Create entry
+            entry = {
+                "timestamp": datetime.now().isoformat(),
+                "type": "basic_metrics",
+                "metrics": {
+                    "cpu_percent": cpu_percent,
+                    "memory_rss": memory_info.rss / 1024 / 1024,  # Convert to MB
+                    "memory_vms": memory_info.vms / 1024 / 1024,  # Convert to MB
+                    "system_memory_used": virtual_memory.percent,
+                    "swap_used": psutil.swap_memory().used / 1024 / 1024,  # Convert to MB
+                    "cpu_user_time": cpu_times.user,
+                    "cpu_system_time": cpu_times.system
+                }
+            }
+            
+            # Write entry to log file
+            self._write_entry(entry)
+            
+            # Log human-readable format
             self.performance_logger.info(f"Current time: {datetime.now():%Y-%m-%d %H:%M:%S}")
-
             self.performance_logger.info("""
 📊 SYSTEM RESOURCES
 ------------------
@@ -209,24 +217,6 @@ class PerformanceMonitor:
                 psutil.swap_memory().used / 1024 / 1024
             ))
             
-            # Create log entry
-            log_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "type": "basic_metrics",
-                "metrics": {
-                    "cpu_percent": cpu_percent,
-                    "cpu_user_time": cpu_times.user,
-                    "cpu_system_time": cpu_times.system,
-                    "memory_rss": memory_info.rss / 1024 / 1024,
-                    "memory_vms": memory_info.vms / 1024 / 1024,
-                    "system_memory_used": virtual_memory.percent,
-                    "swap_used": psutil.swap_memory().used / 1024 / 1024
-                }
-            }
-            
-            # Add entry and write JSON
-            self.performance_data['entries'].append(log_entry)
-            self._write_json()
         except Exception as e:
             self.performance_logger.error(f"Error logging basic metrics: {e}")
     
@@ -269,21 +259,6 @@ class PerformanceMonitor:
                     'system_time': thread.system_time
                 })
             
-            # Get tracemalloc statistics if enabled
-            if self.tracemalloc_enabled:
-                snapshot = tracemalloc.take_snapshot()
-                stats = snapshot.statistics('lineno')
-                top_stats = stats[:10]  # Get top 10 memory allocations
-                
-                trace_stats = []
-                for stat in top_stats:
-                    frame = stat.traceback[0]
-                    trace_stats.append({
-                        'file': frame.filename,
-                        'line': frame.lineno,
-                        'size': stat.size
-                    })
-            
             # Create entry for JSON log
             entry = {
                 'timestamp': datetime.now().isoformat(),
@@ -314,14 +289,8 @@ class PerformanceMonitor:
                 }
             }
             
-            if self.tracemalloc_enabled:
-                entry['memory']['tracemalloc'] = {
-                    'top_allocations': trace_stats
-                }
-            
-            # Add to performance data
-            self.performance_data['entries'].append(entry)
-            self._write_json()
+            # Write entry to log file
+            self._write_entry(entry)
             
             # Log to performance logger
             self.performance_logger.info("""
@@ -357,51 +326,29 @@ Threads:
                 sum(1 for t in threads if t.user_time > 0 or t.system_time > 0)
             ))
             
-            if self.tracemalloc_enabled:
-                self.performance_logger.info("\nTop Memory Allocations:")
-                for stat in trace_stats:
-                    self.performance_logger.info(f"  {stat['file']}:{stat['line']} - {self._format_size(stat['size'])}")
-            
         except Exception as e:
             self.performance_logger.error(f"Error logging detailed memory: {e}")
     
     def _log_memory_growth(self):
-        """Log memory growth using tracemalloc"""
+        """Log memory growth"""
         try:
-            if not self.tracemalloc_enabled:
-                return
-                
-            snapshot = tracemalloc.take_snapshot()
-            top_stats = snapshot.statistics('lineno')
-            
             self.performance_logger.info("""
 📈 MEMORY GROWTH
 ---------------
-Top Memory Allocations by Location:
-{}""".format(
-                '\n'.join(f"   {stat.count:,} objects: {self._format_size(stat.size)} - {os.path.basename(stat.traceback[0].filename)}:{stat.traceback[0].lineno}"
-                         for stat in top_stats[:10])
-            ))
+No memory growth data available""")
             
             # Create log entry
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
                 "type": "memory_growth",
                 "metrics": {
-                    "top_allocations": [
-                        {
-                            "count": stat.count,
-                            "size": stat.size,
-                            "file": os.path.basename(stat.traceback[0].filename),
-                            "line": stat.traceback[0].lineno
-                        } for stat in top_stats[:10]
-                    ]
+                    "message": "No memory growth data available"
                 }
             }
             
-            # Add entry and write JSON
-            self.performance_data['entries'].append(log_entry)
-            self._write_json()
+            # Write entry to log file
+            self._write_entry(log_entry)
+            
         except Exception as e:
             self.performance_logger.error(f"Error logging memory growth: {e}")
     
@@ -447,156 +394,171 @@ Top Memory Allocations by Location:
                 }
             }
             
-            # Add entry and write JSON
-            self.performance_data['entries'].append(log_entry)
-            self._write_json()
+            # Write entry to log file
+            self._write_entry(log_entry)
+            
         except Exception as e:
             self.performance_logger.error(f"Error logging file descriptors: {e}")
     
-    def _log_cpu_profile(self):
-        """Log CPU profiling information"""
+    def _log_cpu_metrics(self):
+        """Log CPU usage metrics without full profiling"""
         try:
-            s = io.StringIO()
-            stats = pstats.Stats(self.profiler, stream=s)
+            current_time = time.time()
             
-            total_time = 0
-            sleep_time = 0
-            
-            try:
-                total_time = sum(stat[3] for stat in stats.stats.values())
-                sleep_time = sum(stat[3] for key, stat in stats.stats.items() 
-                               if 'sleep' in str(key[2]).lower())
-            except Exception:
-                pass
-            
-            active_time = total_time - sleep_time
-            
-            # Group stats by file
-            file_stats = defaultdict(lambda: {'calls': 0, 'time': 0.0, 'funcs': defaultdict(float)})
-            
-            for (file, line, func), stat in stats.stats.items():
-                if 'sleep' in str(func).lower():
-                    continue
+            # Only measure if enough time has passed
+            if (self.last_cpu_measure_time is None or 
+                current_time - self.last_cpu_measure_time >= self.cpu_measure_interval):
                 
-                func_time = stat[3]
-                calls = stat[0]
+                # Get process CPU times
+                cpu_times = self.process.cpu_times()
+                self.cpu_times['user'].append(cpu_times.user)
+                self.cpu_times['system'].append(cpu_times.system)
                 
-                file_stats[file]['calls'] += calls
-                file_stats[file]['time'] += func_time
-                file_stats[file]['funcs'][func] += func_time
-            
-            sorted_files = sorted(file_stats.items(), key=lambda x: x[1]['time'], reverse=True)
-            
-            # Format output
-            output = ["""
-⚡️ CPU PROFILE
-------------
-⏱️  Time Distribution:
-   Total Time: {:.1f}s
-   Active Time: {:.1f}s
-   Idle Time: {:.1f}s
+                # Get CPU percentage for process (non-blocking)
+                cpu_percent = self.process.cpu_percent(interval=None)
+                self.cpu_percent_history['process'].append(cpu_percent)
+                
+                # Get per-thread CPU times
+                thread_times = []
+                for thread in self.process.threads():
+                    thread_times.append({
+                        'id': thread.id,
+                        'user_time': thread.user_time,
+                        'system_time': thread.system_time
+                    })
+                
+                # Keep only last 60 measurements (1 hour at 1 min intervals)
+                max_history = 60
+                self.cpu_times['user'] = self.cpu_times['user'][-max_history:]
+                self.cpu_times['system'] = self.cpu_times['system'][-max_history:]
+                self.cpu_percent_history['process'] = self.cpu_percent_history['process'][-max_history:]
+                
+                # Calculate CPU usage deltas
+                user_delta = self.cpu_times['user'][-1] - self.cpu_times['user'][0] if len(self.cpu_times['user']) > 1 else 0
+                system_delta = self.cpu_times['system'][-1] - self.cpu_times['system'][0] if len(self.cpu_times['system']) > 1 else 0
+                
+                # Log CPU metrics
+                self.performance_logger.info(f"""
+CPU Usage Metrics:
+----------------
+Process CPU: {cpu_percent:.1f}%
+User Time Δ: {user_delta:.2f}s
+System Time Δ: {system_delta:.2f}s
+Active Threads: {len(thread_times)}
+Top Thread Usage:
+{self._format_thread_times(thread_times[:5])}
+""")
 
-📊 Top Files by CPU Usage:""".format(total_time, active_time, sleep_time)]
-            
-            for file, data in sorted_files[:10]:
-                if file == '~':
-                    continue
-                file_name = os.path.basename(str(file)) if file else "Unknown"
-                output.append(f"   {file_name:<30} {data['time']:>6.1f}s | {data['calls']:,} calls")
+                # Create JSON log entry with CPU profiling information
+                log_entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    "type": "cpu_metrics",
+                    "metrics": {
+                        "process_cpu_percent": cpu_percent,
+                        "user_time_delta": user_delta,
+                        "system_time_delta": system_delta,
+                        "active_threads": len(thread_times),
+                        "cpu_times": {
+                            "user": cpu_times.user,
+                            "system": cpu_times.system,
+                            "children_user": getattr(cpu_times, 'children_user', 0),
+                            "children_system": getattr(cpu_times, 'children_system', 0)
+                        },
+                        "thread_times": sorted(
+                            thread_times,
+                            key=lambda x: x['user_time'] + x['system_time'],
+                            reverse=True
+                        )[:5]  # Include only top 5 threads
+                    }
+                }
                 
-                sorted_funcs = sorted(data['funcs'].items(), key=lambda x: x[1], reverse=True)
-                for func, time in sorted_funcs[:3]:
-                    output.append(f"      ↳ {func:<40} {time:>6.1f}s")
-                output.append("")
-            
-            self.performance_logger.info('\n'.join(output))
-            
-            self._setup_profiler()
+                # Write entry to log file
+                self._write_entry(log_entry)
+                
+                # Update measurement time
+                self.last_cpu_measure_time = current_time
+                
+        except Exception as e:
+            self.performance_logger.error(f"Error logging CPU metrics: {e}")
+
+    def _format_thread_times(self, thread_times):
+        """Format thread times for logging"""
+        return '\n'.join(
+            f"  Thread {t['id']}: {t['user_time']:.2f}s user, {t['system_time']:.2f}s system"
+            for t in sorted(thread_times, key=lambda x: x['user_time'] + x['system_time'], reverse=True)
+        )
+    
+    def _take_memory_snapshot(self):
+        """Take a memory snapshot"""
+        try:
+            self.performance_logger.info("""
+📈 MEMORY SNAPSHOT
+---------------
+No memory snapshot available""")
             
             # Create log entry
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
-                "type": "cpu_profile",
+                "type": "memory_snapshot",
                 "metrics": {
-                    "total_time": total_time,
-                    "active_time": active_time,
-                    "sleep_time": sleep_time,
-                    "top_files": [
-                        {
-                            "file": os.path.basename(str(file)) if file else "Unknown",
-                            "time": data['time'],
-                            "calls": data['calls'],
-                            "top_functions": [
-                                {"function": func, "time": time}
-                                for func, time in sorted(data['funcs'].items(), key=lambda x: x[1], reverse=True)[:3]
-                            ]
-                        } for file, data in sorted_files[:10] if file != '~'
-                    ]
+                    "message": "No memory snapshot available"
                 }
             }
             
-            # Add entry and write JSON
-            self.performance_data['entries'].append(log_entry)
-            self._write_json()
+            # Write entry to log file
+            self._write_entry(log_entry)
             
-        except Exception as e:
-            self.performance_logger.error(f"Error in CPU profiling: {e}")
-            self._setup_profiler()
-    
-    def _setup_profiler(self):
-        """Setup or reset the profiler"""
-        if hasattr(self, 'profiler'):
-            self.profiler.disable()
-        self.profiler = cProfile.Profile()
-        self.profiler.enable()
-    
-    def _take_memory_snapshot(self):
-        """Take a memory snapshot for leak detection"""
-        try:
-            if not self.tracemalloc_enabled:
-                return
-                
-            snapshot = tracemalloc.take_snapshot()
-            self.memory_snapshots.append((datetime.now(), snapshot))
-            
-            # Keep only last 24 hours of snapshots
-            cutoff_time = datetime.now() - timedelta(hours=24)
-            self.memory_snapshots = [(t, s) for t, s in self.memory_snapshots if t > cutoff_time]
-            
-            # Compare with previous snapshot if available
-            if len(self.memory_snapshots) >= 2:
-                old_snapshot = self.memory_snapshots[-2][1]
-                new_snapshot = self.memory_snapshots[-1][1]
-                diff_stats = new_snapshot.compare_to(old_snapshot, 'lineno')
-                
-                self.performance_logger.info("""
-📈 MEMORY GROWTH
----------------
-Memory Growth Since Last Snapshot (Top 10):
-{}""".format(
-                    '\n'.join(f"   {stat}" for stat in diff_stats[:10])
-                ))
-                
-                # Create log entry
-                log_entry = {
-                    "timestamp": datetime.now().isoformat(),
-                    "type": "memory_snapshot",
-                    "metrics": {
-                        "memory_growth": [
-                            {
-                                "size": stat.size,
-                                "count": stat.count,
-                                "traceback": str(stat.traceback)
-                            } for stat in diff_stats[:10]
-                        ]
-                    }
-                }
-                
-                # Add entry and write JSON
-                self.performance_data['entries'].append(log_entry)
-                self._write_json()
         except Exception as e:
             self.performance_logger.error(f"Error taking memory snapshot: {e}")
 
-# Global instance
+    def _cleanup_old_logs(self):
+        """Clean up old log entries to prevent file growth"""
+        try:
+            # Keep last 24 hours of entries (one entry per minute = 1440 entries)
+            max_age = 24 * 60 * 60  # 24 hours in seconds
+            cutoff_time = time.time() - max_age
+            
+            if not os.path.exists(self.log_file):
+                return
+                
+            # Create a temporary file
+            temp_file = self.log_file + '.temp'
+            kept_count = 0
+            removed_count = 0
+            
+            with open(self.log_file, 'r') as old_file, open(temp_file, 'w') as new_file:
+                for line in old_file:
+                    try:
+                        entry = json.loads(line.strip())
+                        entry_time = datetime.fromisoformat(entry['timestamp']).timestamp()
+                        
+                        if entry_time >= cutoff_time:
+                            new_file.write(line)
+                            kept_count += 1
+                        else:
+                            removed_count += 1
+                    except (json.JSONDecodeError, KeyError, ValueError):
+                        # Keep lines we can't parse, just in case
+                        new_file.write(line)
+                        kept_count += 1
+            
+            # Replace old file with new file
+            os.replace(temp_file, self.log_file)
+            
+            self.performance_logger.info(f"Cleaned up performance logs: kept {kept_count} entries, removed {removed_count} entries")
+            
+        except Exception as e:
+            self.performance_logger.error(f"Error cleaning up old log entries: {e}")
+            # If cleanup fails, don't leave temp file behind
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+
+# Create singleton instance but don't start monitoring yet
 monitor = PerformanceMonitor()
+
+def start_performance_monitoring():
+    """Start performance monitoring after app initialization"""
+    monitor.start_monitoring()

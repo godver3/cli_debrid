@@ -79,7 +79,7 @@ def setup_logging():
     os.makedirs(log_dir, exist_ok=True)
 
     # Ensure log files exist
-    for log_file in ['debug.log', 'info.log', 'queue.log']:
+    for log_file in ['debug.log']:
         log_path = os.path.join(log_dir, log_file)
         if not os.path.exists(log_path):
             open(log_path, 'a').close()

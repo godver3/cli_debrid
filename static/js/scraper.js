@@ -42,7 +42,7 @@ function displaySearchResults(results, version) {
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     function handleScreenChange(e) {
         if (e.matches) {
-            gridContainer.style.justifyContent = 'center';
+    gridContainer.style.justifyContent = 'center';
         } else {
             gridContainer.style.justifyContent = 'flex-start';
         }
@@ -424,16 +424,7 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
     gridContainer.style.display = 'flex';
     gridContainer.style.flexWrap = 'wrap';
     gridContainer.style.gap = '20px';
-    const mediaQuery = window.matchMedia('(max-width: 1024px)');
-    function handleScreenChange(e) {
-        if (e.matches) {
-            gridContainer.style.justifyContent = 'center';
-        } else {
-            gridContainer.style.justifyContent = 'flex-start';
-        }
-    }
-    mediaQuery.addListener(handleScreenChange);
-    handleScreenChange(mediaQuery);
+    gridContainer.style.justifyContent = 'center';
 
     episodeResults.forEach(item => {
         const episodeDiv = document.createElement('div');
