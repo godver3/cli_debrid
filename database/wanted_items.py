@@ -267,6 +267,9 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     ))
                     items_added += 1
                 else:
+                    # Check if we need to update the show title for all related records
+                    update_show_title(conn, item.get('imdb_id'), item.get('tmdb_id'), item.get('title'))
+                    
                     airtime = item.get('airtime') or '19:00'
                     
                     from settings import get_setting
@@ -322,3 +325,67 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         conn.close()
         if watch_history_conn:
             watch_history_conn.close()
+
+
+def update_show_title(conn, imdb_id: str = None, tmdb_id: str = None, new_title: str = None) -> bool:
+    """
+    Update the title of a show and all its episodes in the database if the new title differs from the existing one.
+    Related records are determined by matching either imdb_id or tmdb_id. The title will be normalized before updating.
+    
+    Args:
+        conn: Database connection
+        imdb_id: IMDb ID of the show
+        tmdb_id: TMDB ID of the show
+        new_title: New title from metadata
+        
+    Returns:
+        bool: True if title was updated, False otherwise
+    """
+    if not new_title or (not imdb_id and not tmdb_id):
+        return False
+    
+    normalized_new_title = normalize_string(str(new_title))
+    
+    # Build query conditions for finding related records
+    conditions = []
+    params = []
+    if imdb_id:
+        conditions.append("imdb_id = ?")
+        params.append(imdb_id)
+    if tmdb_id:
+        conditions.append("tmdb_id = ?")
+        params.append(tmdb_id)
+    
+    # Check if title is different
+    query = f"""
+        SELECT title, COUNT(*) as record_count 
+        FROM media_items 
+        WHERE ({' OR '.join(conditions)})
+        AND type IN ('episode', 'show')
+        GROUP BY title
+        ORDER BY record_count DESC
+        LIMIT 1
+    """
+    
+    row = conn.execute(query, params).fetchone()
+    if not row:
+        return False
+        
+    existing_title = row['title']
+    if existing_title == normalized_new_title:
+        return False
+    
+    # Update all related records (show and episodes) that share the same imdb_id or tmdb_id
+    update_query = f"""
+        UPDATE media_items 
+        SET title = ?,
+            last_updated = ?
+        WHERE ({' OR '.join(conditions)})
+        AND type IN ('episode', 'show')
+    """
+    params = [normalized_new_title, datetime.now(timezone.utc)] + params
+    conn.execute(update_query, params)
+    conn.commit()
+    
+    logging.info(f"Updated show title from '{existing_title}' to '{normalized_new_title}' for {row['record_count']} records")
+    return True

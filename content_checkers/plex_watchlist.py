@@ -8,6 +8,7 @@ from cli_battery.app.trakt_metadata import TraktMetadata
 import os
 import pickle
 from datetime import datetime, timedelta
+from .plex_token_manager import update_token_status, get_token_status
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -43,10 +44,13 @@ def get_plex_client():
         return None
     
     try:
+        logging.info("Connecting to Plex.tv cloud service using token authentication")
         account = MyPlexAccount(token=plex_token)
+        logging.info(f"Successfully connected to Plex.tv as user: {account.username}")
+        logging.debug(f"Connection details - Using Plex.tv API, endpoint: {account._server}")
         return account
     except Exception as e:
-        logging.error(f"Error connecting to Plex: {e}")
+        logging.error(f"Error connecting to Plex.tv cloud service: {e}")
         return None
 
 def get_show_status(imdb_id: str) -> str:
@@ -75,6 +79,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
     cache = {} if disable_caching else load_plex_cache(PLEX_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
     
+    logging.info("Starting Plex.tv cloud watchlist retrieval")
     account = get_plex_client()
     if not account:
         return [([], versions)]
@@ -90,10 +95,17 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                 logging.debug("Keeping TV series in watchlist")
         
         # Get the watchlist directly from PlexAPI
+        logging.info("Fetching watchlist from Plex.tv cloud service")
         watchlist = account.watchlist()
-        skipped_count = 0
-        removed_count = 0
-        cache_skipped = 0
+        logging.debug(f"API Response - Connected to: {account._server}")
+        logging.debug(f"API Response - Service Type: {'Plex.tv Cloud' if 'plex.tv' in str(account._server) else 'Unknown'}")
+        logging.debug(f"Retrieved {len(watchlist)} items from Plex.tv cloud watchlist")
+        
+        total_items = len(watchlist)
+        skipped_count = 0  # Items skipped due to missing IMDB ID
+        removed_count = 0  # Items removed from watchlist
+        cache_skipped = 0  # Items skipped due to cache
+        collected_skipped = 0  # Items skipped because they're already collected
         
         # Process each item in the watchlist
         for item in watchlist:
@@ -118,12 +130,14 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                 if media_type == 'tv':
                     if keep_series:
                         logging.debug(f"Keeping TV series: {imdb_id} ('{item.title}') - keep_series is enabled")
+                        collected_skipped += 1
                         continue
                     else:
                         # Check if the show has ended before removing
                         show_status = get_show_status(imdb_id)
                         if show_status != 'ended':
                             logging.debug(f"Keeping ongoing TV series: {imdb_id} ('{item.title}') - status: {show_status}")
+                            collected_skipped += 1
                             continue
                         logging.debug(f"Removing ended TV series: {imdb_id} ('{item.title}') - status: {show_status}")
                 else:
@@ -171,15 +185,20 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             })
             logging.debug(f"Added {media_type} '{item.title}' (IMDB: {imdb_id}) to processed items")
 
-        if skipped_count > 0:
-            logging.info(f"Skipped {skipped_count} items due to missing IMDB IDs")
-        if removed_count > 0:
-            logging.info(f"Removed {removed_count} collected items from watchlist")
+        # Log detailed statistics
+        logging.info(f"Plex.tv cloud watchlist processing complete:")
+        logging.info(f"Total items in watchlist: {total_items}")
+        logging.info(f"Items skipped (no IMDB): {skipped_count}")
+        logging.info(f"Items removed: {removed_count}")
+        logging.info(f"Items skipped (cached): {cache_skipped}")
+        logging.info(f"Items skipped (collected): {collected_skipped}")
+        logging.info(f"New items processed: {len(processed_items)}")
         
         if not disable_caching:
-            logging.info(f"Found {len(processed_items)} new items from Plex watchlist. Skipped {cache_skipped} items in cache.")
+            logging.info(f"Found {len(processed_items)} new items from Plex watchlist. Skipped {cache_skipped + collected_skipped + skipped_count} items total.")
         else:
             logging.info(f"Found {len(processed_items)} items from Plex watchlist. Caching disabled.")
+        
         all_wanted_items.append((processed_items, versions))
         
         # Save updated cache only if caching is enabled
@@ -201,14 +220,18 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
 
     try:
         # Connect to Plex using the provided token
+        logging.info(f"Connecting to Plex.tv cloud service for user {username}")
         account = MyPlexAccount(token=token)
         if not account:
-            logging.error(f"Could not connect to Plex account with provided token for user {username}")
+            logging.error(f"Could not connect to Plex.tv cloud service with provided token for user {username}")
             return [([], versions)]
+        
+        logging.debug(f"API Response - Connected to: {account._server}")
+        logging.debug(f"API Response - Service Type: {'Plex.tv Cloud' if 'plex.tv' in str(account._server) else 'Unknown'}")
         
         # Verify the username matches
         if account.username != username:
-            logging.error(f"Token does not match provided username. Expected {username}, got {account.username}")
+            logging.error(f"Plex.tv cloud token does not match provided username. Expected {username}, got {account.username}")
             return [([], versions)]
                     
         # Get the watchlist directly from PlexAPI
@@ -271,3 +294,57 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
         save_plex_cache(cache, OTHER_PLEX_WATCHLIST_CACHE_FILE)
     all_wanted_items.append((processed_items, versions))
     return all_wanted_items
+
+def validate_plex_tokens():
+    """Validate all Plex tokens and return their status."""
+    token_status = {}
+    
+    # Validate main user's token
+    try:
+        plex_token = get_setting('Plex', 'token')
+        if plex_token:
+            account = MyPlexAccount(token=plex_token)
+            # Ping to refresh the auth token
+            account.ping()
+            # The expiration is stored in the account object directly
+            token_status['main'] = {
+                'valid': True,
+                'expires_at': account.rememberExpiresAt if hasattr(account, 'rememberExpiresAt') else None,
+                'username': account.username
+            }
+            update_token_status('main', True, 
+                              expires_at=account.rememberExpiresAt if hasattr(account, 'rememberExpiresAt') else None,
+                              plex_username=account.username)
+    except Exception as e:
+        logging.error(f"Error validating main Plex token: {e}")
+        token_status['main'] = {'valid': False, 'expires_at': None, 'username': None}
+        update_token_status('main', False)
+    
+    # Validate other users' tokens
+    config = load_config()
+    content_sources = config.get('Content Sources', {})
+    
+    for source_id, source in content_sources.items():
+        if source.get('type') == 'Other Plex Watchlist':
+            username = source.get('username')
+            token = source.get('token')
+            
+            if username and token:
+                try:
+                    account = MyPlexAccount(token=token)
+                    # Ping to refresh the auth token
+                    account.ping()
+                    token_status[username] = {
+                        'valid': True,
+                        'expires_at': account.rememberExpiresAt if hasattr(account, 'rememberExpiresAt') else None,
+                        'username': account.username
+                    }
+                    update_token_status(username, True,
+                                      expires_at=account.rememberExpiresAt if hasattr(account, 'rememberExpiresAt') else None,
+                                      plex_username=account.username)
+                except Exception as e:
+                    logging.error(f"Error validating Plex token for user {username}: {e}")
+                    token_status[username] = {'valid': False, 'expires_at': None, 'username': None}
+                    update_token_status(username, False)
+    
+    return token_status

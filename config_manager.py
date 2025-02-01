@@ -173,11 +173,16 @@ def delete_content_source(source_id):
         return False
 
 def update_content_source(source_id, source_config):
+    from content_checkers.plex_watchlist import validate_plex_tokens
+
     process_id = str(uuid.uuid4())[:8]
     logging.debug(f"[{process_id}] Starting update_content_source process for source_id: {source_id}")
     
     config = load_config()
     if 'Content Sources' in config and source_id in config['Content Sources']:
+        # Store the old config to check for changes
+        old_config = config['Content Sources'].get(source_id, {})
+        
         # Validate and update only the fields present in the schema
         source_type = source_id.split('_')[0]
         schema = SETTINGS_SCHEMA['Content Sources']['schema'][source_type]
@@ -192,8 +197,19 @@ def update_content_source(source_id, source_config):
                     elif not isinstance(value, list):
                         value = list(value)
                 config['Content Sources'][source_id][key] = value
+        
+        # If this is a Plex watchlist and the token has changed, validate it
+        if (source_config.get('type') == 'Other Plex Watchlist' and 
+            (old_config.get('token') != source_config.get('token') or 
+             old_config.get('username') != source_config.get('username'))):
+            token_status = validate_plex_tokens()
+            username = source_config.get('username')
+            if username in token_status and not token_status[username]['valid']:
+                logging.error(f"Invalid Plex token for newly added/updated user {username}")
+        
         log_config_state(f"[{process_id}] Config after updating content source", config)
         save_config(config)
+        
         # Explicitly reset provider and reinitialize components after content source update
         reset_provider()
         from queue_manager import QueueManager
