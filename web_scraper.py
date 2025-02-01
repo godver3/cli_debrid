@@ -194,8 +194,8 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         vote_average = details_data.get('vote_average', 0)
         backdrop_path = details_data.get('backdrop_path', '')
         if backdrop_path:
-            backdrop_path = f"https://image.tmdb.org/t/p/original{backdrop_path}"
-
+            backdrop_path = backdrop_path  # Just return the path, not the full URL
+        
         media_meta = (poster_url, overview, genres, vote_average, backdrop_path)
         
         if poster_url:

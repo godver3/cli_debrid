@@ -759,3 +759,48 @@ def get_tv_details(tmdb_id):
     except Exception as e:
         logging.error(f"Error getting TV details: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@scraper_bp.route('/tmdb_image/<path:image_path>')
+def tmdb_image_proxy(image_path):
+    import requests
+    from flask import Response, make_response, request
+    from datetime import datetime, timedelta
+
+    # Log if this is a fresh request or from browser cache
+    if_none_match = request.headers.get('If-None-Match')
+    if_modified_since = request.headers.get('If-Modified-Since')
+    
+    if if_none_match or if_modified_since:
+        logging.info(f"Browser requesting image with cache validation: {image_path}")
+    else:
+        logging.info(f"Fresh image request from browser: {image_path}")
+
+    # Construct TMDB URL
+    tmdb_url = f'https://image.tmdb.org/t/p/{image_path}'
+    
+    try:
+        # Get the image from TMDB
+        response = requests.get(tmdb_url, stream=True)
+        response.raise_for_status()
+        
+        # Create Flask response with the image content
+        proxy_response = Response(
+            response.iter_content(chunk_size=8192),
+            content_type=response.headers['Content-Type']
+        )
+        
+        # Set cache control headers - cache for 7 days
+        proxy_response.headers['Cache-Control'] = 'public, max-age=604800'  # 7 days in seconds
+        proxy_response.headers['Expires'] = (datetime.utcnow() + timedelta(days=7)).strftime('%a, %d %b %Y %H:%M:%S GMT')
+        
+        # Add ETag for cache validation
+        proxy_response.headers['ETag'] = response.headers.get('ETag', '')
+        
+        # Log successful image fetch
+        logging.info(f"Successfully fetched and cached image from TMDB: {image_path}")
+        
+        return proxy_response
+        
+    except requests.RequestException as e:
+        logging.error(f"Error proxying TMDB image: {e}")
+        return make_response('Image not found', 404)
