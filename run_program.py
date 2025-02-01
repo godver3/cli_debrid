@@ -8,7 +8,7 @@ from settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
-from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist, validate_plex_tokens
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime
 from content_checkers.mdb_list import get_wanted_from_mdblists
@@ -85,9 +85,9 @@ class ProgramRunner:
             'Pending Uncached': 3600,
             'Upgrading': 3600,
             'task_plex_full_scan': 3600,
-            'task_debug_log': 60,
+            #'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
-            'task_purge_not_wanted_magnets_file': 604800,
+            #'task_purge_not_wanted_magnets_file': 604800,
             'task_generate_airtime_report': 3600,
             'task_check_service_connectivity': 60,
             'task_send_notifications': 15,  # Run every 0.25 minutes (15 seconds)
@@ -95,11 +95,12 @@ class ProgramRunner:
             'task_check_trakt_early_releases': 3600,  # Run every hour
             'task_reconcile_queues': 300,  # Run every 5 minutes
             'task_heartbeat': 120,  # Run every 2 minutes
-            'task_local_library_scan': 900,  # Run every 5 minutes
+            #'task_local_library_scan': 900,  # Run every 5 minutes
             'task_refresh_download_stats': 300,  # Run every 5 minutes
             'task_check_plex_files': 60,  # Run every 60 seconds
             #'task_update_show_ids': 3600,  # Run every hour
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
+            'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -122,8 +123,9 @@ class ProgramRunner:
             'task_check_trakt_early_releases',
             'task_reconcile_queues',
             'task_heartbeat',
-            'task_refresh_download_stats' 
+            'task_refresh_download_stats',
             #'task_update_show_ids'
+            'task_refresh_plex_tokens'
         }
 
         if get_setting('File Management', 'file_collection_management') == 'Plex':
@@ -876,6 +878,13 @@ class ProgramRunner:
             logging.debug("Download stats cache refreshed")
         except Exception as e:
             logging.error(f"Error refreshing download stats cache: {str(e)}")
+
+    def task_refresh_plex_tokens():
+        logging.info("Performing periodic Plex token validation")
+        token_status = validate_plex_tokens()
+        for username, status in token_status.items():
+            if not status['valid']:
+                logging.error(f"Invalid Plex token detected during periodic check for user {username}")
 
     def task_check_plex_files(self):
         """Check for new files in Plex location and update libraries"""

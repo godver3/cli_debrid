@@ -204,3 +204,92 @@ button:hover {
 #refresh-rate-limits:hover {
     background-color: #218838;
 }
+
+/* Plex Token Status Styles */
+#plex-token-status {
+    margin-top: 1rem;
+}
+
+.token-status-container {
+    margin-bottom: 1rem;
+}
+
+.token-status {
+    background: #3b3b3b5;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    border-left: 4px solid transparent;
+    color: #333;  
+}
+
+.token-status.valid {
+    border-left-color: #4CAF50;
+}
+
+.token-status.invalid {
+    border-left-color: #f44336;
+}
+
+.token-user {
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+    color: rgb(209, 209, 209)
+}
+
+.token-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.token-validity {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+.token-validity.valid {
+    background: rgba(76, 175, 80, 0.1);
+    color: #2e7d32;
+}
+
+.token-validity.invalid {
+    background: rgba(244, 67, 54, 0.1);
+    color: #d32f2f;
+}
+
+.token-expiry {
+    color: #ababab;
+}
+
+.token-username {
+    color: #ababab;
+    font-style: italic;
+}
+
+.token-last-checked {
+    color: #ababab;
+    font-size: 0.9em;
+    display: none;
+}
+
+#refresh-plex-tokens {
+    width: 100%;
+    margin-top: 1rem;
+}
+
+#refresh-plex-tokens:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.error {
+    color: #d32f2f;
+    padding: 1rem;
+    background: rgba(244, 67, 54, 0.1);
+    border-radius: 4px;
+    margin-bottom: 1rem;
+}

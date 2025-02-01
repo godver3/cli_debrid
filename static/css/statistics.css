@@ -361,6 +361,12 @@ input:checked + .toggle-slider:before {
     word-break: break-word;
 }
 
+@media (max-width: 1280px) {
+    .stats-container {
+        width: 90%;
+    }
+}
+
 /* Bottom sections grid layout for compact view (desktop only) */
 @media screen and (min-width: 769px) {
     .statistics-wrapper.compact-view .recently-added {

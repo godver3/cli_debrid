@@ -1080,3 +1080,39 @@ def convert_to_symlinks():
     except Exception as e:
         logging.error(f"Error converting library to symlinks: {str(e)}")
         return f"Error converting library to symlinks: {str(e)}", 500
+
+@debug_bp.route('/validate_plex_tokens', methods=['GET', 'POST'])
+@admin_required
+def validate_plex_tokens_route():
+    """Route to validate and refresh Plex tokens"""
+    from content_checkers.plex_watchlist import validate_plex_tokens
+    from content_checkers.plex_token_manager import get_token_status
+    
+    try:
+        if request.method == 'POST':
+            # For POST requests, perform a fresh validation
+            token_status = validate_plex_tokens()
+        else:
+            # For GET requests, return the stored status
+            token_status = get_token_status()
+            if not token_status:
+                # If no stored status exists, perform a fresh validation
+                token_status = validate_plex_tokens()
+        
+        # Ensure all datetime objects are serialized
+        for username, status in token_status.items():
+            if isinstance(status.get('expires_at'), datetime):
+                status['expires_at'] = status['expires_at'].isoformat()
+            if isinstance(status.get('last_checked'), datetime):
+                status['last_checked'] = status['last_checked'].isoformat()
+        
+        return jsonify({
+            'success': True,
+            'token_status': token_status
+        })
+    except Exception as e:
+        logging.error(f"Error in validate_plex_tokens route: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })

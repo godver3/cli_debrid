@@ -776,19 +776,40 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
             shareUrl.style.display = 'inline-block';
             copyBtn.style.display = 'inline-block';
             
-            // Copy URL to clipboard
-            navigator.clipboard.writeText(data.url).then(() => {
-                const sizeInfo = data.originalSize && data.compressedSize ? 
-                    `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
-                const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
-                
-                showPopup({
-                    type: POPUP_TYPES.SUCCESS,
-                    title: 'Success',
-                    message: `Logs shared successfully! URL copied to clipboard.${serviceInfo}${sizeInfo}`,
-                    autoClose: 5000
-                });
-            }).catch(() => {
+            // Try to copy URL to clipboard with fallback
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(data.url)
+                    .then(() => {
+                        const sizeInfo = data.originalSize && data.compressedSize ? 
+                            `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
+                        const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
+                        
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            title: 'Success',
+                            message: `Logs shared successfully! URL copied to clipboard.${serviceInfo}${sizeInfo}`,
+                            autoClose: 10000
+                        });
+                        button.textContent = 'Share Logs';
+                        button.disabled = false;
+                    })
+                    .catch(err => {
+                        console.warn('Failed to copy to clipboard:', err);
+                        const sizeInfo = data.originalSize && data.compressedSize ? 
+                            `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
+                        const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
+                        
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            title: 'Success',
+                            message: `Logs shared successfully!\nURL: ${data.url}${serviceInfo}${sizeInfo}`,
+                            autoClose: 60000
+                        });
+                        button.textContent = 'Share Logs';
+                        button.disabled = false;
+                    });
+            } else {
+                // Fallback for browsers without clipboard API
                 const sizeInfo = data.originalSize && data.compressedSize ? 
                     `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
                 const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
@@ -799,7 +820,9 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
                     message: `Logs shared successfully!\nURL: ${data.url}${serviceInfo}${sizeInfo}`,
                     autoClose: 5000
                 });
-            });
+                button.textContent = 'Share Logs';
+                button.disabled = false;
+            }
         } else {
             throw new Error(data.error || 'Failed to share logs');
         }
@@ -816,9 +839,7 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
         });
     })
     .finally(() => {
-        button.disabled = false;
-        button.textContent = 'Share Logs';
-        progressBar.style.width = '0%';
+        progressBar.style.width = '100%';
     });
 
     // Simulate progress until we get a response
@@ -833,7 +854,6 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
     // Clear the interval when the request completes
     setTimeout(() => {
         clearInterval(progressInterval);
-        progressBar.style.width = '100%';
     }, 10000);
 });
 

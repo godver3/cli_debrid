@@ -203,6 +203,15 @@
                 <button type="submit">Convert to Symlinks</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Plex Token Status</h3>
+            <div id="plex-token-status">
+                <div class="token-status-container">
+                    <!-- Status will be populated here -->
+                </div>
+                <button id="refresh-plex-tokens" class="btn">Refresh Tokens</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -900,6 +909,95 @@
                 });
             });
         }
+
+        function updatePlexTokenStatus(data) {
+            const container = document.querySelector('.token-status-container');
+            container.innerHTML = '';
+            
+            if (!data.success) {
+                container.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                return;
+            }
+            
+            Object.entries(data.token_status).forEach(([username, status]) => {
+                const tokenDiv = document.createElement('div');
+                tokenDiv.className = `token-status ${status.valid ? 'valid' : 'invalid'}`;
+                
+                let expiresText = 'No expiration date';
+                if (status.expires_at) {
+                    const expiresDate = new Date(status.expires_at);
+                    if (!isNaN(expiresDate)) {
+                        expiresText = `Expires: ${expiresDate.toLocaleString()}`;
+                    }
+                }
+
+                let lastCheckedText = '';
+                if (status.last_checked) {
+                    const lastCheckedDate = new Date(status.last_checked);
+                    if (!isNaN(lastCheckedDate)) {
+                        lastCheckedText = `Last checked: ${lastCheckedDate.toLocaleString()}`;
+                    }
+                }
+                
+                tokenDiv.innerHTML = `
+                    <div class="token-user">${username}</div>
+                    <div class="token-details">
+                        <span class="token-validity ${status.valid ? 'valid' : 'invalid'}">
+                            ${status.valid ? 'Valid' : 'Invalid'}
+                        </span>
+                        ${status.username ? `<span class="token-username">Plex Username: ${status.username}</span>` : ''}
+                        <span class="token-expiry">${expiresText}</span>
+                        <span class="token-last-checked">${lastCheckedText}</span>
+                    </div>
+                `;
+                container.appendChild(tokenDiv);
+            });
+        }
+
+        function refreshPlexTokens() {
+            const button = document.getElementById('refresh-plex-tokens');
+            button.disabled = true;
+            button.textContent = 'Refreshing...';
+            
+            fetch('/debug/validate_plex_tokens', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                updatePlexTokenStatus(data);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                const container = document.querySelector('.token-status-container');
+                container.innerHTML = `<div class="error">Error refreshing tokens: ${error}</div>`;
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.textContent = 'Refresh Tokens';
+            });
+        }
+
+        // Initial fetch to show current status without refreshing
+        fetch('/debug/validate_plex_tokens', {
+            method: 'GET'
+        })
+        .then(response => response.json())
+        .then(data => {
+            updatePlexTokenStatus(data);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            const container = document.querySelector('.token-status-container');
+            container.innerHTML = `<div class="error">Error loading token status: ${error}</div>`;
+        });
+
+        // Add click handler for refresh button
+        document.getElementById('refresh-plex-tokens').addEventListener('click', () => {
+            refreshPlexTokens();
+        });
     });
 </script>
 {% endblock %}

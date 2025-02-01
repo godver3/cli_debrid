@@ -25,6 +25,7 @@ from settings import set_setting
 from settings import get_setting
 from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
+from content_checkers.plex_watchlist import validate_plex_tokens
 
 if sys.platform.startswith('win'):
     app_name = "cli_debrid"  # Replace with your app's name
@@ -875,6 +876,12 @@ def main():
 
     # Fix notification settings if needed
     fix_notification_settings()
+
+    # Validate Plex tokens on startup
+    token_status = validate_plex_tokens()
+    for username, status in token_status.items():
+        if not status['valid']:
+            logging.error(f"Invalid Plex token for user {username}")
 
     # Add the update_media_locations call here
     # update_media_locations()
