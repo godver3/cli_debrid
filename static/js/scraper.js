@@ -65,14 +65,11 @@ function displaySearchResults(results, version) {
         console.log('Starts with static?', normalizedPath.startsWith('static/'));
         console.log('Starts with http?', normalizedPath.startsWith('http'));
         if (normalizedPath.startsWith('static/')) {
-            posterUrl = `/${normalizedPath}`;  // Add leading slash back for URL
-            console.log('Using static path:', posterUrl);
+            posterUrl = `/${normalizedPath}`;  // Local static image
         } else if (normalizedPath.startsWith('http')) {
-            posterUrl = item.poster_path;  // Use original path for full URLs
-            console.log('Using full URL:', posterUrl);
+            posterUrl = item.poster_path;  // Full URL
         } else {
-            posterUrl = `https://image.tmdb.org/t/p/w300${item.poster_path}`;
-            console.log('Using TMDB URL:', posterUrl);
+            posterUrl = `/scraper/tmdb_image/w300${item.poster_path}`; // Use our proxy route
         }
         console.log('Final poster URL:', posterUrl);
         searchResDiv.innerHTML = `
@@ -129,7 +126,7 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
     seasonInfo.innerHTML = `
         <div class="season-info-container">
             <span class="show-rating">${(vote_average).toFixed(1)}</span>
-            <img src="https://image.tmdb.org/t/p/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
+            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
             <div class="season-details">
                 <h2>${title} - Season ${season_num}</h2>
                 <p>${genreString}</p>
@@ -138,7 +135,7 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
                 </div>
             </div>
         </div>
-        <div class="season-bg-image" style="background-image: url('https://image.tmdb.org/t/p/w1920_and_h800_multi_faces${backdrop_path}');"></div>
+        <div class="season-bg-image" style="background-image: url('${backdrop_path.startsWith('http') ? backdrop_path : `/scraper/tmdb_image/w1920_and_h800_multi_faces${backdrop_path}`}');"></div>
     `;
 }
 
@@ -433,7 +430,7 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
         var date = item.air_date ? new Date(item.air_date) : null;
         episodeDiv.innerHTML = `        
             <button><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
-            <img src="${item.still_path ? `https://image.tmdb.org/t/p/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}" 
+            <img src="${item.still_path ? `/scraper/tmdb_image/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}" 
                 alt="${item.episode_title || ''}" 
                 class="${item.still_path ? '' : 'placeholder-episode'}">
             <div class="episode-info">
@@ -677,7 +674,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <span id="trending-rating">${(data.rating).toFixed(1)}</span>
                 <span id="trending-watchers">👁 ${data.watcher_count}</span>
                 <span class="media-title">${data.title}</br><span style="font-size: 14px; opacity: 0.8;">${data.year}</span></span>
-                <img src="${data.poster_path}" alt="${data.title}" class="media-poster-img">
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" alt="${data.title}" class="media-poster-img">
             </div>
         `;
         movieElement.onclick = function() {
@@ -694,7 +691,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <span id="trending-rating">${(data.rating).toFixed(1)}</span>
                 <span id="trending-watchers">👁 ${data.watcher_count}</span>
                 <span class="media-title">${data.title}</br><span style="font-size: 14px; opacity: 0.8;">${data.year}</span></span>
-                <img src="${data.poster_path}" alt="${data.title}" class="media-poster-img">
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" alt="${data.title}" class="media-poster-img">
             </div>
         `;
         movieElement.onclick = function() {

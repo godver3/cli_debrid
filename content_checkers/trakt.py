@@ -538,10 +538,16 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
     cache_skipped = 0
 
     # Get collection items
-    collection_items = fetch_items_from_trakt("/sync/collection")
+    response = make_trakt_request('get', "/sync/collection/movies")
+    movie_items = response.json() if response else []
+    
+    response = make_trakt_request('get', "/sync/collection/shows")
+    show_items = response.json() if response else []
+    
+    collection_items = movie_items + show_items
     processed_items = []
     skipped_count = 0
-
+    
     for item in collection_items:
         media_type = assign_media_type(item)
         if not media_type:
