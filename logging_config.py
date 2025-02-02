@@ -109,10 +109,12 @@ def setup_debug_logging(log_dir):
     logging.getLogger().addHandler(debug_handler)
 
 def setup_info_logging(log_dir):
-    # Redirect info logger to null
-    info_logger = logging.getLogger('info_logger')
-    info_logger.addHandler(logging.NullHandler())
-    info_logger.propagate = False
+    # Add console handler for info logs
+    console_handler = DynamicConsoleHandler()
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    
+    # Add handler to root logger
+    logging.getLogger().addHandler(console_handler)
 
 def setup_error_logging(log_dir):
     # Error file handler

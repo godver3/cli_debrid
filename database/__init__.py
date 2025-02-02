@@ -11,7 +11,8 @@ submodules = [
     'statistics',
     'wanted_items',
     'database_reading',
-    'database_writing'
+    'database_writing',
+    'maintenance'
 ]
 
 # Import all submodules

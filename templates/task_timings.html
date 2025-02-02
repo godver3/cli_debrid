@@ -35,6 +35,7 @@
         border-radius: 10px;
         background-color: #2c2c2c;
         padding: 1rem;
+        cursor: pointer;
     }
 
     .task-tile:hover {
@@ -46,6 +47,7 @@
         opacity: 0.7;
         background-color: #1a1a1a;
         border-color: #333;
+        cursor: not-allowed;
     }
 
     .task-tile.disabled .task-name,
@@ -190,7 +192,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
 document.addEventListener('DOMContentLoaded', function() {
     // Tab switching
     const tabs = document.querySelectorAll('.tab');
@@ -224,23 +228,31 @@ function createTaskTile(taskName, taskData) {
         .replace(/_/g, ' ')
         .replace(/\b\w/g, c => c.toUpperCase());
 
-    return `
-        <div class="task-tile ${enabled ? '' : 'disabled'}">
-            <div class="task-header">
-                <div class="task-name">
-                    <span class="status-indicator ${enabled ? 'enabled' : 'disabled'}"></span>
-                    ${displayName}
-                </div>
-                <span class="interval-badge">
-                    ${intervalMinutes}m
-                </span>
+    const tile = document.createElement('div');
+    tile.className = `task-tile ${enabled ? '' : 'disabled'}`;
+    
+    // Only add click handler if the task is enabled
+    if (enabled) {
+        tile.onclick = () => triggerTask(taskName);
+    }
+
+    tile.innerHTML = `
+        <div class="task-header">
+            <div class="task-name">
+                <span class="status-indicator ${enabled ? 'enabled' : 'disabled'}"></span>
+                ${displayName}
             </div>
-            <div class="countdown" data-task="${taskName}">
-                ${formatTime(taskData.next_run_in.hours, taskData.next_run_in.minutes, taskData.next_run_in.seconds)}
-            </div>
-            <small style="display: block; text-align: center; color: #888;">until next run</small>
+            <span class="interval-badge">
+                ${intervalMinutes}m
+            </span>
         </div>
+        <div class="countdown" data-task="${taskName}">
+            ${formatTime(taskData.next_run_in.hours, taskData.next_run_in.minutes, taskData.next_run_in.seconds)}
+        </div>
+        <small style="display: block; text-align: center; color: #888;">until next run</small>
     `;
+
+    return tile;
 }
 
 function updateTimers() {
@@ -276,20 +288,20 @@ function fetchAndUpdateTasks() {
                 const tasks = data.tasks;
                 
                 // Update task sections
-                document.querySelector('#queues .task-grid').innerHTML = 
-                    Object.entries(tasks.queues || {})
-                        .map(([name, info]) => createTaskTile(name, info))
-                        .join('');
-                
-                document.querySelector('#sources .task-grid').innerHTML = 
-                    Object.entries(tasks.content_sources || {})
-                        .map(([name, info]) => createTaskTile(name, info))
-                        .join('');
-                
-                document.querySelector('#system .task-grid').innerHTML = 
-                    Object.entries(tasks.system_tasks || {})
-                        .map(([name, info]) => createTaskTile(name, info))
-                        .join('');
+                document.querySelector('#queues .task-grid').innerHTML = '';
+                Object.entries(tasks.queues || {}).forEach(([name, info]) => {
+                    document.querySelector('#queues .task-grid').appendChild(createTaskTile(name, info));
+                });
+
+                document.querySelector('#sources .task-grid').innerHTML = '';
+                Object.entries(tasks.content_sources || {}).forEach(([name, info]) => {
+                    document.querySelector('#sources .task-grid').appendChild(createTaskTile(name, info));
+                });
+
+                document.querySelector('#system .task-grid').innerHTML = '';
+                Object.entries(tasks.system_tasks || {}).forEach(([name, info]) => {
+                    document.querySelector('#system .task-grid').appendChild(createTaskTile(name, info));
+                });
 
                 // Update badge counts
                 updateBadgeCounts(tasks);
@@ -312,6 +324,47 @@ function fetchAndUpdateTasks() {
             document.querySelector('.source-count').textContent = '0';
             document.querySelector('.system-count').textContent = '0';
         });
+}
+
+function triggerTask(taskName) {
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Trigger Task',
+        message: `Do you want to trigger task: ${taskName}?`,
+        onConfirm: () => {
+            fetch('/program_operation/trigger_task', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `task_name=${encodeURIComponent(taskName)}`
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Success',
+                        message: `Successfully triggered task: ${taskName}`
+                    });
+                } else {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error',
+                        message: data.error || 'Failed to trigger task'
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Failed to trigger task'
+                });
+            });
+        }
+    });
 }
 
 // Initial fetch and setup

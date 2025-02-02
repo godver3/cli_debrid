@@ -873,7 +873,7 @@ class MetadataManager:
                     last_updated=datetime.now(timezone.utc)
                 )
                 metadata_entries.append(metadata)
-                logger.debug(f"Added metadata entry for {item.imdb_id}: {key}")
+                #logger.debug(f"Added metadata entry for {item.imdb_id}: {key}")
 
             # Bulk insert all metadata entries
             session.bulk_save_objects(metadata_entries)
@@ -899,7 +899,7 @@ class MetadataManager:
             else:
                 logger.warning(f"No seasons metadata found after save for {item.imdb_id}")
                 
-            logger.info(f"Successfully saved {len(metadata_entries)} metadata entries for {item.imdb_id}")
+            #logger.info(f"Successfully saved {len(metadata_entries)} metadata entries for {item.imdb_id}")
             return True
         except Exception as e:
             logger.error(f"Error in update_show_metadata for item {item.imdb_id}: {str(e)}")
