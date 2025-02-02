@@ -31,6 +31,7 @@ import tempfile
 from api_tracker import api  # Add this import for the api module
 from plexapi.server import PlexServer
 from database.core import get_db_connection
+import json
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -98,7 +99,8 @@ class ProgramRunner:
             #'task_local_library_scan': 900,  # Run every 5 minutes
             'task_refresh_download_stats': 300,  # Run every 5 minutes
             'task_check_plex_files': 60,  # Run every 60 seconds
-            #'task_update_show_ids': 3600,  # Run every hour
+            'task_update_show_ids': 3600,  # Run every hour
+            'task_update_show_titles': 3600,  # Run every hour
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
             'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
         }
@@ -124,14 +126,13 @@ class ProgramRunner:
             'task_reconcile_queues',
             'task_heartbeat',
             'task_refresh_download_stats',
-            #'task_update_show_ids'
+            'task_update_show_ids',
+            'task_update_show_titles',
             'task_refresh_plex_tokens'
         }
 
         if get_setting('File Management', 'file_collection_management') == 'Plex':
             self.enabled_tasks.add('task_plex_full_scan')
-        else:
-            self.enabled_tasks.add('task_local_library_scan')
 
         if get_setting('File Management', 'file_collection_management') == 'Plex' and get_setting('Plex', 'update_plex_on_file_discovery'):
             self.enabled_tasks.add('task_check_plex_files')
@@ -879,12 +880,14 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error refreshing download stats cache: {str(e)}")
 
-    def task_refresh_plex_tokens():
+    def task_refresh_plex_tokens(self):
         logging.info("Performing periodic Plex token validation")
         token_status = validate_plex_tokens()
         for username, status in token_status.items():
             if not status['valid']:
                 logging.error(f"Invalid Plex token detected during periodic check for user {username}")
+            else:
+                logging.debug(f"Plex token for user {username} is valid")
 
     def task_check_plex_files(self):
         """Check for new files in Plex location and update libraries"""
@@ -1055,73 +1058,107 @@ class ProgramRunner:
 
     def task_update_show_ids(self):
         """Update show IDs (imdb_id and tmdb_id) in the database if they don't match the direct API."""
-        import sqlite3
-        from cli_battery.app.direct_api import DirectAPI
-        import os
-
-        logging.info("Starting show ID update task (DRY RUN)")
-        api = DirectAPI()
-
-        # Connect to media_items.db
-        db_path = os.path.join('/user/db_content', 'media_items.db')
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         try:
-            # Get all unique shows by grouping episodes
-            cursor.execute("""
-                SELECT 
-                    title,
-                    imdb_id,
-                    GROUP_CONCAT(id) as episode_ids,
-                    COUNT(*) as episode_count
-                FROM media_items 
-                WHERE type='episode'
-                GROUP BY title, imdb_id
-            """)
-            shows = cursor.fetchall()
-            
-            logging.info(f"Found {len(shows)} shows to check")
-
-            for show in shows:
-                try:
-                    show_title = show['title']
-                    show_imdb_id = show['imdb_id']
-                    episode_ids = show['episode_ids'].split(',')
-
-                    # Get show metadata from direct API
-                    metadata, source = api.get_show_metadata(show_imdb_id)
-                    if not metadata:
-                        logging.warning(f"No metadata found in API for show {show_title} (imdb_id: {show_imdb_id})")
-                        continue
-
-                    api_imdb_id = metadata.get('imdb_id')
-                    api_tmdb_id = metadata.get('tmdb_id')
-
-                    if api_imdb_id and api_imdb_id != show_imdb_id:
-                        logging.info(f"[DRY RUN] Would update show {show_title}:")
-                        logging.info(f"  IMDB ID: {show_imdb_id} -> {api_imdb_id}")
-                        if api_tmdb_id:
-                            logging.info(f"  TMDB ID: (updating to {api_tmdb_id})")
-                        # When ready to make actual changes, uncomment these lines:
-                        # cursor.execute("""
-                        #     UPDATE media_items
-                        #     SET imdb_id = ?, tmdb_id = ?
-                        #     WHERE id IN ({})
-                        # """.format(','.join('?' * len(episode_ids))), 
-                        # [api_imdb_id, api_tmdb_id] + episode_ids)
-                        # conn.commit()
-
-                except Exception as e:
-                    logging.error(f"Error processing show {show_title}: {str(e)}")
-                    continue
-
+            from database.maintenance import update_show_ids
+            update_show_ids()
         except Exception as e:
             logging.error(f"Error in task_update_show_ids: {str(e)}")
-        finally:
-            cursor.close()
-            conn.close()
+
+    def task_update_show_titles(self):
+        """Update show titles in the database if they don't match the direct API, storing old titles in title_aliases."""
+        try:
+            from database.maintenance import update_show_titles
+            update_show_titles()
+        except Exception as e:
+            logging.error(f"Error in task_update_show_titles: {str(e)}")
+
+    def trigger_task(self, task_name):
+        """Manually trigger a task to run immediately."""
+        if task_name not in self.enabled_tasks:
+            # Convert task name to match how it's stored in enabled_tasks
+            task_name_normalized = task_name
+            if task_name.startswith('task_'):
+                task_name_normalized = task_name[5:]  # Remove task_ prefix
+            
+            # For content source tasks, they're stored with spaces in enabled_tasks
+            if '_wanted' in task_name_normalized:
+                task_name_normalized = task_name_normalized.replace('_', ' ')
+                if not task_name_normalized.startswith('task_'):
+                    task_name_normalized = f'task_{task_name_normalized}'
+                
+            if task_name_normalized not in self.enabled_tasks:
+                raise ValueError(f"Task {task_name} is not enabled")
+            task_name = task_name_normalized
+        
+        # Handle queue tasks (which don't have task_ prefix)
+        queue_tasks = [
+            'process_wanted',
+            'process_checking',
+            'process_scraping',
+            'process_adding',
+            'process_unreleased',
+            'process_sleeping',
+            'process_blacklisted',
+            'process_pending_uncached',
+            'process_upgrading'
+        ]
+        
+        # Remove process_ prefix and convert to lower case for comparison
+        task_name_lower = task_name.lower()
+        if task_name_lower.startswith('process_'):
+            task_name_lower = task_name_lower[8:]  # Remove 'process_'
+        elif task_name_lower.startswith('task_'):
+            task_name_lower = task_name_lower[5:]  # Remove 'task_'
+            
+        # Check if this task name (without prefix) matches any queue task
+        for queue_task in queue_tasks:
+            queue_task_lower = queue_task.lower()[8:]  # Remove 'process_' prefix
+            if task_name_lower == queue_task_lower:
+                try:
+                    queue_method = getattr(self.queue_manager, queue_task)  # Use original queue task name
+                    queue_method()
+                    logging.info(f"Manually triggered queue task: {queue_task}")
+                    return
+                except Exception as e:
+                    logging.error(f"Error running queue task {queue_task}: {str(e)}")
+                    raise
+                    
+        # Handle content source tasks
+        if '_wanted' in task_name_lower or ' wanted' in task_name_lower:
+            content_sources = self.get_content_sources()
+            source_id = None
+            
+            # Try to match the task name to a content source
+            task_name_parts = task_name_lower.replace('task_', '').replace('_wanted', ' wanted').split(' wanted')[0]
+            
+            for source in content_sources:
+                if source.lower() == task_name_parts:
+                    source_id = source
+                    break
+                    
+            if source_id and source_id in content_sources:
+                try:
+                    self.process_content_source(source_id, content_sources[source_id])
+                    logging.info(f"Manually triggered content source: {source_id}")
+                    return
+                except Exception as e:
+                    logging.error(f"Error running content source {source_id}: {str(e)}")
+                    raise
+        
+        # If we get here, it's a regular task - ensure it has task_ prefix
+        if not task_name.startswith('task_'):
+            task_name = f'task_{task_name}'
+            
+        task_method = getattr(self, task_name, None)
+        if task_method is None:
+            raise ValueError(f"Task {task_name} does not exist")
+            
+        try:
+            task_method()
+            logging.info(f"Manually triggered task: {task_name}")
+        except Exception as e:
+            logging.error(f"Error running task {task_name}: {str(e)}")
+            raise
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
@@ -1256,10 +1293,10 @@ def append_runtime_airtime(items):
             logging.error(traceback.format_exc())
     
 def get_and_add_all_collected_from_plex():
-    if get_setting('File Management', 'file_collection_management', 'Plex') == 'Plex':
+    if get_setting('File Management', 'file_collection_management') == 'Plex':
         logging.info("Getting all collected content from Plex")
         collected_content = asyncio.run(run_get_collected_from_plex())
-    elif get_setting('File Management', 'file_collection_management', 'Plex') == 'Zurg':
+    elif get_setting('File Management', 'file_collection_management') == 'Zurg':
         logging.info("Getting all collected content from Zurg")
         collected_content = asyncio.run(run_get_collected_from_zurg())
 
@@ -1278,10 +1315,10 @@ def get_and_add_all_collected_from_plex():
     return None
 
 def get_and_add_recent_collected_from_plex():
-    if get_setting('File Management', 'file_collection_management', 'Plex') == 'Plex':
+    if get_setting('File Management', 'file_collection_management') == 'Plex':
         logging.info("Getting recently added content from Plex")
         collected_content = asyncio.run(run_get_recent_from_plex())
-    elif get_setting('File Management', 'file_collection_management', 'Plex') == 'Zurg':
+    elif get_setting('File Management', 'file_collection_management') == 'Zurg':
         logging.info("Getting recently added content from Zurg")
         collected_content = asyncio.run(run_get_recent_from_zurg())
     

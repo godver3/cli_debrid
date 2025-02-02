@@ -4,6 +4,7 @@ import re
 from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
 from settings import load_config, get_setting
+from database.database_reading import get_imdb_aliases
 
 DEFAULT_OPTS = "sort=qualitysize|qualityfilter=480p,scr,cam"
 TORRENTIO_BASE_URL = "https://torrentio.strem.fun"
@@ -14,16 +15,32 @@ def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: 
         opts = DEFAULT_OPTS
     
     try:
-        url = construct_url(imdb_id, content_type, season, episode, opts)
-        logging.debug(f"Constructed Torrentio URL: {url}")
-        response = fetch_data(url)
-        if not response or 'streams' not in response:
-            logging.warning(f"No streams found for IMDb ID: {imdb_id} in instance {instance}")
-            return []
-        #logging.debug(f"Torrentio returned {len(response['streams'])} total results before parsing")
-        parsed_results = parse_results(response['streams'], instance)
-        #logging.debug(f"Successfully parsed {len(parsed_results)} results from Torrentio")
-        return parsed_results
+        # Get all IMDB aliases for this ID
+        imdb_ids = get_imdb_aliases(imdb_id)
+        all_results = []
+        
+        # Scrape for each IMDB ID (original + aliases)
+        for current_imdb_id in imdb_ids:
+            url = construct_url(current_imdb_id, content_type, season, episode, opts)
+            logging.debug(f"Constructed Torrentio URL for ID {current_imdb_id}: {url}")
+            response = fetch_data(url)
+            if not response or 'streams' not in response:
+                logging.warning(f"No streams found for IMDb ID: {current_imdb_id} in instance {instance}")
+                continue
+                
+            parsed_results = parse_results(response['streams'], instance)
+            all_results.extend(parsed_results)
+            
+        # Remove duplicates based on info_hash
+        seen_hashes = set()
+        unique_results = []
+        for result in all_results:
+            if result['info_hash'] not in seen_hashes:
+                seen_hashes.add(result['info_hash'])
+                unique_results.append(result)
+                
+        logging.debug(f"Found {len(unique_results)} unique results after checking {len(imdb_ids)} IMDB IDs")
+        return unique_results
     except Exception as e:
         logging.error(f"Error in scrape_torrentio_instance for {instance}: {str(e)}", exc_info=True)
         return []
@@ -105,7 +122,8 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 'size': size,
                 'source': f'{instance}',
                 'magnet': magnet_link,
-                'seeders': seeders
+                'seeders': seeders,
+                'info_hash': info_hash
             }
             results.append(result)
             #logging.debug(f"Successfully parsed result: {result}")

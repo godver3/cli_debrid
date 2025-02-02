@@ -535,3 +535,20 @@ def get_task_timings():
 @user_required
 def task_timings():
     return render_template('task_timings.html')
+
+@program_operation_bp.route('/trigger_task', methods=['POST'])
+@admin_required
+def trigger_task():
+    task_name = request.form.get('task_name')
+    if not task_name:
+        return jsonify({'success': False, 'error': 'Task name is required'})
+    
+    try:
+        program_runner = get_program_runner()
+        if not program_runner:
+            return jsonify({'success': False, 'error': 'Program is not running'})
+        
+        program_runner.trigger_task(task_name)
+        return jsonify({'success': True, 'message': f'Successfully triggered task: {task_name}'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})

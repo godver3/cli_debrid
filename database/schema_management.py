@@ -106,6 +106,12 @@ def migrate_schema():
         if 'resolution' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN resolution TEXT')
             logging.info("Successfully added resolution column to media_items table.")
+        if 'imdb_aliases' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN imdb_aliases TEXT')
+            logging.info("Successfully added imdb_aliases column to media_items table.")
+        if 'title_aliases' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN title_aliases TEXT')
+            logging.info("Successfully added title_aliases column to media_items table.")
         
         # logging.info("Successfully added new columns to media_items table.")
 
@@ -209,7 +215,9 @@ def create_tables():
                 upgrading BOOLEAN DEFAULT FALSE,
                 requested_season BOOLEAN DEFAULT FALSE,
                 content_source TEXT,
-                resolution TEXT
+                resolution TEXT,
+                imdb_aliases TEXT,
+                title_aliases TEXT
             )
         ''')
 

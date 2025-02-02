@@ -2,23 +2,41 @@ from api_tracker import api
 import logging
 import re
 from typing import Dict, Any, List
+from database.database_reading import get_imdb_aliases
 
 def scrape_mediafusion_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     mediafusion_base_url = settings.get('url', '').rstrip('manifest.json')
     
     try:
-        url = construct_url(mediafusion_base_url, imdb_id, content_type, season, episode)
-        response = fetch_data(url)
-        if not response:
-            logging.warning(f"No response received for IMDb ID: {imdb_id} from {instance}")
-            return []
+        # Get all IMDB aliases for this ID
+        imdb_ids = get_imdb_aliases(imdb_id)
+        all_results = []
         
-        if 'streams' not in response:
-            logging.warning(f"No 'streams' key in response for IMDb ID: {imdb_id} from {instance}")
-            return []
+        # Scrape for each IMDB ID (original + aliases)
+        for current_imdb_id in imdb_ids:
+            url = construct_url(mediafusion_base_url, current_imdb_id, content_type, season, episode)
+            response = fetch_data(url)
+            if not response:
+                logging.warning(f"No response received for IMDb ID: {current_imdb_id} from {instance}")
+                continue
             
-        parsed_results = parse_results(response['streams'], instance)
-        return parsed_results
+            if 'streams' not in response:
+                logging.warning(f"No 'streams' key in response for IMDb ID: {current_imdb_id} from {instance}")
+                continue
+                
+            parsed_results = parse_results(response['streams'], instance)
+            all_results.extend(parsed_results)
+            
+        # Remove duplicates based on info_hash
+        seen_hashes = set()
+        unique_results = []
+        for result in all_results:
+            if result['info_hash'] not in seen_hashes:
+                seen_hashes.add(result['info_hash'])
+                unique_results.append(result)
+                
+        logging.debug(f"Found {len(unique_results)} unique results after checking {len(imdb_ids)} IMDB IDs")
+        return unique_results
     except Exception as e:
         logging.error(f"Error in scrape_mediafusion_instance for {instance}: {str(e)}", exc_info=True)
         return []
@@ -169,7 +187,8 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 'size': size,
                 'seeders': seeders,
                 'source': instance,
-                'magnet': magnet_link
+                'magnet': magnet_link,
+                'info_hash': info_hash
             })
             
         except Exception as e:
