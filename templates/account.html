@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<style>
+    .account-container {
+        max-width: 500px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: #2a2a2a;
+        border-radius: 5px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .account-container h2 {
+        text-align: center;
+        color: #f4f4f4;
+        margin-bottom: 20px;
+    }
+
+    .account-form {
+        margin-top: 20px;
+    }
+
+    .account-form input[type="password"] {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 15px;
+        border: 1px solid #555;
+        border-radius: 3px;
+        background-color: #333;
+        color: #f4f4f4;
+        font-size: 16px;
+        box-sizing: border-box;
+    }
+
+    .account-form input[type="submit"] {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 3px;
+        background-color: #4CAF50;
+        color: white;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background-color 0.3s;
+    }
+
+    .account-form input[type="submit"]:hover {
+        background-color: #45a049;
+    }
+
+    .flash-message {
+        padding: 10px;
+        margin-bottom: 15px;
+        border-radius: 3px;
+        text-align: center;
+    }
+
+    .flash-message.success {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    .flash-message.error {
+        background-color: #ff6b6b;
+        color: white;
+    }
+</style>
+
+<div class="account-container">
+    <h2>Account Settings</h2>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div class="account-form">
+        <h3>Change Password</h3>
+        <form method="POST" action="{{ url_for('auth.change_password') }}">
+            <input type="password" name="current_password" placeholder="Current Password" required>
+            <input type="password" name="new_password" placeholder="New Password" required>
+            <input type="password" name="confirm_password" placeholder="Confirm New Password" required>
+            <input type="submit" value="Update Password">
+        </form>
+    </div>
+</div>
+{% endblock %} 
