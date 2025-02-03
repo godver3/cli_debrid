@@ -12,6 +12,8 @@ from reverse_parser import get_version_settings, get_default_version, get_versio
 from .models import admin_required
 from utilities.plex_functions import remove_file_from_plex
 from database.database_reading import get_media_item_by_id
+import os
+from datetime import datetime
 
 database_bp = Blueprint('database', __name__)
 
@@ -342,3 +344,108 @@ def apply_parsed_versions():
     except Exception as e:
         logging.error(f"Error applying parsed versions: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@database_bp.route('/watch_history', methods=['GET'])
+@admin_required
+def watch_history():
+    try:
+        # Get database connection
+        db_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        db_path = os.path.join(db_dir, 'watch_history.db')
+        
+        if not os.path.exists(db_path):
+            flash("Watch history database not found. Please sync Plex watch history first.", "warning")
+            return render_template('watch_history.html', items=[])
+            
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get filter parameters
+        content_type = request.args.get('type', 'all')  # 'movie', 'episode', or 'all'
+        sort_by = request.args.get('sort', 'watched_at')  # 'title' or 'watched_at'
+        sort_order = request.args.get('order', 'desc')  # 'asc' or 'desc'
+        
+        # Build query
+        query = """
+            SELECT title, type, watched_at, season, episode, show_title, source
+            FROM watch_history
+            WHERE 1=1
+        """
+        params = []
+        
+        if content_type != 'all':
+            query += " AND type = ?"
+            params.append(content_type)
+            
+        query += f" ORDER BY {sort_by} {sort_order}"
+        
+        # Execute query
+        cursor.execute(query, params)
+        items = cursor.fetchall()
+        
+        # Convert to list of dicts for easier template handling
+        formatted_items = []
+        for item in items:
+            title, type_, watched_at, season, episode, show_title, source = item
+            
+            # Format the watched_at date
+            try:
+                watched_at = datetime.strptime(watched_at, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %H:%M')
+            except:
+                watched_at = 'Unknown'
+                
+            # Format the display title
+            if type_ == 'episode' and show_title:
+                display_title = f"{show_title} - S{season:02d}E{episode:02d} - {title}"
+            else:
+                display_title = title
+                
+            formatted_items.append({
+                'title': display_title,
+                'type': type_,
+                'watched_at': watched_at,
+                'source': source
+            })
+        
+        conn.close()
+        
+        return render_template('watch_history.html',
+                             items=formatted_items,
+                             content_type=content_type,
+                             sort_by=sort_by,
+                             sort_order=sort_order)
+                             
+    except Exception as e:
+        logging.error(f"Error in watch history route: {str(e)}")
+        flash(f"Error retrieving watch history: {str(e)}", "error")
+        return render_template('watch_history.html', items=[])
+
+@database_bp.route('/watch_history/clear', methods=['POST'])
+@admin_required
+def clear_watch_history():
+    try:
+        # Get database connection
+        db_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        db_path = os.path.join(db_dir, 'watch_history.db')
+        
+        if not os.path.exists(db_path):
+            return jsonify({'success': False, 'error': 'Watch history database not found'})
+            
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Clear the watch history table
+        cursor.execute('DELETE FROM watch_history')
+        
+        # Reset the auto-increment counter
+        cursor.execute('DELETE FROM sqlite_sequence WHERE name = "watch_history"')
+        
+        conn.commit()
+        conn.close()
+        
+        logging.info("Watch history cleared successfully")
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        logging.error(f"Error clearing watch history: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})

@@ -62,9 +62,10 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
 
     while True:
         try:
-            #logging.debug(f"Fetching Overseerr requests page {page}")
+            request_url = get_url(overseerr_url, f"/api/v1/request?take={take}&skip={skip}&filter=approved")
+            logging.debug(f"Fetching Overseerr requests with URL: {request_url}")
             response = api.get(
-                get_url(overseerr_url, f"/api/v1/request?take={take}&skip={skip}"),
+                request_url,
                 headers=headers,
                 timeout=REQUEST_TIMEOUT
             )

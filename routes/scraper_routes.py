@@ -236,7 +236,7 @@ def add_torrent_to_debrid():
             return jsonify({'error': message}), 400
 
         # Check if symlinking is enabled
-        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local' or 1==1:
             try:
                 # Convert media type to movie_or_episode format
                 movie_or_episode = 'episode' if media_type == 'tv' or media_type == 'show' else 'movie'
