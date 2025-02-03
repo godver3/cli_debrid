@@ -168,7 +168,6 @@ function updateDashboard() {
                 const entries = data.entries;
                 const basicMetrics = entries.findLast(entry => entry.type === 'basic_metrics');
                 const detailedMemory = entries.findLast(entry => entry.memory);
-                const memoryGrowthEntries = entries.filter(entry => entry.type === 'basic_metrics').slice(-10);
                 const resourceHandles = entries.findLast(entry => entry.type === 'file_descriptors');
                 
                 if (basicMetrics) {
@@ -184,105 +183,13 @@ function updateDashboard() {
                     document.getElementById('cpu-details').innerHTML = 
                         `<strong>System Time:</strong> ${metrics.cpu_system_time.toFixed(2)}s ` +
                         `<strong>User Time:</strong> ${metrics.cpu_user_time.toFixed(2)}s`;
-                    
-                    // Update Memory Usage
-                    const memoryRssMB = metrics.memory_rss || 0;
-                    const memoryVmsMB = metrics.memory_vms || 0;
-                    const memoryPercent = metrics.system_memory_used || 0;
-                    const memoryBar = document.getElementById('memory-progress');
-                    const memoryText = document.getElementById('memory-text');
-                    
-                    memoryBar.style.width = `${Math.min(memoryPercent, 100)}%`;
-                    memoryText.textContent = `${memoryPercent.toFixed(1)}%`;
-                    
-                    document.getElementById('memory-details').innerHTML = 
-                        `<strong>RSS Memory:</strong> ${memoryRssMB.toFixed(2)} MB ` +
-                        `<strong>Virtual Memory:</strong> ${memoryVmsMB.toFixed(2)} MB ` +
-                        `<strong>Swap Used:</strong> ${metrics.swap_used.toFixed(2)} MB`;
                 }
-
-                // Memory Analysis
-                if (detailedMemory) {
-                    const memoryData = detailedMemory.memory;
-                    
-                    // Memory by Type
-                    const anonymousHtml = `
-                        <div class="memory-type">
-                            <h6>Anonymous Memory</h6>
-                            <div class="memory-stats">
-                                <span>Size: ${memoryData.anonymous.formatted_size}</span>
-                                <span>Count: ${memoryData.anonymous.count.toLocaleString()} mappings</span>
-                            </div>
-                        </div>`;
-
-                    // Enhanced file-backed memory section
-                    const fileBackedHtml = `
-                        <div class="memory-type">
-                            <h6>File-backed Memory</h6>
-                            <div class="memory-stats">
-                                <span>Total Size: ${memoryData.file_backed.formatted_size}</span>
-                                <span>Mappings: ${memoryData.file_backed.count.toLocaleString()}</span>
-                            </div>
-                            <div class="file-details">
-                                <h6 class="mt-3">File Details</h6>
-                                <div class="file-list">
-                                    ${memoryData.open_files.files.map(file => `
-                                        <div class="file-item">
-                                            <div class="file-path">${file.path}</div>
-                                            <div class="file-size">${formatBytes(file.size)}</div>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            </div>
-                        </div>`;
-                    
-                    // Network connections section
-                    const networkHtml = `
-                        <div class="memory-type">
-                            <h6>Network Connections</h6>
-                            <div class="memory-stats">
-                                <span>Total: ${memoryData.network.total_connections}</span>
-                                ${Object.entries(memoryData.network.states).map(([state, count]) => 
-                                    `<span>${state}: ${count}</span>`
-                                ).join('')}
-                            </div>
-                        </div>`;
-                    
-                    document.getElementById('memory-analysis').innerHTML = anonymousHtml + fileBackedHtml + networkHtml;
-                }
-
-                // Memory Growth over time
-                if (memoryGrowthEntries.length > 0) {
-                    const growthHtml = memoryGrowthEntries
-                        .slice()  // Create a copy of the array
-                        .reverse() // Reverse to get most recent first
-                        .slice(0, 5) // Limit to 5 entries
-                        .map(entry => {
-                            const metrics = entry.metrics;
-                            const timestamp = new Date(entry.timestamp).toLocaleString();
-                            return `
-                                <div class="memory-growth-item">
-                                    <span class="timestamp">${timestamp}</span>
-                                    <div class="memory-values">
-                                        <span class="rss">RSS: ${metrics.memory_rss.toFixed(2)} MB</span>
-                                        <span class="vms">VMS: ${metrics.memory_vms.toFixed(2)} MB</span>
-                                        <span class="swap">Swap: ${metrics.swap_used.toFixed(2)} MB</span>
-                                    </div>
-                                </div>`;
-                        }).join('');
-                    
-                    document.getElementById('memory-growth-text').innerHTML = growthHtml;
-                }
-
-                // Update Memory Growth Chart
-                updateMemoryChart(memoryGrowthEntries);
 
                 // Resource Handles
                 if (resourceHandles) {
                     const metrics = resourceHandles.metrics;
                     document.getElementById('open-files-count').textContent = metrics.open_files_count || 0;
                     
-                    // Format file types as "extension: count" pairs
                     const fileTypesText = metrics.file_types ? 
                         Object.entries(metrics.file_types)
                             .map(([ext, count]) => `${ext}: ${count}`)
@@ -341,6 +248,54 @@ function updateDashboard() {
             }
         })
         .catch(error => console.error('Error fetching CPU data:', error));
+
+    // Fetch memory data separately
+    fetch('/performance/api/performance/memory?hours=1')
+        .then(response => response.json())
+        .then(data => {
+            if (data.summary) {
+                // Update memory summary statistics
+                const memoryBar = document.getElementById('memory-progress');
+                const memoryText = document.getElementById('memory-text');
+                const systemMemoryUsed = data.summary.avg_system_memory_used || 0;
+                
+                memoryBar.style.width = `${Math.min(systemMemoryUsed, 100)}%`;
+                memoryText.textContent = `${systemMemoryUsed.toFixed(1)}%`;
+                
+                // Get the latest entry
+                const latestEntry = data.entries[data.entries.length - 1];
+                if (latestEntry && latestEntry.metrics) {
+                    const metrics = latestEntry.metrics;
+                    document.getElementById('memory-details').innerHTML = 
+                        `<strong>RSS Memory:</strong> ${metrics.memory_rss.toFixed(2)} MB ` +
+                        `<strong>Virtual Memory:</strong> ${metrics.memory_vms.toFixed(2)} MB ` +
+                        `<strong>Swap Used:</strong> ${metrics.swap_used.toFixed(2)} MB`;
+                }
+                
+                // Update memory growth text with recent entries
+                const recentEntries = data.entries.slice(-5);
+                const growthHtml = recentEntries
+                    .map(entry => {
+                        const metrics = entry.metrics;
+                        const timestamp = new Date(entry.timestamp).toLocaleString();
+                        return `
+                            <div class="memory-growth-item">
+                                <span class="timestamp">${timestamp}</span>
+                                <div class="memory-values">
+                                    <span class="rss">RSS: ${metrics.memory_rss.toFixed(2)} MB</span>
+                                    <span class="vms">VMS: ${metrics.memory_vms.toFixed(2)} MB</span>
+                                    <span class="swap">Swap: ${metrics.swap_used.toFixed(2)} MB</span>
+                                </div>
+                            </div>`;
+                    }).join('');
+                
+                document.getElementById('memory-growth-text').innerHTML = growthHtml;
+                
+                // Update memory history chart
+                updateMemoryChart(data.entries);
+            }
+        })
+        .catch(error => console.error('Error fetching memory data:', error));
 }
 
 function updateCpuChart(entries) {

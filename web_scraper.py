@@ -446,8 +446,6 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
             logging.warning(f"No results found for show: {title}")
             return {"error": "No results found"}
 
-        #logging.info(f"Found results: {trakt_data}")
-
         # Fetch TMDB data
         tmdb_data = get_tmdb_data(media_id, 'tv', season)
 
@@ -469,11 +467,14 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
                         "multi": False
                     }
                     for episode in trakt_data
-                    if episode.get('first_aired') is not None
-                    if episode['number'] != 0
+                    if episode['number'] != 0  # Only filter out special episodes
                 ]
             }
         else:
+            # Get TMDB season data for fallback air dates
+            tmdb_seasons = tmdb_data.get('seasons', [])
+            tmdb_seasons_dict = {s['season_number']: s for s in tmdb_seasons}
+            
             return {
                 "episode_results": [
                     {
@@ -484,14 +485,13 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
                         "year": year,
                         "media_type": 'tv',
                         "poster_path": tmdb_data.get('poster_path'),
-                        "air_date": season.get('first_aired'),
-                        "season_overview": season.get('overview', ''),
-                        "episode_count": season.get('episode_count', 0),
+                        "air_date": season.get('first_aired') or tmdb_seasons_dict.get(season['number'], {}).get('air_date'),
+                        "season_overview": season.get('overview', '') or tmdb_seasons_dict.get(season['number'], {}).get('overview', ''),
+                        "episode_count": season.get('episode_count', 0) or tmdb_seasons_dict.get(season['number'], {}).get('episode_count', 0),
                         "multi": True
                     }
                     for season in trakt_data
-                    if season.get('first_aired') is not None
-                    if season['number'] != 0
+                    if season['number'] != 0  # Only filter out special episodes
                 ]
             }
     except api.exceptions.RequestException as e:

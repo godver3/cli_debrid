@@ -196,7 +196,7 @@ class ScrapingQueue:
                 logging.info(f"Filtered out {len(results) - len(filtered_results)} results due to not wanted magnets/URLs")
             results = filtered_results
 
-        is_anime = True if 'anime' in item['genres'] else False
+        is_anime = True if item.get('genres') and 'anime' in item['genres'] else False
         
         # For episodes, filter by exact season/episode match
         if not is_anime:

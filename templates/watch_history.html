@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Watch History{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Plex Watch History</h2>
+        <button class="btn btn-danger" onclick="confirmClearHistory()">
+            <i class="fas fa-trash-alt"></i> Clear Watch History
+        </button>
+    </div>
+    
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="type" class="form-label">Content Type</label>
+                    <select name="type" id="type" class="form-select" onchange="this.form.submit()">
+                        <option value="all" {% if content_type == 'all' %}selected{% endif %}>All</option>
+                        <option value="movie" {% if content_type == 'movie' %}selected{% endif %}>Movies</option>
+                        <option value="episode" {% if content_type == 'episode' %}selected{% endif %}>Episodes</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="sort" class="form-label">Sort By</label>
+                    <select name="sort" id="sort" class="form-select" onchange="this.form.submit()">
+                        <option value="watched_at" {% if sort_by == 'watched_at' %}selected{% endif %}>Watch Date</option>
+                        <option value="title" {% if sort_by == 'title' %}selected{% endif %}>Title</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="order" class="form-label">Order</label>
+                    <select name="order" id="order" class="form-select" onchange="this.form.submit()">
+                        <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Newest First</option>
+                        <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Oldest First</option>
+                    </select>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Results -->
+    {% if items %}
+        <div class="table-responsive">
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Type</th>
+                        <th>Watched At</th>
+                        <th>Source</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                        <tr>
+                            <td>{{ item.title }}</td>
+                            <td><span class="badge bg-{{ 'primary' if item.type == 'movie' else 'info' }}">{{ item.type }}</span></td>
+                            <td>{{ item.watched_at }}</td>
+                            <td><span class="badge bg-secondary">{{ item.source }}</span></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">
+            No watch history found. Please sync your Plex watch history first.
+        </div>
+    {% endif %}
+</div>
+
+<style>
+    .table td {
+        vertical-align: middle;
+    }
+    .badge {
+        font-size: 0.9em;
+    }
+</style>
+
+<script>
+function confirmClearHistory() {
+    if (confirm('Are you sure you want to clear all watch history? This action cannot be undone.')) {
+        fetch('/database/watch_history/clear', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Watch history cleared successfully');
+                window.location.reload();
+            } else {
+                alert('Error clearing watch history: ' + data.error);
+            }
+        })
+        .catch(error => {
+            alert('Error clearing watch history: ' + error);
+        });
+    }
+}
+</script>
+{% endblock %} 
