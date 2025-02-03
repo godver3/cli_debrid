@@ -32,7 +32,28 @@ def manage_users():
     if not is_user_system_enabled():
         return redirect(url_for('root.root'))
     users = User.query.all()
-    return render_template('manage_users.html', users=users)
+    key_info = User.get_registration_key()
+    return render_template('manage_users.html', users=users, registration_key=key_info)
+
+@user_management_bp.route('/update_registration_key', methods=['POST'])
+@admin_required
+def update_registration_key():
+    key = request.form.get('registration_key')
+    limit = request.form.get('registration_key_limit')
+    
+    if key:
+        try:
+            # Convert limit to integer if provided, otherwise set to None
+            limit = int(limit) if limit and limit.strip() else None
+            if User.set_registration_key(key, limit):
+                flash('Registration key updated successfully.', 'success')
+            else:
+                flash('Failed to update registration key.', 'error')
+        except ValueError:
+            flash('Key usage limit must be a valid number.', 'error')
+    else:
+        flash('Registration key cannot be empty.', 'error')
+    return redirect(url_for('user_management.manage_users'))
 
 @user_management_bp.route('/add_user', methods=['POST'])
 @admin_required
@@ -70,6 +91,29 @@ def delete_user(user_id):
 
     try:
         db.session.delete(user)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+
+@user_management_bp.route('/change_user_password/<int:user_id>', methods=['POST'])
+@admin_required
+def change_user_password(user_id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    new_password = request.form.get('new_password')
+    if not new_password:
+        return jsonify({'success': False, 'error': 'Password is required'}), 400
+
+    try:
+        user.password = generate_password_hash(new_password)
+        user.is_default = False
         db.session.commit()
         return jsonify({'success': True})
     except Exception as e:
