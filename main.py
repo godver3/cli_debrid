@@ -852,6 +852,40 @@ def main():
         logging.info("Resetting Torbox debrid provider to Real-Debrid")
         set_setting('Debrid Provider', 'provider', 'RealDebrid')
 
+    # Add migration for media_type setting
+    from config_manager import load_config, save_config
+    config = load_config()
+    if 'Content Sources' in config:
+        updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            # Skip the Collected source as it doesn't use media_type
+            if source_id.startswith('Collected_'):
+                continue
+            
+            # Check if media_type is missing
+            if 'media_type' not in source_config:
+                # Create new ordered dict with desired key order
+                new_config = {}
+                # Copy existing keys except display_name
+                for key in source_config:
+                    if key != 'display_name':
+                        new_config[key] = source_config[key]
+                # Add media_type before display_name
+                new_config['media_type'] = 'All'
+                # Add display_name last if it exists
+                if 'display_name' in source_config:
+                    new_config['display_name'] = source_config['display_name']
+                
+                # Replace the old config with the new ordered one
+                config['Content Sources'][source_id] = new_config
+                logging.info(f"Adding default media_type 'All' to content source {source_id}")
+                updated = True
+        
+        # Save the updated config if changes were made
+        if updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include media_type setting")
+
     # Get battery port from environment variable
     battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
     

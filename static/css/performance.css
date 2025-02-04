@@ -442,15 +442,21 @@ h6 {
 
 /* File Details Styles */
 .file-details {
-    margin-top: 1rem;
-    border-top: 1px solid #444;
+    margin-top: 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
     padding-top: 1rem;
 }
 
 .file-details h6 {
-    color: #aaa;
-    font-size: 0.85rem;
-    margin-bottom: 0.75rem;
+    color: #f4f4f4;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.file-details h6 i {
+    color: #4CAF50;
 }
 
 .file-list {
@@ -462,42 +468,69 @@ h6 {
 .file-item {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     padding: 0.5rem;
     margin-bottom: 0.5rem;
-    background-color: #2c2c2c;
+    background: rgba(26, 26, 26, 0.5);
     border-radius: 4px;
-    font-size: 0.8rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.875rem;
+}
+
+.file-info {
+    flex: 1;
+    min-width: 0;
+    margin-right: 1rem;
 }
 
 .file-path {
-    color: #e0e0e0;
-    margin-right: 1rem;
+    color: #4CAF50;
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-path-full {
+    color: #888;
+    font-size: 0.8rem;
     word-break: break-all;
 }
 
 .file-size {
-    color: #aaa;
+    color: #f4f4f4;
     white-space: nowrap;
+    font-family: monospace;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
 }
 
-/* Add custom scrollbar for the file list */
+.no-files {
+    color: #888;
+    text-align: center;
+    padding: 1rem;
+    font-style: italic;
+}
+
+/* Scrollbar styles for file list */
 .file-list::-webkit-scrollbar {
-    width: 8px;
+    width: 6px;
 }
 
 .file-list::-webkit-scrollbar-track {
-    background: #1a1a1a;
-    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
 }
 
 .file-list::-webkit-scrollbar-thumb {
-    background: #444;
-    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
 }
 
 .file-list::-webkit-scrollbar-thumb:hover {
-    background: #555;
+    background: rgba(255, 255, 255, 0.3);
 }
 
 /* Responsive adjustments */
@@ -513,4 +546,120 @@ h6 {
     .card {
         margin-bottom: 1rem;
     }
+}
+
+.memory-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.metric-item {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.metric-item h6 {
+    margin: 0;
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.metric-item span {
+    display: block;
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-top: 0.5rem;
+    color: #979797;
+}
+
+.memory-chart-small {
+    height: 200px;
+    margin-top: 1rem;
+    display: none;
+}
+
+#memory-distribution-chart {
+    width: 100%;
+    height: 100%;
+}
+
+.memory-type-metrics {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.memory-type {
+    flex: 1;
+    background: rgba(26, 26, 26, 0.5);
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.memory-type h6 {
+    color: #f4f4f4;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.memory-type h6 i {
+    color: #4CAF50;
+}
+
+.memory-stats {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.memory-stats span {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    color: #f4f4f4;
+    font-family: monospace;
+}
+
+.file-summary {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem;
+    margin-bottom: 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    font-size: 0.875rem;
+    color: #f4f4f4;
+}
+
+.file-summary span {
+    font-family: monospace;
+}
+
+.file-summary .total-size {
+    color: #4CAF50;
+}
+
+.file-summary .file-count {
+    color: #2196f3;
+}
+
+.file-stats {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.25rem;
+}
+
+.file-percent {
+    font-size: 0.75rem;
+    color: #888;
+    font-family: monospace;
 } 

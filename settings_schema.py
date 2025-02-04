@@ -440,6 +440,7 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "urls": {"type": "string", "default": ""},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "MDBList"}
             },
             "Collected": {
@@ -450,17 +451,20 @@ SETTINGS_SCHEMA = {
             "Trakt Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Trakt Watchlist"}
             },
             "Trakt Lists": {
                 "enabled": {"type": "boolean", "default": False},
                 "trakt_lists": {"type": "string", "default": ""},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Trakt Lists"}
             },
             "Trakt Collection": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Trakt Collection"}
             },
             "Overseerr": {
@@ -468,11 +472,13 @@ SETTINGS_SCHEMA = {
                 "url": {"type": "string", "default": "", "validate": "url"},
                 "api_key": {"type": "string", "default": "", "sensitive": True},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Overseerr"}
             },
             "My Plex Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Plex Watchlist"}
             },
             "Other Plex Watchlist": {
@@ -480,18 +486,21 @@ SETTINGS_SCHEMA = {
                 "username": {"type": "string", "default": ""},
                 "token": {"type": "string", "default": "", "sensitive": True},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "Other Plex Watchlist"}
             },
             "My Plex RSS Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Plex RSS Watchlist"}
             },
             "My Friends Plex RSS Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"},
                 "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Friends Plex RSS Watchlist"}
             }
         }

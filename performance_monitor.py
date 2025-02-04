@@ -164,6 +164,11 @@ class PerformanceMonitor:
             memory_info = process.memory_info()
             virtual_memory = psutil.virtual_memory()
             
+            # Calculate actual memory usage percentage without cache
+            total_memory = virtual_memory.total
+            used_memory = virtual_memory.total - virtual_memory.available
+            memory_percent = (used_memory / total_memory) * 100
+            
             memory_delta_str = ""
             if self._last_memory_info is not None:
                 try:
@@ -174,15 +179,16 @@ class PerformanceMonitor:
             
             self._last_memory_info = memory_info.rss
             
-            # Create entry
+            # Create entry with UTC timestamp
+            current_time = datetime.utcnow()
             entry = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": current_time.isoformat(),
                 "type": "basic_metrics",
                 "metrics": {
                     "cpu_percent": cpu_percent,
                     "memory_rss": memory_info.rss / 1024 / 1024,  # Convert to MB
                     "memory_vms": memory_info.vms / 1024 / 1024,  # Convert to MB
-                    "system_memory_used": virtual_memory.percent,
+                    "system_memory_used": memory_percent,
                     "swap_used": psutil.swap_memory().used / 1024 / 1024,  # Convert to MB
                     "cpu_user_time": cpu_times.user,
                     "cpu_system_time": cpu_times.system
@@ -213,7 +219,7 @@ class PerformanceMonitor:
                 memory_info.rss / 1024 / 1024,
                 memory_delta_str,
                 memory_info.vms / 1024 / 1024,
-                virtual_memory.percent,
+                memory_percent,
                 psutil.swap_memory().used / 1024 / 1024
             ))
             

@@ -21,7 +21,7 @@ def get_performance_log():
     limit = request.args.get('limit', type=int, default=1000)
     entry_type = request.args.get('type', type=str)  # Optional type filter
     metric_type = request.args.get('metric', type=str)  # Optional metric filter
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    cutoff_time = datetime.utcnow() - timedelta(hours=hours)
     
     try:
         entries = []
@@ -42,15 +42,19 @@ def get_performance_log():
                         if metric_type and ('metrics' not in entry or metric_type not in entry['metrics']):
                             continue
                             
-                        entry_time = datetime.fromisoformat(entry['timestamp'])
+                        entry_time = datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00'))
                         if entry_time >= cutoff_time:
                             entries.append(entry)
-                            if len(entries) >= limit:
-                                break
                     except (json.JSONDecodeError, KeyError, ValueError) as e:
                         continue
         
-        # Sort entries by timestamp
+        # Sort entries by timestamp in descending order (newest first)
+        entries.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        
+        # Take only the most recent entries up to the limit
+        entries = entries[:limit]
+        
+        # Re-sort in ascending order for display
         entries.sort(key=lambda x: x.get('timestamp', ''))
         
         # Get system info for metadata

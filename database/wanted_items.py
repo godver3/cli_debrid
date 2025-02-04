@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from metadata.metadata import get_tmdb_id_and_media_type
 import random
 import os
+from config_manager import load_config
 
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
     from metadata.metadata import get_show_airtime_by_imdb_id
     from settings import get_setting
-
 
     conn = get_db_connection()
     try:
@@ -25,9 +25,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'existing_episode_tmdb': 0,
             'missing_ids': 0,
             'blacklisted': 0,
-            'already_watched': 0
+            'already_watched': 0,
+            'media_type_mismatch': 0
         }
         airtime_cache = {}
+
+        # Load config to get content source settings
+        config = load_config()
+        content_sources = config.get('Content Sources', {})
 
         # Check if we should skip watched content
         do_not_add_watched = get_setting('Debug','do_not_add_plex_watch_history_items_to_queue', False)
@@ -56,7 +61,24 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         episode_imdb_keys = set()
         episode_tmdb_keys = set()
 
+        filtered_media_items_batch = []
         for item in media_items_batch:
+            # Get content source settings
+            content_source = item.get('content_source')
+            if content_source and content_source in content_sources:
+                source_config = content_sources[content_source]
+                source_media_type = source_config.get('media_type', 'All')
+                
+                # Skip if content source is not Collected and media type doesn't match
+                if not content_source.startswith('Collected_'):
+                    item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+                    if source_media_type != 'All':
+                        if (source_media_type == 'Movies' and item_type != 'movie') or \
+                           (source_media_type == 'Shows' and item_type != 'episode'):
+                            skip_stats['media_type_mismatch'] += 1
+                            items_skipped += 1
+                            continue
+
             imdb_id = item.get('imdb_id')
             tmdb_id = item.get('tmdb_id')
 
@@ -84,6 +106,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 if tmdb_id:
                     episode_tmdb_ids.add(tmdb_id)
                     episode_tmdb_keys.add((tmdb_id, season_number, episode_number))
+
+            filtered_media_items_batch.append(item)
+
+        media_items_batch = filtered_media_items_batch
 
         existing_movies = set()
         batch_size = 450
@@ -313,6 +339,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             skip_report.append(f"- {skip_stats['blacklisted']} items skipped due to blacklist")
         if skip_stats['already_watched'] > 0:
             skip_report.append(f"- {skip_stats['already_watched']} items skipped due to watch history")
+        if skip_stats['media_type_mismatch'] > 0:
+            skip_report.append(f"- {skip_stats['media_type_mismatch']} items skipped due to media type mismatch")
         
         if skip_report:
             logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))
