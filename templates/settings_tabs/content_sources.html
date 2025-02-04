@@ -209,6 +209,17 @@
                                {% if value %}checked{% endif %}>
                         {{ key|replace('_', ' ')|title }}
                     </label>
+                {% elif key == 'media_type' %}
+                    <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Media Type:</label>
+                    <select id="content-sources-{{ source_id }}-{{ key }}" 
+                            name="Content Sources.{{ source_id }}.{{ key }}" 
+                            class="settings-input"
+                            data-section="Content Sources" 
+                            data-key="{{ source_id }}.{{ key }}">
+                        {% for option in ['All', 'Movies', 'Shows'] %}
+                            <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
                 {% else %}
                     <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value is iterable and (value is not string) %}
