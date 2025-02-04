@@ -160,7 +160,8 @@ input:checked + .toggle-slider:before {
 .stats-box.airing-soon li,
 .stats-box.upcoming-releases li {
     display: flex;
-    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
     padding: 8px 0;
     border-bottom: 1px solid #3a3a3a;
 }
@@ -169,6 +170,12 @@ input:checked + .toggle-slider:before {
 .stats-box.airing-soon li:last-child,
 .stats-box.upcoming-releases li:last-child {
     border-bottom: none;
+}
+
+.stats-box.recently-aired .show-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
 }
 
 .stats-box.recently-aired .show-title,
@@ -185,6 +192,26 @@ input:checked + .toggle-slider:before {
     margin-left: 20px;
     font-style: italic;
     font-size: 0.9em;
+}
+
+.rescrape-btn {
+    background: none;
+    border: none;
+    color: #FFA500;
+    cursor: pointer;
+    padding: 4px 8px;
+    margin-left: 10px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.rescrape-btn:hover {
+    background-color: rgba(255, 165, 0, 0.2);
+}
+
+.rescrape-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* Card styles */

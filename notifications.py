@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import datetime
 import time
 from threading import Timer, Lock
+import sys
 
 # Global notification buffer
 notification_buffer = []
@@ -97,8 +98,20 @@ def format_notification_content(notifications, notification_type, notification_c
         'movie': "🎬",
         'show': "📺",
         'upgrade': "⬆️",
-        'new': "🆕"
+        'new': "🆕",
+        'program_stop': "🛑",
+        'program_crash': "💥",
+        'program_start': "🟢",
+        'queue_pause': "⚠️",
+        'queue_resume': "✅",
+        'queue_start': "▶️",
+        'queue_stop': "⏹️"
     }
+
+    # For system notifications (stop/crash/start/pause/resume), we'll use a different format
+    if notification_category in ['program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop']:
+        emoji = EMOJIS.get(notification_category, "ℹ️")
+        return f"{emoji} **cli_debrid {notification_category.replace('_', ' ').title()}**\n{notifications}"
 
     def format_state_suffix(state, is_upgrade=False):
         """Return the appropriate suffix based on state"""
@@ -410,3 +423,115 @@ def verify_notification_config(notification_type, config):
             if value.get('default') is None:  # Consider it required if there's no default value
                 return False, f"Missing required field: {key}"
     return True, None
+
+def get_enabled_notifications():
+    """Get enabled notifications from either the settings route or directly from config."""
+    try:
+        # Try to use the Flask route first
+        from routes.settings_routes import get_enabled_notifications as get_notifications
+        enabled_notifications_response = get_notifications()
+        logging.debug("Successfully got enabled notifications from Flask route")
+        return enabled_notifications_response.get_json()['enabled_notifications']
+    except RuntimeError as e:  # Catches "Working outside of application context"
+        if "Working outside of application context" in str(e):
+            # This is expected during startup, just log at debug level
+            logging.debug("Outside Flask context, reading notifications directly from config")
+        else:
+            # Log other RuntimeErrors as errors
+            logging.error(f"Unexpected RuntimeError in get_enabled_notifications: {str(e)}")
+            
+        # If we're outside Flask context (e.g. during startup), read directly from config
+        from settings import load_config
+        config = load_config()
+        notifications = config.get('Notifications', {})
+        
+        enabled_notifications = {}
+        for notification_id, notification_config in notifications.items():
+            if not notification_config or not notification_config.get('enabled', False):
+                continue
+
+            # Only include notifications that have the required fields
+            if notification_config['type'] == 'Discord':
+                if notification_config.get('webhook_url'):
+                    enabled_notifications[notification_id] = notification_config
+            elif notification_config['type'] == 'Email':
+                if all([
+                    notification_config.get('smtp_server'),
+                    notification_config.get('smtp_port'),
+                    notification_config.get('smtp_username'),
+                    notification_config.get('smtp_password'),
+                    notification_config.get('from_address'),
+                    notification_config.get('to_address')
+                ]):
+                    enabled_notifications[notification_id] = notification_config
+            elif notification_config['type'] == 'Telegram':
+                if all([
+                    notification_config.get('bot_token'),
+                    notification_config.get('chat_id')
+                ]):
+                    enabled_notifications[notification_id] = notification_config
+            elif notification_config['type'] == 'NTFY':
+                if all([
+                    notification_config.get('host'),
+                    notification_config.get('topic')
+                ]):
+                    enabled_notifications[notification_id] = notification_config
+
+        logging.debug(f"Found {len(enabled_notifications)} enabled notifications from config")
+        return enabled_notifications
+
+def send_program_stop_notification(message="Program stopped"):
+    """Send notification when program stops."""
+    enabled_notifications = get_enabled_notifications()
+    _send_notifications(message, enabled_notifications, 'program_stop')
+
+def send_program_crash_notification(error_message="Program crashed"):
+    """Send notification when program crashes."""
+    enabled_notifications = get_enabled_notifications()
+    _send_notifications(error_message, enabled_notifications, 'program_crash')
+
+def send_program_start_notification(message="Program started"):
+    """Send notification when program starts."""
+    enabled_notifications = get_enabled_notifications()
+    _send_notifications(message, enabled_notifications, 'program_start')
+
+def send_queue_pause_notification(message="Queue processing paused"):
+    """Send notification when queue is paused."""
+    enabled_notifications = get_enabled_notifications()
+    _send_notifications(message, enabled_notifications, 'queue_pause')
+
+def send_queue_resume_notification(message="Queue processing resumed"):
+    """Send notification when queue is resumed."""
+    enabled_notifications = get_enabled_notifications()
+    _send_notifications(message, enabled_notifications, 'queue_resume')
+
+def send_queue_start_notification(message="Queue processing started"):
+    """Send notification when queue is started."""
+    enabled_notifications = get_enabled_notifications()
+    _send_notifications(message, enabled_notifications, 'queue_start')
+
+def send_queue_stop_notification(message="Queue processing stopped"):
+    """Send notification when queue is stopped."""
+    enabled_notifications = get_enabled_notifications()
+    _send_notifications(message, enabled_notifications, 'queue_stop')
+
+def setup_crash_handler():
+    """Set up system-wide exception handler for crash notifications."""
+    def crash_handler(exctype, value, traceback):
+        error_message = f"Program crashed: {exctype.__name__}: {str(value)}"
+        send_program_crash_notification(error_message)
+        sys.__excepthook__(exctype, value, traceback)  # Call the default handler
+    
+    sys.excepthook = crash_handler
+
+def register_shutdown_handler():
+    """Register handler for graceful shutdown notifications."""
+    def shutdown_handler():
+        send_program_stop_notification("Program shutting down gracefully")
+    
+    import atexit
+    atexit.register(shutdown_handler)
+
+def register_startup_handler():
+    """Register handler for program startup notifications."""
+    send_program_start_notification("Program starting up")

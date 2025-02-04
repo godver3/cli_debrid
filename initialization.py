@@ -234,6 +234,17 @@ def initialize(skip_initial_plex_update=False):
     refresh_release_dates()
     complete_phase('release')
     
+    from database.maintenance import update_show_ids, update_show_titles
+
+    # Update Show IDs and Titles (1 minute)
+    start_phase('show_ids', 'Update Show IDs', 'Updating show IDs')
+    update_show_ids()
+    complete_phase('show_ids')
+
+    start_phase('show_titles', 'Update Show Titles', 'Updating show titles')
+    update_show_titles()
+    complete_phase('show_titles')
+
     # Complete
     final_status = "completed successfully" if plex_success else "completed with Plex update issues"
     update_initialization_step("Complete", final_status)

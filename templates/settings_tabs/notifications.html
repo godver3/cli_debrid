@@ -21,7 +21,7 @@
                             <div class="settings-form-group">
                                 <label class="settings-title">Notify On:</label>
                                 <div class="notification-categories">
-                                    {% set allowed_categories = ['checking', 'sleeping', 'collected', 'upgrading'] %}
+                                    {% set allowed_categories = ['checking', 'sleeping', 'collected', 'upgrading', 'program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop'] %}
                                     {% for category, enabled in value.items() %}
                                         {% if category.lower() in allowed_categories %}
                                             <div class="notification-category">

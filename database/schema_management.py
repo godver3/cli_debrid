@@ -112,6 +112,9 @@ def migrate_schema():
         if 'title_aliases' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN title_aliases TEXT')
             logging.info("Successfully added title_aliases column to media_items table.")
+        if 'disable_not_wanted_check' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN disable_not_wanted_check BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added disable_not_wanted_check column to media_items table.")
         
         # logging.info("Successfully added new columns to media_items table.")
 
@@ -217,7 +220,8 @@ def create_tables():
                 content_source TEXT,
                 resolution TEXT,
                 imdb_aliases TEXT,
-                title_aliases TEXT
+                title_aliases TEXT,
+                disable_not_wanted_check BOOLEAN DEFAULT FALSE
             )
         ''')
 

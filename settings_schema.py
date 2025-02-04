@@ -396,6 +396,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Do not add Plex watch history items to queue",
             "default": False
+        },
+        "enable_crash_test": {
+            "type": "boolean",
+            "description": "Enable crash test",
+            "default": False
         }
     },
     "Scrapers": {
@@ -527,7 +532,12 @@ SETTINGS_SCHEMA = {
                         "unreleased": False,
                         "blacklisted": False,
                         "pending_uncached": False,
-                        "upgrading": False
+                        "upgrading": False,
+                        "program_stop": True,
+                        "program_crash": True,
+                        "program_start": True,
+                        "program_pause": True,
+                        "program_resume": True
                     },
                     "description": "Configure which queue state changes trigger notifications"
                 }
@@ -547,7 +557,14 @@ SETTINGS_SCHEMA = {
                         "unreleased": False,
                         "blacklisted": False,
                         "pending_uncached": False,
-                        "upgrading": False
+                        "upgrading": False,
+                        "program_stop": True,
+                        "program_crash": True,
+                        "program_start": True,
+                        "queue_pause": True,
+                        "queue_resume": True,
+                        "queue_start": True,
+                        "queue_stop": True
                     },
                     "description": "Configure which queue state changes trigger notifications"
                 }
@@ -570,7 +587,14 @@ SETTINGS_SCHEMA = {
                         "unreleased": False,
                         "blacklisted": False,
                         "pending_uncached": False,
-                        "upgrading": False
+                        "upgrading": False,
+                        "program_stop": True,
+                        "program_crash": True,
+                        "program_start": True,
+                        "queue_pause": True,
+                        "queue_resume": True,
+                        "queue_start": True,
+                        "queue_stop": True
                     },
                     "description": "Configure which queue state changes trigger notifications"
                 }
@@ -595,7 +619,14 @@ SETTINGS_SCHEMA = {
                         "unreleased": False,
                         "blacklisted": False,
                         "pending_uncached": False,
-                        "upgrading": False
+                        "upgrading": False,
+                        "program_stop": True,
+                        "program_crash": True,
+                        "program_start": True,
+                        "queue_pause": True,
+                        "queue_resume": True,
+                        "queue_start": True,
+                        "queue_stop": True
                     },
                     "description": "Configure which queue state changes trigger notifications"
                 }

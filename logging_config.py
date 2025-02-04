@@ -82,7 +82,15 @@ def log_system_stats():
 # Create a filter to exclude logs from specific files
 class ExcludeFilter(logging.Filter):
     def filter(self, record):
-        return not (record.filename == 'rules.py' or record.filename == 'rebulk.py' or record.filename == 'processors.py' or 'profiling' in record.msg.lower())
+        # Exclude logs from specific files and profiling messages
+        if record.filename == 'rules.py' or record.filename == 'rebulk.py' or record.filename == 'processors.py' or 'profiling' in record.msg.lower():
+            return False
+            
+        # Exclude Flask application context error during startup
+        if record.filename == 'settings_routes.py' and record.funcName == 'get_enabled_notifications' and 'Working outside of application context' in str(record.msg):
+            return False
+            
+        return True
 
 def setup_debug_logging(log_dir):
     # Debug file handler with immediate flush
@@ -112,6 +120,10 @@ def setup_info_logging(log_dir):
     # Add console handler for info logs
     console_handler = DynamicConsoleHandler()
     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    
+    # Add filters to exclude unwanted messages
+    console_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
+    console_handler.addFilter(ExcludeFilter())
     
     # Add handler to root logger
     logging.getLogger().addHandler(console_handler)

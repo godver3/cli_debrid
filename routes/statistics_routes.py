@@ -170,6 +170,7 @@ def get_recently_aired_and_airing_soon():
             m.release_date,
             m.airtime,
             m.imdb_id,
+            m.tmdb_id,
             CASE WHEN c.title IS NOT NULL THEN 1 ELSE 0 END as is_collected,
             ROW_NUMBER() OVER (PARTITION BY m.title, m.season_number, m.episode_number ORDER BY m.release_date DESC, m.airtime DESC) as rn
         FROM media_items m
@@ -188,6 +189,7 @@ def get_recently_aired_and_airing_soon():
         release_date,
         airtime,
         imdb_id,
+        tmdb_id,
         is_collected
     FROM RankedEpisodes
     WHERE rn = 1
@@ -206,7 +208,7 @@ def get_recently_aired_and_airing_soon():
     shows = {}
     
     for result in results:
-        title, season, episode, release_date, airtime, imdb_id, is_collected = result
+        title, season, episode, release_date, airtime, imdb_id, tmdb_id, is_collected = result
         try:
             release_date = datetime.fromisoformat(release_date)
             
@@ -238,7 +240,9 @@ def get_recently_aired_and_airing_soon():
                     'episodes': set(),
                     'air_datetime': air_datetime,
                     'release_date': release_date.date(),
-                    'is_collected': bool(is_collected)  # Convert from SQLite int to Python bool
+                    'is_collected': bool(is_collected),
+                    'imdb_id': imdb_id,
+                    'tmdb_id': tmdb_id
                 }
             
             shows[show_key]['episodes'].add(episode)
@@ -277,7 +281,11 @@ def get_recently_aired_and_airing_soon():
             'air_datetime': show['air_datetime'],
             'sort_key': show['air_datetime'].isoformat(),
             'formatted_datetime': format_datetime_preference(show['air_datetime'], session.get('use_24hour_format', False)),
-            'is_collected': show['is_collected']
+            'is_collected': show['is_collected'],
+            'imdb_id': show['imdb_id'],
+            'tmdb_id': show['tmdb_id'],
+            'season_number': show['season'],
+            'episode_number': episodes[0]  # Use first episode number for single episodes or ranges
         }
         
         if show['air_datetime'] <= now:
@@ -948,3 +956,83 @@ def index_api():
         'recently_upgraded': recently_upgraded,
         'use_24hour_format': use_24hour_format
     })
+
+@statistics_bp.route('/move_to_wanted', methods=['POST'])
+@user_required
+def move_to_wanted():
+    """Move an item back to Wanted state and disable not wanted checks"""
+    try:
+        data = request.json
+        imdb_id = data.get('imdb_id')
+        tmdb_id = data.get('tmdb_id')
+        season_number = data.get('season_number')
+        episode_number = data.get('episode_number')
+        
+        if not (imdb_id or tmdb_id):
+            return jsonify({'success': False, 'error': 'IMDb ID or TMDB ID is required'}), 400
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Build query based on item type
+        if season_number is not None and episode_number is not None:
+            # Episode
+            query = """
+                UPDATE media_items 
+                SET state = 'Wanted',
+                    filled_by_file = NULL,
+                    filled_by_title = NULL,
+                    filled_by_magnet = NULL,
+                    filled_by_torrent_id = NULL,
+                    collected_at = NULL,
+                    last_updated = ?,
+                    disable_not_wanted_check = TRUE,
+                    location_on_disk = NULL,
+                    original_path_for_symlink = NULL,
+                    original_scraped_torrent_title = NULL,
+                    upgrading_from = NULL,
+                    version = TRIM(version, '*'),
+                    upgrading = NULL
+                WHERE (imdb_id = ? OR tmdb_id = ?)
+                AND season_number = ? 
+                AND episode_number = ?
+                AND state IN ('Collected', 'Upgrading')
+            """
+            params = (datetime.now(), imdb_id, tmdb_id, season_number, episode_number)
+        else:
+            # Movie
+            query = """
+                UPDATE media_items 
+                SET state = 'Wanted',
+                    filled_by_file = NULL,
+                    filled_by_title = NULL,
+                    filled_by_magnet = NULL,
+                    filled_by_torrent_id = NULL,
+                    collected_at = NULL,
+                    last_updated = ?,
+                    disable_not_wanted_check = TRUE,
+                    location_on_disk = NULL,
+                    original_path_for_symlink = NULL,
+                    original_scraped_torrent_title = NULL,
+                    upgrading_from = NULL,
+                    version = TRIM(version, '*'),
+                    upgrading = NULL
+                WHERE (imdb_id = ? OR tmdb_id = ?)
+                AND type = 'movie'
+                AND state IN ('Collected', 'Upgrading')
+            """
+            params = (datetime.now(), imdb_id, tmdb_id)
+            
+        cursor.execute(query, params)
+        conn.commit()
+        
+        if cursor.rowcount > 0:
+            return jsonify({'success': True}), 200
+        else:
+            return jsonify({'success': False, 'error': 'No matching items found or items not in Collected/Upgrading state'}), 404
+            
+    except Exception as e:
+        logging.error(f"Error moving item to Wanted state: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()

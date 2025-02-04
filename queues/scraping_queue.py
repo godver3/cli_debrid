@@ -24,6 +24,23 @@ class ScrapingQueue:
     def remove_item(self, item: Dict[str, Any]):
         self.items = [i for i in self.items if i['id'] != item['id']]
 
+    def reset_not_wanted_check(self, item_id):
+        """Reset the disable_not_wanted_check flag after scraping is complete"""
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE media_items 
+                SET disable_not_wanted_check = FALSE
+                WHERE id = ?
+            """, (item_id,))
+            conn.commit()
+        except Exception as e:
+            logging.error(f"Error resetting disable_not_wanted_check flag: {str(e)}")
+        finally:
+            conn.close()
+
     def process(self, queue_manager):
         processed_count = 0
         had_error = False
@@ -90,12 +107,13 @@ class ScrapingQueue:
                 # Filter and process results
                 filtered_results = []
                 for result in results:
-                    if is_magnet_not_wanted(result['magnet']):
-                        logging.info(f"Result '{result['title']}' filtered out by not_wanted_magnets check")
-                        continue
-                    if is_url_not_wanted(result['magnet']):
-                        logging.info(f"Result '{result['title']}' filtered out by not_wanted_urls check")
-                        continue
+                    if not item.get('disable_not_wanted_check'):
+                        if is_magnet_not_wanted(result['magnet']):
+                            logging.info(f"Result '{result['title']}' filtered out by not_wanted_magnets check")
+                            continue
+                        if is_url_not_wanted(result['magnet']):
+                            logging.info(f"Result '{result['title']}' filtered out by not_wanted_urls check")
+                            continue
                     filtered_results.append(result)
                 
                 logging.info(f"Found {len(filtered_results)} valid results after filtering for {item_identifier} (filtered out {len(results) - len(filtered_results)} results)")
@@ -107,12 +125,13 @@ class ScrapingQueue:
                     
                     filtered_individual_results = []
                     for result in individual_results:
-                        if is_magnet_not_wanted(result['magnet']):
-                            logging.info(f"Individual result '{result['title']}' filtered out by not_wanted_magnets check")
-                            continue
-                        if is_url_not_wanted(result['magnet']):
-                            logging.info(f"Individual result '{result['title']}' filtered out by not_wanted_urls check")
-                            continue
+                        if not item.get('disable_not_wanted_check'):
+                            if is_magnet_not_wanted(result['magnet']):
+                                logging.info(f"Individual result '{result['title']}' filtered out by not_wanted_magnets check")
+                                continue
+                            if is_url_not_wanted(result['magnet']):
+                                logging.info(f"Individual result '{result['title']}' filtered out by not_wanted_urls check")
+                                continue
                         filtered_individual_results.append(result)
                     
                     logging.info(f"After filtering, individual scraping has {len(filtered_individual_results)} valid results (filtered out {len(individual_results) - len(filtered_individual_results)} results)")
@@ -120,6 +139,7 @@ class ScrapingQueue:
                     if not filtered_individual_results:
                         logging.warning(f"No valid results after individual scraping for {item_identifier}. Moving to Sleeping.")
                         queue_manager.move_to_sleeping(item, "Scraping")
+                        self.reset_not_wanted_check(item['id'])
                         processed_count += 1
                         logging.info(f"Processed count after moving to sleeping: {processed_count}")
                         return True
@@ -139,6 +159,7 @@ class ScrapingQueue:
                     logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
                     try:
                         queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
+                        self.reset_not_wanted_check(item['id'])
                         logging.info(f"Successfully moved {item_identifier} to Adding queue")
                     except Exception as e:
                         logging.error(f"Failed to move {item_identifier} to Adding queue: {str(e)}", exc_info=True)
@@ -146,6 +167,7 @@ class ScrapingQueue:
                 else:
                     logging.info(f"No valid results for {item_identifier}, moving to Sleeping")
                     queue_manager.move_to_sleeping(item, "Scraping")
+                    self.reset_not_wanted_check(item['id'])
                 
                 processed_count += 1
                 logging.info(f"Final processed count: {processed_count}")
@@ -189,7 +211,7 @@ class ScrapingQueue:
         for result in results:
             logging.debug(f"Scrape result: {result}")
 
-        if not skip_filter:
+        if not skip_filter and not item.get('disable_not_wanted_check'):
             # Filter out unwanted magnets and URLs
             filtered_results = [r for r in results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
             if len(filtered_results) < len(results):
@@ -237,7 +259,7 @@ class ScrapingQueue:
         individual_filtered_out = individual_filtered_out if individual_filtered_out is not None else []
 
         # Filter out unwanted magnets and URLs for individual results
-        if not skip_filter:
+        if not skip_filter and not item.get('disable_not_wanted_check'):
             individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
 
         # For episodes, ensure we have the correct season and episode
@@ -279,17 +301,21 @@ class ScrapingQueue:
             if item['type'] == 'episode':
                 logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
                 queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
+                self.reset_not_wanted_check(item['id'])
             elif item['type'] == 'movie':
                 logging.info(f"No results found for old movie {item_identifier}. Blacklisting item.")
                 queue_manager.move_to_blacklisted(item, "Scraping")
+                self.reset_not_wanted_check(item['id'])
             else:
                 logging.warning(f"Unknown item type {item['type']} for {item_identifier}. Blacklisting item.")
                 queue_manager.move_to_blacklisted(item, "Scraping")
+                self.reset_not_wanted_check(item['id'])
         else:
             logging.warning(f"No results found for {item_identifier}. Moving to Sleeping queue.")
             wake_count = wake_count_manager.get_wake_count(item['id'])
             logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
             queue_manager.move_to_sleeping(item, "Scraping")
+            self.reset_not_wanted_check(item['id'])
             logging.debug(f"Updated wake count in Sleeping queue: {wake_count}")
             
     def is_item_old(self, item: Dict[str, Any]) -> bool:
