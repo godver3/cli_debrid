@@ -19,6 +19,10 @@ import psutil
 import sys
 import subprocess
 import xml.etree.ElementTree as ET
+from notifications import (
+    send_queue_start_notification,
+    send_queue_stop_notification
+)
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -391,21 +395,24 @@ def start_program():
     # Start the program runner in a separate thread to avoid blocking the Flask server
     threading.Thread(target=program_runner.start).start()
     current_app.config['PROGRAM_RUNNING'] = True
+    
+    # Send program start notification
+    send_queue_start_notification("Queue processing started via web interface")
+    
     return jsonify({"status": "success", "message": "Program started"})
 
 def stop_program():
     global program_runner, server_thread
     try:
         if program_runner is not None and program_runner.is_running():
+            # Send stop notification before stopping
+            send_queue_stop_notification("Queue processing stopped via web interface")
+            
             program_runner.stop()
             # Invalidate content sources cache before nulling the instance
             program_runner.invalidate_content_sources_cache()
             program_runner = None
             
-        # Cleanup port
-        # port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-        # cleanup_port(port)
-        
         current_app.config['PROGRAM_RUNNING'] = False
         return {"status": "success", "message": "Program stopped"}
     except Exception as e:

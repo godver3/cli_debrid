@@ -108,10 +108,27 @@
             if (recentlyAiredList && data.recently_aired) {
                 recentlyAiredList.innerHTML = data.recently_aired.map(item => `
                     <li>
-                        <span class="show-title${item.is_collected ? '' : ' uncollected'}">${item.title}</span>
-                        <span class="air-time">${item.formatted_datetime}</span>
+                        <div class="show-info">
+                            <span class="show-title${item.is_collected ? '' : ' uncollected'}">${item.title}</span>
+                            <span class="air-time">${item.formatted_datetime}</span>
+                        </div>
+                        ${item.is_collected ? `
+                            <button class="rescrape-btn" 
+                                data-imdb-id="${item.imdb_id}"
+                                data-tmdb-id="${item.tmdb_id}"
+                                data-season="${item.season_number}"
+                                data-episode="${item.episode_number}"
+                                title="Move back to Wanted state">
+                                <i class="fas fa-redo"></i>
+                            </button>
+                        ` : ''}
                     </li>
                 `).join('');
+
+                // Re-attach event listeners to new buttons
+                recentlyAiredList.querySelectorAll('.rescrape-btn').forEach(button => {
+                    button.addEventListener('click', handleRescrapeClick);
+                });
             }
 
             // Update airing soon items
@@ -212,6 +229,44 @@
             }
         }
 
+        // Separate the click handler function for reusability
+        function handleRescrapeClick() {
+            const btn = this;
+            const data = {
+                imdb_id: btn.dataset.imdbId,
+                tmdb_id: btn.dataset.tmdbId,
+                season_number: parseInt(btn.dataset.season),
+                episode_number: parseInt(btn.dataset.episode)
+            };
+            
+            // Disable button while processing
+            btn.disabled = true;
+            
+            fetch('/statistics/move_to_wanted', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update UI to show item is no longer collected
+                    const showTitle = btn.closest('li').querySelector('.show-title');
+                    showTitle.classList.add('uncollected');
+                    btn.remove(); // Remove the button
+                } else {
+                    throw new Error(data.error || 'Failed to move item to Wanted state');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error moving item to Wanted state: ' + error.message);
+                btn.disabled = false;
+            });
+        }
+
         document.getElementById('compact-toggle').addEventListener('change', function() {
             const isChecked = this.checked;
             
@@ -295,8 +350,20 @@
                 <ul>
                     {% for item in recently_aired %}
                     <li>
-                        <span class="show-title{% if not item.is_collected %} uncollected{% endif %}">{{ item.title }}</span>
-                        <span class="air-time">{{ item.formatted_datetime }}</span>
+                        <div class="show-info">
+                            <span class="show-title{% if not item.is_collected %} uncollected{% endif %}">{{ item.title }}</span>
+                            <span class="air-time">{{ item.formatted_datetime }}</span>
+                        </div>
+                        {% if item.is_collected %}
+                        <button class="rescrape-btn" 
+                                data-imdb-id="{{ item.imdb_id }}"
+                                data-tmdb-id="{{ item.tmdb_id }}"
+                                data-season="{{ item.season_number }}"
+                                data-episode="{{ item.episode_number }}"
+                                title="Move back to Wanted state">
+                            <i class="fas fa-redo"></i>
+                        </button>
+                        {% endif %}
                     </li>
                     {% endfor %}
                 </ul>
@@ -402,7 +469,7 @@
                             <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                                <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
+                                <span class="metadata">${item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : ''}Quality: {{ item.version }}</span>
                                 <span class="filename">{{ item.filled_by_file }}</span>
                             </div>
                         </div>
@@ -475,6 +542,11 @@
         // Update displays
         updateActiveDownloadsDisplay();
         updateUsageStatsDisplay();
+
+        // Add click handler for rescrape buttons
+        document.querySelectorAll('.rescrape-btn').forEach(button => {
+            button.addEventListener('click', handleRescrapeClick);
+        });
     });
 
     document.getElementById('time-format-toggle').addEventListener('change', function() {

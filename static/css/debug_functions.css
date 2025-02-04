@@ -234,7 +234,7 @@ button:hover {
 .token-user {
     font-weight: bold;
     margin-bottom: 0.5rem;
-    color: rgb(209, 209, 209)
+    color: #f4f4f4
 }
 
 .token-details {
@@ -253,7 +253,7 @@ button:hover {
 
 .token-validity.valid {
     background: rgba(76, 175, 80, 0.1);
-    color: #2e7d32;
+    color: #45b84b;
 }
 
 .token-validity.invalid {

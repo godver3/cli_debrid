@@ -333,6 +333,8 @@ class QueueManager:
         if not self.paused:
             self.paused = True
             logging.info("Queue processing paused")
+            from notifications import send_queue_pause_notification
+            send_queue_pause_notification("Queue processing paused")
         else:
             logging.warning("Queue is already paused")
 
@@ -340,6 +342,8 @@ class QueueManager:
         if self.paused:
             self.paused = False
             logging.info("Queue processing resumed")
+            from notifications import send_queue_resume_notification
+            send_queue_resume_notification("Queue processing resumed")
         else:
             logging.warning("Queue is not paused")
 

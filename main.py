@@ -26,6 +26,12 @@ from settings import get_setting
 from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
 from content_checkers.plex_watchlist import validate_plex_tokens
+from notifications import (
+    setup_crash_handler, 
+    register_shutdown_handler, 
+    register_startup_handler,
+    send_program_stop_notification
+)
 
 if sys.platform.startswith('win'):
     app_name = "cli_debrid"  # Replace with your app's name
@@ -171,6 +177,7 @@ def get_version():
         return "0.0.0"
 
 def signal_handler(signum, frame):
+    """Handle termination signals gracefully."""
     stop_program(from_signal=True)
     # Exit directly when handling SIGINT
     if signum == signal.SIGINT:
@@ -836,7 +843,12 @@ def main():
 
     setup_directories()
     backup_config()
-    backup_database()  # Add the database backup call here
+    backup_database()
+    
+    # Set up notification handlers
+    setup_crash_handler()
+    register_shutdown_handler()
+    register_startup_handler()
 
     from settings import ensure_settings_file, get_setting, set_setting
     from database import verify_database
@@ -885,6 +897,51 @@ def main():
         if updated:
             save_config(config)
             logging.info("Successfully migrated content sources to include media_type setting")
+
+    # Add migration for notification settings
+    if 'Notifications' in config:
+        notifications_updated = False
+        default_notify_on = {
+            'collected': True,
+            'wanted': False,
+            'scraping': False,
+            'adding': False,
+            'checking': False,
+            'sleeping': False,
+            'unreleased': False,
+            'blacklisted': False,
+            'pending_uncached': False,
+            'upgrading': False,
+            'program_stop': True,
+            'program_crash': True,
+            'program_start': True,
+            'program_pause': True,
+            'program_resume': True,
+            'queue_pause': True,
+            'queue_resume': True,
+            'queue_start': True,
+            'queue_stop': True
+        }
+
+        for notification_id, notification_config in config['Notifications'].items():
+            if notification_config is not None:
+                # Check if notify_on is missing or incomplete
+                if 'notify_on' not in notification_config or not isinstance(notification_config['notify_on'], dict):
+                    notification_config['notify_on'] = default_notify_on.copy()
+                    notifications_updated = True
+                    logging.info(f"Adding default notify_on settings to notification {notification_id}")
+                else:
+                    # Add any missing notification types
+                    for key, default_value in default_notify_on.items():
+                        if key not in notification_config['notify_on']:
+                            notification_config['notify_on'][key] = default_value
+                            notifications_updated = True
+                            logging.info(f"Adding missing notify_on setting '{key}' to notification {notification_id}")
+
+        # Save the updated config if changes were made
+        if notifications_updated:
+            save_config(config)
+            logging.info("Successfully migrated notifications to include all notify_on settings")
 
     # Get battery port from environment variable
     battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))

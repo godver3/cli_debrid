@@ -42,6 +42,37 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             watch_db_path = os.path.join(db_dir, 'watch_history.db')
             if os.path.exists(watch_db_path):
                 watch_history_conn = get_db_connection(watch_db_path)
+                # Ensure watch_history table exists
+                watch_history_conn.execute('''
+                    CREATE TABLE IF NOT EXISTS watch_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        watched_at TIMESTAMP,
+                        media_id TEXT,
+                        imdb_id TEXT,
+                        tmdb_id TEXT,
+                        tvdb_id TEXT,
+                        season INTEGER,
+                        episode INTEGER,
+                        show_title TEXT,
+                        duration INTEGER,
+                        watch_progress INTEGER,
+                        source TEXT,
+                        UNIQUE(title, type, watched_at),
+                        UNIQUE(show_title, season, episode, watched_at)
+                    )
+                ''')
+                watch_history_conn.commit()
+
+                # Check if source column exists, if not add it
+                cursor = watch_history_conn.cursor()
+                cursor.execute("PRAGMA table_info(watch_history)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'source' not in columns:
+                    watch_history_conn.execute('ALTER TABLE watch_history ADD COLUMN source TEXT')
+                    watch_history_conn.commit()
+                    logging.info("Added 'source' column to watch_history table")
 
         if isinstance(versions_input, str):
             try:
@@ -417,3 +448,52 @@ def update_show_title(conn, imdb_id: str = None, tmdb_id: str = None, new_title:
     
     logging.info(f"Updated show title from '{existing_title}' to '{normalized_new_title}' for {row['record_count']} records")
     return True
+
+def process_batch(conn, batch_items, versions, processed):
+    """Helper function to process a batch of items"""
+    movie_items = []
+    episode_items = []
+    
+    for item, item_type, normalized_title, genres in batch_items:
+        if item_type == 'movie':
+            for version, enabled in versions.items():
+                if enabled:
+                    movie_items.append((
+                        item.get('imdb_id'), item.get('tmdb_id'), normalized_title, 
+                        item.get('year'), item.get('release_date'), 'Wanted', 'movie', 
+                        datetime.now(), version, genres, item.get('runtime'), 
+                        item.get('country', '').lower(), item.get('content_source')
+                    ))
+        else:
+            for version, enabled in versions.items():
+                if enabled:
+                    initial_state = 'Wanted' if item.get('is_requested_season', True) else 'Blacklisted'
+                    blacklisted_date = datetime.now(timezone.utc) if initial_state == 'Blacklisted' else None
+                    
+                    episode_items.append((
+                        item.get('imdb_id'), item.get('tmdb_id'), normalized_title,
+                        item.get('year'), item.get('release_date'), initial_state, 'episode',
+                        item['season_number'], item['episode_number'], item.get('episode_title', ''),
+                        datetime.now(), version, item.get('runtime'), item.get('airtime', '19:00'),
+                        genres, item.get('country', '').lower(), blacklisted_date,
+                        item.get('requested_season', False), item.get('content_source')
+                    ))
+    
+    if movie_items:
+        conn.executemany('''
+            INSERT INTO media_items
+            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, 
+             version, genres, runtime, country, content_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', movie_items)
+        processed['movies'] += len(movie_items)
+    
+    if episode_items:
+        conn.executemany('''
+            INSERT INTO media_items
+            (imdb_id, tmdb_id, title, year, release_date, state, type, season_number,
+             episode_number, episode_title, last_updated, version, runtime, airtime,
+             genres, country, blacklisted_date, requested_season, content_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', episode_items)
+        processed['episodes'] += len(episode_items)

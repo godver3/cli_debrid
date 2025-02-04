@@ -1117,3 +1117,18 @@ def validate_plex_tokens_route():
             'success': False,
             'error': str(e)
         })
+            
+@debug_bp.route('/simulate_crash')
+def simulate_crash():
+    """Route to simulate a program crash for testing notifications."""
+    from settings import get_setting
+    if not get_setting('Debug', 'enable_crash_test', False):
+        return jsonify({'success': False, 'error': 'Crash simulation is not enabled'}), 400
+        
+    # First send the crash notification
+    from notifications import send_program_crash_notification
+    send_program_crash_notification("Simulated crash for testing notifications")
+    
+    # Then force an immediate crash with os._exit
+    import os
+    os._exit(1)  # This will force an immediate program termination

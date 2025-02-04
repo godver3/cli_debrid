@@ -5,7 +5,8 @@ import logging
 from plexapi.server import PlexServer
 from settings import get_setting
 from cli_battery.app.trakt_metadata import TraktMetadata
-from datetime import datetime
+from datetime import datetime, timedelta
+import requests
 
 async def get_watch_history_from_plex():
     """
@@ -59,10 +60,17 @@ async def get_watch_history_from_plex():
                 duration INTEGER,
                 watch_progress INTEGER,
                 source TEXT,
-                UNIQUE(title, type, date(watched_at)) ON CONFLICT REPLACE,
-                UNIQUE(show_title, season, episode, date(watched_at)) ON CONFLICT REPLACE
+                UNIQUE(title, type, watched_at) ON CONFLICT REPLACE,
+                UNIQUE(show_title, season, episode, watched_at) ON CONFLICT REPLACE
             )
         ''')
+        
+        # Check if source column exists, if not add it
+        cursor.execute("PRAGMA table_info(watch_history)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'source' not in columns:
+            cursor.execute('ALTER TABLE watch_history ADD COLUMN source TEXT')
+            logging.info("Added 'source' column to watch_history table")
         
         # Get all watched history from account
         logging.info("Fetching history from Plex account...")
@@ -77,42 +85,35 @@ async def get_watch_history_from_plex():
         logging.info(f"Found {total_items} items in account history")
         
         # Process account history items
-        for i, item in enumerate(account_history, 1):
-            try:
-                if i % 100 == 0 or i == total_items:
-                    logging.info(f"Processing account item {i}/{total_items} ({(i/total_items*100):.1f}%)")
-                
-                # Get all available item information for logging
-                item_info = {
-                    'title': getattr(item, 'title', None),
-                    'type': getattr(item, 'type', None),
-                    'viewedAt': getattr(item, 'viewedAt', None),
-                    'ratingKey': getattr(item, 'ratingKey', None),
-                    'seasonNumber': getattr(item, 'seasonNumber', None),
-                    'index': getattr(item, 'index', None),
-                    'grandparentTitle': getattr(item, 'grandparentTitle', None),
-                    'duration': getattr(item, 'duration', None),
-                    'viewOffset': getattr(item, 'viewOffset', None),
-                    'guid': getattr(item, 'guid', None),
-                    'raw_guids': str([{'id': g.id, 'attrs': dir(g)} for g in item.guids]) if hasattr(item, 'guids') else 'No guids attribute',
-                    'has_guids_attr': hasattr(item, 'guids'),
-                    'guids_len': len(item.guids) if hasattr(item, 'guids') else 0
-                }
-                
-                success = await process_watch_history_item(cursor, item_info, item, trakt, 'account', processed)
-                if success:
-                    processed['account_items'] += 1
-                
-            except Exception as e:
-                logging.error(f"Error processing account item: {str(e)}")
-                continue
+        batch_size = 100
+        current_batch = []
         
-        # Get history from server libraries
+        for i, item in enumerate(account_history, 1):
+            if i % 100 == 0 or i == total_items:
+                logging.info(f"Processing account item {i}/{total_items} ({(i/total_items*100):.1f}%)")
+            
+            current_batch.append(item)
+            
+            if len(current_batch) >= batch_size or i == total_items:
+                batch_results = await process_watch_history_items(cursor, current_batch, trakt, 'account', processed)
+                if batch_results:
+                    cursor.executemany('''
+                        INSERT OR REPLACE INTO watch_history 
+                        (title, type, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
+                         season, episode, show_title, duration, watch_progress, source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', batch_results)
+                    conn.commit()
+                    processed['account_items'] += len(batch_results)
+                current_batch = []
+        
+        # Process server libraries
         logging.info("\nFetching history from Plex server libraries...")
         
         # Process each library
         for library in plex.library.sections():
             logging.info(f"Processing library: {library.title}")
+            current_batch = []
             
             if library.type == 'movie':
                 # Get watched movies
@@ -125,29 +126,20 @@ async def get_watch_history_from_plex():
                         logging.info(f"Processing movie {i}/{total_movies} in {library.title}")
                     
                     if video.isWatched:
-                        try:
-                            # Create item_info dictionary for server items
-                            item_info = {
-                                'title': video.title,
-                                'type': 'movie',
-                                'viewedAt': getattr(video, 'lastViewedAt', None),
-                                'ratingKey': video.ratingKey,
-                                'duration': video.duration,
-                                'viewOffset': getattr(video, 'viewOffset', None),
-                                'guid': video.guid,
-                                'raw_guids': str([{'id': g.id, 'attrs': dir(g)} for g in video.guids]) if hasattr(video, 'guids') else 'No guids attribute',
-                                'has_guids_attr': hasattr(video, 'guids'),
-                                'guids_len': len(video.guids) if hasattr(video, 'guids') else 0
-                            }
-                            
-                            success = await process_watch_history_item(cursor, item_info, video, trakt, 'server', processed)
-                            if success:
-                                processed['server_items'] += 1
-                                
-                        except Exception as e:
-                            logging.error(f"Error processing server movie {video.title}: {str(e)}")
-                            continue
+                        current_batch.append(video)
                         
+                        if len(current_batch) >= batch_size or i == total_movies:
+                            batch_results = await process_watch_history_items(cursor, current_batch, trakt, 'server', processed)
+                            if batch_results:
+                                cursor.executemany('''
+                                    INSERT OR REPLACE INTO watch_history 
+                                    (title, type, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
+                                     season, episode, show_title, duration, watch_progress, source)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ''', batch_results)
+                                conn.commit()
+                            current_batch = []
+                            
             elif library.type == 'show':
                 # Get watched episodes
                 shows = library.search()
@@ -162,30 +154,36 @@ async def get_watch_history_from_plex():
                         episodes = show.episodes()
                         for episode in episodes:
                             if episode.isWatched:
-                                # Create item_info dictionary for server items
-                                item_info = {
-                                    'title': episode.title,
-                                    'type': 'episode',
-                                    'viewedAt': getattr(episode, 'lastViewedAt', None),
-                                    'ratingKey': episode.ratingKey,
-                                    'seasonNumber': episode.seasonNumber,
-                                    'index': episode.index,
-                                    'grandparentTitle': show.title,
-                                    'duration': episode.duration,
-                                    'viewOffset': getattr(episode, 'viewOffset', None),
-                                    'guid': episode.guid,
-                                    'raw_guids': str([{'id': g.id, 'attrs': dir(g)} for g in episode.guids]) if hasattr(episode, 'guids') else 'No guids attribute',
-                                    'has_guids_attr': hasattr(episode, 'guids'),
-                                    'guids_len': len(episode.guids) if hasattr(episode, 'guids') else 0
-                                }
+                                current_batch.append(episode)
                                 
-                                success = await process_watch_history_item(cursor, item_info, episode, trakt, 'server', processed)
-                                if success:
-                                    processed['server_items'] += 1
+                                if len(current_batch) >= batch_size:
+                                    batch_results = await process_watch_history_items(cursor, current_batch, trakt, 'server', processed)
+                                    if batch_results:
+                                        cursor.executemany('''
+                                            INSERT OR REPLACE INTO watch_history 
+                                            (title, type, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
+                                             season, episode, show_title, duration, watch_progress, source)
+                                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        ''', batch_results)
+                                        conn.commit()
+                                    current_batch = []
                                     
                     except Exception as e:
                         logging.error(f"Error processing show {show.title}: {str(e)}")
                         continue
+                
+                # Process any remaining episodes in the last batch
+                if current_batch:
+                    batch_results = await process_watch_history_items(cursor, current_batch, trakt, 'server', processed)
+                    if batch_results:
+                        cursor.executemany('''
+                            INSERT OR REPLACE INTO watch_history 
+                            (title, type, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
+                             season, episode, show_title, duration, watch_progress, source)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', batch_results)
+                        conn.commit()
+                    current_batch = []
             else:
                 logging.info(f"Skipping library type: {library.type}")
         
@@ -205,31 +203,18 @@ async def get_watch_history_from_plex():
         return {'movies': 0, 'episodes': 0, 'account_items': 0, 'server_items': 0}
 
 async def process_watch_history_item(cursor, item_info, item, trakt, source, processed):
-    """
-    Helper function to process a single watch history item and insert/update it in the database.
-    Returns True if the item was successfully processed, False otherwise.
-    """
+    """Helper function to process a single watch history item and prepare it for database insertion."""
     try:
-        # Skip non-video content
-        if item_info['type'] not in ['movie', 'episode']:
-            logging.info(f"Skipping non-video content - '{item_info['title']}' (Type: {item_info['type']})")
-            return False
-
         # Extract basic info and validate required fields
         title = item_info['title']
-        if not title and item_info['type'] == 'episode' and item_info['grandparentTitle'] and item_info['seasonNumber'] is not None and item_info['index'] is not None:
-            # Generate title for episodes like "Friends - S04E24"
-            title = f"{item_info['grandparentTitle']} - S{item_info['seasonNumber']:02d}E{item_info['index']:02d}"
-            logging.info(f"Generated title for episode: {title}")
-        
         if not title:
             logging.warning(f"Skipping item: Missing required field 'title'. Item info: {item_info}")
-            return False
+            return None
             
         watched_at = item_info['viewedAt']
         if not watched_at:
             logging.warning(f"Skipping item '{title}': Missing required field 'viewedAt'. Item info: {item_info}")
-            return False
+            return None
         
         # Get external IDs
         imdb_id = None
@@ -255,26 +240,26 @@ async def process_watch_history_item(cursor, item_info, item, trakt, source, pro
         
         if not media_id:
             logging.warning(f"Skipping item '{title}': Could not generate media ID. Item info: {item_info}")
-            return False
+            return None
         
-        # Insert or update the database entry
+        # Prepare data for insertion
         if item_info['type'] == 'movie':
-            success = insert_or_update_movie(cursor, title, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
-                                          item_info['duration'], item_info['viewOffset'], source)
-            if success:
+            data = insert_or_update_movie(cursor, title, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
+                                        item_info['duration'], item_info['viewOffset'], source)
+            if data:
                 processed['movies'] += 1
         else:
-            success = insert_or_update_episode(cursor, title, watched_at, media_id, imdb_id, tmdb_id, tvdb_id,
-                                            item_info['seasonNumber'], item_info['index'], item_info['grandparentTitle'],
-                                            item_info['duration'], item_info['viewOffset'], source)
-            if success:
+            data = insert_or_update_episode(cursor, title, watched_at, media_id, imdb_id, tmdb_id, tvdb_id,
+                                          item_info['seasonNumber'], item_info['index'], item_info['grandparentTitle'],
+                                          item_info['duration'], item_info['viewOffset'], source)
+            if data:
                 processed['episodes'] += 1
         
-        return success
+        return data
         
     except Exception as e:
         logging.error(f"Error processing item '{title}': {str(e)}")
-        return False
+        return None
 
 async def find_imdb_id(cursor, item_info, title, trakt):
     """Helper function to find IMDb ID from database cache or Trakt"""
@@ -350,7 +335,7 @@ def generate_synthetic_media_id(item_info, title):
     return None
 
 def insert_or_update_movie(cursor, title, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, duration, view_offset, source):
-    """Helper function to insert or update a movie entry in the database"""
+    """Helper function to prepare movie data for insertion/update in the database"""
     try:
         # First check if we already have this movie for this day
         cursor.execute('''
@@ -386,46 +371,31 @@ def insert_or_update_movie(cursor, title, watched_at, media_id, imdb_id, tmdb_id
                     logging.warning(f"Error comparing dates for '{title}': {str(e)}")
                     should_update = False
             
-            if should_update:
-                cursor.execute('''
-                    UPDATE watch_history 
-                    SET watched_at = ?, media_id = ?, imdb_id = ?, tmdb_id = ?, tvdb_id = ?,
-                        duration = ?, watch_progress = ?, source = ?
-                    WHERE id = ?
-                ''', (
-                    watched_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(watched_at, datetime) else watched_at,
-                    media_id, imdb_id, tmdb_id, tvdb_id,
-                    duration, view_offset, source, existing_id
-                ))
-                logging.debug(f"Updated existing movie entry for '{title}'")
-            else:
+            if not should_update:
                 logging.debug(f"Skipping duplicate movie entry for '{title}' (already have more recent or complete entry)")
-            return True
-            
-        # If no existing entry, insert new one
-        cursor.execute('''
-            INSERT INTO watch_history 
-            (title, type, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, duration, watch_progress, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
+                return None
+        
+        # Return data for batch insert/update
+        logging.debug(f"Prepared movie entry for '{title}'")
+        return (
             title, 'movie',
             watched_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(watched_at, datetime) else watched_at,
             media_id, imdb_id, tmdb_id, tvdb_id,
+            None, None, None,  # season, episode, show_title
             duration, view_offset, source
-        ))
-        logging.debug(f"Inserted new movie entry for '{title}'")
-        return True
+        )
+        
     except Exception as e:
-        logging.error(f"Error inserting/updating movie '{title}': {str(e)}")
-        return False
+        logging.error(f"Error preparing movie '{title}': {str(e)}")
+        return None
 
 def insert_or_update_episode(cursor, title, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
                            season, episode, show_title, duration, view_offset, source):
-    """Helper function to insert or update an episode entry in the database"""
+    """Helper function to prepare episode data for insertion/update in the database"""
     try:
         if season is None or episode is None:
             logging.warning(f"Skipping episode '{title}': Missing season or episode number")
-            return False
+            return None
             
         # First check if we already have this episode for this day
         cursor.execute('''
@@ -463,49 +433,199 @@ def insert_or_update_episode(cursor, title, watched_at, media_id, imdb_id, tmdb_
                     logging.warning(f"Error comparing dates for '{title}': {str(e)}")
                     should_update = False
             
-            if should_update:
-                cursor.execute('''
-                    UPDATE watch_history 
-                    SET title = ?, watched_at = ?, media_id = ?, imdb_id = ?, tmdb_id = ?, tvdb_id = ?,
-                        duration = ?, watch_progress = ?, source = ?
-                    WHERE id = ?
-                ''', (
-                    title,
-                    watched_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(watched_at, datetime) else watched_at,
-                    media_id, imdb_id, tmdb_id, tvdb_id,
-                    duration, view_offset, source, existing_id
-                ))
-                logging.debug(f"Updated existing episode entry for '{show_title} S{season}E{episode}'")
-            else:
+            if not should_update:
                 logging.debug(f"Skipping duplicate episode entry for '{show_title} S{season}E{episode}' (already have more recent or complete entry)")
-            return True
-            
-        # If no existing entry, insert new one
-        cursor.execute('''
-            INSERT INTO watch_history 
-            (title, type, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
-             season, episode, show_title, duration, watch_progress, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
+                return None
+        
+        # Return data for batch insert/update
+        logging.debug(f"Prepared episode entry for '{show_title} S{season}E{episode}'")
+        return (
             title, 'episode',
             watched_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(watched_at, datetime) else watched_at,
             media_id, imdb_id, tmdb_id, tvdb_id,
             season, episode, show_title,
             duration, view_offset, source
-        ))
-        logging.debug(f"Inserted new episode entry for '{show_title} S{season}E{episode}'")
-        return True
+        )
+        
     except Exception as e:
-        logging.error(f"Error inserting/updating episode '{title}': {str(e)}")
-        return False
+        logging.error(f"Error preparing episode '{title}': {str(e)}")
+        return None
+
+async def process_watch_history_items(cursor, items, trakt, source, processed):
+    """Process a batch of watch history items at once"""
+    try:
+        # Separate movies and episodes
+        movies = []
+        episodes = []
+        
+        # First pass - separate items and get external IDs
+        for item in items:
+            title = getattr(item, 'title', None)
+            if not title:
+                continue
+                
+            # Handle both account history (viewedAt) and server items (lastViewedAt)
+            watched_at = getattr(item, 'viewedAt', None) or getattr(item, 'lastViewedAt', None)
+            if not watched_at:
+                continue
+
+            item_type = getattr(item, 'type', None)
+            if item_type == 'movie':
+                movies.append(item)
+            elif item_type == 'episode':
+                episodes.append(item)
+
+        results = []
+        
+        def get_date_str(dt):
+            """Helper to get date string from datetime or string"""
+            if isinstance(dt, datetime):
+                return dt.strftime('%Y-%m-%d')
+            elif isinstance(dt, str):
+                return dt.split()[0]
+            return None
+        
+        # Process movies in batch
+        if movies:
+            # Get all existing movies for this batch
+            movie_titles = [getattr(m, 'title', '') for m in movies]
+            placeholders = ','.join(['?' for _ in movie_titles])
+            cursor.execute(f'''
+                SELECT title, watched_at, imdb_id 
+                FROM watch_history 
+                WHERE type = 'movie' 
+                AND title IN ({placeholders})
+            ''', movie_titles)
+            # Convert rows to dictionary for easier lookup
+            existing_movies = {}
+            for row in cursor.fetchall():
+                watched_date = get_date_str(row[1])
+                existing_movies[(row[0], watched_date)] = row[2]
+            
+            # Process each movie
+            for movie in movies:
+                title = getattr(movie, 'title', None)
+                watched_at = getattr(movie, 'viewedAt', None) or getattr(movie, 'lastViewedAt', None)
+                watched_date = get_date_str(watched_at)
+                
+                # Check if we already have this movie for this day
+                if (title, watched_date) in existing_movies:
+                    # Skip if we already have it with an IMDb ID
+                    if existing_movies[(title, watched_date)]:
+                        continue
+                
+                # Get external IDs
+                imdb_id = None
+                tmdb_id = None
+                tvdb_id = None
+                
+                if hasattr(movie, 'guids'):
+                    for guid in movie.guids:
+                        guid_str = str(guid.id)
+                        if 'imdb://' in guid_str:
+                            imdb_id = guid_str.split('imdb://')[1].split('?')[0]
+                        elif 'tmdb://' in guid_str:
+                            tmdb_id = guid_str.split('tmdb://')[1].split('?')[0]
+                        elif 'tvdb://' in guid_str:
+                            tvdb_id = guid_str.split('tvdb://')[1].split('?')[0]
+                
+                media_id = str(getattr(movie, 'ratingKey', None))
+                duration = getattr(movie, 'duration', None)
+                view_offset = getattr(movie, 'viewOffset', None)
+                
+                # Format watched_at for database
+                if isinstance(watched_at, datetime):
+                    watched_at = watched_at.strftime('%Y-%m-%d %H:%M:%S')
+                
+                results.append((
+                    title, 'movie', watched_at, media_id, imdb_id, tmdb_id, tvdb_id,
+                    None, None, None,  # season, episode, show_title
+                    duration, view_offset, source
+                ))
+                processed['movies'] += 1
+
+        # Process episodes in batch
+        if episodes:
+            # Get all existing episodes for this batch
+            episode_keys = [(getattr(e, 'grandparentTitle', ''), 
+                           getattr(e, 'seasonNumber', None), 
+                           getattr(e, 'index', None)) for e in episodes]
+            placeholders = ','.join(['(?,?,?)' for _ in episode_keys])
+            flat_params = [item for key in episode_keys for item in key]
+            cursor.execute(f'''
+                SELECT show_title, season, episode, watched_at, imdb_id 
+                FROM watch_history 
+                WHERE type = 'episode' 
+                AND (show_title, season, episode) IN ({placeholders})
+            ''', flat_params)
+            # Convert rows to dictionary for easier lookup
+            existing_episodes = {}
+            for row in cursor.fetchall():
+                watched_date = get_date_str(row[3])
+                existing_episodes[(row[0], row[1], row[2], watched_date)] = row[4]
+            
+            # Process each episode
+            for episode in episodes:
+                show_title = getattr(episode, 'grandparentTitle', None)
+                season = getattr(episode, 'seasonNumber', None)
+                episode_num = getattr(episode, 'index', None)
+                watched_at = getattr(episode, 'viewedAt', None) or getattr(episode, 'lastViewedAt', None)
+                watched_date = get_date_str(watched_at)
+                
+                if not all([show_title, season is not None, episode_num is not None]):
+                    continue
+                
+                # Check if we already have this episode for this day
+                if (show_title, season, episode_num, watched_date) in existing_episodes:
+                    # Skip if we already have it with an IMDb ID
+                    if existing_episodes[(show_title, season, episode_num, watched_date)]:
+                        continue
+                
+                # Get external IDs
+                imdb_id = None
+                tmdb_id = None
+                tvdb_id = None
+                
+                if hasattr(episode, 'guids'):
+                    for guid in episode.guids:
+                        guid_str = str(guid.id)
+                        if 'imdb://' in guid_str:
+                            imdb_id = guid_str.split('imdb://')[1].split('?')[0]
+                        elif 'tmdb://' in guid_str:
+                            tmdb_id = guid_str.split('tmdb://')[1].split('?')[0]
+                        elif 'tvdb://' in guid_str:
+                            tvdb_id = guid_str.split('tvdb://')[1].split('?')[0]
+                
+                title = getattr(episode, 'title', None)
+                media_id = str(getattr(episode, 'ratingKey', None))
+                duration = getattr(episode, 'duration', None)
+                view_offset = getattr(episode, 'viewOffset', None)
+                
+                # Format watched_at for database
+                if isinstance(watched_at, datetime):
+                    watched_at = watched_at.strftime('%Y-%m-%d %H:%M:%S')
+                
+                results.append((
+                    title, 'episode', watched_at, media_id, imdb_id, tmdb_id, tvdb_id,
+                    season, episode_num, show_title,
+                    duration, view_offset, source
+                ))
+                processed['episodes'] += 1
+                processed['server_items'] += 1
+        
+        return results
+        
+    except Exception as e:
+        logging.error(f"Error processing batch: {str(e)}")
+        return []
 
 async def test_plex_history_comparison():
     """
-    Test function that compares watch history from two Plex sources:
+    Simple test function that compares total watch history counts from two Plex sources:
     1. account.history() - history directly from Plex account
-    2. PlexServer - history from all libraries on the server
+    2. server.history(accountID=1) - history from the Plex server for admin account
     
-    Prints detailed statistics and any discrepancies found.
+    Prints total counts from both sources for comparison.
     """
     try:
         # Get Plex connection details
@@ -520,112 +640,80 @@ async def test_plex_history_comparison():
         plex = PlexServer(plex_url, plex_token)
         account = plex.myPlexAccount()
         
-        # Get history from account
-        logging.info("Fetching history from Plex account...")
-        account_history = account.history()
+        # Log account details
+        logging.info("\nAccount Information:")
+        logging.info(f"Username: {account.username}")
+        logging.info(f"Account ID (Plex): {account.id}")
+        logging.info(f"Email: {account.email}")
         
-        # Count account history items by type
-        account_counts = {'movies': 0, 'episodes': 0, 'other': 0}
-        account_items = {}  # Store unique identifiers for comparison
+        # Get history from account with increased maxresults
+        logging.info("\nFetching history from Plex account...")
+        account_history = account.history(maxresults=50000)  # Try to get more history
+        account_total = len(account_history)
         
-        for item in account_history:
-            item_type = getattr(item, 'type', 'other')
-            if item_type == 'movie':
-                account_counts['movies'] += 1
-                key = ('movie', getattr(item, 'title', ''), getattr(item, 'year', ''))
-                account_items[key] = account_items.get(key, 0) + 1
-            elif item_type == 'episode':
-                account_counts['episodes'] += 1
-                show = getattr(item, 'grandparentTitle', '')
-                season = getattr(item, 'seasonNumber', '')
-                episode = getattr(item, 'index', '')
-                key = ('episode', show, season, episode)
-                account_items[key] = account_items.get(key, 0) + 1
-            else:
-                account_counts['other'] += 1
-        
-        # Get history from server libraries
-        logging.info("Fetching history from Plex server libraries...")
-        server_counts = {'movies': 0, 'episodes': 0, 'other': 0}
-        server_items = {}  # Store unique identifiers for comparison
-        
-        # Process each library
-        for library in plex.library.sections():
-            logging.info(f"Processing library: {library.title}")
+        # Log sample of account history with dates
+        if account_history:
+            logging.info("\nSample items from account history:")
+            # Get first and last items to see date range
+            first_item = account_history[-1] if account_history else None
+            last_item = account_history[0] if account_history else None
             
-            if library.type == 'movie':
-                # Get watched movies
-                for video in library.search(unwatched=False):
-                    if video.isWatched:
-                        server_counts['movies'] += 1
-                        key = ('movie', video.title, getattr(video, 'year', ''))
-                        server_items[key] = server_items.get(key, 0) + 1
-                        
-            elif library.type == 'show':
-                # Get watched episodes
-                for show in library.search():
-                    for episode in show.episodes():
-                        if episode.isWatched:
-                            server_counts['episodes'] += 1
-                            key = ('episode', show.title, episode.seasonNumber, episode.index)
-                            server_items[key] = server_items.get(key, 0) + 1
-            else:
-                logging.info(f"Skipping library type: {library.type}")
+            if first_item and last_item:
+                first_date = getattr(first_item, 'viewedAt', 'N/A')
+                last_date = getattr(last_item, 'viewedAt', 'N/A')
+                logging.info(f"\nDate range in account history:")
+                logging.info(f"Earliest: {first_date}")
+                logging.info(f"Latest: {last_date}")
+            
+            logging.info("\nMost recent items:")
+            for item in account_history[:3]:
+                logging.info(f"- Title: {getattr(item, 'title', 'N/A')}")
+                logging.info(f"  Type: {getattr(item, 'type', 'N/A')}")
+                logging.info(f"  Account ID: {getattr(item, 'accountID', 'N/A')}")
+                logging.info(f"  Rating Key: {getattr(item, 'ratingKey', 'N/A')}")
+                logging.info(f"  Viewed At: {getattr(item, 'viewedAt', 'N/A')}")
         
-        # Compare most recent items
-        logging.info("\nMost recent items from account history:")
-        for item in account_history[:5]:
-            title = getattr(item, 'title', 'N/A')
-            type_ = getattr(item, 'type', 'N/A')
-            show = getattr(item, 'grandparentTitle', '')
-            if show:
-                title = f"{show} - {title}"
-            logging.info(f"- {title} ({type_})")
+        # Get history from server for admin account (ID=1)
+        logging.info("\nFetching history from Plex server...")
+        server_history = plex.history(accountID=1, maxresults=50000)  # Try to get more history
+        server_total = len(server_history)
+        
+        # Log sample of server history with dates
+        if server_history:
+            logging.info("\nSample items from server history (admin account):")
+            # Get first and last items to see date range
+            first_item = server_history[-1] if server_history else None
+            last_item = server_history[0] if server_history else None
+            
+            if first_item and last_item:
+                first_date = getattr(first_item, 'viewedAt', 'N/A')
+                last_date = getattr(last_item, 'viewedAt', 'N/A')
+                logging.info(f"\nDate range in server history:")
+                logging.info(f"Earliest: {first_date}")
+                logging.info(f"Latest: {last_date}")
+            
+            logging.info("\nMost recent items:")
+            for item in server_history[:3]:
+                logging.info(f"- Title: {getattr(item, 'title', 'N/A')}")
+                logging.info(f"  Type: {getattr(item, 'type', 'N/A')}")
+                logging.info(f"  Account ID: {getattr(item, 'accountID', 'N/A')}")
+                logging.info(f"  Rating Key: {getattr(item, 'ratingKey', 'N/A')}")
+                logging.info(f"  Viewed At: {getattr(item, 'viewedAt', 'N/A')}")
+        
+        # Get total history count for reference
+        all_users_history = plex.history(maxresults=50000)
+        all_users_total = len(all_users_history)
         
         # Print comparison
-        logging.info("\nComparison Summary:")
-        logging.info("Account History Counts:")
-        logging.info(f"- Movies: {account_counts['movies']}")
-        logging.info(f"- Episodes: {account_counts['episodes']}")
-        logging.info(f"- Other: {account_counts['other']}")
-        logging.info(f"Total: {sum(account_counts.values())}")
+        logging.info("\nHistory Count Comparison:")
+        logging.info(f"Account history total items: {account_total}")
+        logging.info(f"Server history total items (admin account): {server_total}")
+        logging.info(f"Total server history (all users): {all_users_total}")
         
-        logging.info("\nServer Library Counts:")
-        logging.info(f"- Movies: {server_counts['movies']}")
-        logging.info(f"- Episodes: {server_counts['episodes']}")
-        logging.info(f"Total: {sum(server_counts.values())}")
+        # Calculate difference
+        diff = account_total - server_total
+        logging.info(f"\nDifference (Account - Server): {diff:+d} items")
         
-        # Calculate differences
-        movie_diff = account_counts['movies'] - server_counts['movies']
-        episode_diff = account_counts['episodes'] - server_counts['episodes']
-        
-        logging.info("\nDifferences (Account - Server):")
-        logging.info(f"- Movies: {movie_diff:+d}")
-        logging.info(f"- Episodes: {episode_diff:+d}")
-        
-        # Find specific differences
-        logging.info("\nDetailed Differences:")
-        
-        # Items in account but not in server
-        account_only = set(account_items.keys()) - set(server_items.keys())
-        if account_only:
-            logging.info("\nItems in account history but not marked watched on server:")
-            for item in sorted(account_only)[:5]:  # Show first 5 differences
-                if item[0] == 'movie':
-                    logging.info(f"- Movie: {item[1]} ({item[2]})")
-                else:
-                    logging.info(f"- Episode: {item[1]} S{item[2]}E{item[3]}")
-        
-        # Items in server but not in account
-        server_only = set(server_items.keys()) - set(account_items.keys())
-        if server_only:
-            logging.info("\nItems marked watched on server but not in account history:")
-            for item in sorted(server_only)[:5]:  # Show first 5 differences
-                if item[0] == 'movie':
-                    logging.info(f"- Movie: {item[1]} ({item[2]})")
-                else:
-                    logging.info(f"- Episode: {item[1]} S{item[2]}E{item[3]}")
-                    
     except Exception as e:
         logging.error(f"Error during history comparison: {str(e)}")
 
@@ -646,3 +734,100 @@ def sync_test_plex_history_sync():
     Synchronous wrapper for test_plex_history_sync
     """
     return asyncio.run(test_plex_history_comparison())
+
+async def test_direct_plex_history():
+    """
+    Test function that directly queries the Plex API for history using different parameters
+    to try to find older history entries.
+    """
+    try:
+        token = "URyzrzpcCWsuZe7ZCeRs"
+        base_url = "https://plex.tv/api/v2"
+        headers = {
+            'Accept': 'application/json',
+            'X-Plex-Token': token
+        }
+        
+        logging.info("\nTesting direct Plex API calls for history...")
+        
+        # First get account info
+        account_url = f"{base_url}/user"
+        account_response = requests.get(account_url, headers=headers)
+        if account_response.status_code == 200:
+            account_data = account_response.json()
+            logging.info(f"\nAccount Info:")
+            logging.info(f"UUID: {account_data.get('uuid', 'N/A')}")
+            logging.info(f"Username: {account_data.get('username', 'N/A')}")
+            logging.info(f"Email: {account_data.get('email', 'N/A')}")
+        
+        # Try different date ranges
+        date_ranges = [
+            ("Past 5 years", datetime.now() - timedelta(days=365*5)),
+            ("Past 10 years", datetime.now() - timedelta(days=365*10)),
+            ("Since 2010", datetime(2010, 1, 1))
+        ]
+        
+        for range_name, start_date in date_ranges:
+            logging.info(f"\nTrying to fetch history for {range_name}...")
+            history_url = f"{base_url}/history/all"
+            params = {
+                'X-Plex-Token': token,
+                'mindate': start_date.strftime('%Y-%m-%d'),
+                'limit': 50000
+            }
+            
+            try:
+                response = requests.get(history_url, headers=headers, params=params)
+                if response.status_code == 200:
+                    history_data = response.json()
+                    items = history_data.get('MediaContainer', {}).get('Metadata', [])
+                    if items:
+                        oldest = min(items, key=lambda x: x.get('viewedAt', 0))
+                        newest = max(items, key=lambda x: x.get('viewedAt', 0))
+                        logging.info(f"Found {len(items)} items")
+                        logging.info(f"Oldest item: {datetime.fromtimestamp(oldest.get('viewedAt', 0))}")
+                        logging.info(f"Newest item: {datetime.fromtimestamp(newest.get('viewedAt', 0))}")
+                        
+                        # Show a few sample items
+                        logging.info("\nSample items:")
+                        for item in items[:3]:
+                            logging.info(f"- Title: {item.get('title', 'N/A')}")
+                            logging.info(f"  Type: {item.get('type', 'N/A')}")
+                            logging.info(f"  Viewed At: {datetime.fromtimestamp(item.get('viewedAt', 0))}")
+                    else:
+                        logging.info("No items found in this date range")
+                else:
+                    logging.info(f"Failed to get history: {response.status_code}")
+                    logging.info(f"Response: {response.text}")
+            except Exception as e:
+                logging.error(f"Error querying for {range_name}: {str(e)}")
+        
+        # Try the v1 API endpoint as well
+        logging.info("\nTrying Plex API v1 endpoint...")
+        v1_url = "https://plex.tv/pms/history/all"
+        params = {
+            'X-Plex-Token': token,
+            'limit': 50000
+        }
+        
+        try:
+            response = requests.get(v1_url, headers=headers, params=params)
+            if response.status_code == 200:
+                # V1 API returns XML, log the raw response for inspection
+                logging.info(f"V1 API Response length: {len(response.text)} bytes")
+                logging.info("First 500 characters of response:")
+                logging.info(response.text[:500])
+            else:
+                logging.info(f"Failed to get v1 history: {response.status_code}")
+                logging.info(f"Response: {response.text}")
+        except Exception as e:
+            logging.error(f"Error querying v1 API: {str(e)}")
+            
+    except Exception as e:
+        logging.error(f"Error during direct API test: {str(e)}")
+
+def sync_test_direct_plex_history():
+    """
+    Synchronous wrapper for test_direct_plex_history
+    """
+    return asyncio.run(test_direct_plex_history())
