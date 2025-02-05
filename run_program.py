@@ -103,6 +103,7 @@ class ProgramRunner:
             'task_update_show_titles': 3600,  # Run every hour
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
             'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
+            'task_check_database_health': 3600,  # Run every hour
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -128,7 +129,8 @@ class ProgramRunner:
             'task_refresh_download_stats',
             'task_update_show_ids',
             'task_update_show_titles',
-            'task_refresh_plex_tokens'
+            'task_refresh_plex_tokens',
+            'task_check_database_health'
         }
 
         if get_setting('File Management', 'file_collection_management') == 'Plex':
@@ -1159,6 +1161,29 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error running task {task_name}: {str(e)}")
             raise
+
+    def task_check_database_health(self):
+        """Periodic task to verify database health and handle any corruption."""
+        from main import verify_database_health
+        
+        try:
+            if not verify_database_health():
+                logging.error("Database health check failed during periodic check")
+                # Pause the queue if database is corrupted
+                self.pause_reason = "Database corruption detected - check logs for details"
+                self.pause_queue()
+                
+                # Send notification about database corruption
+                try:
+                    from notifications import send_program_crash_notification                    
+                    send_program_crash_notification("Database corruption detected - program must be restarted to recreate databases")
+
+                except Exception as e:
+                    logging.error(f"Failed to send database corruption notification: {str(e)}")
+            else:
+                logging.info("Periodic database health check passed")
+        except Exception as e:
+            logging.error(f"Error during periodic database health check: {str(e)}")
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

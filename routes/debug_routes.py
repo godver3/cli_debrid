@@ -744,6 +744,7 @@ def run_task():
         'task_update_show_ids': program_runner.task_update_show_ids,
         'task_update_show_titles': program_runner.task_update_show_titles,
         'task_get_plex_watch_history': program_runner.task_get_plex_watch_history,
+        'task_check_database_health': program_runner.task_check_database_health,
     }
 
     if task_name not in tasks:
@@ -765,7 +766,8 @@ def get_available_tasks():
         'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
         'task_generate_airtime_report', 'task_check_service_connectivity', 'task_send_notifications',
         'task_check_trakt_early_releases', 'task_reconcile_queues', 'task_check_plex_files',
-        'task_update_show_ids', 'task_update_show_titles', 'task_get_plex_watch_history'
+        'task_update_show_ids', 'task_update_show_titles', 'task_get_plex_watch_history',
+        'task_check_database_health'
     ]
     return jsonify({'tasks': tasks}), 200
 

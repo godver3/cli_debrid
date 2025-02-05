@@ -9,6 +9,7 @@ import platform
 import psutil
 import webbrowser
 import socket
+import sqlite3
 from datetime import datetime
 
 # Import Windows-specific modules only on Windows
@@ -834,7 +835,81 @@ def fix_notification_settings():
     except Exception as e:
         logging.error(f"Error checking notification settings: {e}")
 
-# Update the main function to use a single thread for the metadata battery
+def verify_database_health():
+    """
+    Verifies the health of both media_items.db and cli_battery.db databases.
+    If corruption is detected, backs up the corrupted database and creates a new one.
+    """
+    logging.info("Verifying database health...")
+    
+    # Get database paths
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    media_items_path = os.path.join(db_content_dir, 'media_items.db')
+    cli_battery_path = os.path.join(db_content_dir, 'cli_battery.db')
+    
+    def check_db_health(db_path, db_name):
+        if not os.path.exists(db_path):
+            logging.warning(f"{db_name} does not exist, will be created during initialization")
+            return True
+            
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Try to perform a simple query
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            
+            # Verify database integrity
+            cursor.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if result[0] != "ok":
+                raise sqlite3.DatabaseError(f"Integrity check failed: {result[0]}")
+                
+            logging.info(f"{db_name} health check passed")
+            return True
+            
+        except sqlite3.DatabaseError as e:
+            logging.error(f"{db_name} is corrupted: {str(e)}")
+            
+            # Create backup of corrupted database
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_path = f"{db_path}.corrupted_{timestamp}"
+            try:
+                shutil.copy2(db_path, backup_path)
+                logging.info(f"Created backup of corrupted {db_name} at {backup_path}")
+            except Exception as backup_error:
+                logging.error(f"Failed to create backup of corrupted {db_name}: {str(backup_error)}")
+            
+            # Delete corrupted database
+            try:
+                os.remove(db_path)
+                logging.info(f"Removed corrupted {db_name}")
+            except Exception as del_error:
+                logging.error(f"Failed to remove corrupted {db_name}: {str(del_error)}")
+                return False
+            
+            return True
+        
+        except Exception as e:
+            logging.error(f"Error checking {db_name} health: {str(e)}")
+            return False
+    
+    # Check both databases
+    media_items_ok = check_db_health(media_items_path, "media_items.db")
+    cli_battery_ok = check_db_health(cli_battery_path, "cli_battery.db")
+    
+    if not media_items_ok or not cli_battery_ok:
+        logging.error("Database health check failed")
+        return False
+    
+    logging.info("Database health check completed successfully")
+    return True
+
 def main():
     global program_runner, metadata_process
     metadata_process = None
@@ -844,6 +919,11 @@ def main():
     setup_directories()
     backup_config()
     backup_database()
+    
+    # Verify database health before proceeding
+    if not verify_database_health():
+        logging.error("Database health check failed. Please check the logs and resolve any issues.")
+        return False
     
     # Set up notification handlers
     setup_crash_handler()
