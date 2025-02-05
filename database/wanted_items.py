@@ -142,6 +142,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
         media_items_batch = filtered_media_items_batch
 
+        # Get existing movies and episodes
         existing_movies = set()
         batch_size = 450
 
@@ -169,7 +170,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 existing_movies.update(str(row['tmdb_id']) for row in rows)
 
-        existing_episodes = set()
+        existing_episodes_imdb = set()
+        existing_episodes_tmdb = set()
 
         if episode_imdb_ids:
             episode_imdb_list = list(episode_imdb_ids)
@@ -183,7 +185,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
-                    existing_episodes.add(key)
+                    existing_episodes_imdb.add(key)
 
         if episode_tmdb_ids:
             episode_tmdb_list = list(episode_tmdb_ids)
@@ -197,7 +199,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
-                    existing_episodes.add(key)
+                    existing_episodes_tmdb.add(key)
 
         filtered_media_items_batch = []
         for item in media_items_batch:
@@ -228,15 +230,17 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     # Check if episode exists in watch history
                     season = item.get('season_number')
                     episode = item.get('episode_number')
+                    show_title = normalize_string(str(item.get('grandparentTitle', item.get('title', 'Unknown'))))
                     if (imdb_id or tmdb_id) and season is not None and episode is not None:
                         query = """
                             SELECT 1 FROM watch_history 
                             WHERE type = 'episode' 
                             AND season = ? 
                             AND episode = ? 
+                            AND show_title = ?
                             AND (
                         """
-                        params = [season, episode]
+                        params = [season, episode, show_title]
                         conditions = []
                         if imdb_id:
                             conditions.append("imdb_id = ?")
@@ -245,6 +249,12 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                             conditions.append("tmdb_id = ?")
                             params.append(tmdb_id)
                         query += " OR ".join(conditions) + ")"
+                        
+                        # Log the query and parameters for debugging
+                        # logging.debug(f"Watch history check query: {query}")
+                        # logging.debug(f"Parameters: season={season}, episode={episode}, show_title={show_title}, " + 
+                                   # f"show_imdb_id={imdb_id}, show_tmdb_id={tmdb_id}")
+                        
                         if watch_history_conn.execute(query, params).fetchone():
                             skip_stats['already_watched'] += 1
                             items_skipped += 1
@@ -266,10 +276,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 season_number = item.get('season_number')
                 episode_number = item.get('episode_number')
                 skip = False
-                if imdb_id and (imdb_id, season_number, episode_number) in existing_episodes:
+                if imdb_id and (str(imdb_id), season_number, episode_number) in existing_episodes_imdb:
                     skip_stats['existing_episode_imdb'] += 1
                     skip = True
-                if tmdb_id and (tmdb_id, season_number, episode_number) in existing_episodes:
+                if tmdb_id and (str(tmdb_id), season_number, episode_number) in existing_episodes_tmdb:
                     skip_stats['existing_episode_tmdb'] += 1
                     skip = True
                 if skip:
