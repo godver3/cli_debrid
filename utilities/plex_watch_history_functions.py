@@ -202,64 +202,7 @@ async def get_watch_history_from_plex():
         logging.error(f"Error getting watch history: {str(e)}")
         return {'movies': 0, 'episodes': 0, 'account_items': 0, 'server_items': 0}
 
-async def process_watch_history_item(cursor, item_info, item, trakt, source, processed):
-    """Helper function to process a single watch history item and prepare it for database insertion."""
-    try:
-        # Extract basic info and validate required fields
-        title = item_info['title']
-        if not title:
-            logging.warning(f"Skipping item: Missing required field 'title'. Item info: {item_info}")
-            return None
-            
-        watched_at = item_info['viewedAt']
-        if not watched_at:
-            logging.warning(f"Skipping item '{title}': Missing required field 'viewedAt'. Item info: {item_info}")
-            return None
-        
-        # Get external IDs
-        imdb_id = None
-        tmdb_id = None
-        tvdb_id = None
-        
-        if hasattr(item, 'guids'):
-            for guid in item.guids:
-                guid_str = str(guid.id)
-                if 'imdb://' in guid_str:
-                    imdb_id = guid_str.split('imdb://')[1].split('?')[0]
-                elif 'tmdb://' in guid_str:
-                    tmdb_id = guid_str.split('tmdb://')[1].split('?')[0]
-                elif 'tvdb://' in guid_str:
-                    tvdb_id = guid_str.split('tvdb://')[1].split('?')[0]
-        
-        if not imdb_id:
-            # Try to find IMDb ID using existing database entry or Trakt
-            imdb_id = await find_imdb_id(cursor, item_info, title, trakt)
-        
-        # Get or generate media_id
-        media_id = str(item_info['ratingKey']) if item_info['ratingKey'] else generate_synthetic_media_id(item_info, title)
-        
-        if not media_id:
-            logging.warning(f"Skipping item '{title}': Could not generate media ID. Item info: {item_info}")
-            return None
-        
-        # Prepare data for insertion
-        if item_info['type'] == 'movie':
-            data = insert_or_update_movie(cursor, title, watched_at, media_id, imdb_id, tmdb_id, tvdb_id, 
-                                        item_info['duration'], item_info['viewOffset'], source)
-            if data:
-                processed['movies'] += 1
-        else:
-            data = insert_or_update_episode(cursor, title, watched_at, media_id, imdb_id, tmdb_id, tvdb_id,
-                                          item_info['seasonNumber'], item_info['index'], item_info['grandparentTitle'],
-                                          item_info['duration'], item_info['viewOffset'], source)
-            if data:
-                processed['episodes'] += 1
-        
-        return data
-        
-    except Exception as e:
-        logging.error(f"Error processing item '{title}': {str(e)}")
-        return None
+
 
 async def find_imdb_id(cursor, item_info, title, trakt):
     """Helper function to find IMDb ID from database cache or Trakt"""
@@ -586,15 +529,64 @@ async def process_watch_history_items(cursor, items, trakt, source, processed):
                 tmdb_id = None
                 tvdb_id = None
                 
-                if hasattr(episode, 'guids'):
-                    for guid in episode.guids:
-                        guid_str = str(guid.id)
-                        if 'imdb://' in guid_str:
-                            imdb_id = guid_str.split('imdb://')[1].split('?')[0]
-                        elif 'tmdb://' in guid_str:
-                            tmdb_id = guid_str.split('tmdb://')[1].split('?')[0]
-                        elif 'tvdb://' in guid_str:
-                            tvdb_id = guid_str.split('tvdb://')[1].split('?')[0]
+                #logging.info(f"Getting IDs for episode: {show_title} S{season}E{episode_num}")
+                try:
+                    # Try to get show IDs first
+                    if hasattr(episode, 'grandparentKey') and episode.grandparentKey:
+                        show = episode.show()
+                        if show and hasattr(show, 'guids'):
+                            #logging.info(f"Found show object with guids for '{show_title}'")
+                            for guid in show.guids:
+                                guid_str = str(guid.id)
+                                #logging.info(f"Processing show guid: {guid_str}")
+                                if 'imdb://' in guid_str:
+                                    imdb_id = guid_str.split('imdb://')[1].split('?')[0]
+                                    #logging.info(f"Found show IMDb ID: {imdb_id}")
+                                elif 'tmdb://' in guid_str:
+                                    tmdb_id = guid_str.split('tmdb://')[1].split('?')[0]
+                                    #logging.info(f"Found show TMDb ID: {tmdb_id}")
+                                elif 'tvdb://' in guid_str:
+                                    tvdb_id = guid_str.split('tvdb://')[1].split('?')[0]
+                                    #logging.info(f"Found show TVDb ID: {tvdb_id}")
+                    else:
+                        # Try to get IDs from grandparentRatingKey if available
+                        if hasattr(episode, 'grandparentRatingKey') and episode.grandparentRatingKey:
+                            try:
+                                #logging.info(f"Trying to get show via grandparentRatingKey: {episode.grandparentRatingKey}")
+                                show = episode._server.fetchItem(episode.grandparentRatingKey)
+                                if show and hasattr(show, 'guids'):
+                                    #logging.info(f"Found show object via grandparentRatingKey for '{show_title}'")
+                                    for guid in show.guids:
+                                        guid_str = str(guid.id)
+                                        #logging.info(f"Processing show guid: {guid_str}")
+                                        if 'imdb://' in guid_str:
+                                            imdb_id = guid_str.split('imdb://')[1].split('?')[0]
+                                            #logging.info(f"Found show IMDb ID: {imdb_id}")
+                                        elif 'tmdb://' in guid_str:
+                                            tmdb_id = guid_str.split('tmdb://')[1].split('?')[0]
+                                            #logging.info(f"Found show TMDb ID: {tmdb_id}")
+                                        elif 'tvdb://' in guid_str:
+                                            tvdb_id = guid_str.split('tvdb://')[1].split('?')[0]
+                                            #logging.info(f"Found show TVDb ID: {tvdb_id}")
+                            except Exception as e:
+                                logging.warning(f"Failed to get show via grandparentRatingKey for '{show_title}': {str(e)}")
+                        else:
+                            logging.warning(f"No grandparentKey or grandparentRatingKey available for '{show_title}'")
+                except Exception as e:
+                    logging.warning(f"Failed to get show IDs for '{show_title}': {str(e)}", exc_info=True)
+                
+                # If we couldn't get show IDs, try to find them via Trakt
+                if not imdb_id:
+                    #logging.info(f"No IMDb ID found from Plex, trying Trakt lookup for show: {show_title}")
+                    try:
+                        imdb_id = await find_imdb_id(cursor, {'type': 'episode', 'grandparentTitle': show_title}, show_title, trakt)
+                        if imdb_id:
+                            #logging.info(f"Found show IMDb ID via Trakt: {imdb_id}")
+                            pass
+                        else:
+                            logging.warning(f"Failed to find show IMDb ID via Trakt for: {show_title}")
+                    except Exception as e:
+                        logging.warning(f"Error during Trakt lookup for '{show_title}': {str(e)}", exc_info=True)
                 
                 title = getattr(episode, 'title', None)
                 media_id = str(getattr(episode, 'ratingKey', None))
