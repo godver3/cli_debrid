@@ -1,31 +1,59 @@
+:root {
+    --primary-color: #4CAF50;
+    --primary-hover: #45a049;
+    --background-dark: #121212;
+    --background-light: #1e1e1e;
+    --surface-color: #2d2d2d;
+    --text-primary: rgba(255, 255, 255, 0.87);
+    --text-secondary: rgba(255, 255, 255, 0.6);
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --border-radius-sm: 8px;
+    --border-radius-md: 12px;
+    --border-radius-lg: 16px;
+    --transition-speed: 0.3s;
+}
+
 html, body {
     min-height: 100vh;
     height: auto;
     margin: 0;
     padding: 0;
     padding-top: 45px;
-    background-color: black;
+    background-color: var(--background-dark);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 
 form#search-form {
     text-align: center;
-    padding: 8px;
-    background-color: #444;
-    border: 1px solid #666;
-    color: #fff;
-    border-radius: 3px;
-    box-sizing: border-box;
-    font-family: inherit;
+    padding: var(--spacing-md);
+    background-color: var(--surface-color);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-radius: var(--border-radius-md);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: var(--spacing-lg);
 }
 
-form#search-form input, select, button {
-    padding: 8px;
-    background-color: #444;
-    border: 1px solid #666;
-    color: #fff;
-    border-radius: 3px;
-    box-sizing: border-box;
-    font-family: inherit;
+form#search-form input, 
+form#search-form select, 
+form#search-form button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--background-light);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-radius: var(--border-radius-sm);
+    transition: all var(--transition-speed) ease;
+}
+
+form#search-form input:focus,
+form#search-form select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
 }
 
 /* Override autofill styles */
@@ -49,52 +77,56 @@ form#search-form input:-ms-input-placeholder {
     color: #fff !important;
 }
 
-.movie-list {
+.movie-list, .show-list {
     display: flex;
     overflow-x: auto;
-    gap: 20px;
-    padding-bottom: 20px;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
     scroll-behavior: smooth;
     scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+    -ms-overflow-style: none;  /* IE and Edge */
+    -webkit-overflow-scrolling: touch;
 }
 
-.movie-list::-webkit-scrollbar {
-    display: none; /* WebKit */
+.movie-list::-webkit-scrollbar, 
+.show-list::-webkit-scrollbar {
+    display: none; /* Chrome, Safari and Opera */
 }
 
 .media-card {
     flex: 0 0 auto;
     width: 176px;
-}
-
-.show-list {
-    display: flex;
-    overflow-x: auto;
-    gap: 20px;
-    padding-bottom: 20px;
-    scroll-behavior: smooth;
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none;  /* Internet Explorer 10+ */
-}
-
-.show-list::-webkit-scrollbar {
-    display: none; /* WebKit */
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .media-poster {
     position: relative;
     width: 176px;
     height: 264px;
-    border-radius: 8px;
+    border-radius: var(--border-radius-lg);
     overflow: hidden;
+    box-shadow: 
+        0 4px 6px rgba(0, 0, 0, 0.1),
+        0 12px 16px rgba(0, 0, 0, 0.1),
+        0 0 20px rgba(255, 255, 255, 0.05),
+        0 0 40px rgba(255, 255, 255, 0.03);
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.media-poster:hover {
+    transform: translateY(-8px);
+    box-shadow: 
+        0 8px 12px rgba(0, 0, 0, 0.15),
+        0 16px 24px rgba(0, 0, 0, 0.15),
+        0 0 30px rgba(255, 255, 255, 0.08),
+        0 0 50px rgba(255, 255, 255, 0.05);
 }
 
 .media-poster-img {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: transform 0.3s ease;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Add styles for placeholder images */
@@ -104,164 +136,44 @@ form#search-form input:-ms-input-placeholder {
     object-fit: cover !important;
 }
 
-
 .media-title {
     position: absolute;
-    bottom: 0px;
+    bottom: 0;
     width: 100%;
-    height: 25%;
-    background-color: rgb(0 0 0 / 63%);
-    color: white;
-    justify-content: center;
-    align-items: center;
+    padding: var(--spacing-md);
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
+    color: var(--text-primary);
     opacity: 0;
-    font-family: Arial, sans-serif;
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 19px;
+    transform: translateY(20px);
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    font-weight: 500;
     text-align: center;
-    box-sizing: border-box;
-    z-index: 1;
-    padding-top: 10px;
+    backdrop-filter: blur(4px);
+}
+
+.media-poster:hover .media-title {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .no-tmdb-api .media-title {
     opacity: 1;
 }
 
-.media-poster:hover .media-poster-img {
-    transform: scale(1.1);
-}
-
-.media-poster:hover .media-title {
-    opacity: 1;
-}
-
-.media-poster:hover {
-    cursor: pointer;
-}
-
-
-.sresult {
-    flex: 0 0 auto;
-    transition: transform 0.3s ease;
-    width: 200px;
-    margin-bottom: 20px;
-}
-
-.sresult:hover {
-    transform: scale(1.05);
-}
-
-.sresult button {
-    background-color: #100a0a17;
-    border-radius: 20px;
-    border: solid;
-    border-color: #2220;
-    padding: 0px;
-}
-
-h2.searchresult-item {
-    font-size: 0.999rem;
-    line-height: 1.3rem;
-    color: rgb(191 191 190);
-    padding-top: 10px;
-    padding-bottom: 10px;
-}
-
-.sresult img {
-    width: 176px;
-    height: 264px;
-    margin-right: 5px;
-    border-radius: 16px;
-    object-fit: cover;
-}
-
-.search-results-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 20px;
-    justify-content: center;
-}
-
-#searchResult {
-    width: 100%;
-    padding: 20px;
-    box-sizing: border-box;
-}
-
-#searchResult > div {
-    padding-top: 30px;
-    max-width: 1600px;
-    width: 100%;
-    margin: 0 auto;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 20px;
-    justify-content: center;
-}
-
-.close-btn {
-    position: absolute;
-    top: 0px;
-    right: 26px;
-    font-size: 37px;
-    cursor: pointer;
-}
-
-select#seasonDropdown {
-    position: absolute;
-    padding: 8px;
-    background-color: #444;
-    border: 1px solid #666;
-    color: #fff;
-    border-radius: 3px;
-    box-sizing: border-box;
-    font-family: inherit;
-    z-index: 1;
-}
-
-button#seasonPackButton {
-    position: absolute;
-    margin-left: 111px;
-    z-index: 1;
-    transition: background-color 0.3s;
-    background-color: #4CAF50;
-    border: none;
-    color: white;
-    padding: 9px 15px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 14px;
-    margin-right: 10px;
-    cursor: pointer;
-    border-radius: 3px;
-}
-
-#seasonPackButton:hover{
-    opacity: 0.9;
-}
-
-#seasonDropdown, #seasonPackButton {
-    margin-bottom: 20px;
-}
-
 .show-rating {
     position: absolute;
-    right: 0;
-    margin: 5px;
-    width: 50px;
-    height: 50px;
-    color: rgb(255 255 255 / 80%);
-    font-size: 21px;
+    right: var(--spacing-sm);
+    top: var(--spacing-sm);
+    width: 40px;
+    height: 40px;
+    color: white;
+    font-size: 16px;
     font-weight: bold;
-    line-height: 49px;
+    line-height: 40px;
     text-align: center;
-    border-radius: 82px;
-    background: linear-gradient(to right, rgba(24, 170, 135, 1) 0%, rgba(1, 144, 182, 1) 100%);
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary-color), #2196F3);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     z-index: 1;
 }
 
@@ -366,18 +278,24 @@ body {
 .episode {
     width: 100%;
     max-width: 300px;
-    transition: transform 0.3s ease;
+    transition: transform var(--transition-speed) ease;
+    background-color: var(--surface-color);
+    border-radius: var(--border-radius-md);
+    overflow: hidden;
 }
 
 .episode button {
-    border-radius: 12px;
+    border-radius: var(--border-radius-md);
     background-color: rgba(22, 21, 21, 0.66);
     padding: 8px;
+    border: none;
+    width: 100%;
+    cursor: pointer;
+    transition: transform var(--transition-speed) ease;
 }
 
-.episode:hover {
-    transform: scale(1.05);
-    cursor: pointer;
+.episode button:hover {
+    transform: scale(1.02);
 }
 
 .episode img {
@@ -440,9 +358,8 @@ h2.episode-title {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(17, 16, 16, 0.5);
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px); /* For Safari */
+    backdrop-filter: blur(8px);
+    background-color: rgba(0, 0, 0, 0.7);
     z-index: 1000;
 }
 
@@ -451,13 +368,16 @@ h2.episode-title {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: rgba(41, 36, 36, 0.95);
+    background-color: var(--surface-color);
     padding: 20px;
-    border-radius: 10px;
+    border-radius: var(--border-radius-lg);
     max-width: 85%; /* Increased from 90% to 95% */
     max-height: 80%; /* Increased from 80% to 90% */
     overflow-y: auto;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;  /* IE and Edge */
 }
 
 .overlay-content table {
@@ -492,7 +412,7 @@ h2.episode-title {
 
 /* Update button styles */
 .overlay-content td button {
-    background-color: #4CAF50;
+    background-color: var(--primary-color);
     border: none;
     color: white;
     text-align: center;
@@ -502,21 +422,28 @@ h2.episode-title {
     margin: 2px 1px; /* Reduced margin */
     cursor: pointer;
     border-radius: 4px;
-    transition: background-color 0.3s;
+    transition: background-color var(--transition-speed) ease;
     text-wrap: pretty;
 }
 
 .overlay-content td button:hover {
-    background-color: #45a049;
+    background-color: var(--primary-hover);
 }
 
 .torresult {
     width: 300px;
     margin-bottom: 5px;
-    border-radius: 12px;
-    background-color: #161515a8;
+    border-radius: var(--border-radius-md);
+    background-color: var(--surface-color);
+    padding: var(--spacing-md);
+    transition: transform var(--transition-speed) ease;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.torresult:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
 
 .torresult button {
     background-color: #f9080800;
@@ -543,25 +470,7 @@ p.torresult-title {
 
 /* Custom scrollbar styles */
 #overlayContentRes > div::-webkit-scrollbar {
-    height: 8px;
-}
-
-#overlayContentRes > div::-webkit-scrollbar-track {
-    background: #f1f1f1;
-}
-
-#overlayContentRes > div::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 4px;
-}
-
-#overlayContentRes > div::-webkit-scrollbar-thumb:hover {
-    background: #555;
-}
-
-.torresult-info {
-    flex: 1;
-    overflow-wrap: anywhere;
+    display: none; /* Chrome, Safari and Opera */
 }
 
 #overlayContentRes > div {
@@ -569,6 +478,8 @@ p.torresult-title {
     max-width: 1024px; /* (300px * 5) + (20px * 4) for gaps */
     min-width: 312px;
     margin: 0 auto; /* Centers the container if it's narrower than its parent */
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;  /* IE and Edge */
 }
 
 .mediatype-tv {
@@ -599,4 +510,32 @@ p.torresult-title {
     border-radius: 11px;
     background-color: rgb(0 0 0 / 72%);
     z-index: 1;
+}
+
+#trending-rating, #trending-watchers {
+    display: none;
+}
+
+/* Media queries for better responsive design */
+@media (max-width: 768px) {
+    .movie-list, .show-list {
+        gap: var(--spacing-sm);
+        padding: var(--spacing-sm);
+    }
+    
+    .media-card {
+        width: 140px;
+    }
+    
+    .media-poster {
+        width: 140px;
+        height: 210px;
+    }
+    
+    .show-rating {
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+        line-height: 32px;
+    }
 }

@@ -161,9 +161,9 @@ input:checked + .toggle-slider:before {
 .stats-box.upcoming-releases li {
     display: flex;
     justify-content: space-between;
-    align-items: center;
     padding: 8px 0;
     border-bottom: 1px solid #3a3a3a;
+    position: relative;
 }
 
 .stats-box.recently-aired li:last-child,
@@ -177,6 +177,26 @@ input:checked + .toggle-slider:before {
     display: flex;
     flex-direction: column;
 }
+
+.stats-box.airing-soon li,
+.stats-box.upcoming-releases li
+    {
+        flex-direction: column;
+        align-items: left;
+    }
+
+.compact-view .stats-box.recently-aired .show-info {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+}
+
+.compact-view .stats-box.recently-aired .air-time
+    {
+        min-width: 120px;
+        text-align: right;
+        margin-right: 34px;  /* This accounts for the button width (24px) + its left margin (10px) */
+    }
 
 .stats-box.recently-aired .show-title,
 .stats-box.airing-soon .show-title,
@@ -203,6 +223,9 @@ input:checked + .toggle-slider:before {
     margin-left: 10px;
     border-radius: 4px;
     transition: all 0.2s ease;
+    width: 24px;
+    position: absolute;
+    right: 0;
 }
 
 .rescrape-btn:hover {
@@ -368,7 +391,6 @@ input:checked + .toggle-slider:before {
 .compact-view .stats-box.upcoming-releases .release-date {
     margin-left: auto;
     text-align: right;
-    min-width: 160px;
 }
 
 .compact-view .file-details {
@@ -518,5 +540,19 @@ input:checked + .toggle-slider:before {
 
     input:checked + .toggle-slider:before {
         transform: translateX(20px);
+    }
+
+    .stats-box.recently-aired .air-time,
+    .stats-box.airing-soon .air-time,
+    .stats-box.upcoming-releases .release-date {
+        margin-left: 0px !important;
+        min-width: 0px !important;
+        text-align: left !important;
+    }
+
+    .stats-box.airing-soon .show-title,
+    .stats-box.upcoming-releases .titles 
+    {
+        max-width: 270px !important;
     }
 }
