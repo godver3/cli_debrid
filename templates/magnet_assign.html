@@ -4,23 +4,199 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/magnet_assign.css') }}">
-<script>
+<script type="module">
+const notificationsUrl = "{{ url_for('static', filename='js/notifications.js') }}";
+let showPopup, POPUP_TYPES;
+
+// Dynamic import of notifications module
+import(notificationsUrl).then(module => {
+    showPopup = module.showPopup;
+    POPUP_TYPES = module.POPUP_TYPES;
+}).catch(error => console.error('Error loading notifications module:', error));
+
 document.addEventListener('DOMContentLoaded', function() {
     const contentTypeSelect = document.getElementById('content_type');
-    const tvShowFields = document.querySelector('.tv-show-fields');
     
-    if (contentTypeSelect && tvShowFields) {
-        contentTypeSelect.addEventListener('change', function() {
-            if (this.value === 'show') {
-                tvShowFields.style.display = 'block';
-            } else {
-                tvShowFields.style.display = 'none';
+    // Handle TV show selection UI
+    document.querySelectorAll('.tv-show-selection').forEach(tvShowSelection => {
+        const tmdbId = tvShowSelection.dataset.tmdbId;
+        const selectionType = tvShowSelection.querySelector('.selection-type');
+        const seasonSelection = tvShowSelection.querySelector('.season-selection');
+        const episodeSelection = tvShowSelection.querySelector('.episode-selection');
+        const seasonsSelect = tvShowSelection.querySelector('.seasons-select');
+        const seasonSelect = tvShowSelection.querySelector('.season-select');
+        const episodeSelect = tvShowSelection.querySelector('.episode-select');
+        
+        // Get the associated form elements
+        const form = tvShowSelection.nextElementSibling;
+        const magnetInput = form.querySelector('.magnet-input');
+        const versionInput = form.querySelector('.version-input');
+        const submitBtn = form.querySelector('.submit-btn');
+        const selectionTypeInput = form.querySelector('.selection-type-input');
+        const selectedSeasonsInput = form.querySelector('.selected-seasons-input');
+        const seasonInput = form.querySelector('.season-input');
+        const episodeInput = form.querySelector('.episode-input');
+
+        // Load season data when TV show card is loaded
+        loadSeasonData();
+
+        // Handle selection type changes
+        selectionType.addEventListener('change', function() {
+            updateSelectionFields(this.value);
+            selectionTypeInput.value = this.value;
+        });
+
+        // Initialize selection type fields based on default value
+        const initialSelectionType = selectionType.value;
+        updateSelectionFields(initialSelectionType);
+        selectionTypeInput.value = initialSelectionType;
+
+        // Handle season selection for single episodes
+        seasonSelect.addEventListener('change', function() {
+            const seasonData = this.seasonData?.[this.value];
+            if (seasonData) {
+                populateEpisodes(seasonData);
+                seasonInput.value = this.value;
             }
         });
-    }
+
+        // Handle episode selection
+        episodeSelect.addEventListener('change', function() {
+            episodeInput.value = this.value;
+            // Show magnet input fields when episode is selected
+            showMagnetFields();
+        });
+
+        // Handle multi-season selection
+        seasonsSelect.addEventListener('change', function() {
+            const selectedSeasons = Array.from(this.selectedOptions).map(opt => opt.value);
+            selectedSeasonsInput.value = selectedSeasons.join(',');
+            if (selectedSeasons.length > 0) {
+                showMagnetFields();
+            } else {
+                hideMagnetFields();
+            }
+        });
+
+        function updateSelectionFields(type) {
+            switch(type) {
+                case 'all':
+                    seasonSelection.style.display = 'none';
+                    episodeSelection.style.display = 'none';
+                    showMagnetFields();
+                    break;
+                case 'seasons':
+                    seasonSelection.style.display = 'block';
+                    episodeSelection.style.display = 'none';
+                    hideMagnetFields();
+                    break;
+                case 'episode':
+                    seasonSelection.style.display = 'none';
+                    episodeSelection.style.display = 'block';
+                    hideMagnetFields();
+                    
+                    // If we have season data and no episode is selected yet, populate episodes for the first season
+                    if (seasonSelect.seasonData && !episodeSelect.value) {
+                        // Select the first season if none selected
+                        if (!seasonSelect.value && seasonSelect.options.length > 0) {
+                            seasonSelect.value = seasonSelect.options[0].value;
+                            seasonInput.value = seasonSelect.value;
+                        }
+                        
+                        // Populate episodes for the selected season
+                        const seasonData = seasonSelect.seasonData[seasonSelect.value];
+                        if (seasonData) {
+                            populateEpisodes(seasonData);
+                            
+                            // Select the first episode if none selected
+                            if (!episodeSelect.value && episodeSelect.options.length > 0) {
+                                episodeSelect.value = episodeSelect.options[0].value;
+                                episodeInput.value = episodeSelect.value;
+                                showMagnetFields();
+                            }
+                        }
+                    }
+                    break;
+            }
+        }
+
+        async function loadSeasonData() {
+            try {
+                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}`);
+                if (!response.ok) throw new Error('Failed to fetch season data');
+                const data = await response.json();
+                
+                // Store season data for later use
+                seasonSelect.seasonData = data;
+
+                // Clear existing options
+                seasonsSelect.innerHTML = '';
+                seasonSelect.innerHTML = '';
+                episodeSelect.innerHTML = '';
+
+                // Add seasons to both dropdowns
+                Object.entries(data).forEach(([seasonNum, episodeCount]) => {
+                    // Skip season 0 (specials)
+                    if (seasonNum === '0') return;
+
+                    // Add to multi-select seasons dropdown
+                    const seasonOption = document.createElement('option');
+                    seasonOption.value = seasonNum;
+                    seasonOption.textContent = `Season ${seasonNum} (${episodeCount} episodes)`;
+                    seasonsSelect.appendChild(seasonOption);
+
+                    // Add to single season dropdown
+                    const singleSeasonOption = seasonOption.cloneNode(true);
+                    seasonSelect.appendChild(singleSeasonOption);
+                });
+
+                // Enable season selection
+                seasonSelect.disabled = false;
+            } catch (error) {
+                console.error('Error loading season data:', error);
+                showError('Failed to load season data');
+            }
+        }
+
+        function populateEpisodes(episodeCount) {
+            episodeSelect.innerHTML = '';
+            episodeSelect.disabled = false;
+
+            for (let i = 1; i <= episodeCount; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `Episode ${i}`;
+                episodeSelect.appendChild(option);
+            }
+        }
+
+        function showMagnetFields() {
+            magnetInput.style.display = 'block';
+            versionInput.style.display = 'block';
+            submitBtn.style.display = 'block';
+        }
+
+        function hideMagnetFields() {
+            magnetInput.style.display = 'none';
+            versionInput.style.display = 'none';
+            submitBtn.style.display = 'none';
+        }
+
+        function showError(message) {
+            if (showPopup) {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: message,
+                    autoClose: 5000
+                });
+            }
+        }
+    });
 
     // Load versions from API
-    fetch('{{ url_for('magnet.get_versions') }}')
+    const versionsUrl = "{{ url_for('magnet.get_versions') }}";
+    fetch(versionsUrl)
         .then(response => response.json())
         .then(versions => {
             const versionSelects = document.querySelectorAll('select[name="version"]');
@@ -36,11 +212,122 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => console.error('Error loading versions:', error));
 
-    // Add event listener to bypass the generic form handler for our forms
-    document.querySelectorAll('.direct-submit-form').forEach(form => {
-        form.addEventListener('submit', function(e) {
-            // Don't prevent default - let the form submit normally
-            e.stopPropagation(); // Prevent other handlers from catching this event
+    // Handle magnet assignment forms
+    document.querySelectorAll('.magnet-form').forEach(form => {
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Validate form data before submission
+            const mediaType = form.querySelector('input[name="media_type"]').value;
+            if (mediaType === 'show') {
+                const selectionType = form.querySelector('.selection-type-input').value;
+                if (!selectionType) {
+                    showError('Please select a selection type');
+                    return;
+                }
+
+                if (selectionType === 'seasons') {
+                    const selectedSeasons = form.querySelector('.selected-seasons-input').value;
+                    if (!selectedSeasons) {
+                        showError('Please select at least one season');
+                        return;
+                    }
+                } else if (selectionType === 'episode') {
+                    const season = form.querySelector('.season-input').value;
+                    const episode = form.querySelector('.episode-input').value;
+                    if (!season || !episode) {
+                        showError('Please select both season and episode');
+                        return;
+                    }
+                }
+            }
+
+            const magnetLink = form.querySelector('input[name="magnet_link"]').value;
+            if (!magnetLink) {
+                showError('Please enter a magnet link');
+                return;
+            }
+
+            const version = form.querySelector('select[name="version"]').value;
+            if (!version) {
+                showError('Please select a version');
+                return;
+            }
+
+            // Log form data for debugging
+            const formData = new FormData(form);
+            for (let [key, value] of formData.entries()) {
+                console.log(`${key}: ${value}`);
+            }
+            
+            try {
+                const formAction = form.getAttribute('action');
+                const response = await fetch(formAction, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Check if any items were actually added
+                    if (data.success && data.added_items > 0) {
+                        const title = form.querySelector('input[name="title"]').value;
+                        const version = form.querySelector('select[name="version"]').value;
+                        
+                        if (showPopup) {
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                title: 'Magnet Assigned',
+                                message: `Successfully assigned magnet to ${title} (${version})`,
+                                autoClose: 3000,
+                                onConfirm: () => {
+                                    window.location.href = "{{ url_for('magnet.assign_magnet') }}";
+                                }
+                            });
+                            
+                            setTimeout(() => {
+                                window.location.href = "{{ url_for('magnet.assign_magnet') }}";
+                            }, 3000);
+                        } else {
+                            window.location.href = "{{ url_for('magnet.assign_magnet') }}";
+                        }
+                    } else {
+                        // No items were added successfully
+                        if (showPopup) {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                title: 'Error',
+                                message: data.error || 'Failed to add any items to the database',
+                                autoClose: 5000
+                            });
+                        }
+                    }
+                } else {
+                    const data = await response.json().catch(() => ({ error: 'Failed to assign magnet' }));
+                    if (showPopup) {
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Error',
+                            message: data.error || 'Failed to assign magnet',
+                            autoClose: 5000
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error submitting form:', error);
+                if (showPopup) {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error',
+                        message: 'An error occurred while assigning the magnet',
+                        autoClose: 5000
+                    });
+                }
+            }
         });
     });
 });
@@ -64,20 +351,9 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="form-group mb-3">
                 <label for="content_type">Content Type:</label>
                 <select class="form-control" id="content_type" name="content_type">
-                    <option value="all">All</option>
                     <option value="movie">Movie</option>
                     <option value="show">TV Show</option>
                 </select>
-            </div>
-            <div class="tv-show-fields" style="display: none;">
-                <div class="form-group mb-3">
-                    <label for="season">Season Number:</label>
-                    <input type="number" class="form-control" id="season" name="season" min="1">
-                </div>
-                <div class="form-group mb-3">
-                    <label for="episode">Episode Number:</label>
-                    <input type="number" class="form-control" id="episode" name="episode" min="1">
-                </div>
             </div>
             <button type="submit" class="btn btn-primary">Search</button>
         </form>
@@ -99,37 +375,70 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="media-info">
                     <h6>{{ result.title }} ({{ result.year }})</h6>
                     <p class="text-muted">{{ result.mediaType|title }}</p>
+                    
                     {% if result.mediaType == 'show' %}
-                        {% if result.selected_season %}
-                            <p>Season: {{ result.selected_season }}
-                            {% if result.selected_episode %}
-                                , Episode: {{ result.selected_episode }}
-                            {% endif %}
-                            </p>
-                        {% endif %}
+                    <div class="tv-show-selection" data-tmdb-id="{{ result.id }}">
+                        <div class="form-group mb-3">
+                            <label for="selection_type_{{ result.id }}">Selection Type:</label>
+                            <select class="form-control selection-type" id="selection_type_{{ result.id }}">
+                                <option value="all">Full Series</option>
+                                <option value="seasons">Season Pack</option>
+                                <option value="episode">Single Episode</option>
+                            </select>
+                        </div>
+                        <div class="season-selection" style="display: none;">
+                            <label for="seasons_{{ result.id }}">Select Seasons:</label>
+                            <select class="form-control seasons-select" id="seasons_{{ result.id }}" multiple>
+                                <!-- Will be populated via JavaScript -->
+                            </select>
+                            <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple seasons</small>
+                        </div>
+                        <div class="episode-selection" style="display: none;">
+                            <div class="row">
+                                <div class="col">
+                                    <label for="season_{{ result.id }}">Season:</label>
+                                    <select class="form-control season-select" id="season_{{ result.id }}">
+                                        <!-- Will be populated via JavaScript -->
+                                    </select>
+                                </div>
+                                <div class="col">
+                                    <label for="episode_{{ result.id }}">Episode:</label>
+                                    <select class="form-control episode-select" id="episode_{{ result.id }}" disabled>
+                                        <!-- Will be populated based on selected season -->
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     {% endif %}
+
                     <form method="POST" action="{{ url_for('magnet.assign_magnet') }}" class="magnet-form direct-submit-form">
                         <input type="hidden" name="action" value="assign">
                         <input type="hidden" name="tmdb_id" value="{{ result.id }}">
                         <input type="hidden" name="media_type" value="{{ result.mediaType }}">
                         <input type="hidden" name="title" value="{{ result.title }}">
                         <input type="hidden" name="year" value="{{ result.year }}">
-                        {% if result.selected_season %}
-                            <input type="hidden" name="season" value="{{ result.selected_season }}">
-                            {% if result.selected_episode %}
-                                <input type="hidden" name="episode" value="{{ result.selected_episode }}">
-                            {% endif %}
+                        
+                        {% if result.mediaType == 'show' %}
+                        <!-- These will be populated by JavaScript before form submission -->
+                        <input type="hidden" name="selection_type" class="selection-type-input">
+                        <input type="hidden" name="selected_seasons" class="selected-seasons-input">
+                        <input type="hidden" name="season" class="season-input">
+                        <input type="hidden" name="episode" class="episode-input">
                         {% endif %}
-                        <div class="form-group">
+
+                        <div class="form-group magnet-input" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
                             <input type="text" class="form-control" id="magnet_link_{{ result.id }}" 
                                    name="magnet_link" required placeholder="Enter magnet link">
                         </div>
-                        <div class="form-group">
+                        <div class="form-group version-input" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
                             <select class="form-control" name="version" required>
                                 <option value="">Select Version</option>
                             </select>
                         </div>
-                        <button type="submit" class="btn btn-success">Assign Magnet</button>
+                        <button type="submit" class="btn btn-success submit-btn" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
+                            Assign Magnet
+                        </button>
                     </form>
                 </div>
             </div>
