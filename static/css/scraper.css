@@ -46,14 +46,20 @@ form#search-form button {
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text-primary);
     border-radius: var(--border-radius-sm);
-    transition: all var(--transition-speed) ease;
+    transition: none;
+    -webkit-appearance: none;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
 }
 
 form#search-form input:focus,
-form#search-form select:focus {
+form#search-form select:focus,
+form#search-form input:active,
+form#search-form select:active {
     outline: none;
-    border-color: var(--primary-color);
+    border: 1px solid var(--primary-color);
     box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+    background-color: var(--background-light);
 }
 
 /* Override autofill styles */
@@ -61,20 +67,33 @@ form#search-form input:-webkit-autofill,
 form#search-form input:-webkit-autofill:hover,
 form#search-form input:-webkit-autofill:focus,
 form#search-form input:-webkit-autofill:active {
-    -webkit-text-fill-color: #fff !important;
-    -webkit-box-shadow: 0 0 0 30px #444 inset !important;
-    transition: background-color 5000s ease-in-out 0s;
+    -webkit-text-fill-color: var(--text-primary) !important;
+    -webkit-box-shadow: 0 0 0 30px var(--background-light) inset !important;
+    box-shadow: none;
+    transition: none;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Additional focus prevention */
+form#search-form *:focus {
+    outline: none !important;
+}
+
+form#search-form input::selection {
+    background-color: var(--primary-color);
+    color: var(--text-primary);
 }
 
 /* For Firefox */
 form#search-form input:autofill {
-    color: #fff;
-    background-color: #444;
+    background-color: var(--background-light) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 /* For Edge */
 form#search-form input:-ms-input-placeholder {
-    color: #fff !important;
+    color: var(--text-primary) !important;
 }
 
 .movie-list, .show-list {
@@ -93,18 +112,35 @@ form#search-form input:-ms-input-placeholder {
     display: none; /* Chrome, Safari and Opera */
 }
 
-.media-card {
+/* Common poster styles */
+.media-card,
+.sresult {
     flex: 0 0 auto;
     width: 176px;
     transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.media-poster {
+.media-poster,
+.sresult button {
     position: relative;
+    width: 100%;
+    cursor: pointer;
+}
+
+.sresult button {
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: none;
+}
+
+.media-poster-img,
+.sresult img {
     width: 176px;
     height: 264px;
     border-radius: var(--border-radius-lg);
     overflow: hidden;
+    object-fit: cover;
     box-shadow: 
         0 4px 6px rgba(0, 0, 0, 0.1),
         0 12px 16px rgba(0, 0, 0, 0.1),
@@ -113,7 +149,8 @@ form#search-form input:-ms-input-placeholder {
     transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.media-poster:hover {
+.media-poster:hover .media-poster-img,
+.sresult:hover img {
     transform: translateY(-8px);
     box-shadow: 
         0 8px 12px rgba(0, 0, 0, 0.15),
@@ -122,21 +159,8 @@ form#search-form input:-ms-input-placeholder {
         0 0 50px rgba(255, 255, 255, 0.05);
 }
 
-.media-poster-img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Add styles for placeholder images */
-.placeholder-poster {
-    width: 176px !important;
-    height: 264px !important;
-    object-fit: cover !important;
-}
-
-.media-title {
+.media-title,
+.searchresult-info {
     position: absolute;
     bottom: 0;
     width: 100%;
@@ -146,35 +170,48 @@ form#search-form input:-ms-input-placeholder {
     opacity: 0;
     transform: translateY(20px);
     transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-    font-weight: 500;
     text-align: center;
     backdrop-filter: blur(4px);
 }
 
-.media-poster:hover .media-title {
+.media-poster:hover .media-title,
+.sresult:hover .searchresult-info {
     opacity: 1;
     transform: translateY(0);
 }
 
-.no-tmdb-api .media-title {
+.no-tmdb-api .media-title,
+.no-tmdb-api .searchresult-info {
     opacity: 1;
 }
 
-.show-rating {
+/* Add styles for placeholder images */
+.placeholder-poster {
+    width: 176px !important;
+    height: 264px !important;
+    object-fit: cover !important;
+}
+
+h2.searchresult-item {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--text-primary);
+}
+
+.mediatype-tv, .mediatype-mv {
     position: absolute;
-    right: var(--spacing-sm);
-    top: var(--spacing-sm);
-    width: 40px;
-    height: 40px;
-    color: white;
-    font-size: 16px;
-    font-weight: bold;
-    line-height: 40px;
-    text-align: center;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--primary-color), #2196F3);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    z-index: 1;
+    top: 8px;
+    left: 8px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background-color: rgba(0, 0, 0, 0.75);
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    z-index: 2;
+    backdrop-filter: blur(4px);
 }
 
 .season-info-container {
@@ -202,6 +239,7 @@ form#search-form input:-ms-input-placeholder {
     padding: 1rem;
     border-radius: 4px;
     max-height: 200px;
+    position: relative;
 }
 
 .season-details > p {
@@ -220,7 +258,42 @@ form#search-form input:-ms-input-placeholder {
 }
 
 .season-controls {
+    display: inline-flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+    padding: var(--spacing-sm);
+    border-radius: var(--border-radius-md);
+    margin-top: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
     margin-left: 10px;
+    z-index: 2;
+    position: relative;
+}
+
+.season-controls select,
+.season-controls button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--background-light);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-radius: var(--border-radius-sm);
+    transition: all var(--transition-speed) ease;
+    min-width: 120px;
+}
+
+.season-controls button {
+    background-color: var(--primary-color);
+    cursor: pointer;
+}
+
+.season-controls button:hover {
+    background-color: var(--primary-hover);
+}
+
+.season-controls select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
 }
 
 .season-overview p {
@@ -259,7 +332,13 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.6) 60%, rgba(0, 0, 0, 1) 100%);
+    background: linear-gradient(to bottom, 
+        rgba(0, 0, 0, 1) 0%,
+        rgba(0, 0, 0, 0.7) 15%,
+        rgba(0, 0, 0, 0) 40%,
+        rgba(0, 0, 0, 0.6) 60%,
+        rgba(0, 0, 0, 1) 100%
+    );
 }
 
 #episodeResults > div {
@@ -273,6 +352,7 @@ body {
     gap: 20px;
     justify-items: center !important;
     margin-top: 190px;
+    margin-bottom: 170px;
 }
 
 .episode {
@@ -371,13 +451,37 @@ h2.episode-title {
     background-color: var(--surface-color);
     padding: 20px;
     border-radius: var(--border-radius-lg);
-    max-width: 85%; /* Increased from 90% to 95% */
-    max-height: 80%; /* Increased from 80% to 90% */
+    max-width: 85%;
+    max-height: 80%;
     overflow-y: auto;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    margin-top: 50px;
+}
+
+.close-btn {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    width: 30px;
+    height: 30px;
+    font-size: 24px;
+    line-height: 30px;
+    text-align: center;
+    cursor: pointer;
+    color: var(--text-secondary);
+    background-color: transparent;
+    border-radius: 50%;
+    transition: all var(--transition-speed) ease;
+    z-index: 2;
+}
+
+.close-btn:hover {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.1);
+    transform: scale(1.1);
 }
 
 .overlay-content table {
@@ -412,18 +516,23 @@ h2.episode-title {
 
 /* Update button styles */
 .overlay-content td button {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: bold;
+    text-transform: uppercase;
+    min-width: 120px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     background-color: var(--primary-color);
     border: none;
     color: white;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 12px; /* Reduced font size */
-    margin: 2px 1px; /* Reduced margin */
+    margin: 5px 0;
     cursor: pointer;
-    border-radius: 4px;
     transition: background-color var(--transition-speed) ease;
-    text-wrap: pretty;
 }
 
 .overlay-content td button:hover {
@@ -482,36 +591,6 @@ p.torresult-title {
     -ms-overflow-style: none;  /* IE and Edge */
 }
 
-.mediatype-tv {
-    position: absolute;
-    margin: 5px;
-    width: 26px;
-    height: 16px;
-    color: rgba(255, 255, 255, 0.8);
-    font-size: 11px;
-    font-weight: bold;
-    line-height: 16px;
-    text-align: center;
-    border-radius: 11px;
-    background-color: rgb(0 0 0 / 72%);
-    z-index: 1;
-}
-
-.mediatype-mv {
-    position: absolute;
-    margin: 5px;
-    width: 49px;
-    height: 16px;
-    color: rgba(255, 255, 255, 0.8);
-    font-size: 11px;
-    font-weight: bold;
-    line-height: 16px;
-    text-align: center;
-    border-radius: 11px;
-    background-color: rgb(0 0 0 / 72%);
-    z-index: 1;
-}
-
 #trending-rating, #trending-watchers {
     display: none;
 }
@@ -523,11 +602,13 @@ p.torresult-title {
         padding: var(--spacing-sm);
     }
     
-    .media-card {
+    .media-card,
+    .sresult {
         width: 140px;
     }
     
-    .media-poster {
+    .media-poster-img,
+    .sresult img {
         width: 140px;
         height: 210px;
     }
@@ -538,4 +619,21 @@ p.torresult-title {
         font-size: 14px;
         line-height: 32px;
     }
+}
+
+.show-rating {
+    position: absolute;
+    right: var(--spacing-md);
+    top: var(--spacing-md);
+    width: 40px;
+    height: 40px;
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    line-height: 40px;
+    text-align: center;
+    border-radius: 50%;
+    background: linear-gradient(135deg, rgba(64, 64, 64, 0.95), rgba(32, 32, 32, 0.85));
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    z-index: 2;
 }

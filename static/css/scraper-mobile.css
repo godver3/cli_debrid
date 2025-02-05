@@ -85,7 +85,7 @@
 
     .season-bg-image {
         position: absolute;
-        top: 105px;
+        top: 60px;
         left: 0;
         height: 600px;
         width: 100%;
@@ -104,8 +104,13 @@
         left: 0;
         width: 100%;
         height: 100%;
-        background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.8) 50%, #000 100%);
-    }
+        background: linear-gradient(to bottom, 
+            rgba(0, 0, 0, 1) 0%,
+            rgba(0, 0, 0, 0.7) 15%,
+            rgba(0, 0, 0, 0) 40%,
+            rgba(0, 0, 0, 0.6) 60%,
+            rgba(0, 0, 0, 1) 100%
+        );    }
 
     .season-details {
         position: relative;
@@ -184,8 +189,13 @@
         margin-top: 0;
         position: relative;
         z-index: 2;
-        margin-left: 10px;
         margin-top: 120px;
+        display: flex;
+        flex-direction: column;
+        gap: 0px;
+        align-items: left !important;
+        width: 50px;
+        margin-left: 110px;
     }
 
     select#seasonDropdown,
@@ -245,8 +255,16 @@
     }
 
     .media-poster {
-        width: 120px;
-        height: 180px;
+        width: auto;
+        height: auto;
+    }
+
+    .media-card {
+        width: auto;
+    }
+
+    .movie-list, .show-list {
+        height: 250px;
     }
 
     /* Overlay Content */
@@ -254,13 +272,94 @@
         min-width: 200px;
     }
 
+    /* Torrent Results Mobile Styles */
+    .torresult {
+        width: 100% !important;
+        max-width: calc(100% - 20px) !important;
+        margin: 10px auto !important;
+        box-sizing: border-box;
+    }
+
+    .torresult button {
+        width: 100%;
+        padding: 15px 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .torresult-info {
+        width: 100%;
+        text-align: center;
+    }
+
+    p.torresult-title {
+        font-size: 1rem;
+        text-align: center;
+        margin: 5px 0;
+        word-break: break-word;
+    }
+
+    p.torresult-item {
+        font-size: 0.9rem;
+        margin: 5px 0;
+    }
+
+    .cache-status {
+        margin: 10px auto 5px auto;
+        display: block;
+    }
+
+    #overlayContent {
+        padding: 10px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    #overlayContent > div {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+        gap: 10px;
+    }
+
+    #overlayContent h3 {
+        text-align: center;
+        width: 100%;
+        margin: 10px 0;
+        padding: 0 20px;
+        box-sizing: border-box;
+    }
+
     /* Form Styles */
     form#search-form {
-        flex-direction: column;
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
+        padding: 10px;
+        align-items: center;
+        justify-content: center;
     }
     
     form#search-form input {
         min-height: 35px;
+        width: 40%;
+        min-width: 120px;
+    }
+
+    form#search-form select {
+        min-height: 35px;
+        width: 30%;
+        min-width: 90px;
+        padding-right: 25px; /* Space for the dropdown arrow */
+    }
+
+    form#search-form button {
+        min-height: 35px;
+        width: 20%;
+        min-width: 70px;
+        padding: 0 8px;
     }
 
     /* Override base.css background gradient with fixed height */
