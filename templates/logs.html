@@ -5,19 +5,22 @@
 {% block content %}
 <style>
     /* Logs page styles */
+
     .log-container {
-        width: 95vw; /* 95% of the viewport width */
-        max-width: 1200px; /* Maximum width */
-        height: calc(100vh - 200px); /* Adjust based on your header height */
-        margin: 20px auto;
+        width: 100%;
+        height: calc(100vh - 95px);
+        /* width: 95vw; */
+        /* max-width: 1200px; */
+        /* height: calc(100vh - 200px); */
+        /* margin: 20px auto; */
         overflow: hidden;
         display: flex;
         flex-direction: column;
         background-color: #222;
-        border: 1px solid #555;
-        border-radius: 5px;
-        position: relative; /* Add this */
-        margin-top: 25px
+        /* border: 1px solid #555; */
+        /* border-radius: 5px; */
+        position: relative;
+        /* margin-top: 25px; */
     }
 
     /* Mobile-specific adjustments */
@@ -25,7 +28,7 @@
         .log-container {
             width: 100vw;
             margin: 0;
-            height: calc(100vh - 120px);
+            height: calc(100vh - 70px);
             border-radius: 0;
         }
 

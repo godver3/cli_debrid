@@ -212,6 +212,13 @@ SETTINGS_SCHEMA = {
             "description": "Enable upgrading of items in the queue",
             "default": False
         },
+        "upgrading_percentage_threshold": {
+            "type": "float",
+            "description": "Percentage threshold for upgrading (0.0 to 1.0). Higher values mean an item's score must be higher than the threshold to be upgraded.",
+            "default": 0.1,
+            "min": 0.0,
+            "max": 1.0
+        },
         "enable_upgrading_cleanup": {
             "type": "boolean",
             "description": "Enable cleanup of original items after successful upgrade (removes original item from Debrid Provider)",

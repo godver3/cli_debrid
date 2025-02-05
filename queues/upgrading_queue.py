@@ -205,35 +205,64 @@ class UpgradingQueue:
 
             # Get similarity threshold from settings, default to 95%
             similarity_threshold = 0.95 #float(get_setting('Scraping', 'upgrade_similarity_threshold', '0.95'))
+            upgrading_percentage_threshold = float(get_setting('Scraping', 'upgrading_percentage_threshold', '0.1'))
+
+            # Get current item's score if it exists in results
+            current_score = 0
+            if current_position is not None:
+                current_score = results[current_position]['score_breakdown'].get('total_score', 0)
+                logging.info(f"Current item score: {current_score:.2f}")
 
             for index, result in enumerate(results):
                 # Calculate similarity score
                 similarity = SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio()
-                logging.info(f"Result {index}: {result['title']} (Similarity: {similarity:.2%})")
+                logging.info(f"Result {index + 1}: {result['title']}")
+                logging.info(f"  Similarity: {similarity:.2%}")
+                if 'score_breakdown' in result:
+                    total_score = result['score_breakdown'].get('total_score', 0)
+                    score_increase = (total_score - current_score) / current_score if current_score > 0 else float('inf')
+                    logging.info(f"  Score: {total_score:.2f} ({'+' if score_increase > 0 else ''}{score_increase:.2%} compared to current)")
+                    if score_increase > upgrading_percentage_threshold:
+                        logging.info(f"  ⬆ Above upgrade threshold ({upgrading_percentage_threshold:.2%})")
+                logging.info("  ---")
 
             if current_position is None:
-                logging.info(f"Current item {item_identifier} not found in scrape results")
+                logging.info(f"Current item {item_identifier} not found in scrape results (treating current score as 0)")
                 # Filter out results that are too similar to current title
                 better_results = [
                     result for result in results 
-                    if SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold
+                    if (SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold and
+                        result['score_breakdown'].get('total_score', 0) > 0)  # Any score above 0 is an upgrade
                 ]
+                if better_results:
+                    logging.info(f"Found {len(better_results)} potential upgrades after filtering out similar titles (threshold: {similarity_threshold:.2%})")
+                else:
+                    logging.info("No results found that are sufficiently different from current title")
             else:
                 logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the scrape results")
                 logging.info(f"Current item title: {current_title}")
                 
-                # Only consider results that are in higher positions AND not too similar
+                # Only consider results that are in higher positions AND not too similar AND score increase > threshold
                 better_results = [
                     result for result in results[:current_position]
-                    if SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold
+                    if (SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold and
+                        (result['score_breakdown'].get('total_score', 0) - current_score) / current_score > upgrading_percentage_threshold)
                 ]
-            
+                if better_results:
+                    logging.info(f"Found {len(better_results)} potential upgrade(s) in higher positions after similarity filtering (threshold: {similarity_threshold:.2%})")
+                else:
+                    logging.info("No better results found in higher positions that are sufficiently different and above upgrade threshold")
+
             if better_results:
-                logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier} after similarity filtering")
+                logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier} after filtering")
                 logging.info("Better results to try:")
                 for i, result in enumerate(better_results):
                     similarity = SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio()
-                    logging.info(f"  {i}: {result['title']} (Similarity: {similarity:.2%})")
+                    score = result['score_breakdown'].get('total_score', 0)
+                    score_increase = (score - current_score) / current_score if current_score > 0 else float('inf')
+                    logging.info(f"  {i}: {result['title']}")
+                    logging.info(f"     Similarity: {similarity:.2%}")
+                    logging.info(f"     Score: {score:.2f} ({'+' if score_increase > 0 else ''}{score_increase:.2%} compared to current)")
 
                 # Update item with scrape results in database first
                 best_result = better_results[0]
