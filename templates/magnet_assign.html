@@ -4,6 +4,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/magnet_assign.css') }}">
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
 const notificationsUrl = "{{ url_for('static', filename='js/notifications.js') }}";
 let showPopup, POPUP_TYPES;
@@ -17,7 +18,20 @@ import(notificationsUrl).then(module => {
 document.addEventListener('DOMContentLoaded', function() {
     const contentTypeSelect = document.getElementById('content_type');
     
-    // Handle TV show selection UI
+    console.log('Starting TV show selection handling');
+    
+    // First, hide all TV show selection UI elements for movies
+    document.querySelectorAll('.media-card').forEach(card => {
+        const mediaType = card.querySelector('input[name="media_type"]')?.value;
+        const tvShowSelection = card.querySelector('.tv-show-selection');
+        console.log(`Card media type: ${mediaType}, Has TV selection: ${!!tvShowSelection}`);
+        
+        if (mediaType === 'movie' && tvShowSelection) {
+            tvShowSelection.style.display = 'none';
+        }
+    });
+
+    // Handle TV show selection UI only for TV shows
     document.querySelectorAll('.tv-show-selection').forEach(tvShowSelection => {
         const tmdbId = tvShowSelection.dataset.tmdbId;
         const selectionType = tvShowSelection.querySelector('.selection-type');
@@ -29,6 +43,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Get the associated form elements
         const form = tvShowSelection.nextElementSibling;
+        
         const magnetInput = form.querySelector('.magnet-input');
         const versionInput = form.querySelector('.version-input');
         const submitBtn = form.querySelector('.submit-btn');
@@ -38,7 +53,45 @@ document.addEventListener('DOMContentLoaded', function() {
         const episodeInput = form.querySelector('.episode-input');
 
         // Load season data when TV show card is loaded
-        loadSeasonData();
+        async function loadSeasonData() {
+            try {
+                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                // Store season data for later use
+                seasonSelect.seasonData = data;
+
+                // Clear existing options
+                seasonsSelect.innerHTML = '';
+                seasonSelect.innerHTML = '';
+                episodeSelect.innerHTML = '';
+
+                // Add seasons to both dropdowns
+                Object.entries(data).forEach(([seasonNum, episodeCount]) => {
+                    // Skip season 0 (specials)
+                    if (seasonNum === '0') return;
+
+                    // Add to multi-select seasons dropdown
+                    const seasonOption = document.createElement('option');
+                    seasonOption.value = seasonNum;
+                    seasonOption.textContent = `Season ${seasonNum} (${episodeCount} episodes)`;
+                    seasonsSelect.appendChild(seasonOption);
+
+                    // Add to single season dropdown
+                    const singleSeasonOption = seasonOption.cloneNode(true);
+                    seasonSelect.appendChild(singleSeasonOption);
+                });
+
+                // Enable season selection
+                seasonSelect.disabled = false;
+            } catch (error) {
+                console.error('Error loading season data:', error);
+                showError('Failed to load season data');
+            }
+        }
 
         // Handle selection type changes
         selectionType.addEventListener('change', function() {
@@ -120,44 +173,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        async function loadSeasonData() {
-            try {
-                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}`);
-                if (!response.ok) throw new Error('Failed to fetch season data');
-                const data = await response.json();
-                
-                // Store season data for later use
-                seasonSelect.seasonData = data;
-
-                // Clear existing options
-                seasonsSelect.innerHTML = '';
-                seasonSelect.innerHTML = '';
-                episodeSelect.innerHTML = '';
-
-                // Add seasons to both dropdowns
-                Object.entries(data).forEach(([seasonNum, episodeCount]) => {
-                    // Skip season 0 (specials)
-                    if (seasonNum === '0') return;
-
-                    // Add to multi-select seasons dropdown
-                    const seasonOption = document.createElement('option');
-                    seasonOption.value = seasonNum;
-                    seasonOption.textContent = `Season ${seasonNum} (${episodeCount} episodes)`;
-                    seasonsSelect.appendChild(seasonOption);
-
-                    // Add to single season dropdown
-                    const singleSeasonOption = seasonOption.cloneNode(true);
-                    seasonSelect.appendChild(singleSeasonOption);
-                });
-
-                // Enable season selection
-                seasonSelect.disabled = false;
-            } catch (error) {
-                console.error('Error loading season data:', error);
-                showError('Failed to load season data');
-            }
-        }
-
         function populateEpisodes(episodeCount) {
             episodeSelect.innerHTML = '';
             episodeSelect.disabled = false;
@@ -192,6 +207,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             }
         }
+
+        loadSeasonData();
     });
 
     // Load versions from API
@@ -254,13 +271,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
-            // Log form data for debugging
-            const formData = new FormData(form);
-            for (let [key, value] of formData.entries()) {
-                console.log(`${key}: ${value}`);
-            }
+            // Show loading indicator
+            Loading.show();
             
             try {
+                const formData = new FormData(form);
                 const formAction = form.getAttribute('action');
                 const response = await fetch(formAction, {
                     method: 'POST',
@@ -270,54 +285,46 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 });
                 
-                if (response.ok) {
-                    const data = await response.json();
+                const data = await response.json();
+                
+                // Hide loading indicator
+                Loading.hide();
+                
+                if (response.ok && data.success && data.added_items > 0) {
+                    const title = form.querySelector('input[name="title"]').value;
+                    const version = form.querySelector('select[name="version"]').value;
                     
-                    // Check if any items were actually added
-                    if (data.success && data.added_items > 0) {
-                        const title = form.querySelector('input[name="title"]').value;
-                        const version = form.querySelector('select[name="version"]').value;
-                        
-                        if (showPopup) {
-                            showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                title: 'Magnet Assigned',
-                                message: `Successfully assigned magnet to ${title} (${version})`,
-                                autoClose: 3000,
-                                onConfirm: () => {
-                                    window.location.href = "{{ url_for('magnet.assign_magnet') }}";
-                                }
-                            });
-                            
-                            setTimeout(() => {
+                    if (showPopup) {
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            title: 'Magnet Assigned',
+                            message: `Successfully assigned magnet to ${title} (${version})`,
+                            autoClose: 3000,
+                            onConfirm: () => {
                                 window.location.href = "{{ url_for('magnet.assign_magnet') }}";
-                            }, 3000);
-                        } else {
+                            }
+                        });
+                        
+                        setTimeout(() => {
                             window.location.href = "{{ url_for('magnet.assign_magnet') }}";
-                        }
+                        }, 3000);
                     } else {
-                        // No items were added successfully
-                        if (showPopup) {
-                            showPopup({
-                                type: POPUP_TYPES.ERROR,
-                                title: 'Error',
-                                message: data.error || 'Failed to add any items to the database',
-                                autoClose: 5000
-                            });
-                        }
+                        window.location.href = "{{ url_for('magnet.assign_magnet') }}";
                     }
                 } else {
-                    const data = await response.json().catch(() => ({ error: 'Failed to assign magnet' }));
                     if (showPopup) {
                         showPopup({
                             type: POPUP_TYPES.ERROR,
                             title: 'Error',
-                            message: data.error || 'Failed to assign magnet',
+                            message: data.error || 'Failed to add any items to the database',
                             autoClose: 5000
                         });
                     }
                 }
             } catch (error) {
+                // Hide loading indicator on error
+                Loading.hide();
+                
                 console.error('Error submitting form:', error);
                 if (showPopup) {
                     showPopup({

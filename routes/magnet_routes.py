@@ -1,7 +1,7 @@
 from flask import Blueprint, request, render_template, flash, redirect, url_for, jsonify
 from debrid import get_debrid_provider
 from database.database_writing import add_media_item
-from metadata.metadata import get_metadata, _get_local_timezone
+from metadata.metadata import get_metadata, _get_local_timezone, get_all_season_episode_counts
 from .models import admin_required
 from config_manager import load_config
 from queues.checking_queue import CheckingQueue
@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from queues.media_matcher import MediaMatcher
 import logging
 from cli_battery.app.direct_api import DirectAPI
+import os
 
 magnet_bp = Blueprint('magnet', __name__)
 
@@ -18,6 +19,30 @@ def get_versions():
     version_terms = settings.get('Scraping', {}).get('versions', {})
     # Return list of version keys
     return jsonify(list(version_terms.keys()))
+
+@magnet_bp.route('/get_season_data')
+def get_season_data():
+    tmdb_id = request.args.get('tmdb_id')
+    if not tmdb_id:
+        return jsonify({'error': 'No TMDB ID provided'}), 400
+
+    try:
+        # Convert TMDB ID to IMDb ID
+        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show')
+        if not imdb_id:
+            return jsonify({'error': 'Could not find IMDb ID'}), 404
+
+        # Get season episode counts
+        season_counts = get_all_season_episode_counts(imdb_id)
+        if not season_counts:
+            return jsonify({'error': 'Could not fetch season data'}), 404
+
+        # Convert all season numbers to strings for JSON serialization
+        season_counts = {str(season): count for season, count in season_counts.items()}
+        return jsonify(season_counts)
+    except Exception as e:
+        logging.error(f"Error getting season data: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @magnet_bp.route('/assign_magnet', methods=['GET', 'POST'])
 @admin_required
@@ -39,8 +64,12 @@ def assign_magnet():
             from web_scraper import search_trakt
             search_results = search_trakt(search_term, content_type)
             
+            # Filter results based on content type
+            if content_type != 'all':
+                search_results = [result for result in search_results if result['mediaType'] == content_type]
+            
             # Add season/episode info to results if provided
-            if season:
+            if season and content_type == 'show':
                 for result in search_results:
                     result['selected_season'] = season
                     if episode:
@@ -49,6 +78,7 @@ def assign_magnet():
             return render_template('magnet_assign.html', 
                                 search_results=search_results,
                                 search_term=search_term,
+                                content_type=content_type,
                                 step='results')
         
         elif action == 'assign':
@@ -59,19 +89,12 @@ def assign_magnet():
             title = request.form.get('title')
             year = request.form.get('year')
             version = request.form.get('version')
+            
+            # Get TV show specific data
+            selection_type = request.form.get('selection_type')
+            selected_seasons = request.form.get('selected_seasons', '').split(',') if request.form.get('selected_seasons') else []
             season = request.form.get('season')
             episode = request.form.get('episode')
-
-            # Convert season and episode to integers if present
-            try:
-                season_number = int(season) if season and season.lower() != 'null' else None
-            except (ValueError, TypeError):
-                season_number = None
-
-            try:
-                episode_number = int(episode) if episode and episode.lower() != 'null' else None
-            except (ValueError, TypeError):
-                episode_number = None
 
             # Check if all required fields are present
             if not all([tmdb_id, media_type, magnet_link, title, year, version]):
@@ -93,217 +116,332 @@ def assign_magnet():
                     flash('Failed to get torrent info', 'error')
                     return redirect(url_for('magnet.assign_magnet'))
 
-                # Get metadata to determine genres
-                metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type) if tmdb_id else {}
-                genres = metadata.get('genres', [])
-                genres_str = ','.join(genres) if genres else ''
-
-                # Create base item data
-                item_data = {
-                    'imdb_id': metadata.get('imdb_id'),
-                    'title': title,
-                    'year': year,
-                    'type': 'episode' if media_type in ['tv', 'show'] else 'movie',
-                    'version': version,
-                    'tmdb_id': tmdb_id,
-                    'state': 'Checking',
-                    'filled_by_magnet': magnet_link,
-                    'filled_by_torrent_id': torrent_id,
-                    'genres': genres_str
-                }
-
-                # Get release date from metadata
-                first_aired = metadata.get('first_aired')
-                release_date = metadata.get('release_date')
-                release_dates = metadata.get('release_dates', {})
+                # Log raw torrent info for debugging
+                #logging.debug(f"Raw torrent info: {torrent_info}")
                 
-                if first_aired:
-                    try:
-                        # Try parsing with microseconds first
-                        try:
-                            first_aired_utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S.%fZ")
-                        except ValueError:
-                            # If that fails, try without microseconds
-                            first_aired_utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S")
-                        first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-                        # Convert UTC to local timezone
-                        local_tz = _get_local_timezone()
-                        local_dt = first_aired_utc.astimezone(local_tz)
-                        item_data['release_date'] = local_dt.strftime("%Y-%m-%d")
-                    except ValueError as e:
-                        logging.warning(f"Could not parse first_aired date '{first_aired}': {e}")
-                        item_data['release_date'] = '1970-01-01'
-                elif release_date:
-                    # For movies, use the release_date field
-                    item_data['release_date'] = release_date
-                elif release_dates:
-                    # If we have release dates, try to find the earliest theatrical or digital release
-                    earliest_date = None
-                    for country_releases in release_dates.values():
-                        for release in country_releases:
-                            if release['type'] in ['theatrical', 'digital']:
-                                date = release['date']
-                                if not earliest_date or date < earliest_date:
-                                    earliest_date = date
-                    if earliest_date:
-                        item_data['release_date'] = earliest_date
+                # Get files and ensure they're in the correct format
+                files = torrent_info.get('files', [])
+                if isinstance(files, dict):
+                    # If files is a dictionary, convert to list
+                    files = list(files.values())
+                elif not isinstance(files, list):
+                    files = []
+                
+                # Extract video file paths
+                video_files = []
+                for f in files:
+                    # Handle both dictionary and string file formats
+                    if isinstance(f, dict):
+                        path = f.get('path', '')
                     else:
-                        item_data['release_date'] = '1970-01-01'
-                else:
-                    item_data['release_date'] = '1970-01-01'
-
-                # Handle TV show episodes
-                if media_type in ['tv', 'show']:
-                    # Create MediaMatcher instance for file matching
-                    media_matcher = MediaMatcher()
-                    files = torrent_info.get('files', [])
-
-                    # If this is a season pack (has season but no episode number)
-                    if season_number is not None and episode_number is None:
-                        logging.info(f"Processing season pack for {title} Season {season_number}")
-                        
-                        # Get seasons data which contains episodes
-                        seasons_data, _ = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
-                        logging.info(f"Got seasons data: {seasons_data.keys() if seasons_data else None}")
-                        
-                        if seasons_data and season_number in seasons_data:
-                            season_info = seasons_data[season_number]
-                            logging.info(f"Season info: {season_info}")
-                            episodes = season_info.get('episodes', {})
-                            logging.info(f"Episodes data type: {type(episodes)}")
-                            logging.info(f"Found {len(episodes)} episodes in season {season_number}")
-                            
-                            # Create MediaMatcher instance for file matching
-                            media_matcher = MediaMatcher()
-                            files = torrent_info.get('files', [])
-                            logging.info(f"Found {len(files)} files in torrent")
-                            
-                            # Log raw torrent info
-                            logging.info(f"Raw torrent info: {torrent_info}")
-                            
-                            success_count = 0
-                            # For each episode in the season
-                            for episode_num, episode_data in episodes.items():
-                                try:
-                                    episode_num = int(episode_num)
-                                    logging.info(f"Processing episode {episode_num}: {episode_data}")
-                                    
-                                    # Create episode-specific item for MediaMatcher
-                                    matcher_item = {
-                                        'type': 'episode',
-                                        'series_title': title,  # Required by MediaMatcher
-                                        'title': title,  # Keep original title for reference
-                                        'season': season_number,  # MediaMatcher uses 'season'
-                                        'episode': episode_num,  # MediaMatcher uses 'episode'
-                                        'genres': metadata.get('genres', [])  # Pass genres for anime detection
-                                    }
-                                    
-                                    # Find matching file for this episode
-                                    matches = media_matcher.match_content(files, matcher_item)
-                                    if matches:
-                                        # Get release date from first_aired
-                                        first_aired = episode_data.get('first_aired')
-                                        if first_aired:
-                                            try:
-                                                # Try parsing with microseconds first
-                                                try:
-                                                    first_aired_utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S.%fZ")
-                                                except ValueError:
-                                                    # If that fails, try without microseconds
-                                                    first_aired_utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S")
-                                                first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-                                                # Convert UTC to local timezone
-                                                local_tz = _get_local_timezone()
-                                                local_dt = first_aired_utc.astimezone(local_tz)
-                                                release_date = local_dt.strftime("%Y-%m-%d")
-                                            except ValueError as e:
-                                                logging.warning(f"Could not parse first_aired date '{first_aired}': {e}")
-                                                release_date = '1970-01-01'
-                                        else:
-                                            release_date = '1970-01-01'
-
-                                        # Create database item with only fields that exist in schema
-                                        episode_item = {
-                                            'type': 'episode',
-                                            'title': title,
-                                            'season_number': season_number,
-                                            'episode_number': episode_num,
-                                            'episode_title': episode_data.get('title', f'Episode {episode_num}'),
-                                            'imdb_id': metadata.get('imdb_id'),
-                                            'tmdb_id': metadata.get('tmdb_id'),
-                                            'year': metadata.get('year'),
-                                            'release_date': release_date,
-                                            'genres': ','.join(metadata.get('genres', [])),
-                                            'runtime': metadata.get('runtime'),
-                                            'state': 'Checking',
-                                            'filled_by_magnet': magnet_link,
-                                            'filled_by_torrent_id': torrent_id,
-                                            'filled_by_file': matches[0][0],  # Use first match's path
-                                            'filled_by_title': torrent_info.get('filename', ''),  # Use torrent filename
-                                            'version': version
-                                        }
-                                        
-                                        logging.info(f"Found matching file for episode {episode_num}: {matches[0][0]}")
-                                        
-                                        # Add episode to database
-                                        episode_id = add_media_item(episode_item)
-                                        if episode_id is not None:
-                                            # Update episode_item with the database ID
-                                            episode_item['id'] = episode_id
-                                            
-                                            # Add to checking queue
-                                            checking_queue = CheckingQueue()
-                                            checking_queue.add_item(episode_item)
-                                            success_count += 1
-                                            logging.info(f"Added episode {episode_num} to checking queue")
-                                        else:
-                                            logging.error(f"Failed to add episode {episode_num} to database")
-                                    else:
-                                        logging.warning(f"No matching file found for episode {episode_num}")
-                                except Exception as e:
-                                    logging.error(f"Error processing episode {episode_num}: {str(e)}")
-                                    continue
-                            
-                            if success_count > 0:
-                                flash(f'Successfully processed {success_count} episodes from season pack', 'success')
-                            else:
-                                flash('No episodes were successfully processed from season pack', 'error')
-                        else:
-                            logging.error(f"No episodes data found in season {season_number}")
-                            flash(f'No episodes found for season {season_number}', 'error')
-                        
-                        return redirect(url_for('magnet.assign_magnet'))
-
-                    # Single episode
-                    else:
-                        item_data.update({
-                            'season_number': season_number,
-                            'episode_number': episode_number
+                        path = str(f)
+                    
+                    # Clean up path and check for video files
+                    path = path.lstrip('/')  # Remove leading slash
+                    if any(ext in path.lower() for ext in ['.mkv', '.mp4', '.avi']):
+                        # Use just the filename for matching, but keep the full path
+                        video_files.append({
+                            'path': os.path.basename(path),  # Just the filename for matching
+                            'full_path': path  # Keep the full path for later use
                         })
-                        
-                        if metadata and metadata.get('seasons'):
-                            season_data = metadata['seasons'].get(str(season_number), {})
-                            episode_data = season_data.get('episodes', {}).get(str(episode_number), {})
-                            item_data['episode_title'] = episode_data.get('title', f'Episode {episode_number}')
+                
+                logging.info(f"Found {len(files)} total files, {len(video_files)} video files")
+                #logging.debug(f"Video files: {[f['path'] for f in video_files]}")
 
-                        # Find matching file
-                        matches = media_matcher.match_content(files, item_data)
-                        if matches:
-                            item_data['filled_by_file'] = matches[0][0]  # Use first match's path
-
-                # Add the item to the database
-                item_id = add_media_item(item_data)
-                if item_id is not None:
-                    flash('Successfully added media item to database', 'success')
-                else:
-                    flash('Failed to add media item to database', 'error')
+                # Get metadata
+                metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
+                if not metadata:
+                    flash('Failed to get metadata', 'error')
                     return redirect(url_for('magnet.assign_magnet'))
 
-                return redirect(url_for('magnet.assign_magnet'))
+                # For TV shows, fetch additional season data
+                if media_type in ['tv', 'show']:
+                    try:
+                        # Get seasons data which contains episodes
+                        seasons_data, _ = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
+                        if not seasons_data:
+                            flash('Failed to get season data', 'error')
+                            return redirect(url_for('magnet.assign_magnet'))
+                        
+                        # Add seasons data to metadata
+                        metadata['seasons'] = {}
+                        for season_num, season_info in seasons_data.items():
+                            if isinstance(season_num, str):
+                                season_num = int(season_num)
+                            metadata['seasons'][str(season_num)] = {
+                                'episodes': season_info.get('episodes', {}),
+                                'episode_count': len(season_info.get('episodes', {}))
+                            }
+                        logging.info(f"Added seasons data to metadata: {list(metadata['seasons'].keys())}")
+                    except Exception as e:
+                        logging.error(f"Error fetching season data: {str(e)}")
+                        flash('Failed to get season data', 'error')
+                        return redirect(url_for('magnet.assign_magnet'))
+
+                # Create MediaMatcher instance for file matching
+                media_matcher = MediaMatcher()
+
+                if media_type == 'movie':
+                    # Handle movie
+                    item_data = create_movie_item(metadata, title, year, version, torrent_id, magnet_link)
+                    matches = media_matcher.match_content(video_files, item_data)
+                    if matches:
+                        # Use the full path from our matched file
+                        matched_file = next(f['full_path'] for f in video_files if f['path'] == matches[0][0])
+                        item_data['filled_by_file'] = matched_file
+                        item_data['filled_by_title'] = torrent_info.get('filename', '')
+                        items_to_add = [item_data]
+                        logging.info(f"Created movie item: {item_data}")
+                    else:
+                        flash('No matching video file found in torrent', 'error')
+                        return redirect(url_for('magnet.assign_magnet'))
+                else:
+                    # Handle TV show based on selection type
+                    items_to_add = []
+                    logging.info(f"Processing TV show with selection type: {selection_type}")
+                    logging.info(f"Selected seasons: {selected_seasons}")
+                    
+                    if selection_type == 'all':
+                        # Full series - get all seasons and episodes
+                        items_to_add = create_full_series_items(metadata, title, year, version, torrent_id, magnet_link)
+                        logging.info(f"Created {len(items_to_add)} items for full series")
+                    elif selection_type == 'seasons':
+                        # Selected seasons
+                        items_to_add = create_season_items(metadata, title, year, version, torrent_id, magnet_link, selected_seasons)
+                        logging.info(f"Created {len(items_to_add)} items for selected seasons: {selected_seasons}")
+                    else:
+                        # Single episode
+                        try:
+                            season_number = int(season)
+                            episode_number = int(episode)
+                            item_data = create_episode_item(metadata, title, year, version, torrent_id, magnet_link, season_number, episode_number)
+                            items_to_add = [item_data]
+                            logging.info(f"Created single episode item: S{season_number}E{episode_number}")
+                        except (ValueError, TypeError):
+                            flash('Invalid season or episode number', 'error')
+                            return redirect(url_for('magnet.assign_magnet'))
+
+                    # Match files for each item
+                    for item in items_to_add:
+                        matches = media_matcher.match_content(video_files, item)
+                        if matches:
+                            # Use just the filename without the path
+                            matched_file = next(os.path.basename(f['full_path']) for f in video_files if f['path'] == matches[0][0])
+                            item['filled_by_file'] = matched_file
+                            item['filled_by_title'] = torrent_info.get('filename', '')
+                            logging.info(f"Found matching file for {item.get('title')} S{item.get('season_number'):02d}E{item.get('episode_number'):02d}: {matched_file}")
+                        else:
+                            logging.warning(f"No matching file found for {item.get('title')} S{item.get('season_number'):02d}E{item.get('episode_number'):02d}")
+
+                # Add items to database and send notifications
+                added_items = []
+                for item_data in items_to_add:
+                    try:
+                        # Remove fields that aren't in the database schema
+                        db_item = {k: v for k, v in item_data.items() if k not in [
+                            'series_title', 'season', 'episode', 'series_year', 'media_type', '_matcher_data'
+                        ]}
+                        
+                        # Prepare notification data
+                        notification_data = {
+                            'id': None,
+                            'title': db_item.get('title', 'Unknown Title'),
+                            'type': db_item.get('type', 'unknown'),
+                            'year': db_item.get('year', ''),
+                            'version': db_item.get('version', ''),
+                            'season_number': db_item.get('season_number'),
+                            'episode_number': db_item.get('episode_number'),
+                            'new_state': 'Checking',
+                            'is_upgrade': False,
+                            'upgrading_from': None
+                        }
+
+                        # Add to database
+                        item_id = add_media_item(db_item)
+                        if item_id:
+                            notification_data['id'] = item_id
+                            added_items.append(notification_data)
+                        else:
+                            logging.error(f"Failed to add item to database: {db_item}")
+                    except Exception as e:
+                        logging.error(f"Error adding item to database: {str(e)}")
+
+                # Send notifications for all added items
+                if added_items:
+                    try:
+                        from notifications import send_notifications
+                        from routes.settings_routes import get_enabled_notifications_for_category
+                        from extensions import app
+
+                        with app.app_context():
+                            response = get_enabled_notifications_for_category('checking')
+                            if response.json['success']:
+                                enabled_notifications = response.json['enabled_notifications']
+                                if enabled_notifications:
+                                    send_notifications(added_items, enabled_notifications, notification_category='state_change')
+                                    #logging.debug(f"Sent notifications for {len(added_items)} items")
+                    except Exception as e:
+                        logging.error(f"Failed to send notifications: {str(e)}")
+
+                if added_items:
+                    return jsonify({
+                        'success': True,
+                        'added_items': len(added_items),
+                        'message': f'Successfully added {len(added_items)} items to database'
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'added_items': 0,
+                        'error': 'Failed to add any items to database'
+                    }), 500
 
             except Exception as e:
                 logging.error(f"Error assigning magnet: {str(e)}")
-                flash(f'Error: {str(e)}', 'error')
-                return redirect(url_for('magnet.assign_magnet'))
+                return jsonify({
+                    'success': False,
+                    'error': str(e)
+                }), 500
 
     return render_template('magnet_assign.html', step='search')
+
+@magnet_bp.route('/verify_media_type')
+def verify_media_type():
+    tmdb_id = request.args.get('tmdb_id')
+    if not tmdb_id:
+        return jsonify({'error': 'No TMDB ID provided'}), 400
+
+    try:
+        # First try to get movie info
+        try:
+            movie_info = DirectAPI.get_movie_info(str(tmdb_id))
+            if movie_info:
+                return jsonify({'success': True, 'media_type': 'movie'})
+        except Exception as e:
+            logging.debug(f"Not a movie: {str(e)}")
+
+        # If not a movie, try TV show
+        try:
+            show_info = DirectAPI.get_show_info(str(tmdb_id))
+            if show_info:
+                return jsonify({'success': True, 'media_type': 'show'})
+        except Exception as e:
+            logging.debug(f"Not a show: {str(e)}")
+
+        # If we get here, we couldn't determine the type
+        return jsonify({'error': 'Could not determine media type'}), 404
+    except Exception as e:
+        logging.error(f"Error verifying media type: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+def create_movie_item(metadata, title, year, version, torrent_id, magnet_link):
+    """Create a movie item dictionary"""
+    return {
+        'type': 'movie',
+        'title': title,
+        'year': year,
+        'version': version,
+        'state': 'Checking',
+        'filled_by_magnet': magnet_link,
+        'filled_by_torrent_id': torrent_id,
+        'imdb_id': metadata.get('imdb_id'),
+        'tmdb_id': metadata.get('tmdb_id'),
+        'genres': ','.join(metadata.get('genres', [])),
+        'runtime': metadata.get('runtime'),
+        'release_date': metadata.get('release_date')
+    }
+
+def create_episode_item(metadata, title, year, version, torrent_id, magnet_link, season_number, episode_number):
+    """Create a single episode item dictionary"""
+    # Ensure we're working with integers
+    season_number = int(season_number)
+    episode_number = int(episode_number)
+    
+    # Get season and episode data safely
+    season_data = metadata.get('seasons', {}).get(str(season_number), {})
+    episode_data = season_data.get('episodes', {}).get(str(episode_number), {})
+    
+    # Create base item data with only database fields
+    item_data = {
+        'type': 'episode',
+        'title': title,
+        'year': year,
+        'version': version,
+        'state': 'Checking',
+        'filled_by_magnet': magnet_link,
+        'filled_by_torrent_id': torrent_id,
+        'imdb_id': metadata.get('imdb_id'),
+        'tmdb_id': metadata.get('tmdb_id'),
+        'genres': ','.join(metadata.get('genres', [])),
+        'runtime': metadata.get('runtime'),
+        'season_number': season_number,
+        'episode_number': episode_number,
+        'episode_title': episode_data.get('title', f'Episode {episode_number}'),
+        'release_date': episode_data.get('first_aired', '1970-01-01')
+    }
+    
+    # Add MediaMatcher fields as temporary attributes that won't be stored in DB
+    item_data.update({
+        '_matcher_data': {
+            'series_title': title,
+            'season': season_number,
+            'episode': episode_number,
+            'series_year': year,
+            'media_type': 'episode'
+        }
+    })
+    
+    return item_data
+
+def create_season_items(metadata, title, year, version, torrent_id, magnet_link, selected_seasons):
+    """Create items for selected seasons"""
+    items = []
+    for season in selected_seasons:
+        try:
+            season_number = int(season)
+            season_data = metadata.get('seasons', {}).get(str(season_number), {})
+            episodes = season_data.get('episodes', {})
+            
+            for episode_number in episodes:
+                try:
+                    episode_num = int(episode_number)
+                    item = create_episode_item(metadata, title, year, version, torrent_id, magnet_link, season_number, episode_num)
+                    items.append(item)
+                except (ValueError, TypeError):
+                    logging.warning(f"Invalid episode number: {episode_number}")
+                    continue
+        except (ValueError, TypeError):
+            logging.warning(f"Invalid season number: {season}")
+            continue
+    
+    return items
+
+def create_full_series_items(metadata, title, year, version, torrent_id, magnet_link):
+    """Create items for all episodes in the series"""
+    items = []
+    seasons = metadata.get('seasons', {})
+    
+    for season_number in sorted(seasons.keys()):
+        try:
+            season_num = int(season_number)
+            if season_num == 0:  # Skip specials
+                continue
+                
+            season_data = seasons.get(str(season_num), {})  # Use string key to access season data
+            episodes = season_data.get('episodes', {})
+            
+            # Convert episode dictionary keys to integers and sort them
+            episode_numbers = sorted([int(ep_num) for ep_num in episodes.keys()])
+            
+            for episode_num in episode_numbers:
+                try:
+                    item = create_episode_item(metadata, title, year, version, torrent_id, magnet_link, season_num, episode_num)
+                    items.append(item)
+                except (ValueError, TypeError) as e:
+                    logging.warning(f"Error creating episode item S{season_num:02d}E{episode_num:02d}: {str(e)}")
+                    continue
+        except (ValueError, TypeError) as e:
+            logging.warning(f"Invalid season number {season_number}: {str(e)}")
+            continue
+    
+    return items
