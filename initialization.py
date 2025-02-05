@@ -6,18 +6,22 @@ from settings import get_all_settings, get_setting
 
 # Progress ranges for each phase
 PROGRESS_RANGES = {
-    'reset': (0, 5),    # 5 seconds
-    'plex': (5, 50),    # 2 minutes
-    'sources': (50, 90), # 2 minutes
-    'release': (90, 100) # 30 seconds
+    'reset': (0, 5),     # 5 seconds
+    'plex': (5, 40),     # 2 minutes
+    'sources': (40, 70), # 2 minutes
+    'release': (70, 85), # 30 seconds
+    'show_ids': (85, 92),   # 1 minute
+    'show_titles': (92, 100) # 1 minute
 }
 
 # Duration for each phase in seconds
 PHASE_DURATIONS = {
     'reset': 5,
-    'plex': 120,  # 2 minutes
-    'sources': 120,  # 2 minutes
-    'release': 30
+    'plex': 120,    # 2 minutes
+    'sources': 120, # 2 minutes
+    'release': 30,  # 30 seconds
+    'show_ids': 60,    # 1 minute
+    'show_titles': 60  # 1 minute
 }
 
 # Global variable to track initialization progress

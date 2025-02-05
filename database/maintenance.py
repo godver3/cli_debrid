@@ -98,6 +98,7 @@ def update_show_ids():
                                         if tmdb_id:
                                             logging.info(f"Attempting to get IMDb ID from TMDB (ID: {tmdb_id})")
                                             # TMDB API requires an API key - we should get this from config
+                                            from settings import get_setting
                                             tmdb_api_key = get_setting('TMDB','api_key')
                                             if tmdb_api_key:
                                                 import requests
