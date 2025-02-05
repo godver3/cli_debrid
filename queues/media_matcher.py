@@ -251,7 +251,14 @@ class MediaMatcher:
         ]):
             return False
             
-        # Get parsed title and queue title
+        # First try matching using our search patterns
+        search_patterns = item.get('search_patterns', [])
+        if search_patterns:
+            for pattern in search_patterns:
+                if pattern.lower() in original_title.lower():
+                    return True
+        
+        # If no search patterns or no match, fall back to traditional matching
         parsed_title = self._normalize_title(parsed.get('title', ''))
         queue_title = self._normalize_title(item.get('series_title', '') or item.get('title', ''))
         if not parsed_title or not queue_title:
