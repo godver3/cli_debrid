@@ -214,7 +214,7 @@ SETTINGS_SCHEMA = {
         },
         "upgrading_percentage_threshold": {
             "type": "float",
-            "description": "Percentage threshold for upgrading (0.0 to 1.0). Higher values mean an item's score must be higher than the threshold to be upgraded.",
+            "description": "Percentage threshold for upgrading (enter as decimal representation of percentage,0.0 to 1.0). Higher values mean an item's score must be higher than the threshold to be upgraded.",
             "default": 0.1,
             "min": 0.0,
             "max": 1.0

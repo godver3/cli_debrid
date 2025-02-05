@@ -125,9 +125,9 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
 
     seasonInfo.innerHTML = `
         <div class="season-info-container">
-            <span class="show-rating">${(vote_average).toFixed(1)}</span>
             <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
             <div class="season-details">
+                <span class="show-rating">${(vote_average).toFixed(1)}</span>
                 <h2>${title} - Season ${season_num}</h2>
                 <p>${genreString}</p>
                 <div class="season-overview">
@@ -549,9 +549,9 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     <th style="color: rgb(191 191 190); width: 80%;">Name</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Size</th>
                     <th style="color: rgb(191 191 190); width: 15%;">Source</th>
-                    <th style="color: rgb(191 191 190); width: 15%;">Score</th>
+                    <th style="color: rgb(191 191 190); width: 10%;">Score</th>
                     <th style="color: rgb(191 191 190); width: 15%; text-align: center;">Cache</th>
-                    <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Action</th>
+                    <th style="color: rgb(191 191 190); width: 15%; text-align: center;">Action</th>
                 </tr>
             `;
             table.appendChild(thead);
@@ -589,7 +589,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             episode: episode || null,
                             tmdb_id: torrent.tmdb_id || mediaId,
                             genres: genre_ids
-                        }).replace(/"/g, '&quot;')})">Add to Account</button>
+                        }).replace(/"/g, '&quot;')})">Add</button>
                     </td>
                 `;
                 tbody.appendChild(row);
