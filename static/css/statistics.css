@@ -542,12 +542,23 @@ input:checked + .toggle-slider:before {
         transform: translateX(20px);
     }
 
-    .stats-box.recently-aired .air-time,
     .stats-box.airing-soon .air-time,
     .stats-box.upcoming-releases .release-date {
         margin-left: 0px !important;
         min-width: 0px !important;
         text-align: left !important;
+    }
+
+    /* Stats Box Styles */
+    .stats-box.recently-aired .air-time {
+        text-align: right !important;
+        margin-right: 21px !important;
+        margin-top: auto !important;
+        margin-bottom: auto !important;
+    }
+
+    .stats-box.recently-aired .show-title {
+        max-width: 180px !important;
     }
 
     .stats-box.airing-soon .show-title,

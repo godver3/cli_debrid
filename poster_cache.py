@@ -12,22 +12,78 @@ CACHE_EXPIRY_DAYS = 7  # Cache expires after 7 days
 
 UNAVAILABLE_POSTER = "/static/images/placeholder.png"
 
-def load_cache():
+def is_cache_healthy():
+    """Check if the cache file is valid and can be loaded"""
+    if not os.path.exists(CACHE_FILE):
+        return False
+        
     try:
-        if os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, 'rb') as f:
-                return pickle.load(f)
-    except (EOFError, pickle.UnpicklingError, FileNotFoundError) as e:
+        with open(CACHE_FILE, 'rb') as f:
+            # Try to read and unpickle the first few bytes
+            pickle.load(f)
+        return True
+    except (EOFError, pickle.UnpicklingError, UnicodeDecodeError, FileNotFoundError) as e:
+        logging.error(f"Cache file is corrupted: {e}")
+        try:
+            # If corrupted, attempt to remove the file
+            os.remove(CACHE_FILE)
+            logging.info("Removed corrupted cache file")
+        except Exception as e:
+            logging.error(f"Failed to remove corrupted cache file: {e}")
+        return False
+
+def load_cache():
+    """Load the cache, performing a health check first"""
+    if not is_cache_healthy():
+        logging.info("Creating new cache due to health check failure")
+        return {}
+        
+    try:
+        with open(CACHE_FILE, 'rb') as f:
+            return pickle.load(f)
+    except Exception as e:
         logging.warning(f"Error loading cache: {e}. Creating a new cache.")
-    return {}
+        return {}
 
 def save_cache(cache):
+    """Save the cache to disk with validation and atomic writing"""
+    if not isinstance(cache, dict):
+        logging.error("Invalid cache format: cache must be a dictionary")
+        return False
+        
+    # Create a temporary file to write to first
+    temp_file = f"{CACHE_FILE}.tmp"
     try:
         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-        with open(CACHE_FILE, 'wb') as f:
+        
+        # Write to temporary file first
+        with open(temp_file, 'wb') as f:
             pickle.dump(cache, f)
+            
+        # Validate the temporary file can be read back
+        try:
+            with open(temp_file, 'rb') as f:
+                pickle.load(f)
+        except Exception as e:
+            logging.error(f"Validation of temporary cache file failed: {e}")
+            os.remove(temp_file)
+            return False
+            
+        # If validation passed, move the temporary file to the real location
+        if os.path.exists(CACHE_FILE):
+            os.replace(temp_file, CACHE_FILE)  # atomic on most systems
+        else:
+            os.rename(temp_file, CACHE_FILE)
+            
+        return True
     except Exception as e:
         logging.error(f"Error saving cache: {e}")
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+        return False
 
 def normalize_media_type(media_type):
     """Normalize media type to either 'tv' or 'movie'"""

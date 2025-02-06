@@ -211,8 +211,29 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             # First try the original path construction
             source_file = os.path.join(original_path, item.get('filled_by_title', ''), item['filled_by_file'])
             logging.debug(f"Trying original source file path: {source_file}")
-            
-            if extended_search:
+            found_file = False
+
+            # Always try both standard paths
+            if os.path.exists(source_file):
+                logging.debug(f"Found file at original path: {source_file}")
+                found_file = True
+            else:
+                logging.debug(f"File not found at original path: {source_file}")
+                # Try path with extension stripped from directory name
+                title_dir = os.path.dirname(source_file)
+                parent_dir = os.path.dirname(title_dir)
+                title_without_ext = os.path.splitext(os.path.basename(title_dir))[0]
+                source_file_no_ext = os.path.join(parent_dir, title_without_ext, os.path.basename(source_file))
+                
+                if os.path.exists(source_file_no_ext):
+                    source_file = source_file_no_ext
+                    logging.info(f"Found file at path with extension stripped: {source_file}")
+                    found_file = True
+                else:
+                    logging.debug(f"File not found at stripped extension path: {source_file_no_ext}")
+
+            # If file not found and extended search is enabled, try find command
+            if not found_file and extended_search:
                 # Only do extended search if item is not in a downloading state
                 torrent_id = item.get('filled_by_torrent_id')
                 is_downloading = False
@@ -228,27 +249,27 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     except Exception as e:
                         logging.debug(f"Failed to check torrent status: {str(e)}")
 
-                # Only perform extended search if not downloading
+                # Only perform find command search if not downloading
                 if not is_downloading:
-                    # If file doesn't exist at the original path, search for it using find command
-                    found_path = None
-                    if not os.path.exists(source_file):
-                        logging.debug(f"File not found at original path, searching in {original_path}")
-                        found_path = find_file(item['filled_by_file'], original_path)
-                        if found_path:
-                            source_file = found_path
-                            # Update the filled_by_title to match the actual folder structure
-                            item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
-                            logging.info(f"Found file at alternate location: {source_file}")
-            
-            if not os.path.exists(source_file):
+                    logging.debug(f"Attempting broad search in: {original_path}")
+                    found_path = find_file(item['filled_by_file'], original_path)
+                    if found_path:
+                        source_file = found_path
+                        # Update the filled_by_title to match the actual folder structure
+                        item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
+                        logging.info(f"Found file using find command: {source_file}")
+                        found_file = True
+                    else:
+                        logging.debug(f"File not found after exhaustive search")
+
+            if not found_file:
                 if is_webhook and attempt < max_retries - 1:
                     logging.info(f"File not found, attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay} second...")
                     time.sleep(retry_delay)
                     continue
-                logging.warning(f"Original file not found: {source_file}")
+                logging.warning(f"File not found in any checked location")
                 return False
-                
+            
             # Get destination path based on settings
             dest_file = get_symlink_path(item, source_file)
             if not dest_file:

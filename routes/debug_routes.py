@@ -22,6 +22,7 @@ from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wa
 from metadata.metadata import process_metadata, get_metadata
 from cli_battery.app.direct_api import DirectAPI
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
+from database.torrent_tracking import get_recent_additions, get_torrent_history
 import os
 import glob
 from api_tracker import api 
@@ -38,6 +39,7 @@ from not_wanted_magnets import (
     load_not_wanted_urls, save_not_wanted_urls
 )
 import json
+from debrid import get_debrid_provider
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -1134,3 +1136,145 @@ def simulate_crash():
     # Then force an immediate crash with os._exit
     import os
     os._exit(1)  # This will force an immediate program termination
+
+@debug_bp.route('/torrent_tracking')
+@admin_required
+def torrent_tracking():
+    """View the torrent tracking history."""
+    try:
+        # Get the most recent 1000 entries
+        entries = get_recent_additions(1000)
+        
+        # Convert the entries to a list of dictionaries for easier template handling
+        formatted_entries = []
+        if entries:  # Check if entries exist
+            for entry in entries:
+                formatted_entry = {
+                    'id': entry[0],
+                    'torrent_hash': entry[1],
+                    'timestamp': entry[2],
+                    'trigger_source': entry[3],
+                    'trigger_details': entry[4],
+                    'rationale': entry[5],
+                    'item_data': entry[6],
+                    'is_still_present': bool(entry[7]),
+                    'removal_reason': entry[8],
+                    'removal_timestamp': entry[9],
+                    'additional_metadata': entry[10]
+                }
+                formatted_entries.append(formatted_entry)
+        
+        # Always render the template, even with empty entries
+        return render_template('torrent_tracking.html', entries=formatted_entries)
+    except Exception as e:
+        logging.error(f"Error in torrent tracking view: {e}")
+        flash(f"Error loading torrent tracking data: {str(e)}", 'error')
+        return redirect(url_for('debug.debug_functions'))
+
+@debug_bp.route('/verify_torrent/<hash_value>')
+@admin_required
+def verify_torrent(hash_value):
+    """Verify if a torrent is still present in Real-Debrid and get its status"""
+    try:
+        debrid_provider = get_debrid_provider()
+        
+        # Get all active torrents from Real-Debrid
+        logging.info("Fetching list of active torrents from Real-Debrid")
+        try:
+            active_torrents = debrid_provider.list_active_torrents()
+            logging.info(f"Found {len(active_torrents)} active torrents")
+        except Exception as e:
+            if "429" in str(e):
+                logging.warning("Rate limit hit while fetching active torrents")
+                return jsonify({
+                    'error': 'Rate limit exceeded. Please try again in a few seconds.',
+                    'is_present': None,
+                    'status': 'rate_limited'
+                }), 429
+            else:
+                logging.error(f"Error fetching active torrents: {str(e)}")
+                return jsonify({
+                    'error': f"Failed to fetch active torrents: {str(e)}",
+                    'is_present': None,
+                    'status': 'error'
+                }), 500
+        
+        # Find matching torrent
+        logging.info(f"Searching for torrent with hash {hash_value}")
+        matching_torrent = None
+        for torrent in active_torrents:
+            if torrent.get('hash', '').lower() == hash_value.lower():
+                matching_torrent = torrent
+                logging.info(f"Found matching torrent with ID: {torrent.get('id')}")
+                break
+        
+        # Get any removal reason if it exists
+        logging.info("Checking torrent history for removal information")
+        history = get_torrent_history(hash_value)
+        removal_reason = None
+        
+        if history and not history[0]['is_still_present']:
+            removal_reason = history[0]['removal_reason']
+            logging.info(f"Found removal reason in history: {removal_reason}")
+        
+        if matching_torrent:
+            # Get detailed torrent info to check status
+            logging.info(f"Getting detailed info for torrent ID: {matching_torrent['id']}")
+            try:
+                torrent_info = debrid_provider.get_torrent_info(matching_torrent['id'])
+                if torrent_info:
+                    status = torrent_info.get('status', '')
+                    logging.info(f"Torrent status: {status}")
+                    
+                    if status == 'downloaded':
+                        logging.info("Torrent is present and downloaded")
+                        return jsonify({
+                            'is_present': True,
+                            'status': status,
+                            'removal_reason': None
+                        })
+                    elif status in ['magnet_error', 'error', 'virus', 'dead']:
+                        logging.warning(f"Torrent has error status: {status}")
+                        return jsonify({
+                            'is_present': False,
+                            'status': status,
+                            'removal_reason': f"Torrent error: {status}"
+                        })
+                    else:
+                        logging.info(f"Torrent is present with status: {status}")
+                        return jsonify({
+                            'is_present': True,
+                            'status': status,
+                            'removal_reason': None
+                        })
+            except Exception as e:
+                if "429" in str(e):
+                    logging.warning("Rate limit hit while fetching torrent info")
+                    return jsonify({
+                        'error': 'Rate limit exceeded. Please try again in a few seconds.',
+                        'is_present': None,
+                        'status': 'rate_limited'
+                    }), 429
+                else:
+                    logging.error(f"Error getting torrent info: {str(e)}")
+                    return jsonify({
+                        'error': f"Failed to get torrent info: {str(e)}",
+                        'is_present': None,
+                        'status': 'error'
+                    }), 500
+        
+        # If we get here, the torrent was not found
+        logging.info("Torrent not found in active torrents")
+        return jsonify({
+            'is_present': False,
+            'status': 'not_found',
+            'removal_reason': removal_reason
+        })
+        
+    except Exception as e:
+        logging.error(f"Error verifying torrent {hash_value}: {str(e)}", exc_info=True)
+        return jsonify({
+            'error': f"Verification failed: {str(e)}",
+            'is_present': None,
+            'status': 'error'
+        }), 500

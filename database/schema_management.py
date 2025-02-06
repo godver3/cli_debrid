@@ -1,11 +1,13 @@
 import logging
 from .core import get_db_connection
+from .torrent_tracking import create_torrent_tracking_table
 import sqlite3
 import os
 
 
 def create_database():
     create_tables()
+    create_torrent_tracking_table()
     #TODO: create_upgrading_table()
 
 def migrate_schema():
@@ -140,6 +142,7 @@ def migrate_schema():
 def verify_database():
     create_tables()
     migrate_schema()
+    create_torrent_tracking_table()
     
     # Add statistics indexes
     from .migrations import add_statistics_indexes
@@ -152,6 +155,11 @@ def verify_database():
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='media_items'")
     if not cursor.fetchone():
         logging.error("media_items table does not exist!")
+        
+    # Verify torrent_additions table
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='torrent_additions'")
+    if not cursor.fetchone():
+        logging.error("torrent_additions table does not exist!")
         
     conn.close()
     
