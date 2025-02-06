@@ -102,6 +102,13 @@ def format_datetime(value, format='%Y-%m-%d %H:%M:%S'):
         value = datetime.fromisoformat(value)
     return value.strftime(format)
 
+@app.template_filter('zfill')
+def zfill_filter(value, width=None):
+    """Pad a numeric string with zeros."""
+    if value is None:
+        return ""
+    return str(value).zfill(width if width is not None else 2)
+
 @app.route('/')
 def index():
     from routes.settings_routes import is_user_system_enabled

@@ -22,7 +22,8 @@ import os
 import bencodepy
 from debrid.common.torrent import torrent_to_magnet
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from database.torrent_tracking import record_torrent_addition, get_torrent_history, update_torrent_tracking
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -193,6 +194,65 @@ def add_torrent_to_debrid():
                 error_message = "Failed to add torrent to debrid provider"
                 logging.error(error_message)
                 return jsonify({'error': error_message}), 500
+
+            # Extract torrent hash from magnet link or torrent file
+            torrent_hash = None
+            if magnet_link.startswith('magnet:'):
+                # Extract hash from magnet link
+                hash_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
+                if hash_match:
+                    torrent_hash = hash_match.group(1).lower()
+            elif temp_file:
+                # Extract hash from torrent file
+                with open(temp_file, 'rb') as f:
+                    torrent_data = bencodepy.decode(f.read())
+                    info = torrent_data[b'info']
+                    torrent_hash = hashlib.sha1(bencodepy.encode(info)).hexdigest()
+
+            # Record the torrent addition only if it hasn't been recorded in the last minute
+            if torrent_hash:
+                # Check recent history for this hash
+                history = get_torrent_history(torrent_hash)
+                
+                # Prepare item data
+                item_data = {
+                    'title': title,
+                    'year': year,
+                    'media_type': media_type,
+                    'season': season_number,
+                    'episode': episode_number,
+                    'version': version,
+                    'tmdb_id': tmdb_id,
+                    'genres': genres
+                }
+
+                # If there's a recent entry, update it instead of creating new one
+                if history:
+                    update_torrent_tracking(
+                        torrent_hash=torrent_hash,
+                        item_data=item_data,
+                        trigger_details={
+                            'source': 'web_interface',
+                            'user_initiated': True
+                        },
+                        trigger_source='manual_add',
+                        rationale='User manually added via web interface'
+                    )
+                    logging.info(f"Updated existing torrent tracking entry for {title} (hash: {torrent_hash})")
+                else:
+                    # Record new addition if no history exists
+                    record_torrent_addition(
+                        torrent_hash=torrent_hash,
+                        trigger_source='manual_add',
+                        rationale='User manually added via web interface',
+                        item_data=item_data,
+                        trigger_details={
+                            'source': 'web_interface',
+                            'user_initiated': True
+                        }
+                    )
+                    logging.info(f"Recorded new torrent addition for {title} with hash {torrent_hash}")
+
         finally:
             # Clean up temp file if it exists
             if temp_file and os.path.exists(temp_file):

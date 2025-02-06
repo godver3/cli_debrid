@@ -295,6 +295,7 @@ class RealDebridProvider(DebridProvider):
             # Wait for files to be available
             max_attempts = 30  # Increase timeout to 30 seconds
             success = False
+            selected_files = []
             for attempt in range(max_attempts):
                 info = self.get_torrent_info(torrent_id)
                 if not info:
@@ -319,10 +320,16 @@ class RealDebridProvider(DebridProvider):
                     if files:
                         # Get list of file IDs for video files
                         video_file_ids = []
+                        selected_files = []
                         for i, file_info in enumerate(files, start=1):
                             filename = file_info.get('path', '') or file_info.get('name', '')
                             if filename and is_video_file(filename) and not is_unwanted_file(filename):
                                 video_file_ids.append(str(i))
+                                selected_files.append({
+                                    'path': filename,
+                                    'bytes': file_info.get('bytes', 0),
+                                    'selected': True
+                                })
                                 
                         if video_file_ids:
                             data = {'files': ','.join(video_file_ids)}
@@ -337,6 +344,58 @@ class RealDebridProvider(DebridProvider):
                                     if updated_info and hash_value:
                                         # Cache the filename after file selection
                                         self._cached_torrent_titles[hash_value] = updated_info.get('filename', '')
+                                        
+                                        # Record torrent addition with detailed metadata
+                                        from database.torrent_tracking import record_torrent_addition, update_torrent_tracking
+                                        try:
+                                            # Get the largest selected file
+                                            largest_file = max(
+                                                (f for f in selected_files if f['selected']), 
+                                                key=lambda x: x['bytes']
+                                            )
+                                            
+                                            # Update the existing tracking record with file info
+                                            updated_item_data = {
+                                                'filled_by_title': updated_info.get('filename'),
+                                                'filled_by_file': largest_file['path']
+                                            }
+                                            
+                                            # Update trigger details with file selection info
+                                            updated_trigger_details = {
+                                                'source': 'real_debrid',
+                                                'status': status,
+                                                'selected_files': selected_files
+                                            }
+                                            
+                                            # Update additional metadata with debrid info
+                                            updated_metadata = {
+                                                'debrid_info': {
+                                                    'provider': 'real_debrid',
+                                                    'torrent_id': torrent_id,
+                                                    'status': status,
+                                                    'filename': updated_info.get('filename'),
+                                                    'original_filename': updated_info.get('original_filename')
+                                                }
+                                            }
+                                            
+                                            # Try to update existing record first
+                                            if not update_torrent_tracking(
+                                                torrent_hash=hash_value,
+                                                item_data=updated_item_data,
+                                                trigger_details=updated_trigger_details,
+                                                additional_metadata=updated_metadata
+                                            ):
+                                                # If no existing record, create a new one
+                                                record_torrent_addition(
+                                                    torrent_hash=hash_value,
+                                                    trigger_source='debrid_client',
+                                                    rationale='Added via Real-Debrid client',
+                                                    item_data=updated_item_data,
+                                                    trigger_details=updated_trigger_details,
+                                                    additional_metadata=updated_metadata
+                                                )
+                                        except Exception as track_err:
+                                            logging.error(f"Failed to record torrent addition: {str(track_err)}")
                                     success = True
                                     break
                                 except Exception as e:
@@ -463,6 +522,11 @@ class RealDebridProvider(DebridProvider):
             # Update status based on response
             if info:
                 status = info.get('status', '')
+                hash_value = info.get('hash', '').lower()
+                
+                # Update torrent tracking status
+                from database.torrent_tracking import mark_torrent_removed
+                
                 if status == 'downloaded':
                     self.update_status(torrent_id, TorrentStatus.CACHED)
                 elif status == 'downloading':
@@ -471,13 +535,66 @@ class RealDebridProvider(DebridProvider):
                     self.update_status(torrent_id, TorrentStatus.SELECTING)
                 elif status == 'magnet_error':
                     self.update_status(torrent_id, TorrentStatus.ERROR)
+                    if hash_value:
+                        mark_torrent_removed(hash_value, f"Magnet error: {info.get('filename', '')}")
+                elif status == 'error':
+                    self.update_status(torrent_id, TorrentStatus.ERROR)
+                    if hash_value:
+                        mark_torrent_removed(hash_value, f"Torrent error: {info.get('filename', '')}")
                     
             return info
             
         except Exception as e:
-            logging.error(f"Error getting torrent info: {str(e)}")
-            self.update_status(torrent_id, TorrentStatus.ERROR)
+            if "404" in str(e):
+                # Torrent not found in Real-Debrid
+                self.update_status(torrent_id, TorrentStatus.REMOVED)
+                # Try to get hash from our cache to mark as removed
+                for hash_value, tid in self._cached_torrent_ids.items():
+                    if tid == torrent_id:
+                        from database.torrent_tracking import mark_torrent_removed
+                        mark_torrent_removed(hash_value, "Torrent no longer exists in Real-Debrid")
+                        break
+            else:
+                logging.error(f"Error getting torrent info: {str(e)}")
+                self.update_status(torrent_id, TorrentStatus.ERROR)
             return None
+
+    def verify_torrent_presence(self, hash_value: str = None) -> bool:
+        """
+        Verify if a torrent is still present in Real-Debrid.
+        If hash_value is None, verifies all tracked torrents.
+        
+        Args:
+            hash_value: Optional specific torrent hash to verify
+            
+        Returns:
+            bool: True if torrent(s) verified successfully
+        """
+        try:
+            # Get all active torrents from Real-Debrid
+            active_torrents = make_request('GET', '/torrents', self.api_key) or []
+            active_hashes = {t['hash'].lower(): t['id'] for t in active_torrents}
+            
+            from database.torrent_tracking import mark_torrent_removed
+            
+            if hash_value:
+                # Verify specific torrent
+                if hash_value.lower() not in active_hashes:
+                    mark_torrent_removed(hash_value, "Torrent no longer exists in Real-Debrid")
+                    return False
+                return True
+            else:
+                # Verify all tracked torrents
+                success = True
+                for h, tid in self._cached_torrent_ids.items():
+                    if h.lower() not in active_hashes:
+                        mark_torrent_removed(h, "Torrent no longer exists in Real-Debrid")
+                        success = False
+                return success
+                
+        except Exception as e:
+            logging.error(f"Error verifying torrent presence: {str(e)}")
+            return False
 
     def remove_torrent(self, torrent_id: str) -> None:
         """Remove a torrent from Real-Debrid"""
@@ -492,25 +609,12 @@ class RealDebridProvider(DebridProvider):
             raise
 
     def cleanup(self) -> None:
-        """Clean up stale torrents and status tracking"""
+        """Clean up status tracking only"""
         try:
-            # Get list of active torrents
-            torrents = make_request('GET', '/torrents', self.api_key)
-            if not torrents:
-                return
-                
-            # Find and remove stale torrents (older than 24 hours)
-            cutoff = datetime.utcnow() - timedelta(hours=24)
-            for torrent in torrents:
-                try:
-                    added = datetime.strptime(torrent['added'], "%Y-%m-%d %H:%M:%S")
-                    if added < cutoff:
-                        self.remove_torrent(torrent['id'])
-                except (KeyError, ValueError) as e:
-                    logging.warning(f"Error parsing torrent data: {str(e)}")
-                    
+            # Verify tracked torrents are still present
+            self.verify_torrent_presence()
         except Exception as e:
-            logging.error(f"Error cleaning up torrents: {str(e)}")
+            logging.error(f"Error during status tracking cleanup: {str(e)}")
         finally:
             # Always clean up status tracking
             super().cleanup()

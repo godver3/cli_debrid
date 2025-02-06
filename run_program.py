@@ -924,12 +924,17 @@ class ProgramRunner:
 
                 # Check if the file exists in the expected location
                 file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
-                if not os.path.exists(file_path):
+                title_without_ext = os.path.splitext(filled_by_title)[0]
+                file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
+                
+                if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
                     not_found_items += 1
-                    logging.debug(f"File not found on disk: {file_path}")
+                    logging.debug(f"File not found on disk in either location:\n  {file_path}\n  {file_path_no_ext}")
                     continue
 
-                logging.info(f"Found file on disk, marking as Collected: {file_path}")
+                # Use the path that exists (prefer original if both exist)
+                actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
+                logging.info(f"Found file on disk: {actual_file_path}")
                 # Update item state to Collected
                 conn = get_db_connection()
                 cursor = conn.cursor()
@@ -1003,12 +1008,17 @@ class ProgramRunner:
 
                 # Check if the file exists in the expected location
                 file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
-                if not os.path.exists(file_path):
+                title_without_ext = os.path.splitext(filled_by_title)[0]
+                file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
+                
+                if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
                     not_found_items += 1
-                    logging.debug(f"File not found on disk: {file_path}")
+                    logging.debug(f"File not found on disk in either location:\n  {file_path}\n  {file_path_no_ext}")
                     continue
 
-                logging.info(f"Found file on disk: {file_path}")
+                # Use the path that exists (prefer original if both exist)
+                actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
+                logging.info(f"Found file on disk: {actual_file_path}")
                 updated_items += 1
 
                 # Update all Plex sections using their root directories
@@ -1018,10 +1028,18 @@ class ProgramRunner:
                         
                     try:
                         for location in section.locations:
+                            # Try both with and without extension
                             specific_path = os.path.join(location, filled_by_title)
+                            specific_path_no_ext = os.path.join(location, title_without_ext)
+                            
                             if os.path.exists(specific_path):
                                 logging.info(f"Updating Plex section '{section.title}' for path: {specific_path}")
                                 section.update(path=specific_path)
+                                updated_sections.add(section)
+                                break
+                            elif os.path.exists(specific_path_no_ext):
+                                logging.info(f"Updating Plex section '{section.title}' for path: {specific_path_no_ext}")
+                                section.update(path=specific_path_no_ext)
                                 updated_sections.add(section)
                                 break
                     except Exception as e:
