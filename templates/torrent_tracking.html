@@ -4,11 +4,30 @@
 
 {% block head %}
 <style>
+/* Mobile warning styling */
+.mobile-warning {
+    display: none;
+    background-color: #ff4444;
+    color: white;
+    text-align: center;
+    margin-top: 50px;
+    padding: 20px;
+    font-weight: bold;
+}
+
 /* Container layout */
 .torrent-tracking-container {
     width: 95%;
+    max-width: 1600px;
     margin: 0 auto;
     padding: 20px;
+}
+
+/* Table responsive wrapper */
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* Card styling to match site theme */
@@ -18,26 +37,96 @@
     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     margin-bottom: 20px;
     padding: 20px;
+    overflow-x: auto;
 }
 
 /* Table styling */
 .tracking-table {
     width: 100%;
+    min-width: 800px; /* Minimum width to prevent squishing */
     border-collapse: collapse;
     color: #f4f4f4;
 }
 
-.tracking-table th {
-    background-color: #1a1a1a;
-    padding: 12px;
-    text-align: left;
-    font-weight: 600;
-    text-transform: uppercase;
+/* Column widths */
+.tracking-table th:nth-child(1) { width: 12%; } /* Added - reduced from 15% */
+.tracking-table th:nth-child(2) { width: 40%; } /* Title - increased from 30% */
+.tracking-table th:nth-child(3) { width: 12%; } /* Trigger - reduced from 15% */
+.tracking-table th:nth-child(4) { width: 18%; } /* Rationale - reduced from 20% */
+.tracking-table th:nth-child(5) { width: 10%; } /* Status - reduced from 12% */
+.tracking-table th:nth-child(6) { width: 8%; }  /* Actions - unchanged */
+
+/* Modal responsive styling */
+.modal-container {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #2c2c2c;
+    width: 95%;
+    max-width: 800px;
+    height: auto;
+    max-height: calc(100vh - 100px); /* Account for top and bottom margins */
+    margin: 75px auto 25px;
+    border-radius: 8px;
+    z-index: 1001;
+    overflow-y: auto;
 }
 
+/* Details list responsive */
+.details-list {
+    display: grid;
+    grid-template-columns: minmax(120px, 150px) 1fr;
+    gap: 10px;
+}
+
+/* JSON formatter responsive */
+.json-formatter {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+/* Responsive breakpoints */
+@media screen and (max-width: 1200px) {
+    .torrent-tracking-container {
+        width: 98%;
+        padding: 10px;
+    }
+    
+    .tracking-card {
+        padding: 15px;
+    }
+}
+
+@media screen and (max-width: 992px) {
+    .details-list {
+        grid-template-columns: minmax(100px, 120px) 1fr;
+    }
+}
+
+@media screen and (max-width: 768px) {
+    .mobile-warning {
+        display: block;
+    }
+    .torrent-tracking-container {
+        display: none;
+    }
+}
+
+/* Ensure long text doesn't break layout */
 .tracking-table td {
-    padding: 12px;
-    border-bottom: 1px solid #444;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Allow title column to wrap and not be constrained by max-width */
+.tracking-table td:nth-child(2) {
+    white-space: normal;
+    word-break: break-word;
+    max-width: none;  /* Remove max-width constraint for title column */
 }
 
 /* Status column width and alignment */
@@ -124,13 +213,28 @@
     text-transform: uppercase;
 }
 
-.trigger-badge.manual_add {
+.trigger-badge.manual_add, .trigger-badge.MANUAL_ADD {
     background-color: #17a2b8;
     color: white;
 }
 
-.trigger-badge.debrid_client {
+.trigger-badge.debrid_client, .trigger-badge.DEBRID_CLIENT {
     background-color: #6f42c1;
+    color: white;
+}
+
+.trigger-badge.queue_add, .trigger-badge.QUEUE_ADD {
+    background-color: #28a745;
+    color: white;
+}
+
+.trigger-badge.queue_upgrade, .trigger-badge.QUEUE_UPGRADE {
+    background-color: #fd7e14;
+    color: white;
+}
+
+.trigger-badge.missing_trigger, .trigger-badge.MISSING_TRIGGER {
+    background-color: #6c757d;
     color: white;
 }
 
@@ -146,30 +250,16 @@
     z-index: 1000;
 }
 
-.modal-container {
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background-color: #2c2c2c;
-    width: 90%;
-    max-width: 800px;
-    max-height: 80vh;
-    border-radius: 8px;
-    z-index: 1001;
-    overflow-y: auto;
-    margin-top: 20px;
-    margin-bottom: 10px;
-}
-
 .modal-header {
+    position: sticky;
+    top: 0;
     background-color: #1a1a1a;
     padding: 15px 20px;
     border-bottom: 1px solid #444;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    z-index: 1002;
 }
 
 .modal-title {
@@ -194,6 +284,8 @@
 
 .modal-body {
     padding: 20px;
+    overflow-y: auto;
+    max-height: calc(100vh - 200px); /* Account for header height + margins */
 }
 
 /* Details section styling */
@@ -208,12 +300,6 @@
     margin-bottom: 15px;
     padding-bottom: 10px;
     border-bottom: 1px solid #444;
-}
-
-.details-list {
-    display: grid;
-    grid-template-columns: 150px 1fr;
-    gap: 10px;
 }
 
 .details-list dt {
@@ -312,80 +398,108 @@ code {
     background-color: #ffc107;
     color: #000;
 }
+
+/* Responsive modal adjustments */
+@media screen and (max-height: 800px) {
+    .modal-container {
+        margin: 50px auto 20px;
+        max-height: calc(100vh - 70px);
+    }
+    
+    .modal-body {
+        max-height: calc(100vh - 140px);
+    }
+}
+
+@media screen and (max-height: 600px) {
+    .modal-container {
+        margin: 60px auto 15px;
+        max-height: calc(100vh - 45px);
+    }
+    
+    .modal-body {
+        max-height: calc(100vh - 100px);
+        padding: 15px;
+    }
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="torrent-tracking-container">
-    <h2>Torrent Addition History</h2>
+<div class="mobile-warning">
+    The Torrent Tracking interface cannot be used on mobile devices. Please access it from a desktop computer.
+</div>
 
-    <div class="tracking-card">
-        {% if entries %}
-        <div class="table-responsive">
-            <table class="tracking-table">
-                <thead>
-                    <tr>
-                        <th>Added</th>
-                        <th>Title</th>
-                        <th>Trigger</th>
-                        <th>Rationale</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for entry in entries %}
-                    <tr class="torrent-entry" data-hash="{{ entry.torrent_hash }}">
-                        <td>{{ entry.timestamp }}</td>
-                        <td>
-                            {% if entry.item_data %}
-                                {% set item = entry.item_data|from_json %}
-                                {% if item.filled_by_title %}
-                                    {{ item.filled_by_title }}
-                                {% else %}
-                                    {{ item.title }}
-                                    {% if item.year %}({{ item.year }}){% endif %}
-                                    {% if item.season_number is not none %}
-                                        S{{ item.season_number|string|zfill(2) }}
-                                        {% if item.episode_number is not none %}
-                                            E{{ item.episode_number|string|zfill(2) }}
+<div class="torrent-tracking-container">
+        <h2>Torrent Addition History</h2>
+
+        <div class="tracking-card">
+            {% if entries %}
+            <div class="table-responsive">
+                <table class="tracking-table">
+                    <thead>
+                        <tr>
+                            <th>Added</th>
+                            <th>Title</th>
+                            <th>Trigger</th>
+                            <th>Rationale</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in entries %}
+                        <tr class="torrent-entry" data-hash="{{ entry.torrent_hash }}">
+                            <td>{{ entry.timestamp }}</td>
+                            <td>
+                                {% if entry.item_data %}
+                                    {% set item = entry.item_data|from_json %}
+                                    {% if item.filled_by_title %}
+                                        {{ item.filled_by_title }}
+                                    {% else %}
+                                        {{ item.title }}
+                                        {% if item.year %}({{ item.year }}){% endif %}
+                                        {% if item.season_number is not none %}
+                                            S{{ item.season_number|string|zfill(2) }}
+                                            {% if item.episode_number is not none %}
+                                                E{{ item.episode_number|string|zfill(2) }}
+                                            {% endif %}
                                         {% endif %}
                                     {% endif %}
                                 {% endif %}
-                            {% endif %}
-                        </td>
-                        <td>
-                            <span class="trigger-badge {{ entry.trigger_source }}">{{ entry.trigger_source }}</span>
-                        </td>
-                        <td>{{ entry.rationale }}</td>
-                        <td class="status-cell" data-hash="{{ entry.torrent_hash }}">
-                            <span class="status-badge loading"></span>
-                        </td>
-                        <td>
-                            <button class="details-button" onclick="showModal('detailsModal{{ entry.id }}')">
-                                <i class="fas fa-info-circle"></i> Details
-                            </button>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <div class="alert-info">
-            <h4>No Torrent History Yet</h4>
-            <p>There are currently no torrent additions being tracked. As torrents are added to your account, they will appear here with detailed information about why and how they were added.</p>
-            <hr>
-            <p>The tracking system will automatically record information about:</p>
-            <ul>
-                <li>When torrents are added</li>
-                <li>What triggered the addition</li>
-                <li>The rationale behind each addition</li>
-                <li>Complete item data at the time of addition</li>
-                <li>Current status and any removal information</li>
-            </ul>
-        </div>
-        {% endif %}
+                            </td>
+                            <td>
+                                <span class="trigger-badge {{ entry.trigger_source }}">{{ entry.trigger_source }}</span>
+                            </td>
+                            <td>{{ entry.rationale }}</td>
+                            <td class="status-cell" data-hash="{{ entry.torrent_hash }}">
+                                <span class="status-badge loading"></span>
+                            </td>
+                            <td>
+                                <button class="details-button" onclick="showModal('detailsModal{{ entry.id }}')">
+                                    <i class="fas fa-info-circle"></i> Details
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert-info">
+                <h4>No Torrent History Yet</h4>
+                <p>There are currently no torrent additions being tracked. As torrents are added to your account, they will appear here with detailed information about why and how they were added.</p>
+                <hr>
+                <p>The tracking system will automatically record information about:</p>
+                <ul>
+                    <li>When torrents are added</li>
+                    <li>What triggered the addition</li>
+                    <li>The rationale behind each addition</li>
+                    <li>Complete item data at the time of addition</li>
+                    <li>Current status and any removal information</li>
+                </ul>
+            </div>
+            {% endif %}
     </div>
 </div>
 
@@ -425,6 +539,14 @@ code {
                 <dd class="status-cell" data-hash="{{ entry.torrent_hash }}">
                     <span class="status-badge">Loading...</span>
                 </dd>
+
+                {% if not entry.is_still_present %}
+                <dt>Removal Reason</dt>
+                <dd>{{ entry.removal_reason }}</dd>
+                
+                <dt>Removed At</dt>
+                <dd>{{ entry.removal_timestamp }}</dd>
+                {% endif %}
             </dl>
 
             <h4 class="section-title">Trigger Information</h4>
@@ -570,9 +692,7 @@ code {
 </div>
 {% endfor %}
 {% endif %}
-{% endblock %}
 
-{% block scripts %}
 <script>
 function showModal(modalId) {
     const modal = document.getElementById(modalId);
@@ -601,6 +721,8 @@ window.onclick = function(event) {
 document.addEventListener('DOMContentLoaded', function() {
     // Keep track of active polling intervals
     const activePolls = new Map();
+    const POLL_INTERVAL = 10000;  // Poll every 10 seconds after initial load
+    const INITIAL_STAGGER_DELAY = 1000;  // Delay between each initial status check
     
     // Terminal states that don't need further polling
     const TERMINAL_STATES = ['downloaded', 'magnet_error', 'error', 'virus', 'dead'];
@@ -627,17 +749,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Set up intersection observer for lazy loading
     const observer = new IntersectionObserver((entries, observer) => {
-        entries.forEach(entry => {
+        entries.forEach((entry, index) => {
             const row = entry.target;
             const hash = row.dataset.hash;
             
             if (entry.isIntersecting) {
                 // Start polling when element becomes visible
                 if (!activePolls.has(hash)) {
-                    checkTorrentStatus(hash);
-                    // Set up polling every 5 seconds
-                    const intervalId = setInterval(() => checkTorrentStatus(hash), 10000);
-                    activePolls.set(hash, intervalId);
+                    // Stagger the initial check based on the index
+                    setTimeout(() => {
+                        checkTorrentStatus(hash);
+                        // Set up regular polling after initial staggered load
+                        const intervalId = setInterval(() => checkTorrentStatus(hash), POLL_INTERVAL);
+                        activePolls.set(hash, intervalId);
+                    }, index * INITIAL_STAGGER_DELAY);
                 }
             } else {
                 // Stop polling when element is no longer visible
@@ -685,24 +810,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     throw new Error('No data received from server');
                 }
 
-                // Create the badge HTML
-                let badge;
-                if (data.error) {
-                    badge = `<span class="status-badge error" title="${data.error}">Error: ${data.error}</span>`;
-                } else if (data.is_present === true) {
-                    const status = data.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Present';
-                    const badgeClass = status.toLowerCase() === 'downloading' ? 'downloading' : 'present';
-                    badge = `<span class="status-badge ${badgeClass}" title="Status: ${status}">${status}</span>`;
-                } else if (data.is_present === false) {
-                    const reason = data.removal_reason ? ` (${data.removal_reason})` : '';
-                    const status = data.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Removed';
-                    badge = `<span class="status-badge removed" title="${reason}">${status}${reason}</span>`;
-                } else {
-                    badge = '<span class="status-badge error">Unknown Status</span>';
-                }
-                
                 // Update all matching status cells
                 statusCells.forEach(cell => {
+                    // Create the badge HTML
+                    let badge;
+                    if (data.error) {
+                        badge = `<span class="status-badge error" title="Error: ${data.error}">Error</span>`;
+                    } else if (data.is_present === true) {
+                        const status = data.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Present';
+                        const badgeClass = status.toLowerCase() === 'downloading' ? 'downloading' : 'present';
+                        badge = `<span class="status-badge ${badgeClass}" title="${status}">${status}</span>`;
+                    } else if (data.is_present === false) {
+                        const reason = data.removal_reason ? data.removal_reason : '';
+                        badge = `<span class="status-badge removed" title="Removed: ${reason}">Removed</span>`;
+                    } else {
+                        badge = '<span class="status-badge error">Unknown</span>';
+                    }
+                    
                     // Force a DOM reflow by accessing offsetHeight
                     cell.innerHTML = '';
                     void cell.offsetHeight;

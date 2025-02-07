@@ -206,26 +206,35 @@
             // Update recently upgraded items if they exist
             const recentlyUpgradedContainer = document.querySelector('#recently_upgraded .cards-container');
             if (recentlyUpgradedContainer && data.recently_upgraded) {
-                recentlyUpgradedContainer.innerHTML = data.recently_upgraded.map(item => `
-                    <div class="card">
-                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                const upgradeHtml = data.recently_upgraded.map(item => {
+                    const yearInfo = item.year ? ` (${item.year})` : '';
+                    const episodeInfo = item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : '';
+                    
+                    if (document.querySelector('.statistics-wrapper').classList.contains('compact-view')) {
+                        return `<div class="card">
                             <div class="file-details">
-                                <span class="title">${item.title}${item.year ? ` (${item.year})` : ''}</span>
-                                <span class="metadata">${item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : ''}Quality: ${item.version}</span>
-                                <span class="filename">${item.filled_by_file}</span>
+                                <span class="title">${item.title}${yearInfo}</span>
+                                <span class="metadata">${episodeInfo}Quality: ${item.version}</span>
+                                <span class="filename" data-label="From:">${item.upgrading_from}</span>
+                                <span class="filename" data-label="To:">${item.filled_by_file}</span>
                             </div>
-                        ` : `
+                        </div>`;
+                    } else {
+                        return `<div class="card">
                             <div class="poster-container">
                                 <img src="${item.poster_url}" alt="${item.title} poster" class="poster" loading="lazy">
                                 <div class="poster-hover">
-                                    <span class="title">${item.title}${item.year ? ` (${item.year})` : ''}</span>
-                                    <span class="metadata">${item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : ''}Quality: ${item.version}</span>
-                                    <span class="filename">${item.filled_by_file}</span>
+                                    <span class="title">${item.title}${yearInfo}</span>
+                                    <span class="metadata">${episodeInfo}Quality: ${item.version}</span>
+                                    <span class="filename" data-label="From:">${item.upgrading_from}</span>
+                                    <span class="filename" data-label="To:">${item.filled_by_file}</span>
                                 </div>
                             </div>
-                        `}
-                    </div>
-                `).join('');
+                        </div>`;
+                    }
+                }).join('');
+                
+                recentlyUpgradedContainer.innerHTML = upgradeHtml;
             }
         }
 
@@ -462,15 +471,17 @@
                         <div class="file-details">
                             <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
                             <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
-                            <span class="filename">{{ item.filled_by_file }}</span>
+                            <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
+                            <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                         </div>
                         {% else %}
                         <div class="poster-container">
                             <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                                <span class="metadata">${item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : ''}Quality: {{ item.version }}</span>
-                                <span class="filename">{{ item.filled_by_file }}</span>
+                                <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
+                                <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
+                                <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                             </div>
                         </div>
                         {% endif %}

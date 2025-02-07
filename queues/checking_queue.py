@@ -343,7 +343,10 @@ class CheckingQueue:
                     if time_in_queue > checking_queue_limit:
                         logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds")
                         try:
-                            self.debrid_provider.remove_torrent(torrent_id)
+                            self.debrid_provider.remove_torrent(
+                                torrent_id,
+                                removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds"
+                            )
                         except Exception as e:
                             logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
                         # Move all items for this torrent back to Wanted
@@ -358,12 +361,79 @@ class CheckingQueue:
                 
                 if current_time - last_check >= 300:  # 5 minutes
                     if current_progress == last_progress:
-                        logging.info(f"No progress for torrent {torrent_id} in 5 minutes. Moving all associated items back to Wanted queue.")
+                        logging.info(f"No progress for torrent {torrent_id} in 5 minutes. Handling failed upgrade/download.")
                         try:
-                            self.debrid_provider.remove_torrent(torrent_id)
+                            # Remove the failed torrent from debrid service
+                            self.debrid_provider.remove_torrent(
+                                torrent_id,
+                                removal_reason=f"No download progress after 5 minutes (stalled at {current_progress}%)"
+                            )
+                            logging.info(f"Removed failed torrent {torrent_id} from debrid service")
                         except Exception as e:
                             logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
-                        self.move_items_to_wanted(items, queue_manager, adding_queue, torrent_id)
+
+                        for item in items:
+                            # Check if this was an upgrade attempt
+                            if item.get('upgrading'):
+                                logging.info(f"Failed upgrade detected for {queue_manager.generate_identifier(item)}")
+                                # Get the UpgradingQueue instance to handle the reversion
+                                from queues.upgrading_queue import UpgradingQueue
+                                upgrading_queue = UpgradingQueue()
+                                
+                                # Send failed upgrade notification
+                                from notifications import send_upgrade_failed_notification
+                                notification_data = {
+                                    'title': item.get('title', 'Unknown Title'),
+                                    'year': item.get('year', ''),
+                                    'reason': 'No download progress after 5 minutes'
+                                }
+                                send_upgrade_failed_notification(notification_data)
+                                
+                                # Log the failed upgrade
+                                upgrading_queue.log_failed_upgrade(
+                                    item, 
+                                    item.get('filled_by_title', 'Unknown'), 
+                                    'No download progress after 5 minutes'
+                                )
+                                
+                                # First restore the previous state
+                                if upgrading_queue.restore_item_state(item):
+                                    # Add the failed attempt to tracking
+                                    upgrading_queue.add_failed_upgrade(
+                                        item['id'], 
+                                        {
+                                            'title': item.get('filled_by_title'),
+                                            'magnet': item.get('filled_by_magnet'),
+                                            'torrent_id': torrent_id
+                                        }
+                                    )
+                                    logging.info(f"Successfully reverted failed upgrade for {queue_manager.generate_identifier(item)}")
+                                else:
+                                    logging.error(f"Failed to restore previous state for {queue_manager.generate_identifier(item)}, moving to Wanted")
+                                    queue_manager.move_to_wanted(item, "Checking")
+                            else:
+                                # Regular download failure, move to Wanted
+                                queue_manager.move_to_wanted(item, "Checking")
+                                logging.info(f"Moving item back to Wanted: {queue_manager.generate_identifier(item)}")
+
+                            # Add magnet to not wanted list
+                            magnet = item.get('filled_by_magnet')
+                            if magnet:
+                                try:
+                                    if magnet.startswith('http'):
+                                        from debrid.common import download_and_extract_hash
+                                        hash_value = download_and_extract_hash(magnet)
+                                        add_to_not_wanted(hash_value)
+                                        add_to_not_wanted_urls(magnet)
+                                        logging.info(f"Added hash {hash_value} and URL to not wanted lists")
+                                    else:
+                                        from debrid.common import extract_hash_from_magnet
+                                        hash_value = extract_hash_from_magnet(magnet)
+                                        add_to_not_wanted(hash_value)
+                                        logging.info(f"Added hash {hash_value} to not wanted list")
+                                except Exception as e:
+                                    logging.error(f"Failed to process magnet for not wanted: {str(e)}")
+
                         items_to_remove.extend(items)
                     else:
                         self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': current_progress}

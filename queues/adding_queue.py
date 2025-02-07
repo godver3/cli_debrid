@@ -24,6 +24,7 @@ class AddingQueue:
         self.media_matcher = MediaMatcher()
         self.items: List[Dict] = []
         self.last_process_time = {}
+        logging.info("Initialized AddingQueue")
         
     def reinitialize_provider(self):
         """Reinitialize the debrid provider and processors"""
@@ -32,7 +33,19 @@ class AddingQueue:
         
     def update(self):
         """Update the queue with current items in 'Adding' state"""
+        old_items = {item['id']: item for item in self.items}
         self.items = [dict(row) for row in get_all_media_items(state="Adding")]
+        new_items = {item['id']: item for item in self.items}
+        
+        # Log changes
+        added = set(new_items.keys()) - set(old_items.keys())
+        removed = set(old_items.keys()) - set(new_items.keys())
+        if added:
+            logging.info(f"Added items to queue during update: {added}")
+        if removed:
+            logging.info(f"Removed items from queue during update: {removed}")
+        if len(self.items) > 0:
+            logging.debug(f"Queue now contains {len(self.items)} items")
         
     def get_contents(self) -> List[Dict]:
         """Get current queue contents"""
@@ -40,23 +53,66 @@ class AddingQueue:
         
     def add_item(self, item: Dict):
         """Add an item to the queue"""
-        self.items.append(item)
+        item_id = item.get('id')
+        if item_id:
+            existing = any(i['id'] == item_id for i in self.items)
+            if existing:
+                logging.warning(f"Item {item_id} already exists in queue - duplicate add attempt")
+            else:
+                logging.info(f"Adding item {item_id} to queue")
+                self.items.append(item)
+        else:
+            logging.error("Attempted to add item without ID to queue")
         
     def remove_item(self, item: Dict):
         """Remove an item from the queue"""
-        self.items = [i for i in self.items if i['id'] != item['id']]
+        item_id = item.get('id')
+        if item_id:
+            old_len = len(self.items)
+            self.items = [i for i in self.items if i['id'] != item_id]
+            if len(self.items) < old_len:
+                logging.info(f"Removed item {item_id} from queue")
+            else:
+                logging.warning(f"Attempted to remove item {item_id} but it was not in queue")
+        else:
+            logging.error("Attempted to remove item without ID from queue")
         
     def remove_unwanted_torrent(self, torrent_id: str):
-        """Remove an unwanted torrent from the debrid service
+        """
+        Remove an unwanted torrent from the debrid service and track the removal
         
         Args:
             torrent_id: ID of the torrent to remove
         """
-        if torrent_id:
+        if not torrent_id:
+            logging.warning("Attempted to remove torrent with empty ID")
+            return
+            
+        try:
+            # Get torrent info before removal to record hash
             try:
-                self.debrid_provider.remove_torrent(torrent_id)
+                info = self.debrid_provider.get_torrent_info(torrent_id)
+                if info:
+                    hash_value = info.get('hash', '').lower()
+                    if hash_value:
+                        from not_wanted_magnets import add_to_not_wanted
+                        try:
+                            add_to_not_wanted(hash_value)
+                            logging.info(f"Added hash {hash_value} to not wanted list")
+                        except Exception as e:
+                            logging.error(f"Failed to add to not wanted list: {str(e)}")
             except Exception as e:
-                logging.error(f"Failed to remove unwanted torrent {torrent_id}: {e}")
+                logging.warning(f"Could not get torrent info before removal: {str(e)}")
+                
+            # Remove the torrent with a descriptive reason
+            self.debrid_provider.remove_torrent(
+                torrent_id,
+                removal_reason="Removed due to no matching files for media item"
+            )
+            logging.info(f"Successfully removed unwanted torrent {torrent_id}")
+            
+        except Exception as e:
+            logging.error(f"Failed to remove unwanted torrent {torrent_id}: {str(e)}", exc_info=True)
                 
     def process(self, queue_manager: Any) -> bool:
         """
@@ -75,11 +131,13 @@ class AddingQueue:
         if self.items:
             item = self.items[0]  # Peek at first item
             item_identifier = queue_manager.generate_identifier(item)
+            logging.info(f"Adding Queue - Starting processing of {len(self.items)} items")
             logging.debug(f"Adding Queue - Processing item with resolution: {item.get('resolution', 'Not found')} for {item_identifier}")
             
         for item in self.items[:]:  # Copy list as we'll modify it
             item_identifier = f"{item.get('title')} ({item.get('type')})"
-            logging.info(f"Processing item: {item_identifier}")
+            item_id = item.get('id')
+            logging.info(f"Processing item {item_id}: {item_identifier}")
             
             try:
                 results = item.get('scrape_results', [])
@@ -175,6 +233,10 @@ class AddingQueue:
                     filled_by_file=matched_file,
                     torrent_id=torrent_info.get('id')
                 )
+                
+                # Remove item from queue after successful processing
+                logging.info(f"Removing successfully processed item {item_id} from adding queue")
+                self.remove_item(item)
                 
                 if item.get('type') == 'episode':
                     scraping_items = queue_manager.get_scraping_items()

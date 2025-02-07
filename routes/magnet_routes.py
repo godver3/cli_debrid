@@ -10,6 +10,8 @@ from queues.media_matcher import MediaMatcher
 import logging
 from cli_battery.app.direct_api import DirectAPI
 import os
+import re
+from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
 
 magnet_bp = Blueprint('magnet', __name__)
 
@@ -110,11 +112,72 @@ def assign_magnet():
                     flash('Failed to add magnet to debrid service', 'error')
                     return redirect(url_for('magnet.assign_magnet'))
 
+                # Extract torrent hash from magnet link
+                torrent_hash = None
+                if magnet_link.startswith('magnet:'):
+                    hash_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
+                    if hash_match:
+                        torrent_hash = hash_match.group(1).lower()
+
                 # Get torrent info for file matching
                 torrent_info = debrid_provider.get_torrent_info(torrent_id)
                 if not torrent_info:
                     flash('Failed to get torrent info', 'error')
                     return redirect(url_for('magnet.assign_magnet'))
+
+                # Record torrent addition if we have a hash
+                if torrent_hash:
+                    # Check recent history for this hash
+                    history = get_torrent_history(torrent_hash)
+                    
+                    # Prepare item data for tracking
+                    tracking_item_data = {
+                        'title': title,
+                        'year': year,
+                        'media_type': media_type,
+                        'version': version,
+                        'tmdb_id': tmdb_id,
+                        'filled_by_title': torrent_info.get('filename', ''),
+                        'torrent_id': torrent_id
+                    }
+                    
+                    # Add TV show specific data if applicable
+                    if media_type in ['tv', 'show']:
+                        tracking_item_data.update({
+                            'selection_type': selection_type,
+                            'season_number': season if season else None,
+                            'episode_number': episode if episode else None,
+                            'selected_seasons': selected_seasons if selected_seasons else None
+                        })
+
+                    # If there's a recent entry, update it instead of creating new one
+                    if history:
+                        update_torrent_tracking(
+                            torrent_hash=torrent_hash,
+                            item_data=tracking_item_data,
+                            trigger_details={
+                                'source': 'magnet_assign',
+                                'user_initiated': True,
+                                'torrent_info': torrent_info
+                            },
+                            trigger_source='manual_assign',
+                            rationale='User manually assigned via magnet assignment'
+                        )
+                        logging.info(f"Updated existing torrent tracking entry for {title} (hash: {torrent_hash})")
+                    else:
+                        # Record new addition if no history exists
+                        record_torrent_addition(
+                            torrent_hash=torrent_hash,
+                            trigger_source='manual_assign',
+                            rationale='User manually assigned via magnet assignment',
+                            item_data=tracking_item_data,
+                            trigger_details={
+                                'source': 'magnet_assign',
+                                'user_initiated': True,
+                                'torrent_info': torrent_info
+                            }
+                        )
+                        logging.info(f"Recorded new torrent addition for {title} with hash {torrent_hash}")
 
                 # Log raw torrent info for debugging
                 #logging.debug(f"Raw torrent info: {torrent_info}")

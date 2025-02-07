@@ -304,7 +304,10 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     try:
                         from debrid import get_debrid_provider
                         debrid_provider = get_debrid_provider()
-                        debrid_provider.remove_torrent(item['upgrading_from_torrent_id'])
+                        debrid_provider.remove_torrent(
+                            item['upgrading_from_torrent_id'],
+                            removal_reason="Removed old torrent after successful upgrade"
+                        )
                         logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
                     except Exception as e:
                         logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")

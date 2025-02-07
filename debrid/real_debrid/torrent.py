@@ -72,6 +72,7 @@ def get_torrent_files(api_key: str, hash_value: str) -> List[Dict]:
 
 def remove_torrent(api_key: str, torrent_id: str) -> None:
     """Remove a torrent from Real-Debrid"""
+    logging.error(f"Removing torrent {torrent_id} - THIS FUNCTION IS DEPRECATED AND SHOULD NOT BE CALLED")
     make_request('DELETE', f'/torrents/delete/{torrent_id}', api_key)
 
 def list_active_torrents(api_key: str) -> List[Dict]:
