@@ -191,7 +191,7 @@ def update_torrent_tracking(
         record = cursor.fetchone()
         
         if not record:
-            logging.warning(f"No existing record found for torrent hash {torrent_hash}")
+            logging.debug(f"No existing record found for torrent hash {torrent_hash}")
             return False
             
         # Merge the new data with existing data

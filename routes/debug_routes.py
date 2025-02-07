@@ -1278,3 +1278,28 @@ def verify_torrent(hash_value):
             'is_present': None,
             'status': 'error'
         }), 500
+
+@debug_bp.route('/api/trakt_token_status', methods=['GET'])
+@admin_required
+def get_trakt_token_status():
+    try:
+        from cli_battery.app.trakt_auth import TraktAuth
+        trakt_auth = TraktAuth()
+        
+        status = {
+            'is_authenticated': trakt_auth.is_authenticated(),
+            'token_data': trakt_auth.get_token_data(),
+            'last_refresh': trakt_auth.get_last_refresh_time(),
+            'expires_at': trakt_auth.get_expiration_time()
+        }
+        
+        return jsonify({
+            'success': True,
+            'status': status
+        })
+    except Exception as e:
+        logging.error(f"Error getting Trakt token status: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })

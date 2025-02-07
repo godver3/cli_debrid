@@ -446,6 +446,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                 version,
                 filled_by_title,
                 filled_by_file,
+                upgrading_from,
                 last_updated,
                 season_number,
                 episode_number,
@@ -486,6 +487,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                     'version': item['version'],
                     'filled_by_file': item['filled_by_file'],
                     'filled_by_title': item['filled_by_title'] if item['filled_by_title'] else item['filled_by_file'],
+                    'upgrading_from': item['upgrading_from'],
                     'last_updated': item['last_updated'],
                     'tmdb_id': item['tmdb_id']
                 }

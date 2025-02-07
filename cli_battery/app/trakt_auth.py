@@ -157,3 +157,45 @@ class TraktAuth:
         os.makedirs(os.path.dirname(self.pytrakt_file), exist_ok=True)
         with open(self.pytrakt_file, 'w') as f:
             json.dump(credentials, f)
+
+    def get_token_data(self):
+        """Get the current token data"""
+        return {
+            'access_token': self.access_token,
+            'refresh_token': self.refresh_token,
+            'expires_at': self.expires_at
+        }
+
+    def get_last_refresh_time(self):
+        """Get the last refresh time based on expiration"""
+        if not self.expires_at:
+            return None
+        try:
+            if isinstance(self.expires_at, str):
+                expires_at = iso8601.parse_date(self.expires_at)
+            elif isinstance(self.expires_at, (int, float)):
+                expires_at = datetime.fromtimestamp(self.expires_at, tz=timezone.utc)
+            else:
+                return None
+                
+            # The token is valid for 24 hours, so the last refresh was when the current token was issued
+            # Which is the expiration time minus 24 hours
+            last_refresh = expires_at - timedelta(hours=24)
+            return last_refresh.isoformat()
+        except Exception as e:
+            logger.error(f"Error calculating last refresh time: {str(e)}")
+            return None
+
+    def get_expiration_time(self):
+        """Get the token expiration time"""
+        if not self.expires_at:
+            return None
+        try:
+            if isinstance(self.expires_at, str):
+                return self.expires_at
+            elif isinstance(self.expires_at, (int, float)):
+                return datetime.fromtimestamp(self.expires_at, tz=timezone.utc).isoformat()
+            return None
+        except Exception as e:
+            logger.error(f"Error formatting expiration time: {str(e)}")
+            return None

@@ -12,6 +12,7 @@ import requests
 import os
 import bencodepy
 import hashlib
+import inspect
 
 from debrid.base import DebridProvider, TooManyDownloadsError
 from debrid.common import (
@@ -127,6 +128,11 @@ class TorrentProcessor:
         max_retries = 3
         retry_delay = 2  # seconds
         temp_file = None
+
+        # Get caller information
+        caller_frame = inspect.currentframe().f_back
+        caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_code.co_name}:{caller_frame.f_lineno}"
+        logging.info(f"TorrentProcessor.add_to_account called from {caller_info}")
         
         try:
             magnet, temp_file = self.process_torrent(magnet_or_url)
@@ -167,9 +173,14 @@ class TorrentProcessor:
             
             if torrent_id and (not info or len(info.get('files', [])) == 0):
                 try:
-                    self.debrid_provider.remove_torrent(torrent_id)
+                    logging.info(f"Attempting to remove empty/failed torrent {torrent_id}")
+                    self.debrid_provider.remove_torrent(
+                        torrent_id,
+                        removal_reason="Empty or failed torrent during processing"
+                    )
+                    logging.info(f"Successfully removed empty/failed torrent {torrent_id}")
                 except Exception as e:
-                    logging.error(f"Error cleaning up torrent {torrent_id}: {str(e)}")
+                    logging.error(f"Error cleaning up empty/failed torrent {torrent_id}: {str(e)}", exc_info=True)
                     
     def process_results(
         self,
@@ -188,7 +199,8 @@ class TorrentProcessor:
         Returns:
             Tuple of (torrent_info, magnet_link) if successful, (None, None) otherwise
         """
-        logging.info(f"Starting to process {len(results)} results (accept_uncached={accept_uncached})")
+        item_identifier = item.get('title', 'Unknown') if item else 'Unknown'
+        logging.info(f"[{item_identifier}] Starting to process {len(results)} results (accept_uncached={accept_uncached})")
         
         for idx, result in enumerate(results, 1):
             try:
@@ -197,15 +209,15 @@ class TorrentProcessor:
                     continue
                     
                 result_title = result.get('title', 'Unknown title')
-                logging.info(f"[Result {idx}/{len(results)}] Processing: {result_title}")
-                logging.debug(f"[Result {idx}/{len(results)}] Raw result data: {result}")
+                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Processing: {result_title}")
+                logging.debug(f"[{item_identifier}] [Result {idx}/{len(results)}] Raw result data: {result}")
                 
                 magnet, temp_file = self.process_torrent(original_link)
                 if not magnet and not temp_file:
-                    logging.warning(f"[Result {idx}/{len(results)}] Failed to process magnet/torrent")
+                    logging.warning(f"[{item_identifier}] [Result {idx}/{len(results)}] Failed to process magnet/torrent")
                     continue
                     
-                logging.info(f"[Result {idx}/{len(results)}] PHASE: Cache Check - Starting cache status check")
+                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Cache Check - Starting cache status check")
                 is_cached = self.debrid_provider.is_cached(
                     magnet if not temp_file else "",
                     temp_file,
@@ -214,20 +226,20 @@ class TorrentProcessor:
                 )
                     
                 if is_cached is None:
-                    logging.warning(f"[Result {idx}/{len(results)}] Cache check returned None, skipping result")
+                    logging.warning(f"[{item_identifier}] [Result {idx}/{len(results)}] Cache check returned None, skipping result")
                     continue
                     
-                logging.info(f"[Result {idx}/{len(results)}] Cache status: {'Cached' if is_cached else 'Not cached'}")
+                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Cache status: {'Cached' if is_cached else 'Not cached'}")
                 
                 if not accept_uncached and not is_cached:
-                    logging.info(f"[Result {idx}/{len(results)}] Skipping uncached result (accept_uncached=False)")
+                    logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Skipping uncached result (accept_uncached=False)")
                     continue
                 
                 if not is_cached:
                     try:
                         active_downloads, download_limit = self.debrid_provider.get_active_downloads()
                         if active_downloads >= download_limit:
-                            logging.info(f"[Result {idx}/{len(results)}] Download limit reached ({active_downloads}/{download_limit}). Moving to pending uncached queue.")
+                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Download limit reached ({active_downloads}/{download_limit}). Moving to pending uncached queue.")
                             if item:
                                 from database import update_media_item_state
                                 update_media_item_state(item['id'], "Pending Uncached", 
@@ -237,7 +249,7 @@ class TorrentProcessor:
                                 item['filled_by_title'] = result.get('title', '')
                             return None, original_link
                     except TooManyDownloadsError:
-                        logging.info(f"[Result {idx}/{len(results)}] Download limit reached. Moving to pending uncached queue.")
+                        logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Download limit reached. Moving to pending uncached queue.")
                         if item:
                             from database import update_media_item_state
                             update_media_item_state(item['id'], "Pending Uncached",
@@ -247,7 +259,7 @@ class TorrentProcessor:
                             item['filled_by_title'] = result.get('title', '')
                         return None, original_link
                     except Exception as e:
-                        logging.error(f"[Result {idx}/{len(results)}] Error checking download limits: {str(e)}")
+                        logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error checking download limits: {str(e)}")
                         continue
 
                 info = None
@@ -262,23 +274,85 @@ class TorrentProcessor:
                     if hash_value:
                         torrent_id = self.debrid_provider.get_cached_torrent_id(hash_value)
                         if torrent_id:
-                            logging.info(f"[Result {idx}/{len(results)}] PHASE: Info Fetch - Getting info for cached torrent")
+                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Info Fetch - Getting info for cached torrent")
                             info = self.debrid_provider.get_torrent_info(torrent_id)
                             torrent_title = self.debrid_provider.get_cached_torrent_title(hash_value)
                 
                 if not info:
                     magnet, temp_file = self.process_torrent(original_link)
                     try:
-                        logging.info(f"[Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
+                        logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
                         info = self.add_to_account(original_link)
+                        
                         if info:
+                            # Extract hash after successful addition
+                            hash_value = None
+                            if magnet:
+                                hash_value = extract_hash_from_magnet(magnet)
+                            elif temp_file:
+                                hash_value = extract_hash_from_file(temp_file)
+
+                            if hash_value and item:
+                                from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
+                                # Prepare item data
+                                item_data = {
+                                    'title': item.get('title'),
+                                    'type': item.get('type'),
+                                    'version': item.get('version'),
+                                    'tmdb_id': item.get('tmdb_id'),
+                                    'state': item.get('state')
+                                }
+                                
+                                # Check recent history for this hash
+                                history = get_torrent_history(hash_value)
+                                
+                                # If there's a recent entry, update it instead of creating new one
+                                if history:
+                                    update_torrent_tracking(
+                                        torrent_hash=hash_value,
+                                        item_data=item_data,
+                                        trigger_details={
+                                            'source': 'adding_queue',
+                                            'queue_initiated': True,
+                                            'accept_uncached': accept_uncached,
+                                            'torrent_info': {
+                                                'id': info.get('id'),
+                                                'filename': info.get('filename'),
+                                                'is_cached': is_cached
+                                            }
+                                        },
+                                        trigger_source='queue_add',
+                                        rationale='Added via adding queue processing'
+                                    )
+                                    logging.info(f"[{item_identifier}] Updated existing torrent tracking entry for hash {hash_value}")
+                                else:
+                                    # Record new addition if no history exists
+                                    record_torrent_addition(
+                                        torrent_hash=hash_value,
+                                        trigger_source='queue_add',
+                                        rationale='Added via adding queue processing',
+                                        item_data=item_data,
+                                        trigger_details={
+                                            'source': 'adding_queue',
+                                            'queue_initiated': True,
+                                            'accept_uncached': accept_uncached,
+                                            'torrent_info': {
+                                                'id': info.get('id'),
+                                                'filename': info.get('filename'),
+                                                'is_cached': is_cached
+                                            }
+                                        }
+                                    )
+                                    logging.info(f"[{item_identifier}] Recorded new torrent addition for hash {hash_value}")
+                                    
                             torrent_title = info.get('filename', '')
+                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Successfully added torrent with ID: {info.get('id')}")
                     finally:
                         if temp_file and os.path.exists(temp_file):
                             try:
                                 os.unlink(temp_file)
                             except Exception as e:
-                                logging.error(f"[Result {idx}/{len(results)}] Error cleaning up temp file: {str(e)}")
+                                logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error cleaning up temp file: {str(e)}")
                 
                 if info:
                     info['title'] = torrent_title or result.get('title', '')
@@ -295,22 +369,81 @@ class TorrentProcessor:
                                 else:
                                     hash_value = extract_hash_from_magnet(result_magnet)
                                     add_to_not_wanted(hash_value)
+
+                                # Record torrent tracking after confirming valid result
+                                if hash_value and item:
+                                    from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
+                                    # Prepare item data
+                                    item_data = {
+                                        'title': item.get('title'),
+                                        'type': item.get('type'),
+                                        'version': item.get('version'),
+                                        'tmdb_id': item.get('tmdb_id'),
+                                        'state': item.get('state')
+                                    }
+                                    
+                                    # Check recent history for this hash
+                                    history = get_torrent_history(hash_value)
+                                    
+                                    # If there's a recent entry, update it instead of creating new one
+                                    if history:
+                                        update_torrent_tracking(
+                                            torrent_hash=hash_value,
+                                            item_data=item_data,
+                                            trigger_details={
+                                                'source': 'adding_queue',
+                                                'queue_initiated': True,
+                                                'accept_uncached': accept_uncached,
+                                                'torrent_info': {
+                                                    'id': info.get('id'),
+                                                    'filename': info.get('filename'),
+                                                    'is_cached': is_cached
+                                                }
+                                            },
+                                            trigger_source='queue_add',
+                                            rationale='Added via adding queue processing'
+                                        )
+                                        logging.info(f"[{item_identifier}] Updated existing torrent tracking entry for hash {hash_value}")
+                                    else:
+                                        # Record new addition if no history exists
+                                        record_torrent_addition(
+                                            torrent_hash=hash_value,
+                                            trigger_source='queue_add',
+                                            rationale='Added via adding queue processing',
+                                            item_data=item_data,
+                                            trigger_details={
+                                                'source': 'adding_queue',
+                                                'queue_initiated': True,
+                                                'accept_uncached': accept_uncached,
+                                                'torrent_info': {
+                                                    'id': info.get('id'),
+                                                    'filename': info.get('filename'),
+                                                    'is_cached': is_cached
+                                                }
+                                            }
+                                        )
+                                        logging.info(f"[{item_identifier}] Recorded new torrent addition for hash {hash_value}")
                             except Exception as e:
-                                logging.error(f"[Result {idx}/{len(results)}] Failed to process magnet for not wanted: {str(e)}")
-                        logging.info(f"[Result {idx}/{len(results)}] Successfully processed and added")
-                        return info, original_link
+                                logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Failed to process magnet for not wanted: {str(e)}")
+
+                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Successfully processed and added")
+                            return info, original_link
                     else:
                         try:
                             if info.get('id'):
-                                self.debrid_provider.remove_torrent(info['id'])
+                                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Removing empty torrent {info.get('id')}")
+                                self.debrid_provider.remove_torrent(
+                                    info['id'],
+                                    removal_reason="No files found in torrent after addition"
+                                )
                         except Exception as e:
-                            logging.error(f"[Result {idx}/{len(results)}] Error removing empty torrent {info.get('id')}: {str(e)}")
+                            logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error removing empty torrent {info.get('id')}: {str(e)}")
                 else:
-                    logging.error(f"[Result {idx}/{len(results)}] Failed to add torrent")
+                    logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Failed to add torrent")
                     
             except Exception as e:
-                logging.error(f"[Result {idx}/{len(results)}] Error processing result: {str(e)}", exc_info=True)
+                logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error processing result: {str(e)}", exc_info=True)
                 continue
                 
-        logging.info("No suitable results found after processing all options")
+        logging.info(f"[{item_identifier}] No suitable results found after processing all options")
         return None, None

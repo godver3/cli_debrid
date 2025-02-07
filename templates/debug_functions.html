@@ -217,6 +217,15 @@
             <p class="description">View the history of torrent additions and their current status.</p>
             <a href="{{ url_for('debug.torrent_tracking') }}" class="btn btn-primary">View Torrent History</a>
         </div>
+        <div class="debug_item">
+            <h3>Trakt Token Status</h3>
+            <div id="trakt-token-status">
+                <div class="token-status-container">
+                    <!-- Status will be populated here -->
+                </div>
+                <button id="refresh-trakt-tokens" class="btn">Refresh Status</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -1003,6 +1012,131 @@
         document.getElementById('refresh-plex-tokens').addEventListener('click', () => {
             refreshPlexTokens();
         });
+
+        function updateTraktTokenStatus(data) {
+            const container = document.querySelector('#trakt-token-status .token-status-container');
+            if (!data.success) {
+                container.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                return;
+            }
+
+            const status = data.status;
+            const tokenData = status.token_data || {};
+            const expiresAt = status.expires_at ? new Date(status.expires_at) : null;
+            const lastRefresh = status.last_refresh ? new Date(status.last_refresh) : null;
+            const now = new Date();
+
+            let html = `
+                <div class="token-details">
+                    <div class="token-validity ${status.is_authenticated ? 'valid' : 'invalid'}">
+                        Status: ${status.is_authenticated ? 'Valid' : 'Invalid'}
+                    </div>`;
+
+            if (expiresAt) {
+                const timeUntilExpiry = Math.floor((expiresAt - now) / (1000 * 60 * 60)); // hours
+                html += `
+                    <div class="token-expiry">
+                        Expires: ${expiresAt.toLocaleString()}
+                        (in ${timeUntilExpiry} hours)
+                    </div>`;
+            }
+
+            if (lastRefresh) {
+                const timeSinceRefresh = Math.floor((now - lastRefresh) / (1000 * 60)); // minutes
+                const hoursAgo = Math.floor(timeSinceRefresh / 60);
+                const minutesAgo = timeSinceRefresh % 60;
+                const timeAgoText = hoursAgo > 0 ? 
+                    `${hoursAgo} hours ${minutesAgo} minutes ago` : 
+                    `${minutesAgo} minutes ago`;
+                html += `
+                    <div class="token-last-refresh">
+                        Last Refreshed: ${lastRefresh.toLocaleString()}
+                        (${timeAgoText})
+                    </div>`;
+            }
+
+            if (tokenData.access_token) {
+                html += `
+                    <div class="token-access">
+                        Access Token: ${tokenData.access_token.substring(0, 10)}...
+                    </div>`;
+            }
+
+            if (tokenData.refresh_token) {
+                html += `
+                    <div class="token-refresh">
+                        Refresh Token: ${tokenData.refresh_token.substring(0, 10)}...
+                    </div>`;
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function refreshTraktTokenStatus() {
+            const button = document.getElementById('refresh-trakt-tokens');
+            button.disabled = true;
+            button.textContent = 'Refreshing...';
+
+            fetch('/debug/api/trakt_token_status')
+                .then(response => response.json())
+                .then(data => {
+                    updateTraktTokenStatus(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    const container = document.querySelector('#trakt-token-status .token-status-container');
+                    container.innerHTML = `<div class="error">Error loading token status: ${error}</div>`;
+                })
+                .finally(() => {
+                    button.disabled = false;
+                    button.textContent = 'Refresh Status';
+                });
+        }
+
+        // Initial fetch of token status
+        refreshTraktTokenStatus();
+
+        // Add click handler for refresh button
+        document.getElementById('refresh-trakt-tokens').addEventListener('click', refreshTraktTokenStatus);
     });
 </script>
+
+<style>
+    #trakt-token-status .token-details {
+        margin: 10px 0;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+
+    #trakt-token-status .token-validity {
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+
+    #trakt-token-status .token-validity.valid {
+        color: #28a745;
+    }
+
+    #trakt-token-status .token-validity.invalid {
+        color: #dc3545;
+    }
+
+    #trakt-token-status .token-expiry,
+    #trakt-token-status .token-last-refresh,
+    #trakt-token-status .token-access,
+    #trakt-token-status .token-refresh {
+        margin: 5px 0;
+        font-family: monospace;
+    }
+
+    #trakt-token-status .error {
+        color: #dc3545;
+        padding: 10px;
+        border: 1px solid #dc3545;
+        border-radius: 4px;
+        margin: 10px 0;
+    }
+</style>
 {% endblock %}

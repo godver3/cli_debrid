@@ -353,6 +353,26 @@ input:checked + .toggle-slider:before {
     font-size: 0.85em;
 }
 
+/* Add styling for From/To labels */
+.file-details .filename::before {
+    color: #fff;
+    font-family: inherit;
+}
+
+.file-details .filename[data-label]::before {
+    content: attr(data-label);
+    color: white;
+    margin-right: 4px;
+    font-family: inherit;
+}
+
+.file-details .filename {
+    color: #808080;  /* Keep the filename text gray */
+    display: block;
+    margin-top: 4px;
+    font-family: monospace;
+}
+
 /* Compact view modifications */
 .compact-view .cards-container {
     display: flex;
@@ -566,4 +586,21 @@ input:checked + .toggle-slider:before {
     {
         max-width: 270px !important;
     }
+}
+
+/* Also add styles for the poster hover view */
+.poster-hover .filename[data-label]::before {
+    content: attr(data-label);
+    color: white;
+    margin-right: 4px;
+    font-family: inherit;
+}
+
+.poster-hover .filename {
+    color: #808080;
+    font-family: monospace;
+    font-size: 0.8em;
+    word-break: break-all;
+    display: block;
+    margin-top: 4px;
 }

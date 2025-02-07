@@ -105,12 +105,20 @@ def format_notification_content(notifications, notification_type, notification_c
         'queue_pause': "⚠️",
         'queue_resume': "✅",
         'queue_start': "▶️",
-        'queue_stop': "⏹️"
+        'queue_stop': "⏹️",
+        'upgrade_failed': "❌"  # New emoji for failed upgrades
     }
 
     # For system notifications (stop/crash/start/pause/resume), we'll use a different format
-    if notification_category in ['program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop']:
+    if notification_category in ['program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop', 'upgrade_failed']:
         emoji = EMOJIS.get(notification_category, "ℹ️")
+        if notification_category == 'upgrade_failed':
+            # Special formatting for failed upgrades
+            if isinstance(notifications, dict):
+                title = notifications.get('title', 'Unknown')
+                year = notifications.get('year', '')
+                reason = notifications.get('reason', 'Unknown reason')
+                return f"{emoji} **Upgrade Failed**\nTitle: {title} ({year})\nReason: {reason}"
         return f"{emoji} **cli_debrid {notification_category.replace('_', ' ').title()}**\n{notifications}"
 
     def format_state_suffix(state, is_upgrade=False):
@@ -514,6 +522,11 @@ def send_queue_stop_notification(message="Queue processing stopped"):
     """Send notification when queue is stopped."""
     enabled_notifications = get_enabled_notifications()
     _send_notifications(message, enabled_notifications, 'queue_stop')
+
+def send_upgrade_failed_notification(item_data):
+    """Send notification when an upgrade fails."""
+    enabled_notifications = get_enabled_notifications()
+    _send_notifications(item_data, enabled_notifications, 'upgrade_failed')
 
 def setup_crash_handler():
     """Set up system-wide exception handler for crash notifications."""
