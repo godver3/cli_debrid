@@ -27,14 +27,13 @@ def parse_json_string(s):
     except json.JSONDecodeError:
         return s
 
-def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, item_media_type: Optional[str] = None) -> Dict[str, Any]:
+def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, item_media_type: Optional[str] = None, original_item: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
     if not imdb_id and not tmdb_id:
         raise ValueError("Either imdb_id or tmdb_id must be provided")
 
     # Convert TMDB ID to IMDb ID if necessary
     if tmdb_id and not imdb_id:
-        #logging.info(f"Converting TMDB ID {tmdb_id} to IMDb ID with media type: {item_media_type}")
         if item_media_type == "tv":
             converted_item_media_type = "show"
         else:
@@ -46,7 +45,6 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         logging.info(f"Converted TMDB ID {tmdb_id} to IMDb ID {imdb_id}")
 
     media_type = item_media_type.lower() if item_media_type else 'movie'
-    #logging.info(f"Processing item as {media_type}")
     
     try:
         if media_type == 'movie':
@@ -80,8 +78,12 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             'genres': [],
             'runtime': None,
             'airs': metadata.get('airs', {}),
-            'country': metadata.get('country', '').lower()  # Add country code, defaulting to empty string
+            'country': metadata.get('country', '').lower(),  # Add country code, defaulting to empty string
+            # Preserve content source information if available
+            'content_source': original_item.get('content_source') if original_item else None,
+            'content_source_detail': original_item.get('content_source_detail') if original_item else None
         }
+        logging.debug(f"Created processed_metadata with content_source_detail={processed_metadata.get('content_source_detail')}")
 
         # Handle the 'ids' field
         ids = metadata.get('ids', {})
@@ -137,6 +139,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
 
 def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_number: int, episode_data: Dict[str, Any], is_anime: bool) -> Dict[str, Any]:
     logging.info(f"Creating episode item for {show_item['title']} season {season_number} episode {episode_number}")
+    logging.debug(f"Show item details: content_source_detail={show_item.get('content_source_detail')}")
 
     # Get the first_aired datetime string
     first_aired_str = episode_data.get('first_aired')
@@ -199,7 +202,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
     else:
         airtime = '19:00'  # Default fallback
 
-    return {
+    episode_item = {
         'imdb_id': show_item['imdb_id'],
         'tmdb_id': show_item['tmdb_id'],
         'title': show_item['title'],
@@ -212,8 +215,13 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'genres': ['anime'] if is_anime else show_item.get('genres', []),
         'runtime': episode_data.get('runtime') or show_item.get('runtime'),
         'airtime': airtime,
-        'country': show_item.get('country', '').lower()  # Add country code from show metadata
+        'country': show_item.get('country', '').lower(),  # Add country code from show metadata
+        'content_source': show_item.get('content_source'),  # Preserve content source
+        'content_source_detail': show_item.get('content_source_detail')  # Preserve content source detail
     }
+    
+    logging.debug(f"Created episode item with content_source_detail={episode_item.get('content_source_detail')}")
+    return episode_item
 
 def _get_local_timezone():
     """Get the local timezone in a cross-platform way with fallback to settings."""
@@ -294,17 +302,24 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
 
     for index, item in enumerate(media_items, 1):
         try:
+            logging.debug(f"Processing item {index}: content_source_detail={item.get('content_source_detail')}")
             if not trakt_metadata._check_rate_limit():
                 logging.warning("Trakt rate limit reached. Waiting for 5 minutes before continuing.")
                 time.sleep(300)  # Wait for 5 minutes
 
-            metadata = get_metadata(imdb_id=item.get('imdb_id'), tmdb_id=item.get('tmdb_id'), item_media_type=item.get('media_type'))
+            metadata = get_metadata(
+                imdb_id=item.get('imdb_id'), 
+                tmdb_id=item.get('tmdb_id'), 
+                item_media_type=item.get('media_type'),
+                original_item=item  # Pass the original item to preserve content source info
+            )
             if not metadata:
                 logging.warning(f"Could not fetch metadata for item: {item}")
                 continue
 
             if item['media_type'].lower() == 'movie':
                 processed_items['movies'].append(metadata)
+                logging.debug(f"Added movie with content_source_detail={metadata.get('content_source_detail')}")
             elif item['media_type'].lower() in ['tv', 'show']:
                 is_anime = 'anime' in [genre.lower() for genre in metadata.get('genres', [])]
                 
@@ -404,6 +419,8 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                     # Add content source to episodes
                     for episode in all_episodes:
                         episode['content_source'] = 'overseerr_webhook'
+                        from content_checkers.content_source_detail import append_content_source_detail
+                        episode = append_content_source_detail(episode, source_type='Overseerr')
                     add_wanted_items(all_episodes, versions)
 
         except Exception as e:

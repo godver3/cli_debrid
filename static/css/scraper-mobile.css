@@ -94,7 +94,7 @@
         background-position: center 20%;
         background-repeat: no-repeat;
         transform: none;
-        margin-top: -95px;
+        margin-top: -180px;
     }
 
     .season-bg-image::after {
@@ -191,18 +191,18 @@
         z-index: 2;
         margin-top: 120px;
         display: flex;
-        flex-direction: column;
-        gap: 0px;
+        /*flex-direction: column;*/
+        gap: 7px;
         align-items: left !important;
-        width: 50px;
-        margin-left: 110px;
+        /*width: 50px;*/
+        /*margin-left: 110px;*/
     }
 
     select#seasonDropdown,
     button#seasonPackButton {
         position: static;
         margin: 10px 0;
-        min-width: 200px;
+        min-width: 183px;
     }
 
     /* iOS dropdown styling */
@@ -254,17 +254,47 @@
         display: none;
     }
 
-    .media-poster {
-        width: auto;
-        height: auto;
+    .movie-list, .show-list {
+        display: flex;
+        overflow-x: scroll;
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        gap: 10px;
+        padding: 10px;
+        margin: 0;
+        width: 100%;
+        flex-wrap: nowrap;
+        touch-action: pan-x pan-y;
+        cursor: grab;
+        will-change: transform;
+    }
+
+    .movie-list:active,
+    .show-list:active {
+        cursor: grabbing;
+    }
+
+    .movie-list::-webkit-scrollbar, 
+    .show-list::-webkit-scrollbar {
+        display: none;
     }
 
     .media-card {
-        width: auto;
+        flex: 0 0 120px;
+        min-width: 120px;
+        margin-right: 5px;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
     }
 
-    .movie-list, .show-list {
-        height: 250px;
+    .media-poster-img {
+        width: 120px;
+        height: 180px;
+        border-radius: 8px;
+        object-fit: cover;
     }
 
     /* Overlay Content */
@@ -335,6 +365,7 @@
     /* Form Styles */
     form#search-form {
         display: flex;
+        width: 100%;
         flex-direction: row;
         gap: 8px;
         padding: 10px;

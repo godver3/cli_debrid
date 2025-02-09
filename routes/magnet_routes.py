@@ -12,6 +12,7 @@ from cli_battery.app.direct_api import DirectAPI
 import os
 import re
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
+from content_checkers.content_source_detail import append_content_source_detail
 
 magnet_bp = Blueprint('magnet', __name__)
 
@@ -396,7 +397,7 @@ def verify_media_type():
 
 def create_movie_item(metadata, title, year, version, torrent_id, magnet_link):
     """Create a movie item dictionary"""
-    return {
+    item = {
         'type': 'movie',
         'title': title,
         'year': year,
@@ -408,8 +409,10 @@ def create_movie_item(metadata, title, year, version, torrent_id, magnet_link):
         'tmdb_id': metadata.get('tmdb_id'),
         'genres': ','.join(metadata.get('genres', [])),
         'runtime': metadata.get('runtime'),
-        'release_date': metadata.get('release_date')
+        'release_date': metadata.get('release_date'),
+        'content_source': 'Magnet_Assigner'
     }
+    return append_content_source_detail(item, source_type='Magnet_Assigner')
 
 def create_episode_item(metadata, title, year, version, torrent_id, magnet_link, season_number, episode_number):
     """Create a single episode item dictionary"""
@@ -437,7 +440,8 @@ def create_episode_item(metadata, title, year, version, torrent_id, magnet_link,
         'season_number': season_number,
         'episode_number': episode_number,
         'episode_title': episode_data.get('title', f'Episode {episode_number}'),
-        'release_date': episode_data.get('first_aired', '1970-01-01')
+        'release_date': episode_data.get('first_aired', '1970-01-01'),
+        'content_source': 'Magnet_Assigner'
     }
     
     # Add MediaMatcher fields as temporary attributes that won't be stored in DB
@@ -451,7 +455,7 @@ def create_episode_item(metadata, title, year, version, torrent_id, magnet_link,
         }
     })
     
-    return item_data
+    return append_content_source_detail(item_data, source_type='Magnet_Assigner')
 
 def create_season_items(metadata, title, year, version, torrent_id, magnet_link, selected_seasons):
     """Create items for selected seasons"""
