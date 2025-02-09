@@ -164,26 +164,50 @@ def bulk_queue_action():
     if not action or not selected_items:
         return jsonify({'success': False, 'error': 'Action and selected items are required'})
 
-    conn = get_db_connection()
+    # Process items in batches to avoid SQLite parameter limits
+    BATCH_SIZE = 450  # Stay well under SQLite's 999 parameter limit
+    total_affected = 0
+    error_count = 0
+    
     try:
-        cursor = conn.cursor()
-        if action == 'delete':
-            cursor.execute('DELETE FROM media_items WHERE id IN ({})'.format(','.join('?' * len(selected_items))), selected_items)
-            message = f"Successfully deleted {cursor.rowcount} items"
-        elif action == 'move' and target_queue:
-            cursor.execute('UPDATE media_items SET state = ? WHERE id IN ({})'.format(','.join('?' * len(selected_items))), [target_queue] + selected_items)
-            message = f"Successfully moved {cursor.rowcount} items to {target_queue} queue"
-        else:
-            return jsonify({'success': False, 'error': 'Invalid action or missing target queue'})
+        for i in range(0, len(selected_items), BATCH_SIZE):
+            batch = selected_items[i:i + BATCH_SIZE]
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                if action == 'delete':
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(f'DELETE FROM media_items WHERE id IN ({placeholders})', batch)
+                    total_affected += cursor.rowcount
+                elif action == 'move' and target_queue:
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'UPDATE media_items SET state = ?, last_updated = ? WHERE id IN ({placeholders})',
+                        [target_queue, datetime.now()] + batch
+                    )
+                    total_affected += cursor.rowcount
+                else:
+                    return jsonify({'success': False, 'error': 'Invalid action or missing target queue'})
 
-        conn.commit()
-        return jsonify({'success': True, 'message': message})
+                conn.commit()
+            except Exception as e:
+                error_count += 1
+                conn.rollback()
+                logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+            finally:
+                conn.close()
+
+        if error_count > 0:
+            message = f"Completed with {error_count} batch errors. Successfully processed {total_affected} items."
+            return jsonify({'success': True, 'message': message, 'warning': True})
+        else:
+            action_text = "deleted" if action == "delete" else f"moved to {target_queue} queue"
+            message = f"Successfully {action_text} {total_affected} items"
+            return jsonify({'success': True, 'message': message})
+
     except Exception as e:
-        conn.rollback()
         logging.error(f"Error performing bulk action: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
-    finally:
-        conn.close()
 
 @database_bp.route('/delete_item', methods=['POST'])
 def delete_item():

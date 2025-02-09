@@ -143,8 +143,21 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         media_items_batch = filtered_media_items_batch
 
         # Get existing movies and episodes
-        existing_movies = set()
+        existing_movies = {}  # Changed from set to dict to store versions
         batch_size = 450
+        
+        def strip_version(version):
+            """Strip asterisk from version for comparison"""
+            return version.rstrip('*') if version else version
+
+        # Track version additions for summary
+        version_summary = {
+            'movies': {},  # {id: {'existing': set(), 'added': set()}}
+            'episodes': {}  # {(id, season, episode): {'existing': set(), 'added': set()}}
+        }
+
+        # Get the granular versions setting
+        enable_granular_versions = get_setting('Debug', 'enable_granular_version_additions', False)
 
         if movie_imdb_ids:
             movie_imdb_list = list(movie_imdb_ids)
@@ -152,11 +165,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = movie_imdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT imdb_id FROM media_items
+                    SELECT imdb_id, version FROM media_items
                     WHERE type = 'movie' AND imdb_id IN ({placeholders})
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
-                existing_movies.update(str(row['imdb_id']) for row in rows)
+                for row in rows:
+                    if row['imdb_id'] not in existing_movies:
+                        existing_movies[str(row['imdb_id'])] = set()
+                    existing_movies[str(row['imdb_id'])].add(strip_version(row['version']))
 
         if movie_tmdb_ids:
             movie_tmdb_list = list(movie_tmdb_ids)
@@ -164,14 +180,16 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = movie_tmdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT tmdb_id FROM media_items
+                    SELECT tmdb_id, version FROM media_items
                     WHERE type = 'movie' AND tmdb_id IN ({placeholders})
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
-                existing_movies.update(str(row['tmdb_id']) for row in rows)
+                for row in rows:
+                    if row['tmdb_id'] not in existing_movies:
+                        existing_movies[str(row['tmdb_id'])] = set()
+                    existing_movies[str(row['tmdb_id'])].add(strip_version(row['version']))
 
-        existing_episodes_imdb = set()
-        existing_episodes_tmdb = set()
+        existing_episodes = {}  # Changed from set to dict to store versions
 
         if episode_imdb_ids:
             episode_imdb_list = list(episode_imdb_ids)
@@ -179,13 +197,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = episode_imdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT imdb_id, season_number, episode_number FROM media_items
+                    SELECT imdb_id, season_number, episode_number, version FROM media_items
                     WHERE type = 'episode' AND imdb_id IN ({placeholders})
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
-                    existing_episodes_imdb.add(key)
+                    if key not in existing_episodes:
+                        existing_episodes[key] = set()
+                    existing_episodes[key].add(strip_version(row['version']))
 
         if episode_tmdb_ids:
             episode_tmdb_list = list(episode_tmdb_ids)
@@ -193,19 +213,22 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = episode_tmdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT tmdb_id, season_number, episode_number FROM media_items
+                    SELECT tmdb_id, season_number, episode_number, version FROM media_items
                     WHERE type = 'episode' AND tmdb_id IN ({placeholders})
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
-                    existing_episodes_tmdb.add(key)
+                    if key not in existing_episodes:
+                        existing_episodes[key] = set()
+                    existing_episodes[key].add(strip_version(row['version']))
 
         filtered_media_items_batch = []
         for item in media_items_batch:
             imdb_id = item.get('imdb_id')
             tmdb_id = item.get('tmdb_id')
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+            normalized_title = normalize_string(str(item.get('title', 'Unknown')))
 
             # Check watch history if enabled
             if do_not_add_watched and watch_history_conn:
@@ -230,7 +253,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     # Check if episode exists in watch history
                     season = item.get('season_number')
                     episode = item.get('episode_number')
-                    show_title = normalize_string(str(item.get('grandparentTitle', item.get('title', 'Unknown'))))
+                    show_title = normalized_title
                     if (imdb_id or tmdb_id) and season is not None and episode is not None:
                         query = """
                             SELECT 1 FROM watch_history 
@@ -263,12 +286,43 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             # Continue with existing checks
             if item_type == 'movie':
                 skip = False
-                if imdb_id and imdb_id in existing_movies:
-                    skip_stats['existing_movie_imdb'] += 1
-                    skip = True
-                if tmdb_id and tmdb_id in existing_movies:
-                    skip_stats['existing_movie_tmdb'] += 1
-                    skip = True
+                item_versions = set(v for v, enabled in versions.items() if enabled)
+                media_id = imdb_id or tmdb_id
+                
+                if not enable_granular_versions:
+                    # Original behavior - skip if any version exists
+                    if imdb_id and imdb_id in existing_movies:
+                        skip_stats['existing_movie_imdb'] += 1
+                        skip = True
+                        if media_id not in version_summary['movies']:
+                            version_summary['movies'][media_id] = {'existing': existing_movies[imdb_id], 'added': set(), 'title': normalized_title}
+                    if tmdb_id and tmdb_id in existing_movies:
+                        skip_stats['existing_movie_tmdb'] += 1
+                        skip = True
+                        if media_id not in version_summary['movies']:
+                            version_summary['movies'][media_id] = {'existing': existing_movies[tmdb_id], 'added': set(), 'title': normalized_title}
+                else:
+                    # Granular version check - only skip versions that already exist
+                    existing_versions = set()
+                    if imdb_id and imdb_id in existing_movies:
+                        existing_versions.update(existing_movies[imdb_id])
+                    if tmdb_id and tmdb_id in existing_movies:
+                        existing_versions.update(existing_movies[tmdb_id])
+                    
+                    # Filter out existing versions from the versions to add
+                    new_versions = {v: enabled for v, enabled in versions.items() if strip_version(v) not in existing_versions}
+                    if new_versions:
+                        versions = new_versions
+                        if media_id not in version_summary['movies']:
+                            version_summary['movies'][media_id] = {'existing': existing_versions, 'added': set(new_versions.keys()), 'title': normalized_title}
+                        else:
+                            version_summary['movies'][media_id]['added'].update(new_versions.keys())
+                    else:
+                        skip = True
+                        skip_stats['existing_movie_imdb'] += 1
+                        if media_id not in version_summary['movies']:
+                            version_summary['movies'][media_id] = {'existing': existing_versions, 'added': set(), 'title': normalized_title}
+
                 if skip:
                     items_skipped += 1
                     continue
@@ -276,12 +330,63 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 season_number = item.get('season_number')
                 episode_number = item.get('episode_number')
                 skip = False
-                if imdb_id and (str(imdb_id), season_number, episode_number) in existing_episodes_imdb:
-                    skip_stats['existing_episode_imdb'] += 1
-                    skip = True
-                if tmdb_id and (str(tmdb_id), season_number, episode_number) in existing_episodes_tmdb:
-                    skip_stats['existing_episode_tmdb'] += 1
-                    skip = True
+                media_id = imdb_id or tmdb_id
+                episode_key = (media_id, season_number, episode_number)
+                
+                if not enable_granular_versions:
+                    # Original behavior - skip if any version exists
+                    if imdb_id and (str(imdb_id), season_number, episode_number) in existing_episodes:
+                        skip_stats['existing_episode_imdb'] += 1
+                        skip = True
+                        if episode_key not in version_summary['episodes']:
+                            version_summary['episodes'][episode_key] = {
+                                'existing': existing_episodes[(str(imdb_id), season_number, episode_number)],
+                                'added': set(),
+                                'title': normalized_title
+                            }
+                    if tmdb_id and (str(tmdb_id), season_number, episode_number) in existing_episodes:
+                        skip_stats['existing_episode_tmdb'] += 1
+                        skip = True
+                        if episode_key not in version_summary['episodes']:
+                            version_summary['episodes'][episode_key] = {
+                                'existing': existing_episodes[(str(tmdb_id), season_number, episode_number)],
+                                'added': set(),
+                                'title': normalized_title
+                            }
+                else:
+                    # Granular version check - only skip versions that already exist
+                    existing_versions = set()
+                    if imdb_id:
+                        key = (str(imdb_id), season_number, episode_number)
+                        if key in existing_episodes:
+                            existing_versions.update(existing_episodes[key])
+                    if tmdb_id:
+                        key = (str(tmdb_id), season_number, episode_number)
+                        if key in existing_episodes:
+                            existing_versions.update(existing_episodes[key])
+                    
+                    # Filter out existing versions from the versions to add
+                    new_versions = {v: enabled for v, enabled in versions.items() if strip_version(v) not in existing_versions}
+                    if new_versions:
+                        versions = new_versions
+                        if episode_key not in version_summary['episodes']:
+                            version_summary['episodes'][episode_key] = {
+                                'existing': existing_versions,
+                                'added': set(new_versions.keys()),
+                                'title': normalized_title
+                            }
+                        else:
+                            version_summary['episodes'][episode_key]['added'].update(new_versions.keys())
+                    else:
+                        skip = True
+                        skip_stats['existing_episode_imdb'] += 1
+                        if episode_key not in version_summary['episodes']:
+                            version_summary['episodes'][episode_key] = {
+                                'existing': existing_versions,
+                                'added': set(),
+                                'title': normalized_title
+                            }
+
                 if skip:
                     items_skipped += 1
                     continue
@@ -366,16 +471,47 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         
         # Generate skip summary report
         skip_report = []
-        if skip_stats['existing_movie_imdb'] > 0:
-            skip_report.append(f"- {skip_stats['existing_movie_imdb']} movies already exist (by IMDb ID)")
-        if skip_stats['existing_movie_tmdb'] > 0:
-            skip_report.append(f"- {skip_stats['existing_movie_tmdb']} movies already exist (by TMDb ID)")
-        if skip_stats['existing_episode_imdb'] > 0:
-            skip_report.append(f"- {skip_stats['existing_episode_imdb']} episodes already exist (by IMDb ID)")
-        if skip_stats['existing_episode_tmdb'] > 0:
-            skip_report.append(f"- {skip_stats['existing_episode_tmdb']} episodes already exist (by TMDb ID)")
+        if enable_granular_versions:
+            skip_report.append("Granular version additions enabled:")
+            
+            # Movies summary
+            if version_summary['movies']:
+                skip_report.append("\nMovies:")
+                for media_id, info in version_summary['movies'].items():
+                    id_type = 'IMDb' if str(media_id).startswith('tt') else 'TMDb'
+                    skip_report.append(f"  {info['title']} ({id_type} ID: {media_id}):")
+                    if info['existing']:
+                        skip_report.append(f"    - Existing versions: {sorted(info['existing'])}")
+                    if info['added']:
+                        skip_report.append(f"    - Added versions: {sorted(info['added'])}")
+                    if not info['added']:
+                        skip_report.append("    - No new versions added (all versions exist)")
+            
+            # Episodes summary
+            if version_summary['episodes']:
+                skip_report.append("\nEpisodes:")
+                for (media_id, season, episode), info in version_summary['episodes'].items():
+                    id_type = 'IMDb' if str(media_id).startswith('tt') else 'TMDb'
+                    skip_report.append(f"  {info['title']} S{season:02d}E{episode:02d} ({id_type} ID: {media_id}):")
+                    if info['existing']:
+                        skip_report.append(f"    - Existing versions: {sorted(info['existing'])}")
+                    if info['added']:
+                        skip_report.append(f"    - Added versions: {sorted(info['added'])}")
+                    if not info['added']:
+                        skip_report.append("    - No new versions added (all versions exist)")
+
+        else:
+            if skip_stats['existing_movie_imdb'] > 0:
+                skip_report.append(f"- {skip_stats['existing_movie_imdb']} movies already exist (by IMDb ID)")
+            if skip_stats['existing_movie_tmdb'] > 0:
+                skip_report.append(f"- {skip_stats['existing_movie_tmdb']} movies already exist (by TMDb ID)")
+            if skip_stats['existing_episode_imdb'] > 0:
+                skip_report.append(f"- {skip_stats['existing_episode_imdb']} episodes already exist (by IMDb ID)")
+            if skip_stats['existing_episode_tmdb'] > 0:
+                skip_report.append(f"- {skip_stats['existing_episode_tmdb']} episodes already exist (by TMDb ID)")
+        
         if skip_stats['missing_ids'] > 0:
-            skip_report.append(f"- {skip_stats['missing_ids']} items skipped due to missing IMDb/TMDb IDs")
+            skip_report.append(f"\n- {skip_stats['missing_ids']} items skipped due to missing IMDb/TMDb IDs")
         if skip_stats['blacklisted'] > 0:
             skip_report.append(f"- {skip_stats['blacklisted']} items skipped due to blacklist")
         if skip_stats['already_watched'] > 0:

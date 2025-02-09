@@ -241,8 +241,8 @@ def assign_magnet():
                         flash('Failed to get season data', 'error')
                         return redirect(url_for('magnet.assign_magnet'))
 
-                # Create MediaMatcher instance for file matching
-                media_matcher = MediaMatcher()
+                # Create MediaMatcher instance for file matching with relaxed matching enabled for manual assignments
+                media_matcher = MediaMatcher(relaxed_matching=True)
 
                 if media_type == 'movie':
                     # Handle movie
@@ -285,79 +285,76 @@ def assign_magnet():
                             return redirect(url_for('magnet.assign_magnet'))
 
                     # Match files for each item
-                    for item in items_to_add:
-                        matches = media_matcher.match_content(video_files, item)
+                    added_items = []
+                    for item_data in items_to_add:
+                        matches = media_matcher.match_content(video_files, item_data)
                         if matches:
                             # Use just the filename without the path
                             matched_file = next(os.path.basename(f['full_path']) for f in video_files if f['path'] == matches[0][0])
-                            item['filled_by_file'] = matched_file
-                            item['filled_by_title'] = torrent_info.get('filename', '')
-                            logging.info(f"Found matching file for {item.get('title')} S{item.get('season_number'):02d}E{item.get('episode_number'):02d}: {matched_file}")
+                            item_data['filled_by_file'] = matched_file
+                            item_data['filled_by_title'] = torrent_info.get('filename', '')
+                            logging.info(f"Found matching file for {item_data.get('title')} S{item_data.get('season_number'):02d}E{item_data.get('episode_number'):02d}: {matched_file}")
+                            
+                            try:
+                                # Remove fields that aren't in the database schema
+                                db_item = {k: v for k, v in item_data.items() if k not in [
+                                    'series_title', 'season', 'episode', 'series_year', 'media_type', '_matcher_data'
+                                ]}
+                                
+                                # Prepare notification data
+                                notification_data = {
+                                    'id': None,
+                                    'title': db_item.get('title', 'Unknown Title'),
+                                    'type': db_item.get('type', 'unknown'),
+                                    'year': db_item.get('year', ''),
+                                    'version': db_item.get('version', ''),
+                                    'season_number': db_item.get('season_number'),
+                                    'episode_number': db_item.get('episode_number'),
+                                    'new_state': 'Checking',
+                                    'is_upgrade': False,
+                                    'upgrading_from': None
+                                }
+
+                                # Add to database
+                                item_id = add_media_item(db_item)
+                                if item_id:
+                                    notification_data['id'] = item_id
+                                    added_items.append(notification_data)
+                                else:
+                                    logging.error(f"Failed to add item to database: {db_item}")
+                            except Exception as e:
+                                logging.error(f"Error adding item to database: {str(e)}")
                         else:
-                            logging.warning(f"No matching file found for {item.get('title')} S{item.get('season_number'):02d}E{item.get('episode_number'):02d}")
+                            logging.warning(f"No matching file found for {item_data.get('title')} S{item_data.get('season_number'):02d}E{item_data.get('episode_number'):02d}")
 
-                # Add items to database and send notifications
-                added_items = []
-                for item_data in items_to_add:
-                    try:
-                        # Remove fields that aren't in the database schema
-                        db_item = {k: v for k, v in item_data.items() if k not in [
-                            'series_title', 'season', 'episode', 'series_year', 'media_type', '_matcher_data'
-                        ]}
-                        
-                        # Prepare notification data
-                        notification_data = {
-                            'id': None,
-                            'title': db_item.get('title', 'Unknown Title'),
-                            'type': db_item.get('type', 'unknown'),
-                            'year': db_item.get('year', ''),
-                            'version': db_item.get('version', ''),
-                            'season_number': db_item.get('season_number'),
-                            'episode_number': db_item.get('episode_number'),
-                            'new_state': 'Checking',
-                            'is_upgrade': False,
-                            'upgrading_from': None
-                        }
+                    # Send notifications for all added items
+                    if added_items:
+                        try:
+                            from notifications import send_notifications
+                            from routes.settings_routes import get_enabled_notifications_for_category
+                            from extensions import app
 
-                        # Add to database
-                        item_id = add_media_item(db_item)
-                        if item_id:
-                            notification_data['id'] = item_id
-                            added_items.append(notification_data)
-                        else:
-                            logging.error(f"Failed to add item to database: {db_item}")
-                    except Exception as e:
-                        logging.error(f"Error adding item to database: {str(e)}")
+                            with app.app_context():
+                                response = get_enabled_notifications_for_category('checking')
+                                if response.json['success']:
+                                    enabled_notifications = response.json['enabled_notifications']
+                                    if enabled_notifications:
+                                        send_notifications(added_items, enabled_notifications, notification_category='state_change')
+                        except Exception as e:
+                            logging.error(f"Failed to send notifications: {str(e)}")
 
-                # Send notifications for all added items
-                if added_items:
-                    try:
-                        from notifications import send_notifications
-                        from routes.settings_routes import get_enabled_notifications_for_category
-                        from extensions import app
-
-                        with app.app_context():
-                            response = get_enabled_notifications_for_category('checking')
-                            if response.json['success']:
-                                enabled_notifications = response.json['enabled_notifications']
-                                if enabled_notifications:
-                                    send_notifications(added_items, enabled_notifications, notification_category='state_change')
-                                    #logging.debug(f"Sent notifications for {len(added_items)} items")
-                    except Exception as e:
-                        logging.error(f"Failed to send notifications: {str(e)}")
-
-                if added_items:
-                    return jsonify({
-                        'success': True,
-                        'added_items': len(added_items),
-                        'message': f'Successfully added {len(added_items)} items to database'
-                    })
-                else:
-                    return jsonify({
-                        'success': False,
-                        'added_items': 0,
-                        'error': 'Failed to add any items to database'
-                    }), 500
+                    if added_items:
+                        return jsonify({
+                            'success': True,
+                            'added_items': len(added_items),
+                            'message': f'Successfully added {len(added_items)} matched items to database'
+                        })
+                    else:
+                        return jsonify({
+                            'success': False,
+                            'added_items': 0,
+                            'error': 'No matching files found in torrent'
+                        }), 500
 
             except Exception as e:
                 logging.error(f"Error assigning magnet: {str(e)}")

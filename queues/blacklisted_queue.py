@@ -31,6 +31,12 @@ class BlacklistedQueue:
 
     def process(self, queue_manager):
         logging.debug(f"Processing blacklisted queue. Items: {len(self.items)}")
+        
+        # Check if unblacklisting is disabled
+        if get_setting("Debug", "disable_unblacklisting", True):
+            logging.info("Automatic unblacklisting is disabled. Skipping unblacklist checks.")
+            return
+            
         blacklist_duration = timedelta(days=int(get_setting("Queue", "blacklist_duration", default=30)))
         current_time = datetime.now()
 
