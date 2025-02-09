@@ -16,9 +16,10 @@ from routes import admin_required
 from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from content_checkers.mdb_list import get_wanted_from_mdblists
-from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
+from content_checkers.content_source_detail import append_content_source_detail
 from metadata.metadata import process_metadata, get_metadata
 from cli_battery.app.direct_api import DirectAPI
 from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
@@ -481,9 +482,10 @@ def get_and_add_wanted_content(source_id):
             processed_items = process_metadata(items)
             if processed_items:
                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                # Add content source
+                # Add content source and detail
                 for item in all_items:
                     item['content_source'] = source_id
+                    item = append_content_source_detail(item, source_type=source_type)
                 logging.debug(f"Calling add_wanted_items with {len(all_items)} items and versions: {item_versions}")
                 add_wanted_items(all_items, item_versions)
                 total_items += len(all_items)
@@ -588,7 +590,9 @@ def send_test_notification():
                 'version': '1080p',
                 'is_upgrade': False,
                 'media_type': 'movie',
-                'new_state': 'Collected'  # Adding new_state for NEW indicator
+                'new_state': 'Collected',  # Adding new_state for NEW indicator
+                'content_source': 'My Plex Watchlist',
+                'content_source_detail': 'user1'
             },
             {
                 'type': 'movie',
@@ -600,7 +604,9 @@ def send_test_notification():
                 'is_upgrade': True,
                 'upgrading_from': 'Test Movie 2 1080p.mkv',
                 'media_type': 'movie',
-                'new_state': 'Collected'  # Adding new_state for upgrade indicator
+                'new_state': 'Collected',  # Adding new_state for upgrade indicator
+                'content_source': 'Trakt Watchlist',
+                'content_source_detail': 'user2'
             },
             {
                 'type': 'episode',
@@ -613,7 +619,9 @@ def send_test_notification():
                 'version': 'Default',
                 'is_upgrade': False,
                 'media_type': 'tv',
-                'new_state': 'Collected'
+                'new_state': 'Collected',
+                'content_source': 'Overseerr',
+                'content_source_detail': 'user3'
             },
             {
                 'type': 'episode',
@@ -627,7 +635,9 @@ def send_test_notification():
                 'is_upgrade': True,
                 'upgrading_from': 'Test TV Show 3 S01E03 1080p.mkv',
                 'media_type': 'tv',
-                'new_state': 'Collected'  # This indicates it's a completed upgrade
+                'new_state': 'Collected',  # This indicates it's a completed upgrade
+                'content_source': 'Trakt Lists',
+                'content_source_detail': 'user4'
             }
         ]
 
@@ -642,7 +652,9 @@ def send_test_notification():
                 'new_state': 'Checking',
                 'is_upgrade': False,
                 'upgrading_from': None,
-                'media_type': 'movie'
+                'media_type': 'movie',
+                'content_source': 'MDBList',
+                'content_source_detail': 'user5'
             },
             {
                 'type': 'movie',
@@ -653,7 +665,9 @@ def send_test_notification():
                 'new_state': 'Sleeping',
                 'is_upgrade': False,
                 'upgrading_from': None,
-                'media_type': 'movie'
+                'media_type': 'movie',
+                'content_source': 'My Plex RSS Watchlist',
+                'content_source_detail': 'user6'
             },
             {
                 'type': 'episode',
@@ -666,7 +680,9 @@ def send_test_notification():
                 'new_state': 'Upgrading',
                 'is_upgrade': True,
                 'upgrading_from': 'Test TV Show 2 S01E02 720p.mkv',
-                'media_type': 'tv'
+                'media_type': 'tv',
+                'content_source': 'Other Plex Watchlist',
+                'content_source_detail': 'user7'
             }
         ]
 

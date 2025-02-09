@@ -130,12 +130,17 @@ def format_notification_content(notifications, notification_type, notification_c
 
     def format_title(item):
         """Format the title with appropriate prefix and formatting."""
+        from settings import get_setting
+        enable_detailed_info = get_setting('Debug', 'enable_detailed_notification_information', False)
+        
         title = item.get('title', '')
         year = item.get('year', '')
         version = item.get('version', '').strip('*')
         is_upgrade = item.get('is_upgrade', False)
         media_type = item.get('type', 'movie')
         new_state = item.get('new_state', '')
+        content_source = item.get('content_source')
+        content_source_detail = item.get('content_source_detail')
         
         # Choose prefix based on state and upgrade status
         if new_state == 'Downloading':
@@ -151,11 +156,21 @@ def format_notification_content(notifications, notification_type, notification_c
         else:
             prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
         
+        # Base title format
+        formatted_title = f"{prefix} **{title}** ({year})"
+        
         # Add version info for movies
         if media_type == 'movie':
-            return f"{prefix} **{title}** ({year}) [{version}]"
-        else:
-            return f"{prefix} **{title}** ({year})"
+            formatted_title += f" [{version}]"
+            
+        # Add content source information if enabled and available and item is collected
+        if enable_detailed_info and new_state == 'Collected':
+            if content_source:
+                formatted_title += f"\nSource: {content_source}"
+            if content_source_detail:
+                formatted_title += f"\nRequested by: {content_source_detail}"
+                
+        return formatted_title
 
     def format_episode(item):
         """Format episode information"""

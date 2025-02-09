@@ -497,6 +497,7 @@ class ProgramRunner:
                                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
                                 for item in all_items:
                                     item['content_source'] = source
+                                    item = append_content_source_detail(item, source_type=source_type)
                                 add_wanted_items(all_items, item_versions or versions)
                                 total_items += len(all_items)
                         except Exception as e:
@@ -510,6 +511,7 @@ class ProgramRunner:
                             all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
                             for item in all_items:
                                 item['content_source'] = source
+                                item = append_content_source_detail(item, source_type=source_type)
                             add_wanted_items(all_items, versions)
                             total_items += len(all_items)
                     except Exception as e:
@@ -1248,6 +1250,7 @@ def process_overseerr_webhook(data):
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
         for item in all_items:
             item['content_source'] = 'overseerr_webhook'
+            item = append_content_source_detail(item, source_type='Overseerr')
         add_wanted_items(all_items, versions)
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
 

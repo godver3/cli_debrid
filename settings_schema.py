@@ -414,6 +414,11 @@ SETTINGS_SCHEMA = {
             "description": "Enable crash test",
             "default": False
         },
+        "enable_detailed_notification_information": {
+            "type": "boolean",
+            "description": "Enable detailed information in notifications including content source and content source details",
+            "default": False
+        },
         "enable_granular_version_additions": {
             "type": "boolean",
             "description": "Enable granular version additions for Wanted items",

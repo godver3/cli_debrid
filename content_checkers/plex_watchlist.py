@@ -48,6 +48,7 @@ def get_plex_client():
         logging.info("Connecting to Plex.tv cloud service using token authentication")
         account = MyPlexAccount(token=plex_token)
         logging.info(f"Successfully connected to Plex.tv as user: {account.username}")
+        logging.debug(f"Account details - Username: {account.username}, Email: {account.email}")
         logging.debug(f"Connection details - Using Plex.tv API, endpoint: {account._server}")
         return account
     except Exception as e:
@@ -83,7 +84,10 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
     logging.info("Starting Plex.tv cloud watchlist retrieval")
     account = get_plex_client()
     if not account:
+        logging.error("Failed to get Plex client - no account available")
         return [([], versions)]
+    
+    logging.info(f"Using Plex account: {account.username}")
     
     try:
         # Check if watchlist removal is enabled
@@ -197,9 +201,10 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             
             processed_items.append({
                 'imdb_id': imdb_id,
-                'media_type': media_type
+                'media_type': media_type,
+                'content_source_detail': account.username
             })
-            logging.debug(f"Added {media_type} '{item.title}' (IMDB: {imdb_id}) to processed items")
+            logging.debug(f"Added {media_type} '{item.title}' (IMDB: {imdb_id}) to processed items with source: {account.username}")
 
         # Log detailed statistics
         logging.info(f"Plex.tv cloud watchlist processing complete:")
@@ -291,7 +296,8 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
             
             wanted_item = {
                 'imdb_id': imdb_id,
-                'media_type': media_type
+                'media_type': media_type,
+                'content_source_detail': account.username
             }
             
             processed_items.append(wanted_item)

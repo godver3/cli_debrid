@@ -27,6 +27,13 @@ html, body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 
+#scraper-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
 form#search-form {
     text-align: center;
     padding: var(--spacing-md);
@@ -35,7 +42,15 @@ form#search-form {
     color: var(--text-primary);
     border-radius: var(--border-radius-md);
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    margin-bottom: var(--spacing-lg);
+    margin: var(--spacing-lg) auto;
+    max-width: 600px;
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    opacity: 77%;
+    min-width: 70vw;
 }
 
 form#search-form input, 
@@ -172,6 +187,10 @@ form#search-form input:-ms-input-placeholder {
     transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
     backdrop-filter: blur(4px);
+}
+
+.media-title {
+    display: none;
 }
 
 .media-poster:hover .media-title,
@@ -311,13 +330,13 @@ h2.searchresult-item {
 
 .season-bg-image {
     position: absolute;
-    top: 64px;
+    top: -200px;
     left: 0;
     width: 100%;
     height: 1200px;
     background-size: cover;
-    background-position: center top;
-    z-index: 0;
+    background-position: left calc((24vw - 170px) - 340px) top;
+    z-index: -1;
 }
 
 body {
@@ -334,9 +353,9 @@ body {
     height: 100%;
     background: linear-gradient(to bottom, 
         rgba(0, 0, 0, 1) 0%,
-        rgba(0, 0, 0, 0.7) 15%,
+        rgba(0, 0, 0, 0.7) 20%,
         rgba(0, 0, 0, 0) 40%,
-        rgba(0, 0, 0, 0.6) 60%,
+        rgba(0, 0, 0, 0.6) 50%,
         rgba(0, 0, 0, 1) 100%
     );
 }
@@ -346,12 +365,12 @@ body {
     width: 95%;
     max-width: 1600px;
     margin: 0 auto;
-    top: 140px;
+    /*top: 140px;*/
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 20px;
     justify-items: center !important;
-    margin-top: 190px;
+    /*margin-top: 190px;*/
     margin-bottom: 170px;
 }
 
@@ -362,6 +381,7 @@ body {
     background-color: var(--surface-color);
     border-radius: var(--border-radius-md);
     overflow: hidden;
+    opacity: 70%;
 }
 
 .episode button {
@@ -593,6 +613,10 @@ p.torresult-title {
 
 #trending-rating, #trending-watchers {
     display: none;
+}
+
+#trendingContainer {
+    max-width: 100vw;
 }
 
 /* Media queries for better responsive design */

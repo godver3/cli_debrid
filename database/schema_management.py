@@ -117,6 +117,9 @@ def migrate_schema():
         if 'disable_not_wanted_check' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN disable_not_wanted_check BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added disable_not_wanted_check column to media_items table.")
+        if 'content_source_detail' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN content_source_detail TEXT')
+            logging.info("Successfully added content_source_detail column to media_items table.")
         
         # logging.info("Successfully added new columns to media_items table.")
 
@@ -226,6 +229,7 @@ def create_tables():
                 upgrading BOOLEAN DEFAULT FALSE,
                 requested_season BOOLEAN DEFAULT FALSE,
                 content_source TEXT,
+                content_source_detail TEXT,
                 resolution TEXT,
                 imdb_aliases TEXT,
                 title_aliases TEXT,
