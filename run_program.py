@@ -133,10 +133,10 @@ class ProgramRunner:
             'task_check_database_health'
         }
 
-        if get_setting('File Management', 'file_collection_management') == 'Plex':
-            self.enabled_tasks.add('task_plex_full_scan')
-
-        if get_setting('File Management', 'file_collection_management') == 'Plex' and get_setting('Plex', 'update_plex_on_file_discovery'):
+        if get_setting('File Management', 'file_collection_management') == 'Plex' and (
+            get_setting('Plex', 'update_plex_on_file_discovery') or 
+            get_setting('Plex', 'disable_plex_library_checks')
+        ):
             self.enabled_tasks.add('task_check_plex_files')
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):

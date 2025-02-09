@@ -12,8 +12,9 @@ from PTT import parse_title
 class MediaMatcher:
     """Handles media content matching and validation"""
     
-    def __init__(self):
+    def __init__(self, relaxed_matching: bool = False):
         self.episode_count_cache: Dict[str, Dict[int, int]] = {}
+        self.relaxed_matching = relaxed_matching
 
     def match_content(self, files: List[Dict[str, Any]], item: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
         """
@@ -91,7 +92,7 @@ class MediaMatcher:
         """
         Match TV show files against an episode item.
         Returns all matching files with their season/episode info.
-        Special handling for anime which may not include season numbers.
+        Special handling for anime and relaxed matching which may not include season numbers.
         """
         matches = []
         series_title = item.get('series_title', '') or item.get('title', '')
@@ -103,12 +104,15 @@ class MediaMatcher:
             genres = [genres]
         is_anime = any('anime' in genre.lower() for genre in genres)
         
+        # Apply relaxed matching for anime or when explicitly enabled
+        use_relaxed_matching = is_anime or self.relaxed_matching
+        logging.debug(f"Using relaxed matching ({is_anime}/{self.relaxed_matching})")
         if not all([series_title, item_episode is not None]):
             logging.debug(f"Missing required TV info for {series_title}")
             return []
         
-        if not is_anime and item_season is None:
-            logging.debug("Missing season number for non-anime content")
+        if not use_relaxed_matching and item_season is None:
+            logging.debug("Missing season number for non-relaxed content")
             return []
         
         for file in files:
@@ -138,13 +142,13 @@ class MediaMatcher:
                 'group': ptt_result.get('group'),
                 'seasons': ptt_result.get('seasons', []),
                 'episodes': ptt_result.get('episodes', []),
-                'date': ptt_result.get('date'),  # Explicitly include the date field
-                'bit_depth': ptt_result.get('bit_depth'),  # Include other useful fields
+                'date': ptt_result.get('date'),
+                'bit_depth': ptt_result.get('bit_depth'),
                 'container': ptt_result.get('container')
             }
             
-            # For anime, we only need to match the episode number
-            if is_anime:
+            # For relaxed matching or anime, we only need to match the episode number
+            if use_relaxed_matching:
                 episode_match = False
                 
                 # First try PTT parsed episodes
@@ -161,12 +165,13 @@ class MediaMatcher:
                 season_match = (not result_info.get('seasons') or  # If no season in filename, that's okay
                               not item_season or  # If no season in item, that's okay
                               item_season in result_info.get('seasons', []) or  # If both have season, they should match
-                              (is_anime and 0 in result_info.get('seasons', [])))  # For anime, season 0 matches any season
+                              (use_relaxed_matching and 0 in result_info.get('seasons', [])))  # For relaxed matching, season 0 matches any season
                 
                 if episode_match and season_match:
                     file_path = os.path.basename(file['path'])
                     matches.append((file_path, item))
             else:
+                # Original strict matching logic for non-relaxed content
                 # Check if this is a date-based episode first
                 date_match = False
                 has_date = 'date' in result_info and result_info['date'] is not None

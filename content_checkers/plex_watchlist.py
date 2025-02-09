@@ -5,6 +5,7 @@ from settings import get_setting
 from database.database_reading import get_media_item_presence
 from config_manager import load_config
 from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app.direct_api import DirectAPI
 import os
 import pickle
 from datetime import datetime, timedelta
@@ -109,16 +110,31 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         
         # Process each item in the watchlist
         for item in watchlist:
-            # Extract IMDB ID from the guids
+            # Extract IMDB ID and TMDB ID from the guids
             imdb_id = None
+            tmdb_id = None
             for guid in item.guids:
                 if 'imdb://' in guid.id:
                     imdb_id = guid.id.split('//')[1]
                     break
+                elif 'tmdb://' in guid.id:
+                    tmdb_id = guid.id.split('//')[1]
+            
+            # If no IMDB ID but we have TMDB ID, try to convert
+            if not imdb_id and tmdb_id:
+                logging.debug(f"No IMDB ID found for '{item.title}', attempting to convert TMDB ID: {tmdb_id}")
+                media_type = 'movie' if item.type == 'movie' else 'show'
+                try:
+                    api = DirectAPI()
+                    imdb_id, source = api.tmdb_to_imdb(tmdb_id, media_type=media_type)
+                    if imdb_id:
+                        logging.info(f"Successfully converted TMDB ID {tmdb_id} to IMDB ID {imdb_id} for '{item.title}'")
+                except Exception as e:
+                    logging.error(f"Error converting TMDB ID {tmdb_id} to IMDB ID: {str(e)}")
             
             if not imdb_id:
                 skipped_count += 1
-                logging.debug(f"Skipping item '{item.title}' - no IMDB ID found")
+                logging.debug(f"Skipping item '{item.title}' - no IMDB ID found and TMDB conversion failed")
                 continue
             
             media_type = 'movie' if item.type == 'movie' else 'tv'

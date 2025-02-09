@@ -694,6 +694,49 @@ document.addEventListener('DOMContentLoaded', function() {
         bulkMoveQueue.disabled = selectedCount === 0;
     }
 
+    async function processBatchedItems(items, action, targetQueue = null) {
+        const FRONTEND_BATCH_SIZE = 100; // Process 100 items at a time
+        let totalProcessed = 0;
+        let errors = [];
+
+        for (let i = 0; i < items.length; i += FRONTEND_BATCH_SIZE) {
+            const batch = items.slice(i, i + FRONTEND_BATCH_SIZE);
+            const formData = new FormData();
+            formData.append('action', action);
+            if (targetQueue) {
+                formData.append('target_queue', targetQueue);
+            }
+            
+            batch.forEach(id => {
+                formData.append('selected_items', id);
+            });
+
+            try {
+                const response = await fetch('/database/bulk_queue_action', {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    totalProcessed += batch.length;
+                } else {
+                    errors.push(`Batch ${Math.floor(i/FRONTEND_BATCH_SIZE) + 1}: ${data.error}`);
+                }
+            } catch (error) {
+                errors.push(`Batch ${Math.floor(i/FRONTEND_BATCH_SIZE) + 1}: ${error.message}`);
+            }
+        }
+
+        return {
+            success: errors.length === 0,
+            warning: errors.length > 0 && totalProcessed > 0,
+            message: errors.length > 0 
+                ? `Processed ${totalProcessed} items with ${errors.length} batch errors. Errors: ${errors.join('; ')}`
+                : `Successfully processed ${totalProcessed} items`,
+        };
+    }
+
     // Handle bulk delete
     bulkDeleteBtn.addEventListener('click', function() {
         const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
@@ -705,43 +748,29 @@ document.addEventListener('DOMContentLoaded', function() {
             type: POPUP_TYPES.CONFIRM,
             message: `Are you sure you want to delete ${selectedItems.length} item(s)?`,
             title: 'Confirm Deletion',
-            onConfirm: () => {
+            onConfirm: async () => {
                 Loading.show();
-                const formData = new FormData();
-                formData.append('action', 'delete');
-                // Add each selected item individually
-                selectedItems.forEach(id => {
-                    formData.append('selected_items', id);
-                });
-
-                fetch('/database/bulk_queue_action', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    Loading.hide();
-                    if (data.success) {
-                        showPopup({
-                            type: POPUP_TYPES.SUCCESS,
-                            message: data.message,
-                            title: 'Success'
-                        });
-                        // Refresh the page to show updated content
+                try {
+                    const result = await processBatchedItems(selectedItems, 'delete');
+                    showPopup({
+                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        message: result.message,
+                        title: result.warning ? 'Partial Success' : 'Success',
+                    });
+                    setTimeout(() => {
                         window.location.reload();
-                    } else {
-                        throw new Error(data.error || 'Failed to delete items');
-                    }
-                })
-                .catch(error => {
-                    Loading.hide();
+                    }, 2000);
+                } catch (error) {
+                    console.error('Error:', error);
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         message: error.message,
-                        title: 'Error'
+                        title: 'Error',
                     });
-                });
-            }
+                } finally {
+                    Loading.hide();
+                }
+            },
         });
     });
 
@@ -759,46 +788,29 @@ document.addEventListener('DOMContentLoaded', function() {
             type: POPUP_TYPES.CONFIRM,
             message: `Are you sure you want to move ${selectedItems.length} item(s) to ${selectedQueue} queue?`,
             title: 'Confirm Move',
-            onConfirm: () => {
+            onConfirm: async () => {
                 Loading.show();
-                const formData = new FormData();
-                formData.append('action', 'move');
-                formData.append('target_queue', selectedQueue);
-                // Add each selected item individually
-                selectedItems.forEach(id => {
-                    formData.append('selected_items', id);
-                });
-
-                fetch('/database/bulk_queue_action', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    Loading.hide();
-                    if (data.success) {
-                        showPopup({
-                            type: POPUP_TYPES.SUCCESS,
-                            message: data.message,
-                            title: 'Success'
-                        });
-                        // Refresh the page to show updated content
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 1000);
-                    } else {
-                        throw new Error(data.error || 'Failed to move items');
-                    }
-                })
-                .catch(error => {
-                    Loading.hide();
+                try {
+                    const result = await processBatchedItems(selectedItems, 'move', selectedQueue);
+                    showPopup({
+                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        message: result.message,
+                        title: result.warning ? 'Partial Success' : 'Success',
+                    });
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } catch (error) {
+                    console.error('Error:', error);
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         message: error.message,
-                        title: 'Error'
+                        title: 'Error',
                     });
-                });
-            }
+                } finally {
+                    Loading.hide();
+                }
+            },
         });
         
         // Reset the select element

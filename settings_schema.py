@@ -290,6 +290,11 @@ SETTINGS_SCHEMA = {
             "description": "Skip Plex initial collection scan",
             "default": False
         },
+        "disable_unblacklisting": {
+            "type": "boolean",
+            "description": "Disable automatic unblacklisting of items from the blacklisted queue",
+            "default": True
+        },
         "auto_run_program": {
             "type": "boolean",
             "description": "Run the program automatically on startup",
@@ -407,6 +412,11 @@ SETTINGS_SCHEMA = {
         "enable_crash_test": {
             "type": "boolean",
             "description": "Enable crash test",
+            "default": False
+        },
+        "enable_granular_version_additions": {
+            "type": "boolean",
+            "description": "Enable granular version additions for Wanted items",
             "default": False
         }
     },
