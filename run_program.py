@@ -12,6 +12,7 @@ from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
 from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime
 from content_checkers.mdb_list import get_wanted_from_mdblists
+from content_checkers.content_source_detail import append_content_source_detail
 from database import add_collected_items, add_wanted_items
 from not_wanted_magnets import purge_not_wanted_magnets_file
 import traceback
