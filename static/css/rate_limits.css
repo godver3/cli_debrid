@@ -1,29 +1,47 @@
 .rate-limits-section {
     position: fixed;
-    top: 50px;
-    left: 50%;
-    transform: translateX(-50%);
+    top: 52px;
+    left: 180px;
+    padding: 16px 24px;
     z-index: 999;
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
+    transition: none; /* Remove transition for smoother dragging */
+    cursor: move;
+    user-select: none;
+}
+
+.rate-limits-section .rate-limits-toggle {
+    cursor: grab;
+}
+
+.rate-limits-section.dragging {
+    opacity: 0.9;
+    cursor: grabbing !important;
+}
+
+.rate-limits-section.dragging .rate-limits-toggle {
+    cursor: grabbing;
 }
 
 .rate-limits-toggle {
-    background-color: #1a1a1a;
+    background-color: rgba(26, 26, 26, 0.95);
     padding: 10px 15px;
-    border-radius: 0 0 4px 4px;
+    border-radius: 4px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
     cursor: pointer;
     transition: background-color 0.2s;
     min-width: 150px;
+    display: flex;
     justify-content: space-between;
     align-items: center;
     color: #f4f4f4;
-    font-weight: 600;
-    text-align: center;
-    line-height: 0.6;
-    font-size: 1.0em;
+    font-weight: 500;
+    text-align: left;
+    line-height: 1.2;
+    font-size: 0.95em;
+    backdrop-filter: blur(10px);
 }
 
 .rate-limits-name {
@@ -48,8 +66,10 @@
 }
 
 .rate-limits-container {
-    position: relative;
-    background-color: #1a1a1a;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    background-color: rgba(26, 26, 26, 0.95);
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     width: 300px;
@@ -60,6 +80,7 @@
     display: none;
     opacity: 0;
     transition: opacity 0.3s ease;
+    backdrop-filter: blur(10px);
 }
 
 .rate-limits-container.show {
