@@ -21,10 +21,13 @@ html, body {
     height: auto;
     margin: 0;
     padding: 0;
-    padding-top: 45px;
     background-color: var(--background-dark);
     color: var(--text-primary);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+body {
+    padding-top: 60px;
 }
 
 #scraper-container {
@@ -51,6 +54,7 @@ form#search-form {
     flex-wrap: wrap;
     opacity: 77%;
     min-width: 70vw;
+    margin-top: 10px;
 }
 
 form#search-form input, 
