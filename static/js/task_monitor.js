@@ -155,9 +155,17 @@ export function initializeTaskMonitor() {
     });
 
     function toggleTaskMonitor() {
-        const isVisible = taskMonitorDropdown.style.display === 'block';
-        taskMonitorDropdown.style.display = isVisible ? 'none' : 'block';
-        currentTaskDisplay.classList.toggle('active', !isVisible);
+        const container = document.querySelector('.task-monitor-container');
+        const isHidden = !container.classList.contains('visible');
+        
+        container.classList.toggle('visible');
+        container.classList.toggle('hidden');
+        
+        // Store the state in localStorage
+        localStorage.setItem('taskMonitorVisible', isHidden ? 'true' : 'false');
+        
+        // Update body padding
+        window.updateBodyPadding();
     }
 
     function toggleTaskMonitorVisibility() {

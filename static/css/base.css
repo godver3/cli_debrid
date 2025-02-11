@@ -40,10 +40,29 @@ body {
     background: linear-gradient(to bottom, #333 0%, #333 60%, #000 80%) fixed;
     background-color: #000;  
     margin: 0;
-    padding-top: 95px;
+    padding-top: 60px;
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    visibility: hidden;
+}
+
+body.initialized {
+    visibility: visible;
+}
+
+body.transitions-enabled {
+    transition: padding-top 0.3s ease;
+}
+
+body.has-visible-section {
+    padding-top: 95px;
+}
+
+@media (max-width: 776px) {
+    body {
+        padding-top: 60px !important;
+    }
 }
 
 .container { 
@@ -1189,7 +1208,7 @@ h2 {
 .task-monitor-toggle {
     position: fixed;
     top: 50px;
-    right: calc(40px + env(safe-area-inset-right, 0px));
+    right: calc(45px + env(safe-area-inset-right, 0px));
     background-color: #1a1a1a;
     color: #888;
     border: none;
@@ -1202,6 +1221,11 @@ h2 {
     display: flex;
     justify-content: center;
     align-items: center;
+}
+
+/* Add a gap between toggles */
+.rate-limits-section-toggle + .task-monitor-toggle {
+    margin-right: 8px;
 }
 
 .task-monitor-toggle:hover {

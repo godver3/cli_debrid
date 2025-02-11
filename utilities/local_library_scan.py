@@ -8,6 +8,9 @@ import re
 from datetime import datetime
 import time
 from utilities.anidb_functions import format_filename_with_anidb
+from database.database_writing import update_media_item_state, update_media_item
+from utilities.post_processing import handle_state_change
+from database import get_media_item_by_id
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -22,6 +25,8 @@ def sanitize_filename(filename: str) -> str:
 def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
     """Get the full path for the symlink based on settings and metadata."""
     try:
+        logging.debug(f"get_symlink_path received item with filename_real_path: {item.get('filename_real_path')}")
+        
         symlinked_path = get_setting('File Management', 'symlinked_files_path')
         organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)
         
@@ -48,6 +53,10 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
             'content_source': item.get('content_source', ''),  # Add content source for template use
             'resolution': item.get('resolution', '')  # Add resolution for template use
         }
+
+        if item.get('filename_real_path'):
+            logging.debug(f"Using filename_real_path for original_filename: {item.get('filename_real_path')}")
+            template_vars['original_filename'] = os.path.splitext(item.get('filename_real_path'))[0]
         
         if media_type == 'movie':
             # Get the template for movies
@@ -362,7 +371,6 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
             if success:
                 logging.info(f"[UPGRADE] Successfully processed symlink at: {dest_file}")
-                from database.database_writing import update_media_item
                 
                 # Set state based on whether this is an upgrade candidate
                 new_state = 'Upgrading' if is_upgrade_candidate else 'Collected'
@@ -381,15 +389,20 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     'filled_by_file': item.get('filled_by_file'),
                     'filled_by_magnet': item.get('filled_by_magnet'),
                     'filled_by_torrent_id': item.get('filled_by_torrent_id'),
-                    'resolution': item.get('resolution')
+                    'resolution': item.get('resolution'),
+                    'upgrading_from': item.get('upgrading_from')  # Always include upgrading_from
                 }
-                
-                # Only set upgrading_from if this is a confirmed upgrade
-                if item.get('upgrading_from'):
-                    update_values['upgrading_from'] = item['upgrading_from']
                 
                 logging.debug(f"[UPGRADE] Updating item with values: {update_values}")
                 update_media_item(item['id'], **update_values)
+
+                # Add post-processing call after state update
+                updated_item = get_media_item_by_id(item['id'])
+                if updated_item:
+                    if new_state == 'Collected':
+                        handle_state_change(dict(updated_item))
+                    elif new_state == 'Upgrading':
+                        handle_state_change(dict(updated_item))
 
                 # Add notification for all collections (including previously collected)
                 if not item.get('upgrading_from'):
@@ -595,6 +608,8 @@ def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
     Returns a dict with success status and details about the conversion.
     """
     try:
+        logging.debug(f"convert_item_to_symlink received item with filename_real_path: {item.get('filename_real_path')}")
+        
         if not item.get('location_on_disk'):
             return {
                 'success': False,
@@ -612,6 +627,7 @@ def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         # Get destination path based on settings
+        logging.debug(f"Calling get_symlink_path with filename_real_path: {item.get('filename_real_path')}")
         dest_file = get_symlink_path(item, source_file)
         if not dest_file:
             return {

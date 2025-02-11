@@ -31,6 +31,7 @@ from .cors_testing_routes import cors_testing_bp
 from .magnet_routes import magnet_bp
 from .performance_routes import performance_bp
 from .torrent_status_routes import torrent_status_bp
+from .settings_validation_routes import settings_validation_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -146,7 +147,8 @@ def register_blueprints(app):
         (cors_testing_bp, '/cors_testing'),
         (magnet_bp, '/magnet'),
         (performance_bp, '/performance'),
-        (torrent_status_bp, '/torrent_status')
+        (torrent_status_bp, '/torrent_status'),
+        (settings_validation_bp, '/settings_validation')
     ]
     
     for blueprint, url_prefix in blueprints:

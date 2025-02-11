@@ -52,11 +52,54 @@ def load_config():
     with open(CONFIG_FILE, 'r') as file:
         return json.load(file)
 
+def sync_plex_settings(config):
+    """Synchronize shared settings between Plex and File Management sections."""
+    # Initialize sections if they don't exist
+    if 'Plex' not in config:
+        config['Plex'] = {}
+    if 'File Management' not in config:
+        config['File Management'] = {}
+
+    # Define shared fields and their mappings
+    shared_fields = {
+        'Plex': {
+            'url': 'url',
+            'token': 'token'
+        },
+        'File Management': {
+            'plex_url_for_symlink': 'url',
+            'plex_token_for_symlink': 'token'
+        }
+    }
+
+    # Check both directions and sync non-empty values
+    for source_section, source_mappings in shared_fields.items():
+        target_section = 'File Management' if source_section == 'Plex' else 'Plex'
+        target_mappings = shared_fields[target_section]
+        
+        for source_field, shared_name in source_mappings.items():
+            target_field = next(k for k, v in shared_fields[target_section].items() if v == shared_name)
+            
+            source_value = config[source_section].get(source_field, '')
+            target_value = config[target_section].get(target_field, '')
+            
+            # If source has a value and target is empty, or source has changed
+            if source_value and (not target_value or source_value != target_value):
+                config[target_section][target_field] = source_value
+            # If target has a value and source is empty
+            elif target_value and not source_value:
+                config[source_section][source_field] = target_value
+
+    return config
+
 def save_config(config):
     # Load previous config to check for TMDB API key changes
     previous_config = load_config()
     previous_tmdb_key = previous_config.get('TMDB', {}).get('api_key')
     new_tmdb_key = config.get('TMDB', {}).get('api_key')
+
+    # Sync Plex settings between sections
+    config = sync_plex_settings(config)
 
     # Check if TMDB API key has changed
     if previous_tmdb_key != new_tmdb_key:

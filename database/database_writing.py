@@ -5,6 +5,7 @@ import json
 import pickle
 from pathlib import Path
 import os
+from utilities.post_processing import handle_state_change
 
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
@@ -79,6 +80,9 @@ def update_media_item_state(item_id, state, **kwargs):
     try:
         conn.execute('BEGIN TRANSACTION')
         
+        # Get the item before update for post-processing
+        item_before = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        
         # Prepare the base query
         query = '''
             UPDATE media_items
@@ -87,7 +91,7 @@ def update_media_item_state(item_id, state, **kwargs):
         params = [state, datetime.now()]
 
         # Add optional fields to the query if they are provided
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'version', 'resolution']
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'version', 'resolution', 'upgrading_from']
         for field in optional_fields:
             if field in kwargs:
                 query += f", {field} = ?"
@@ -111,10 +115,19 @@ def update_media_item_state(item_id, state, **kwargs):
 
         conn.commit()
 
+        # Get updated item for post-processing
+        updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        if updated_item:
+            # Convert to dict for post-processing
+            item_dict = dict(updated_item)
+            
+            # Handle post-processing based on state
+            if state == 'Collected':
+                handle_state_change(item_dict)
+            elif state == 'Upgrading':
+                handle_state_change(item_dict)
+
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
-        #for field in optional_fields:
-            #if field in kwargs:
-                #logging.debug(f"  {field}: {kwargs[field]}")
 
     except Exception as e:
         logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")

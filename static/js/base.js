@@ -146,6 +146,61 @@ function toggleRateLimits() {
     }
 }
 
+function updateBodyPadding() {
+    // Skip on mobile
+    if (window.innerWidth <= 776) {
+        return;
+    }
+
+    const taskMonitorContainer = document.querySelector('.task-monitor-container');
+    const rateLimitsSection = document.querySelector('.rate-limits-section');
+    
+    const taskMonitorVisible = taskMonitorContainer && taskMonitorContainer.classList.contains('visible');
+    const rateLimitsVisible = rateLimitsSection && rateLimitsSection.classList.contains('show');
+    
+    if (taskMonitorVisible || rateLimitsVisible) {
+        document.body.classList.add('has-visible-section');
+    } else {
+        document.body.classList.remove('has-visible-section');
+    }
+}
+
+function toggleRateLimitsSection() {
+    const section = document.querySelector('.rate-limits-section');
+    const button = document.getElementById('rateLimitsSectionToggle');
+    if (section && button) {
+        const isHidden = !section.classList.contains('show');
+        section.classList.toggle('show');
+        button.classList.toggle('active');
+        
+        // Store the state in localStorage
+        localStorage.setItem('rateLimitsSectionVisible', isHidden ? 'true' : 'false');
+        
+        // Update body padding
+        updateBodyPadding();
+    }
+}
+
+function initializeRateLimitsSection() {
+    const button = document.getElementById('rateLimitsSectionToggle');
+    if (button) {
+        // Set initial state based on localStorage or default to visible
+        const shouldBeVisible = localStorage.getItem('rateLimitsSectionVisible') !== 'false';
+        const section = document.querySelector('.rate-limits-section');
+        if (section) {
+            if (shouldBeVisible) {
+                section.classList.add('show');
+            }
+            button.classList.toggle('active', !shouldBeVisible);
+        }
+        
+        button.addEventListener('click', toggleRateLimitsSection);
+        
+        // Initial padding update
+        updateBodyPadding();
+    }
+}
+
 function fetchRateLimitInfo() {
     fetch('/debug/api/rate_limit_info')
         .then(response => response.json())
@@ -175,9 +230,28 @@ function fetchRateLimitInfo() {
 // Make functions globally available
 window.toggleRateLimits = toggleRateLimits;
 window.fetchRateLimitInfo = fetchRateLimitInfo;
+window.updateBodyPadding = updateBodyPadding;
 
 // Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
+    // Check initial visibility state before any other initialization
+    const taskMonitorVisible = localStorage.getItem('taskMonitorVisible') === 'true';
+    const rateLimitsVisible = localStorage.getItem('rateLimitsSectionVisible') !== 'false';
+    
+    // Set initial padding and visibility state
+    if (window.innerWidth > 776 && (taskMonitorVisible || rateLimitsVisible)) {
+        document.body.classList.add('has-visible-section');
+    }
+
+    // Show the body after initial state is set
+    requestAnimationFrame(() => {
+        document.body.classList.add('initialized');
+        // Enable transitions after a small delay to ensure initial state is rendered
+        setTimeout(() => {
+            document.body.classList.add('transitions-enabled');
+        }, 100);
+    });
+
     // Set updating content state to false before initializing tooltips
     setUpdatingContent(false);
     
@@ -186,6 +260,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeReleaseNotes();
     initializeTaskMonitor();
     initializeTooltips();
+    initializeRateLimitsSection();
     
     // Initialize program controls if the button exists
     if (document.getElementById('programControlButton')) {
@@ -263,4 +338,28 @@ document.addEventListener('DOMContentLoaded', function() {
         // Open GitHub repository in new tab
         window.open('https://github.com/godver3/cli_debrid', '_blank');
     });
+
+    // Add observer for task monitor visibility changes
+    const taskMonitorContainer = document.querySelector('.task-monitor-container');
+    if (taskMonitorContainer) {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    updateBodyPadding();
+                }
+            });
+        });
+        
+        observer.observe(taskMonitorContainer, {
+            attributes: true
+        });
+    }
+    
+    // Initial padding update
+    updateBodyPadding();
+});
+
+// Add resize listener to handle screen size changes
+window.addEventListener('resize', () => {
+    updateBodyPadding();
 }); 

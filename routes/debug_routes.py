@@ -1,4 +1,4 @@
-from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash, current_app
+from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash, current_app, Response, stream_with_context
 from flask.json import jsonify
 from initialization import get_all_wanted_from_enabled_sources
 from run_program import (
@@ -41,8 +41,20 @@ from not_wanted_magnets import (
 )
 import json
 from debrid import get_debrid_provider
+import threading
+import queue
+import asyncio
+from utilities.plex_functions import get_collected_from_plex
+from content_checkers.content_cache_management import (
+    load_source_cache, save_source_cache, 
+    should_process_item, update_cache_for_item
+)
+import traceback
 
 debug_bp = Blueprint('debug', __name__)
+
+# Global progress tracking
+scan_progress = {}
 
 def async_get_wanted_content(source):
     try:
@@ -400,6 +412,183 @@ def get_collected_from_plex():
     task_id = task_queue.add_task(async_get_collected_from_plex, collection_type)
     return jsonify({'task_id': task_id}), 202
 
+@debug_bp.route('/api/direct_plex_scan', methods=['POST'])
+@admin_required
+def direct_plex_scan():
+    """Direct route to scan Plex library with progress tracking."""
+    try:
+        import uuid
+        from utilities.plex_functions import get_collected_from_plex
+        
+        # Generate unique scan ID
+        scan_id = str(uuid.uuid4())
+        scan_progress[scan_id] = {
+            'status': 'starting',
+            'message': 'Initializing scan...',
+            'movies_count': 0,
+            'episodes_count': 0,
+            'complete': False,
+            'shows_processed': 0,
+            'total_shows': 0,
+            'movies_processed': 0,
+            'total_movies': 0,
+            'episodes_found': 0,
+            'errors': []
+        }
+        
+        def progress_callback(status_type, message, counts=None):
+            """Callback function to update progress"""
+            update = {
+                'status': status_type,
+                'message': message,
+                'complete': status_type in ['complete', 'error']
+            }
+            if counts:
+                update.update(counts)
+            scan_progress[scan_id].update(update)
+            
+            if status_type == 'error':
+                scan_progress[scan_id]['errors'].append(message)
+        
+        def run_scan():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # Update status to show collection starting
+                scan_progress[scan_id].update({
+                    'status': 'collecting',
+                    'message': 'Starting Plex library scan...',
+                    'phase': 'collection'
+                })
+                
+                # Run the scan with progress callback
+                collected_content = loop.run_until_complete(
+                    get_collected_from_plex(
+                        request='all',
+                        progress_callback=progress_callback,
+                        bypass=True
+                    )
+                )
+                
+                loop.close()
+                
+                if collected_content:
+                    # Extract movies and episodes from collected content
+                    movies = collected_content.get('movies', [])
+                    episodes = collected_content.get('episodes', [])
+                    
+                    total_items = len(movies) + len(episodes)
+                    logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes")
+                    
+                    # Update status to show database addition starting
+                    scan_progress[scan_id].update({
+                        'status': 'adding',
+                        'message': f'Adding {total_items} items to database...',
+                        'phase': 'database',
+                        'total_items': total_items,
+                        'processed_items': 0
+                    })
+                    
+                    # Add the collected items to the database
+                    from database.collected_items import add_collected_items
+                    try:
+                        if total_items > 0:
+                            # Update progress before starting database addition
+                            scan_progress[scan_id].update({
+                                'status': 'adding',
+                                'message': f'Adding {len(movies)} movies and {len(episodes)} episodes to database...',
+                                'phase': 'database',
+                                'complete': False  # Ensure we're not marked as complete during database phase
+                            })
+                            
+                            add_collected_items(movies + episodes)
+                            
+                            # Only now mark as complete after database addition is done
+                            scan_progress[scan_id].update({
+                                'status': 'complete',
+                                'message': f'Successfully scanned Plex library and added {len(movies)} movies and {len(episodes)} episodes to database',
+                                'success': True,
+                                'complete': True,
+                                'phase': 'complete'
+                            })
+                        else:
+                            scan_progress[scan_id].update({
+                                'status': 'complete',
+                                'message': 'Scanned Plex library but found no items to add',
+                                'success': True,
+                                'complete': True,
+                                'phase': 'complete'
+                            })
+                    except Exception as e:
+                        error_msg = f"Error adding collected items to database: {str(e)}"
+                        logging.error(error_msg, exc_info=True)
+                        scan_progress[scan_id].update({
+                            'status': 'error',
+                            'message': error_msg,
+                            'success': False,
+                            'complete': True,
+                            'phase': 'error',
+                            'errors': [error_msg]
+                        })
+                else:
+                    scan_progress[scan_id].update({
+                        'status': 'error',
+                        'message': 'No content retrieved from Plex scan',
+                        'success': False,
+                        'complete': True,
+                        'phase': 'error'
+                    })
+            except Exception as e:
+                error_msg = str(e)
+                logging.error(f"Error during Plex scan: {error_msg}", exc_info=True)
+                scan_progress[scan_id].update({
+                    'status': 'error',
+                    'message': f"Error during scan: {error_msg}",
+                    'success': False,
+                    'complete': True,
+                    'phase': 'error',
+                    'errors': [error_msg]
+                })
+            finally:
+                # Clean up after 5 minutes
+                threading.Timer(300, lambda: scan_progress.pop(scan_id, None)).start()
+        
+        # Start scan in background thread
+        thread = threading.Thread(target=run_scan)
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({'success': True, 'scan_id': scan_id})
+            
+    except Exception as e:
+        logging.error(f"Error initiating Plex scan: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)})
+
+@debug_bp.route('/api/plex_scan_progress/<scan_id>')
+def plex_scan_progress(scan_id):
+    """SSE endpoint for tracking Plex scan progress."""
+    def generate():
+        while True:
+            if scan_id not in scan_progress:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'Scan not found'})}\n\n"
+                break
+                
+            progress = scan_progress[scan_id]
+            
+            # Add error details to progress if any exist
+            if progress.get('errors'):
+                progress['error_details'] = progress['errors']
+            
+            yield f"data: {json.dumps(progress)}\n\n"
+            
+            if progress['complete']:
+                break
+                
+            time.sleep(1)
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
 @debug_bp.route('/api/task_status/<task_id>')
 def task_status(task_id):
     from extensions import task_queue
@@ -427,9 +616,19 @@ def get_and_add_wanted_content(source_id):
     source_data = content_sources[source_id]
     source_type = source_id.split('_')[0]
     versions = source_data.get('versions', {})
+    source_media_type = source_data.get('media_type', 'All')
 
     logging.info(f"Processing source: {source_id}")
+    logging.debug(f"Source type: {source_type}, media type: {source_media_type}")
     
+    # Load cache for this source
+    source_cache = load_source_cache(source_id)
+    logging.debug(f"Initial cache state for {source_id}: {len(source_cache)} entries")
+    cache_skipped = 0
+    items_processed = 0
+    total_items = 0
+    media_type_skipped = 0
+
     wanted_content = []
     if source_type == 'Overseerr':
         wanted_content = get_wanted_from_overseerr()
@@ -477,20 +676,67 @@ def get_and_add_wanted_content(source_id):
 
     if wanted_content:
         total_items = 0
-        for items, item_versions in wanted_content:
-            logging.debug(f"Processing items: {len(items)}, versions: {item_versions}")
-            processed_items = process_metadata(items)
-            if processed_items:
-                all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                # Add content source and detail
-                for item in all_items:
-                    item['content_source'] = source_id
-                    item = append_content_source_detail(item, source_type=source_type)
-                logging.debug(f"Calling add_wanted_items with {len(all_items)} items and versions: {item_versions}")
-                add_wanted_items(all_items, item_versions)
-                total_items += len(all_items)
+        if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
+            # Handle list of tuples
+            for items, item_versions in wanted_content:
+                try:
+                    logging.debug(f"Processing batch of {len(items)} items from {source_id}")
+                    
+                    # Filter items by media type first if applicable
+                    if source_media_type != 'All' and not source_type.startswith('Collected'):
+                        original_count = len(items)
+                        items = [
+                            item for item in items
+                            if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
+                               (source_media_type == 'Shows' and item.get('media_type') == 'tv')
+                        ]
+                        media_type_skipped += original_count - len(items)
+                        if media_type_skipped > 0:
+                            logging.debug(f"Skipped {media_type_skipped} items due to media type mismatch")
+                    
+                    # Filter items based on cache before metadata processing
+                    items_to_process = [
+                        item for item in items 
+                        if should_process_item(item, source_id, source_cache)
+                    ]
+                    items_skipped = len(items) - len(items_to_process)
+                    cache_skipped += items_skipped
+                    logging.debug(f"Cache filtering results for {source_id}: {items_skipped} skipped, {len(items_to_process)} to process")
+                    
+                    if not items_to_process:
+                        continue
+
+                    # Process metadata for non-cached items
+                    processed_items = process_metadata(items_to_process)
+                    if processed_items:
+                        all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                        # Add content source and detail
+                        for item in all_items:
+                            item['content_source'] = source_id
+                            item = append_content_source_detail(item, source_type=source_type)
+                        
+                        # Update cache for the original items (pre-metadata processing)
+                        for item in items_to_process:
+                            update_cache_for_item(item, source_id, source_cache)
+                        
+                        add_wanted_items(all_items, item_versions or versions)
+                        total_items += len(all_items)
+                        items_processed += len(items_to_process)
+                except Exception as e:
+                    logging.error(f"Error processing items from {source_id}: {str(e)}")
+                    logging.error(traceback.format_exc())
         
-        logging.info(f"Added {total_items} wanted items from {source_id}")
+        # Save the updated cache
+        save_source_cache(source_id, source_cache)
+        logging.debug(f"Final cache state for {source_id}: {len(source_cache)} entries")
+        
+        stats_msg = f"Added {total_items} wanted items from {source_id} (processed {items_processed} items"
+        if cache_skipped > 0:
+            stats_msg += f", skipped {cache_skipped} cached items"
+        if media_type_skipped > 0:
+            stats_msg += f", skipped {media_type_skipped} items due to media type mismatch"
+        stats_msg += ")"
+        logging.info(stats_msg)
     else:
         logging.warning(f"No wanted content retrieved from {source_id}")
 
@@ -963,144 +1209,231 @@ def get_versions():
 def convert_to_symlinks():
     """Convert existing library items to use symlinks."""
     try:
-        # Get database connection
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        import uuid
+        
+        # Generate unique task ID
+        task_id = str(uuid.uuid4())
+        
+        def run_conversion():
+            try:
+                import os
+                # Get database connection
+                conn = get_db_connection()
+                cursor = conn.cursor()
 
-        # Get symlinked files path from settings
-        symlinked_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
-        if not symlinked_path:
-            logging.error("Symlinked files path not configured")
-            return "Symlinked files path not configured", 400
+                # Get symlinked files path from settings
+                symlinked_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
+                if not symlinked_path:
+                    scan_progress[task_id].update({
+                        'status': 'error',
+                        'message': 'Symlinked files path not configured',
+                        'complete': True
+                    })
+                    return
 
-        # Get all items with location_on_disk set
-        cursor.execute("""
-            SELECT *
-            FROM media_items 
-            WHERE location_on_disk IS NOT NULL 
-            AND location_on_disk != ''
-            AND state = 'Collected'
-        """)
-        items = cursor.fetchall()
-
-        if not items:
-            logging.error("No items found with location_on_disk set")
-            return "No items found with location_on_disk set", 404
-
-        logging.info(f"Found {len(items)} items to convert to symlinks")
-
-        # Convert items to symlinks
-        from utilities.local_library_scan import convert_item_to_symlink
-        results = []
-        processed = 0
-        total = len(items)
-        wanted_count = 0
-        deleted_count = 0
-        skipped_count = 0
-
-        for item in items:
-            item_dict = dict(item)
-            
-            # Check if item is already in symlink folder
-            current_location = item_dict.get('location_on_disk', '')
-            if current_location.startswith(symlinked_path):
-                logging.info(f"Skipping {item_dict['title']} ({item_dict['version']}) - already in symlink folder")
-                skipped_count += 1
-                continue
-
-            result = convert_item_to_symlink(item_dict)
-            results.append(result)
-
-            if result['success']:
-                # Update database with new location and original path
+                # Get all items with location_on_disk set
                 cursor.execute("""
-                    UPDATE media_items 
-                    SET location_on_disk = ?,
-                        original_path_for_symlink = ?
-                    WHERE id = ?
-                """, (result['new_location'], result['old_location'], result['item_id']))
-            else:
-                # If error is "Source file not found", handle specially
-                if "Source file not found" in result['error']:
-                    # Check if we have another item with same title, type, and version that's either Wanted or Collected
-                    cursor.execute("""
-                        SELECT COUNT(*) as count 
-                        FROM media_items 
-                        WHERE title = ? 
-                        AND type = ? 
-                        AND TRIM(version, '*') = TRIM(?, '*')
-                        AND state IN ('Wanted', 'Collected')
-                        AND id != ?
-                    """, (item_dict['title'], item_dict['type'], item_dict['version'], item_dict['id']))
+                    SELECT *
+                    FROM media_items 
+                    WHERE location_on_disk IS NOT NULL 
+                    AND location_on_disk != ''
+                    AND state = 'Collected'
+                """)
+                items = cursor.fetchall()
+
+                if not items:
+                    scan_progress[task_id].update({
+                        'status': 'error',
+                        'message': 'No items found with location_on_disk set',
+                        'complete': True
+                    })
+                    return
+
+                total_items = len(items)
+                logging.info(f"Found {total_items} items to convert to symlinks")
+
+                # Initialize progress tracking
+                scan_progress[task_id].update({
+                    'status': 'running',
+                    'message': f'Converting {total_items} items to symlinks...',
+                    'total_items': total_items,
+                    'processed_items': 0,
+                    'symlinks_created': 0,
+                    'items_to_wanted': 0,
+                    'items_deleted': 0,
+                    'items_skipped': 0,
+                    'complete': False
+                })
+
+                # Convert items to symlinks
+                from utilities.local_library_scan import convert_item_to_symlink
+                processed = 0
+                wanted_count = 0
+                deleted_count = 0
+                skipped_count = 0
+                symlinks_created = 0
+                found_symlinks = False
+                check_for_symlinks = True
+
+                for item in items:
+                    item_dict = dict(item)
                     
-                    has_duplicate = cursor.fetchone()['count'] > 0
+                    # Check if item is already in symlink folder
+                    current_location = item_dict.get('location_on_disk', '')
                     
-                    if has_duplicate:
-                        # Delete this item as we already have a copy
-                        cursor.execute("DELETE FROM media_items WHERE id = ?", (result['item_id'],))
-                        deleted_count += 1
-                        logging.info(f"Deleted item {item_dict['title']} ({item_dict['version']}) as duplicate exists")
-                    else:
-                        # Update the item to Wanted state
+                    # If the current location is in the symlink folder, skip it
+                    if current_location.startswith(symlinked_path):
+                        logging.info(f"Skipping {item_dict['title']} ({item_dict['version']}) - already in symlink folder")
+                        skipped_count += 1
+                        scan_progress[task_id].update({
+                            'items_skipped': skipped_count,
+                            'message': f'Skipping {item_dict["title"]} - already in symlink folder'
+                        })
+                        continue
+
+                    # Only check for symlinks in first 100 items unless we've found one
+                    if check_for_symlinks:
+                        try:
+                            if os.path.islink(current_location):
+                                real_path = os.path.realpath(current_location)
+                                logging.info(f"Found symlink for {item_dict['title']}, using original path: {real_path}")
+                                # Store both the real path and the original filename
+                                item_dict['filename_real_path'] = os.path.basename(real_path)
+                                # Keep the original location_on_disk as is - don't resolve it yet
+                                found_symlinks = True
+                                logging.debug(f"Set filename_real_path to: {item_dict['filename_real_path']}")
+                        except Exception as e:
+                            logging.warning(f"Error checking symlink for {current_location}: {str(e)}")
+
+                        if processed >= 100 and not found_symlinks:
+                            logging.info("No symlinks found in first 100 items, disabling symlink check")
+                            check_for_symlinks = False
+
+                    result = convert_item_to_symlink(item_dict)
+
+                    if result['success']:
+                        symlinks_created += 1
+                        # Update database with new location and original path
                         cursor.execute("""
                             UPDATE media_items 
-                            SET state = 'Wanted',
-                                filled_by_file = NULL,
-                                filled_by_title = NULL,
-                                filled_by_magnet = NULL,
-                                filled_by_torrent_id = NULL,
-                                collected_at = NULL,
-                                location_on_disk = NULL,
-                                last_updated = CURRENT_TIMESTAMP,
-                                version = TRIM(version, '*')
+                            SET location_on_disk = ?,
+                                original_path_for_symlink = ?
                             WHERE id = ?
-                        """, (result['item_id'],))
-                        wanted_count += 1
-                        logging.info(f"Moved item {item_dict['title']} ({item_dict['version']}) to Wanted state")
-            
-            # Log progress every 50 items
-            processed += 1
-            if processed % 50 == 0:
-                logging.info(f"Progress: {processed}/{total} items processed")
-                conn.commit()  # Intermediate commit to avoid long transactions
+                        """, (result['new_location'], result['old_location'], result['item_id']))
+                    else:
+                        # If error is "Source file not found", handle specially
+                        if "Source file not found" in result['error']:
+                            # Check for duplicate
+                            cursor.execute("""
+                                SELECT COUNT(*) as count 
+                                FROM media_items 
+                                WHERE title = ? 
+                                AND type = ? 
+                                AND TRIM(version, '*') = TRIM(?, '*')
+                                AND state IN ('Wanted', 'Collected')
+                                AND id != ?
+                            """, (item_dict['title'], item_dict['type'], item_dict['version'], item_dict['id']))
+                            
+                            has_duplicate = cursor.fetchone()['count'] > 0
+                            
+                            if has_duplicate:
+                                # Delete this item as we already have a copy
+                                cursor.execute("DELETE FROM media_items WHERE id = ?", (result['item_id'],))
+                                deleted_count += 1
+                                logging.info(f"Deleted item {item_dict['title']} as duplicate exists")
+                            else:
+                                # Update the item to Wanted state
+                                cursor.execute("""
+                                    UPDATE media_items 
+                                    SET state = 'Wanted',
+                                        filled_by_file = NULL,
+                                        filled_by_title = NULL,
+                                        filled_by_magnet = NULL,
+                                        filled_by_torrent_id = NULL,
+                                        collected_at = NULL,
+                                        location_on_disk = NULL,
+                                        last_updated = CURRENT_TIMESTAMP,
+                                        version = TRIM(version, '*')
+                                    WHERE id = ?
+                                """, (result['item_id'],))
+                                wanted_count += 1
+                                logging.info(f"Moved item {item_dict['title']} to Wanted state")
+                    
+                    processed += 1
+                    
+                    # Update progress
+                    scan_progress[task_id].update({
+                        'processed_items': processed,
+                        'symlinks_created': symlinks_created,
+                        'items_to_wanted': wanted_count,
+                        'items_deleted': deleted_count,
+                        'items_skipped': skipped_count,
+                        'message': f'Processing: {item_dict["title"]}'
+                    })
+                    
+                    # Commit every 50 items
+                    if processed % 50 == 0:
+                        conn.commit()
 
-        conn.commit()
-        conn.close()
+                conn.commit()
+                conn.close()
 
-        # Count successes and failures
-        successes = sum(1 for r in results if r['success'])
-        failures = sum(1 for r in results if not r['success'])
+                # Final status update
+                scan_progress[task_id].update({
+                    'status': 'complete',
+                    'message': 'Library conversion completed successfully',
+                    'complete': True,
+                    'success': True
+                })
 
-        # Group failures by error type for better reporting
-        error_summary = {}
-        for r in results:
-            if not r['success']:
-                error_type = r['error']
-                if error_type not in error_summary:
-                    error_summary[error_type] = 0
-                error_summary[error_type] += 1
+            except Exception as e:
+                logging.error(f"Error during library conversion: {str(e)}", exc_info=True)
+                scan_progress[task_id].update({
+                    'status': 'error',
+                    'message': f'Error during conversion: {str(e)}',
+                    'complete': True,
+                    'success': False
+                })
+            finally:
+                # Clean up progress tracking after 5 minutes
+                threading.Timer(300, lambda: scan_progress.pop(task_id, None)).start()
 
-        # Log the summary
-        logging.info(f"Processed {len(results)} items: {successes} successful, {failures} failed")
-        if failures > 0:
-            logging.warning("Error summary:")
-            for error_type, count in error_summary.items():
-                logging.warning(f"- {error_type}: {count} items")
+        # Initialize progress tracking
+        scan_progress[task_id] = {
+            'status': 'starting',
+            'message': 'Initializing library conversion...',
+            'complete': False
+        }
 
-        summary = f"Processed {len(results)} items: {successes} successful, {failures} failed"
-        if wanted_count > 0 or deleted_count > 0 or skipped_count > 0:
-            if wanted_count > 0:
-                summary += f"\nMoved {wanted_count} items back to Wanted state"
-            if deleted_count > 0:
-                summary += f"\nDeleted {deleted_count} duplicate items"
-            if skipped_count > 0:
-                summary += f"\nSkipped {skipped_count} items already in symlink folder"
+        # Start conversion in background thread
+        thread = threading.Thread(target=run_conversion)
+        thread.daemon = True
+        thread.start()
 
-        return summary, 200
+        return jsonify({'success': True, 'task_id': task_id})
 
     except Exception as e:
-        logging.error(f"Error converting library to symlinks: {str(e)}")
-        return f"Error converting library to symlinks: {str(e)}", 500
+        logging.error(f"Error initiating library conversion: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)})
+
+@debug_bp.route('/api/conversion_progress/<task_id>')
+def conversion_progress(task_id):
+    """SSE endpoint for tracking library conversion progress."""
+    def generate():
+        while True:
+            if task_id not in scan_progress:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'Conversion task not found'})}\n\n"
+                break
+                
+            progress = scan_progress[task_id]
+            yield f"data: {json.dumps(progress)}\n\n"
+            
+            if progress['complete']:
+                break
+                
+            time.sleep(1)
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 @debug_bp.route('/validate_plex_tokens', methods=['GET', 'POST'])
 @admin_required

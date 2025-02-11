@@ -49,8 +49,12 @@ def get_next_onboarding_step():
     if 'Content Sources' not in config or not config['Content Sources']:
         return 4
     
-    # If all steps are completed, return the final step (5)
-    return 5
+    # Step 5: Check if library management is configured
+    if 'Libraries' not in config or not config['Libraries']:
+        return 5
+
+    # If all steps are completed, return the final step (6)
+    return 6
 
 @onboarding_bp.route('/')
 @login_required
@@ -62,7 +66,7 @@ def onboarding():
 def onboarding_step(step):
     from routes.auth_routes import db
 
-    if step < 1 or step > 5:
+    if step < 1 or step > 6:  # Updated max step
         abort(404)
     
     config = load_config()
@@ -101,12 +105,6 @@ def onboarding_step(step):
        
     if step == 2:
         required_settings = [
-            ('Plex', 'url'),
-            ('Plex', 'token'),
-            ('Plex', 'shows_libraries'),
-            ('Plex', 'movie_libraries'),
-            ('Plex', 'update_plex_on_file_discovery'),
-            ('Plex', 'mounted_file_location'),
             ('Debrid Provider', 'provider'),
             ('Debrid Provider', 'api_key'),
             ('Trakt', 'client_id'),
@@ -116,19 +114,67 @@ def onboarding_step(step):
         if request.method == 'POST':
             try:
                 config = load_config()
-                config['Plex'] = {
-                    'url': request.form['plex_url'],
-                    'token': request.form['plex_token'],
-                    'shows_libraries': request.form['shows_libraries'],
-                    'movie_libraries': request.form['movie_libraries'],
-                    'update_plex_on_file_discovery': request.form.get('update_plex_on_file_discovery', 'false'),
-                    'mounted_file_location': request.form.get('mounted_file_location', '')
+                
+                # Handle file management type
+                file_management_type = request.form.get('file_collection_management', 'Plex')
+                original_files_path = request.form.get('original_files_path', '/mnt/zurg/__all__')
+                
+                # Get Plex URL and token - try both regular and symlink fields
+                plex_url = request.form.get('plex_url_for_symlink', '') or request.form.get('plex_url', '')
+                plex_token = request.form.get('plex_token_for_symlink', '') or request.form.get('plex_token', '')
+                
+                # Debug logging
+                logging.info("Form data received:")
+                logging.info(f"file_management_type: {file_management_type}")
+                logging.info(f"plex_url from regular field: {request.form.get('plex_url', '')}")
+                logging.info(f"plex_url from symlink field: {request.form.get('plex_url_for_symlink', '')}")
+                logging.info(f"plex_token from regular field: {request.form.get('plex_token', '')}")
+                logging.info(f"plex_token from symlink field: {request.form.get('plex_token_for_symlink', '')}")
+                logging.info(f"Final plex_url: {plex_url}")
+                logging.info(f"Final plex_token: {plex_token}")
+                
+                # Set up File Management section with all fields
+                config['File Management'] = {
+                    'file_collection_management': file_management_type,
+                    'original_files_path': original_files_path,
+                    'symlinked_files_path': request.form.get('symlinked_files_path', '/mnt/symlinked'),
+                    'symlink_organize_by_type': True,
+                    'plex_url_for_symlink': plex_url,
+                    'plex_token_for_symlink': plex_token
                 }
+
+                # Set up Plex section with all fields
+                config['Plex'] = {
+                    'url': plex_url,
+                    'token': plex_token,
+                    'shows_libraries': request.form.get('shows_libraries', ''),
+                    'movie_libraries': request.form.get('movie_libraries', ''),
+                    'update_plex_on_file_discovery': request.form.get('update_plex_on_file_discovery', 'false') == 'on',
+                    'mounted_file_location': original_files_path
+                }
+
+                # Add required settings based on mode
+                if file_management_type == 'Symlinked/Local':
+                    required_settings.extend([
+                        ('File Management', 'symlinked_files_path'),
+                        ('File Management', 'original_files_path')
+                    ])
+                
+                # Add Plex-specific required settings if we have Plex URL and token
+                if plex_url and plex_token:
+                    required_settings.extend([
+                        ('Plex', 'url'),
+                        ('Plex', 'token')
+                    ])
+                    if file_management_type == 'Plex':
+                        required_settings.extend([
+                            ('Plex', 'shows_libraries'),
+                            ('Plex', 'movie_libraries')
+                        ])
                 
                 # Handle debrid provider selection
                 provider = request.form.get('debrid_provider', 'RealDebrid')
-                if provider == 'RealDebrid':
-                    api_key = request.form.get('realdebrid_api_key', '')
+                api_key = request.form.get('debrid_api_key', '')
                 
                 config['Debrid Provider'] = {
                     'provider': provider,
@@ -139,6 +185,7 @@ def onboarding_step(step):
                     'client_id': request.form['trakt_client_id'],
                     'client_secret': request.form['trakt_client_secret']
                 }
+                
                 save_config(config)
                 
                 # Check if all required settings are now present
@@ -175,8 +222,21 @@ def onboarding_step(step):
                                SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
 
     elif step == 5:
+        # Library Management step
+        config = load_config()
+        can_proceed = 'Libraries' in config and bool(config['Libraries'])
+        return render_template('onboarding_step_5.html', 
+                             current_step=step, 
+                             can_proceed=can_proceed,
+                             settings=config, 
+                             is_onboarding=True)
+
+    elif step == 6:  # Previous step 5 is now step 6
         can_proceed = True  # Always allow finishing the onboarding process
-        return render_template('onboarding_step_5.html', current_step=step, can_proceed=can_proceed, is_onboarding=True)
+        return render_template('onboarding_step_6.html', 
+                             current_step=step, 
+                             can_proceed=can_proceed, 
+                             is_onboarding=True)
 
 
 @onboarding_bp.route('/complete', methods=['POST'])
@@ -340,3 +400,144 @@ def get_onboarding_scrapers():
         'scrapers': config.get('Scrapers', {}),
         'scraper_types': scraper_types
     })
+
+@onboarding_bp.route('/settings/api/update', methods=['POST'])
+def update_settings():
+    try:
+        data = request.json
+        config = load_config()
+        
+        # Update each setting in the config
+        for setting_path, value in data.items():
+            # Split the path into category and key
+            category, key = setting_path.split('.')
+            
+            # Ensure category exists in config
+            if category not in config:
+                config[category] = {}
+            
+            # Update the setting
+            config[category][key] = value
+        
+        # Save the updated config
+        save_config(config)
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error updating settings: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@onboarding_bp.route('/settings/validate/onboarding-settings', methods=['POST'])
+@login_required
+def validate_onboarding_settings():
+    try:
+        data = request.json
+        management_type = data.get('management_type')
+        config = load_config()
+        
+        # For skip option
+        if management_type == 'skip':
+            # Save minimal library configuration
+            if 'Libraries' not in config:
+                config['Libraries'] = {}
+            config['Libraries']['setup_skipped'] = True
+            save_config(config)
+            return jsonify({
+                'valid': True,
+                'checks': [{
+                    'name': 'Library Management',
+                    'valid': True,
+                    'message': 'Library management setup has been skipped.'
+                }]
+            })
+            
+        # For fresh Plex setup
+        elif management_type == 'fresh':
+            checks = []
+            is_valid = True
+            
+            # Check if Plex settings are configured
+            plex_settings = config.get('Plex', {})
+            if not plex_settings.get('url') or not plex_settings.get('token'):
+                is_valid = False
+                checks.append({
+                    'name': 'Plex Configuration',
+                    'valid': False,
+                    'message': 'Plex URL and token are required for fresh setup.'
+                })
+            else:
+                checks.append({
+                    'name': 'Plex Configuration',
+                    'valid': True,
+                    'message': 'Plex settings are properly configured.'
+                })
+                
+            return jsonify({
+                'valid': is_valid,
+                'checks': checks
+            })
+            
+        # For existing Plex setups
+        elif management_type in ['plex_direct', 'plex_symlink']:
+            checks = []
+            is_valid = True
+            
+            # Validate based on setup type
+            if management_type == 'plex_direct':
+                # Check for direct mount requirements
+                mount_path = config.get('File Management', {}).get('original_files_path')
+                if not mount_path:
+                    is_valid = False
+                    checks.append({
+                        'name': 'Mount Configuration',
+                        'valid': False,
+                        'message': 'Direct mount path is not configured.'
+                    })
+                else:
+                    checks.append({
+                        'name': 'Mount Configuration',
+                        'valid': True,
+                        'message': 'Mount path is properly configured.'
+                    })
+                    
+            elif management_type == 'plex_symlink':
+                # Check for symlink requirements
+                symlink_path = config.get('File Management', {}).get('symlinked_files_path')
+                if not symlink_path:
+                    is_valid = False
+                    checks.append({
+                        'name': 'Symlink Configuration',
+                        'valid': False,
+                        'message': 'Symlink path is not configured.'
+                    })
+                else:
+                    checks.append({
+                        'name': 'Symlink Configuration',
+                        'valid': True,
+                        'message': 'Symlink path is properly configured.'
+                    })
+                    
+            return jsonify({
+                'valid': is_valid,
+                'checks': checks
+            })
+            
+        else:
+            return jsonify({
+                'valid': False,
+                'checks': [{
+                    'name': 'Configuration Error',
+                    'valid': False,
+                    'message': f'Invalid management type: {management_type}'
+                }]
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'valid': False,
+            'checks': [{
+                'name': 'System Error',
+                'valid': False,
+                'message': str(e)
+            }]
+        }), 500

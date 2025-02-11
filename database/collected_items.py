@@ -4,11 +4,12 @@ import logging
 import os
 from datetime import datetime
 import json
-from .database_writing import add_to_collected_notifications
+from .database_writing import add_to_collected_notifications, update_media_item_state
 from reverse_parser import parser_approximation
 from settings import get_setting
 from typing import Dict, Any, List
 from .unmatched_helper import find_matching_item_in_db
+from utilities.post_processing import handle_state_change
 
 def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
@@ -190,6 +191,12 @@ def add_collected_items(media_items_batch, recent=False):
                                 WHERE id = ?
                             ''', (new_state, datetime.now(), collected_at, existing_collected_at, 
                                   location, is_upgrade, item.get('resolution'), item_id))
+
+                            # Add post-processing call after state update
+                            if new_state == 'Collected':
+                                handle_state_change(dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()))
+                            elif new_state == 'Upgrading':
+                                handle_state_change(dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()))
 
                             if not existing_item.get('collected_at'):
                                 cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))

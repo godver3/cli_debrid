@@ -63,53 +63,197 @@
     #trakt-activate-link:hover {
         text-decoration: underline;
     }
-    </style>
+
+    .conditional-fields {
+        display: none;
+    }
+
+    .conditional-fields.active {
+        display: block;
+    }
+
+    .management-type-description {
+        margin: 10px 0;
+        padding: 10px;
+        background-color: #2a2a2a;
+        border-radius: 5px;
+        color: #f1f1f1;
+    }
+
+    /* Validation styles for the popup */
+    .validation-check {
+        margin: 10px 0;
+        padding: 10px;
+        border-radius: 4px;
+        background: var(--card-bg);
+    }
+
+    .validation-check.success {
+        border-left: 4px solid var(--success-color);
+    }
+
+    .validation-check.error {
+        border-left: 4px solid var(--danger-color);
+    }
+
+    .validation-message {
+        margin-top: 5px;
+        font-size: 0.9em;
+    }
+
+    .next-step-btn.validate-btn {
+        background-color: #3498db;  /* Match onboarding.css blue color */
+        color: white;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+    }
+
+    .next-step-btn.validate-btn:hover {
+        background-color: #2980b9;  /* Darker blue on hover */
+        opacity: 0.9;
+    }
+
+    .next-step-btn.validate-btn:disabled {
+        background-color: #95a5a6;  /* Gray when disabled */
+        cursor: not-allowed;
+        opacity: 0.7;
+    }
+</style>
 <div class="onboarding-container">
     <h2 class="onboarding-title">Step 2: Required Settings</h2>
     <form id="settings-form" class="onboarding-form">
-        <label for="plex_url" class="onboarding-label">Plex URL:</label>
-        <input type="text" id="plex_url" name="plex_url" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('url', '') }}">
+        <!-- File Management Type Selection -->
+        <label for="file_collection_management" class="onboarding-label">File Collection Management:</label>
 
-        <label for="plex_token" class="onboarding-label">Plex Token:</label>
-        <input type="text" id="plex_token" name="plex_token" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('token', '') }}">
-
-        <label for="movie_libraries" class="onboarding-label">Movie Libraries:</label>
-        <input type="text" id="movie_libraries" name="movie_libraries" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('movie_libraries', '') }}">
-
-        <label for="shows_libraries" class="onboarding-label">TV Libraries:</label>
-        <input type="text" id="shows_libraries" name="shows_libraries" required class="onboarding-input" value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}">
-
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <label for="update_plex_on_file_discovery" class="onboarding-label" style="margin-bottom: 0;">Update Plex on file discovery:</label>
-            <input type="checkbox" id="update_plex_on_file_discovery" name="update_plex_on_file_discovery" {% if settings.get('Plex', {}).get('update_plex_on_file_discovery', False) %}checked{% endif %}>
+        <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
+            <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
+            <option value="Symlinked/Local" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Symlinked/Local' %}selected{% endif %}>Symlinked/Local</option>
+        </select>
+        <div id="plex-description" class="settings-description">
+            Plex management will integrate with your Plex Media Server to manage and organize your media files.
         </div>
-        <div class="settings-description">Update Plex on file discovery (cli_debrid must be able to access mount at the below location)</div>
+        <div id="local-description" class="settings-description" style="display: none;">
+            Symlinked/Local management will organize files in your local filesystem using symbolic links.
+        </div>
+        <div class="advice-section">
+            <div class="advice-header">
+                💡 Want my advice?
+                <i class="fas fa-chevron-down toggle-icon"></i>
+            </div>
+            <div class="advice-content">
+                If you are starting fresh - I recommend using a Symlinked library (especially if you are watching Anime content).<br><br>
+                If you already have an rclone mounted library in Plex and are not having issues - continue using it.<br><br>
+                If you are having issues with an rclone mounted library (items not scanning in, Anime not recognized by Plex) consider either starting a new Symlinked library or converting your library to Symlinks (done later in Step 5)
+            </div>
+        </div>
 
-        <label for="mounted_file_location" class="onboarding-label">Mounted file location:</label>
-        <input type="text" id="mounted_file_location" name="mounted_file_location" class="onboarding-input" value="{{ settings.get('Plex', {}).get('mounted_file_location', '/mnt/zurg/__all__') }}">
-        <div class="settings-description">Mounted file location (in Zurg use the /__all__ folder)</div>
+        <!-- Plex-specific fields -->
+        <div id="plex-fields" class="conditional-fields">
+            <label for="plex_url" class="onboarding-label">Plex URL:</label>
+            <div id="plex-url-description" class="settings-description">
+                Plex URL is the URL of your Plex Media Server. Remove trailing slashes. e.g. http://192.168.1.100:32400
+            </div>
+            <input type="text" id="plex_url" name="plex_url" class="onboarding-input" value="{{ settings.get('Plex', {}).get('url', '') }}">
+
+            <label for="plex_token" class="onboarding-label">Plex Token:</label>
+            <div id="plex-token-description" class="settings-description">
+                Plex Token is the token for your Plex Media Server. This can be found by selecting an item in Plex, choosing Get Info, choosing Get XML at the bottom left, and selecting the token found after "X-Plex-Token="
+            </div>
+            <input type="text" id="plex_token" name="plex_token" class="onboarding-input" value="{{ settings.get('Plex', {}).get('token', '') }}">
+
+            <label for="movie_libraries" class="onboarding-label">Movie Libraries:</label>
+            <div id="movie-libraries-description" class="settings-description">
+                Movie Libraries are the libraries in Plex that contain movies. Comma separated, and can use either the Library's name or ID
+            </div>
+            <input type="text" id="movie_libraries" name="movie_libraries" class="onboarding-input" value="{{ settings.get('Plex', {}).get('movie_libraries', '') }}">
+
+            <label for="shows_libraries" class="onboarding-label">TV Libraries:</label>
+            <div id="shows-libraries-description" class="settings-description">
+                TV Libraries are the libraries in Plex that contain TV shows. Comma separated, and can use either the Library's name or ID
+            </div>
+            <input type="text" id="shows_libraries" name="shows_libraries" class="onboarding-input" value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}">
+
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label for="update_plex_on_file_discovery" class="onboarding-label" style="margin-bottom: 0;">Update Plex on file discovery (Optional):</label>
+                <input type="checkbox" id="update_plex_on_file_discovery" name="update_plex_on_file_discovery" {% if settings.get('Plex', {}).get('update_plex_on_file_discovery', False) %}checked{% endif %}>
+            </div>
+            <div class="settings-description">Update Plex on file discovery using the Plex API</div>
+        </div>
+
+        <!-- Local/Symlinked-specific fields -->
+        <div id="local-fields" class="conditional-fields">
+            <label for="plex_url_for_symlink" class="onboarding-label">Plex URL (Optional):</label>
+            <div class="settings-description">Plex server URL for symlink updates (optional)</div>
+            <input type="text" id="plex_url_for_symlink" name="plex_url_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_url_for_symlink', '') }}">
+
+            <label for="plex_token_for_symlink" class="onboarding-label">Plex Token (Optional):</label>
+            <div class="settings-description">Plex authentication token for symlink updates (optional)</div>
+            <input type="text" id="plex_token_for_symlink" name="plex_token_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_token_for_symlink', '') }}">
+        
+            <div class="advice-section">
+                <div class="advice-header">
+                    💡 Want my advice?
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                </div>
+                <div class="advice-content">
+                    I recommend including your Plex URL and token even when using Symlinked libraries! This allows cli_debrid to automatically trigger Plex library scans when new files are added, ensuring your content appears in Plex immediately.
+                </div>
+            </div>
+
+            <label for="symlinked_files_path" class="onboarding-label">Symlinked Files Path:</label>
+            <div class="settings-description">Path to the destination folder (where you want your files symlinked to). cli_debrid will create a Movies and TV Shows folder within this location</div>
+            <input type="text" id="symlinked_files_path" name="symlinked_files_path" class="onboarding-input" value="{{ settings.get('File Management', {}).get('symlinked_files_path', '/mnt/symlinked') }}">
+        </div>
+
+        <!-- Common fields -->
+        <label for="original_files_path" class="onboarding-label">Original Files Path:</label>
+        <div id="original-files-path-description" class="settings-description">
+            Path to the original files (in Zurg use the /__all__ folder). cli_debrid must be able to access this location - review your Docker container settings
+        </div>
+        <input type="text" id="original_files_path" name="original_files_path" class="onboarding-input" value="{{ settings.get('File Management', {}).get('original_files_path', '/mnt/zurg/__all__') }}">
+
+        <div class="advice-section">
+            <div class="advice-header">
+                💡 Want my advice?
+                <i class="fas fa-chevron-down toggle-icon"></i>
+            </div>
+            <div class="advice-content">
+                Having a hard time getting cli_debrid to see these locations? Verify your docker_compose.yml mount points and make sure that cli_debrid and Plex can see both symlinked and original mount locations the exact same way. Best practice is to pass:<br><br>
+                <code style="background: #1a1a1a; padding: 8px; border-radius: 4px; display: block;">/mnt:/mnt</code><br>
+                ...into both containers.
+            </div>
+        </div>
 
         <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
+        <div id="debrid-provider-description" class="settings-description">
+            Debrid Provider is the debrid provider you want to use.
+        </div>
         <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">
             <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
         </select>
 
         <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
+        <div id="debrid-api-key-description" class="settings-description">
+            Debrid API Key is the API key for your debrid provider.
+        </div>
         <input type="text" id="debrid_api_key" name="debrid_api_key" required class="onboarding-input" value="{{ settings.get('Debrid Provider', {}).get('api_key', '') }}">
 
-        <!-- <label for="file_collection_management" class="onboarding-label">File Collection Management:</label>
-        <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
-            <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
-            <option value="Zurg" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Zurg' %}selected{% endif %}>Zurg</option>
-        </select> -->
-
-        <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
+        <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/ target="_blank" style="color: #3498db;">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
         <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
 
         <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>
+        <div id="trakt-client-id-description" class="settings-description">
+            Trakt Client ID is the Client ID for your Trakt application.
+        </div>
         <input type="text" id="trakt_client_id" name="trakt_client_id" required class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_id', '') }}">
 
         <label for="trakt_client_secret" class="onboarding-label">Trakt Client Secret:</label>
+        <div id="trakt-client-secret-description" class="settings-description">
+            Trakt Client Secret is the Client Secret for your Trakt application.
+        </div>
         <input type="text" id="trakt_client_secret" name="trakt_client_secret" required class="onboarding-input" value="{{ settings.get('Trakt', {}).get('client_secret', '') }}">
 
         <button type="submit" class="onboarding-submit">Save Settings</button>
@@ -135,8 +279,160 @@ import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 document.addEventListener('DOMContentLoaded', function() {
     const settingsForm = document.getElementById('settings-form');
     const nextStepBtn = document.querySelector('.next-step-btn');
+    const fileManagementSelect = document.getElementById('file_collection_management');
+    const plexFields = document.getElementById('plex-fields');
+    const localFields = document.getElementById('local-fields');
+    const plexDescription = document.getElementById('plex-description');
+    const localDescription = document.getElementById('local-description');
 
-    settingsForm.addEventListener('submit', function(event) {
+    // Change next step button text to "Validate Settings" and set next step URL
+    if (nextStepBtn) {
+        nextStepBtn.textContent = 'Validate Settings';
+        nextStepBtn.classList.add('validate-btn');
+        nextStepBtn.classList.add('onboarding-btn');  // Add the onboarding-btn class
+        nextStepBtn.disabled = false;  // Enable the button initially
+        // Store the next step URL
+        nextStepBtn.setAttribute('data-next-step-url', '{{ url_for("onboarding.onboarding_step", step=3) }}');
+    }
+
+    // Function to update required fields based on management type
+    function updateRequiredFields(managementType) {
+        // Plex fields
+        const plexInputs = plexFields.querySelectorAll('input');
+        plexInputs.forEach(input => {
+            input.required = managementType === 'Plex';
+        });
+
+        // Local fields
+        const localInputs = localFields.querySelectorAll('input');
+        localInputs.forEach(input => {
+            input.required = managementType === 'Local';
+        });
+    }
+
+    // Function to toggle visibility of fields based on management type
+    function toggleFields(managementType) {
+        if (managementType === 'Plex') {
+            plexFields.classList.add('active');
+            localFields.classList.remove('active');
+            plexDescription.style.display = 'block';
+            localDescription.style.display = 'none';
+        } else {
+            plexFields.classList.remove('active');
+            localFields.classList.add('active');
+            plexDescription.style.display = 'none';
+            localDescription.style.display = 'block';
+        }
+        updateRequiredFields(managementType);
+    }
+
+    async function validateSettings() {
+        const formData = new FormData(settingsForm);
+        const managementType = formData.get('file_collection_management');
+        
+        // Convert form data to a proper object
+        const settings = Object.fromEntries(formData.entries());
+        
+        // Handle checkbox value properly
+        settings.update_plex_on_file_discovery = formData.get('update_plex_on_file_discovery') === 'on';
+        
+        try {
+            const response = await fetch('/settings_validation/onboarding-settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    management_type: managementType,
+                    settings: settings
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const result = await response.json();
+            renderValidationResults(result);
+            return result.valid;
+        } catch (error) {
+            console.error('Error validating settings:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Failed to validate settings: ' + error.message,
+            });
+            return false;
+        }
+    }
+
+    function renderValidationResults(results) {
+        // Create a formatted message for the popup
+        const validationMessage = results.checks.map(check => `
+            <div class="validation-check ${check.valid ? 'success' : 'error'}">
+                <strong>${check.name}</strong>
+                <div class="validation-message">${check.message}</div>
+            </div>
+        `).join('');
+
+        // Show the popup with validation results
+        showPopup({
+            type: results.valid ? POPUP_TYPES.SUCCESS : POPUP_TYPES.ERROR,
+            title: results.valid ? 'Validation Successful' : 'Validation Failed',
+            message: validationMessage,
+            autoClose: results.valid ? 8000 : false // Auto close only if validation passed
+        });
+
+        // Update next step button based on validation results
+        if (nextStepBtn) {
+            if (results.valid) {
+                nextStepBtn.textContent = 'Next Step';
+                nextStepBtn.classList.remove('validate-btn');
+                nextStepBtn.disabled = false;
+            } else {
+                nextStepBtn.textContent = 'Validate Settings';
+                nextStepBtn.classList.add('validate-btn');
+                nextStepBtn.disabled = false;
+            }
+        }
+    }
+
+    // Handle next step button click
+    if (nextStepBtn) {
+        nextStepBtn.addEventListener('click', async function(event) {
+            // Always prevent default navigation first
+            event.preventDefault();
+            event.stopPropagation();  // Stop event from bubbling up
+            
+            if (nextStepBtn.classList.contains('validate-btn')) {
+                // If it's in validate mode, perform validation
+                const isValid = await validateSettings();
+                if (!isValid) {
+                    // If validation fails, don't proceed
+                    return;
+                }
+            } else {
+                // If it's in "Next Step" mode (validation already passed), allow navigation
+                window.location.href = nextStepBtn.getAttribute('data-next-step-url');
+            }
+        }, true);  // Use capture phase to ensure this handler runs first
+    }
+
+    // Initialize fields based on current selection
+    if (fileManagementSelect) {
+        toggleFields(fileManagementSelect.value);
+        
+        fileManagementSelect.addEventListener('change', function() {
+            toggleFields(this.value);
+            // Reset validation when management type changes
+            if (nextStepBtn) {
+                nextStepBtn.textContent = 'Validate Settings';
+                nextStepBtn.classList.add('validate-btn');
+            }
+        });
+    }
+
+    settingsForm.addEventListener('submit', async function(event) {
         event.preventDefault();
         const formData = new FormData(settingsForm);
         
@@ -148,20 +444,22 @@ document.addEventListener('DOMContentLoaded', function() {
             formData.set('realdebrid_api_key', apiKey);
         }
         
-        fetch('{{ url_for("onboarding.onboarding_step", step=2) }}', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
+        try {
+            const response = await fetch('{{ url_for("onboarding.onboarding_step", step=2) }}', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
             if (data.success) {
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
                     message: 'Settings saved successfully!',
-                    autoClose: 3000  // Close after 3 seconds
+                    autoClose: 3000
                 });
-                nextStepBtn.disabled = !data.can_proceed;
+                // After saving, validate the settings
+                await validateSettings();
             } else {
                 showPopup({
                     type: POPUP_TYPES.ERROR,
@@ -169,16 +467,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     message: 'Error: ' + data.error,
                 });
             }
-        })
-        .catch(error => {
+        } catch (error) {
             console.error('Error:', error);
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 title: 'Error',
                 message: 'An unexpected error occurred.',
             });
-        });
+        }
     });
+
+    initializeTraktAuthorization();
 });
 
 function initializeTraktAuthorization() {
@@ -273,11 +572,7 @@ function checkTraktAuthStatus() {
             traktAuthStatus.textContent = 'Unable to check Trakt authorization status.';
         });
 }
-
-document.addEventListener('DOMContentLoaded', function() {  
-    initializeTraktAuthorization();
-});
 </script>
 
-{% include 'onboarding_navigation.html' %}
+{% include 'onboarding_navigation.html' with context %}
 {% endblock %}

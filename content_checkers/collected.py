@@ -36,7 +36,7 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
         logging.info("No enabled Collected sources found in settings.")
         return []
 
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    disable_caching = True  # Hardcoded to True
     all_wanted_items = []
     cache = {} if disable_caching else load_collected_cache()
     current_time = datetime.now()
@@ -80,11 +80,7 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                 }
 
         result = list(consolidated_items.values())
-        if not disable_caching:
-            logging.info(f"Found {len(result)} unique TV shows from local database. Skipped {cache_skipped} items in cache.")
-        else:
-            logging.info(f"Found {len(result)} unique TV shows from local database. Caching disabled.")
-        logging.debug(f"Processing batch of {len(result)} items")
+        logging.info(f"Found {len(result)} unique TV shows from local database")
 
         all_wanted_items.append((result, versions))
 

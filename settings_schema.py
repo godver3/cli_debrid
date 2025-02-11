@@ -423,7 +423,12 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Enable granular version additions for Wanted items",
             "default": False
-        }
+        },
+        "cinesync_path": {
+            "type": "string",
+            "description": "Absolute path to your CineSync MediaHub main.py file (e.g. /path/to/CineSync/MediaHub/main.py)",
+            "default": ""
+        },
     },
     "Scrapers": {
         "tab": "Scrapers",

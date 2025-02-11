@@ -362,7 +362,7 @@ body {
 
 #episodeResults > div {
     position: relative;
-    width: 95%;
+    width: auto;
     max-width: 1600px;
     margin: 0 auto;
     /*top: 140px;*/
@@ -616,7 +616,7 @@ p.torresult-title {
 }
 
 #trendingContainer {
-    max-width: 100vw;
+    max-width: 85vw;
 }
 
 /* Media queries for better responsive design */

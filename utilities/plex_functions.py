@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_REQUESTS = 400
 CHUNK_SIZE = 10  # Adjust this value to find the optimal balance
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # seconds
 
 def process_library_names(library_names: str, all_libraries: dict, libraries_by_key: dict) -> list:
     """
@@ -45,9 +47,51 @@ def process_library_names(library_names: str, all_libraries: dict, libraries_by_
     return libraries
 
 async def fetch_data(session: aiohttp.ClientSession, url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
-    async with semaphore:
-        async with session.get(url, headers=headers) as response:
-            return await response.json()
+    """Fetch data from Plex with retry logic."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with semaphore:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        try:
+                            return await response.json()
+                        except aiohttp.ContentTypeError:
+                            # If we can't decode JSON, try to get the text content for error details
+                            error_content = await response.text()
+                            logger.error(f"Failed to decode JSON from {url}. Content: {error_content[:200]}...")
+                            if attempt < MAX_RETRIES - 1:
+                                wait_time = RETRY_DELAY * (attempt + 1)
+                                logger.info(f"Retrying in {wait_time} seconds... (Attempt {attempt + 1}/{MAX_RETRIES})")
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
+                                return {'MediaContainer': {'Metadata': []}}
+                    elif response.status == 404:
+                        logger.warning(f"Resource not found at {url}")
+                        return {'MediaContainer': {'Metadata': []}}
+                    else:
+                        error_content = await response.text()
+                        logger.error(f"HTTP {response.status} from {url}. Content: {error_content[:200]}...")
+                        
+                        if attempt < MAX_RETRIES - 1:
+                            wait_time = RETRY_DELAY * (attempt + 1)
+                            logger.info(f"Retrying in {wait_time} seconds... (Attempt {attempt + 1}/{MAX_RETRIES})")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            return {'MediaContainer': {'Metadata': []}}
+                            
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if attempt < MAX_RETRIES - 1:
+                wait_time = RETRY_DELAY * (attempt + 1)
+                logger.warning(f"Request failed: {str(e)}. Retrying in {wait_time} seconds... (Attempt {attempt + 1}/{MAX_RETRIES})")
+                await asyncio.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"Failed after {MAX_RETRIES} attempts: {str(e)}")
+                return {'MediaContainer': {'Metadata': []}}
+    
+    return {'MediaContainer': {'Metadata': []}}
 
 async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, library_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
     url = f"{plex_url}/library/sections/{library_key}/all?includeGuids=1"
@@ -285,10 +329,14 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     logger.debug(f"Processed {len(movie_entries)} entries for movie: {movie['title']}")
     return movie_entries
 
-async def get_collected_from_plex(request='all'):
+async def get_collected_from_plex(request='all', progress_callback=None, bypass=False):
     try:
         start_time = time.time()
         logger.info(f"Starting Plex content collection. Request type: {request}")
+
+        if progress_callback:
+            logger.debug("Calling progress callback: Connecting to Plex server...")
+            progress_callback('scanning', 'Connecting to Plex server...')
 
         plex_url = get_setting('Plex', 'url').rstrip('/')
         plex_token = get_setting('Plex', 'token')
@@ -300,25 +348,47 @@ async def get_collected_from_plex(request='all'):
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
         async with aiohttp.ClientSession() as session:
+            if progress_callback:
+                logger.debug("Calling progress callback: Retrieving library sections...")
+                progress_callback('scanning', 'Retrieving library sections...')
+
             libraries_url = f"{plex_url}/library/sections"
+            logger.debug(f"Fetching library sections from: {libraries_url}")
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
             
             # Create mappings for library names and keys
             libraries_by_key = {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']}
             all_libraries = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
             
-            # Process movie and show libraries
-            movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, libraries_by_key)
-            show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, libraries_by_key)
+            if bypass:
+                # When bypass is true, gather all movie and show libraries
+                movie_libraries = []
+                show_libraries = []
+                for library in libraries_data['MediaContainer']['Directory']:
+                    if library['type'] == 'movie':
+                        movie_libraries.append(str(library['key']))
+                    elif library['type'] == 'show':
+                        show_libraries.append(str(library['key']))
+            else:
+                # Process movie and show libraries from settings
+                movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, libraries_by_key)
+                show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, libraries_by_key)
             
             logger.info(f"TV Show libraries to process: {show_libraries}")
             logger.info(f"Movie libraries to process: {movie_libraries}")
+
+            if progress_callback:
+                logger.debug("Calling progress callback: Retrieving show library contents...")
+                progress_callback('scanning', 'Retrieving show library contents...')
 
             all_shows = []
             for library_key in show_libraries:
                 shows = await get_library_contents(session, plex_url, library_key, headers, semaphore)
                 all_shows.extend(shows)
             
+            if progress_callback:
+                progress_callback('scanning', 'Retrieving movie library contents...')
+
             all_movies = []
             for library_key in movie_libraries:
                 movies = await get_library_contents(session, plex_url, library_key, headers, semaphore)
@@ -327,33 +397,71 @@ async def get_collected_from_plex(request='all'):
             logger.info(f"Total shows found: {len(all_shows)}")
             logger.info(f"Total movies found: {len(all_movies)}")
             
+            if progress_callback:
+                progress_callback('scanning', f'Processing {len(all_shows)} shows...', {
+                    'total_shows': len(all_shows),
+                    'total_movies': len(all_movies),
+                    'shows_processed': 0,
+                    'movies_processed': 0
+                })
+
             all_episodes = []
             for i in range(0, len(all_shows), CHUNK_SIZE):
                 chunk = all_shows[i:i+CHUNK_SIZE]
                 chunk_episodes = await process_shows_chunk(session, plex_url, headers, semaphore, chunk)
                 all_episodes.extend(chunk_episodes)
-                logger.info(f"Processed {i+len(chunk)}/{len(all_shows)} shows")
-                logger.debug(f"Total episodes: {len(all_episodes)}")
+                
+                if progress_callback:
+                    shows_processed = min(i + CHUNK_SIZE, len(all_shows))
+                    progress_callback('scanning', 
+                        f'Processed {shows_processed}/{len(all_shows)} shows ({len(all_episodes)} episodes found)',
+                        {
+                            'shows_processed': shows_processed,
+                            'total_shows': len(all_shows),
+                            'total_movies': len(all_movies),
+                            'episodes_found': len(all_episodes)
+                        }
+                    )
             
+            if progress_callback:
+                progress_callback('scanning', f'Processing {len(all_movies)} movies...')
+
             all_movies_processed = []
             for i in range(0, len(all_movies), CHUNK_SIZE):
                 chunk = all_movies[i:i+CHUNK_SIZE]
                 chunk_movies = await process_movies_chunk(session, plex_url, headers, semaphore, chunk)
                 all_movies_processed.extend(chunk_movies)
-                logger.info(f"Processed {i+len(chunk)}/{len(all_movies)} movies")
-                logger.debug(f"Total movies: {len(all_movies_processed)}")
+                
+                if progress_callback:
+                    movies_processed = min(i + CHUNK_SIZE, len(all_movies))
+                    progress_callback('scanning', 
+                        f'Processed {movies_processed}/{len(all_movies)} movies',
+                        {
+                            'shows_processed': len(all_shows),
+                            'total_shows': len(all_shows),
+                            'movies_processed': movies_processed,
+                            'total_movies': len(all_movies),
+                            'episodes_found': len(all_episodes)
+                        }
+                    )
            
         end_time = time.time()
         total_time = end_time - start_time
         logger.info(f"Collection complete. Total time: {total_time:.2f} seconds")
         logger.info(f"Collected: {len(all_episodes)} episodes and {len(all_movies_processed)} movies")
-        
-        logger.debug(f"Final episodes list length: {len(all_episodes)}")
-        logger.debug(f"Final movies list length: {len(all_movies_processed)}")
 
         if not all_movies_processed and not all_episodes:
             logger.error("No content retrieved from Plex scan")
             return None
+
+        if progress_callback:
+            progress_callback('complete', 'Scan complete', {
+                'shows_processed': len(all_shows),
+                'total_shows': len(all_shows),
+                'movies_processed': len(all_movies),
+                'total_movies': len(all_movies),
+                'episodes_found': len(all_episodes)
+            })
 
         return {
             'movies': all_movies_processed,
@@ -361,16 +469,18 @@ async def get_collected_from_plex(request='all'):
         }
     except Exception as e:
         logger.error(f"Error collecting content from Plex: {str(e)}", exc_info=True)
-        return None
+        if progress_callback:
+            progress_callback('error', f'Error: {str(e)}')
+        raise
 
-async def run_get_collected_from_plex(request='all'):
+async def run_get_collected_from_plex(request='all', progress_callback=None, bypass=False):
     logger.info("Starting run_get_collected_from_plex")
-    result = await get_collected_from_plex(request)
+    result = await get_collected_from_plex(request, progress_callback, bypass)
     logger.info("Completed run_get_collected_from_plex")
     return result
 
-def sync_run_get_collected_from_plex(request='all'):
-    return asyncio.run(run_get_collected_from_plex(request))
+def sync_run_get_collected_from_plex(request='all', progress_callback=None):
+    return asyncio.run(run_get_collected_from_plex(request, progress_callback))
 
 async def get_recent_from_plex():
     try:
