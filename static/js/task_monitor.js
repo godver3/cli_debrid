@@ -155,17 +155,10 @@ export function initializeTaskMonitor() {
     });
 
     function toggleTaskMonitor() {
-        const container = document.querySelector('.task-monitor-container');
-        const isHidden = !container.classList.contains('visible');
-        
-        container.classList.toggle('visible');
-        container.classList.toggle('hidden');
-        
-        // Store the state in localStorage
-        localStorage.setItem('taskMonitorVisible', isHidden ? 'true' : 'false');
-        
-        // Update body padding
-        window.updateBodyPadding();
+        const dropdown = document.getElementById('taskMonitorDropdown');
+        if (dropdown) {
+            dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+        }
     }
 
     function toggleTaskMonitorVisibility() {
