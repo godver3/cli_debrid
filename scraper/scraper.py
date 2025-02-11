@@ -70,19 +70,17 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         if version == "No Version":
             version = None
             
-        # Check for preferred alias first
+        # Get preferred alias first
         preferred_alias = get_preferred_alias(tmdb_id, imdb_id, content_type, season)
         if preferred_alias:
             logging.info(f"Found preferred alias: {preferred_alias}")
-            title = preferred_alias
 
-        # Get aliases if no preferred alias exists
+        # Get all available aliases
         item_aliases = {}
         if content_type.lower() == 'movie':
             item_aliases, _ = direct_api.get_movie_aliases(imdb_id)
         else:
             item_aliases, _ = direct_api.get_show_aliases(imdb_id)
-        # logging.info(f"Alias list: {item_aliases}")
 
         media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
         logging.info(f"Media country code (aliases): {media_country_code}")
@@ -92,7 +90,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             matching_aliases = [alias for alias in item_aliases[media_country_code] if alias.lower() != title.lower()]
             matching_aliases = list(dict.fromkeys(matching_aliases))
             logging.info(f"Found {len(matching_aliases)} matching aliases: {matching_aliases}")
-        
+
         # Initialize anime-specific variables
         genres = filter_genres(genres)
         is_anime = genres and 'anime' in [genre.lower() for genre in genres]
@@ -104,6 +102,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             logging.info(f"Total episodes for season {season}: {total_episodes}")
             episode_formats = convert_anime_episode_format(season, episode, total_episodes)
             logging.info(f"Generated episode formats for anime: {episode_formats}")
+
+        # Initialize results lists
+        all_filtered_results = []
+        all_filtered_out_results = []
 
         def _do_scrape(
             search_title: str,
@@ -182,16 +184,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     'preferred_filter_out': []
                 }
 
-            task_start = time.time()
-            normalized_title = normalize_title(search_title)
-            task_timings['title_normalization'] = time.time() - task_start
-
             # Use ScraperManager to handle scraping
             task_start = time.time()
             scraper_manager = ScraperManager(load_config())
             all_results = scraper_manager.scrape_all(
                 imdb_id=imdb_id,
-                title=normalized_title,
+                title=search_title,
                 year=year,
                 content_type=content_type,
                 season=season,
@@ -227,8 +225,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     
                 normalized_result = result.copy()
                 original_title = result.get('title', '')
-                normalized_result['original_title'] = original_title
-                normalized_result['title'] = parsed_info.get('title', original_title)
+                normalized_result['original_title'] = original_title  # Keep original torrent title
+                normalized_result['parsed_title'] = parsed_info.get('title', original_title)  # Store parsed title separately
                 normalized_result['resolution'] = parsed_info.get('resolution', 'Unknown')
                 normalized_result['parsed_info'] = parsed_info
                 if is_alias:
@@ -239,74 +237,48 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             # Filter results
             task_start = time.time()
-            filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, normalized_title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres, matching_aliases)
+            filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, search_title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres, matching_aliases)
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
 
-            # Process results
-            for result in filtered_results:
-                result['is_anime'] = is_anime
-                result['media_country_code'] = media_country_code
-                
-                # Add multi-pack information
-                original_title = result.get('original_title', result.get('title', ''))
-                result['title'] = original_title  # Preserve the original title
-                preprocessed_title = preprocess_title(original_title)
-                preprocessed_title = normalize_title(preprocessed_title)
-                season_episode_info = detect_season_episode_info(preprocessed_title)
-                season_pack = season_episode_info['season_pack']
-                is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
-                result['is_multi_pack'] = is_multi_pack
-                result['season_pack'] = season_pack
-
-            # Sort results
-            task_start = time.time()
-            def stable_rank_key(x):
-                return rank_result_key(x, filtered_results, normalized_title, year, season, episode, multi, content_type, version_settings)
-
-            # Apply ultimate sort order if present
-            if get_setting('Scraping', 'ultimate_sort_order')=='Size: large to small':
-                filtered_results = sorted(filtered_results, key=stable_rank_key)
-                filtered_results = sorted(filtered_results, key=lambda x: x.get('size', 0), reverse=True)
-            elif get_setting('Scraping', 'ultimate_sort_order')=='Size: small to large':
-                filtered_results = sorted(filtered_results, key=stable_rank_key)
-                filtered_results = sorted(filtered_results, key=lambda x: x.get('size', 0))
-            else:
-                filtered_results = sorted(filtered_results, key=stable_rank_key)
-
-            task_timings['sorting'] = time.time() - task_start
-
             return filtered_results, filtered_out_results, task_timings
 
-        # First pass with original title or preferred alias
-        filtered_results, filtered_out_results, task_timings = _do_scrape(
-            search_title=title,
-            content_type=content_type,
-            version=version,
-            season=season,
-            episode=episode,
-            multi=multi,
-            genres=genres,
-            episode_formats=episode_formats,
-            is_anime=is_anime,
-            is_alias=preferred_alias is not None,
-            alias_country=media_country_code if preferred_alias else None
-        )
+        # First pass: Try original title and preferred alias together
+        titles_to_try = [('original', title)]
+        if preferred_alias:
+            titles_to_try.append(('preferred_alias', preferred_alias))
 
-        # If no results and we're not already using a preferred alias, try aliases
-        if not filtered_results and not preferred_alias:
-            logging.info(f"No valid results found with original title. Attempting to use aliases.")
+        for source, search_title in titles_to_try:
+            logging.info(f"First pass - Trying {source}: {search_title}")
+            filtered_results, filtered_out_results, task_timings = _do_scrape(
+                search_title=search_title,
+                content_type=content_type,
+                version=version,
+                season=season,
+                episode=episode,
+                multi=multi,
+                genres=genres,
+                episode_formats=episode_formats,
+                is_anime=is_anime,
+                is_alias=(source != 'original'),
+                alias_country=media_country_code if source != 'original' else None
+            )
             
-            if matching_aliases:
-                # Remove duplicates while preserving order
-                best_alias = None
-                best_results = []
-                best_filtered_out = None
-                
-                # Try all aliases and keep track of which one produces the most results
-                for alias in matching_aliases:
+            if filtered_results:
+                all_filtered_results.extend(filtered_results)
+                if filtered_out_results:
+                    all_filtered_out_results.extend(filtered_out_results)
+
+        # If no results from first pass, try aliases
+        if not all_filtered_results and matching_aliases:
+            logging.info("No results from first pass, trying aliases...")
+            best_alias = None
+            best_alias_results = []
+            
+            for alias in matching_aliases:
+                if alias != preferred_alias:  # Skip if we already tried it
                     logging.info(f"Trying alias: {alias}")
-                    alias_results, alias_filtered_out, alias_timings = _do_scrape(
+                    filtered_results, filtered_out_results, task_timings = _do_scrape(
                         search_title=alias,
                         content_type=content_type,
                         version=version,
@@ -320,50 +292,71 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         alias_country=media_country_code
                     )
                     
-                    if alias_results and len(alias_results) > len(best_results):
-                        logging.info(f"New best alias found: {alias} with {len(alias_results)} results")
+                    if filtered_results and len(filtered_results) > len(best_alias_results):
+                        logging.info(f"New best alias found: {alias} with {len(filtered_results)} results")
                         best_alias = alias
-                        best_results = alias_results
-                        best_filtered_out = alias_filtered_out
-                
-                # If we found any results, use the best alias
-                if best_alias:
-                    logging.info(f"Using best alias: {best_alias} with {len(best_results)} results")
-                    # Store this most successful alias as preferred for future use
-                    update_preferred_alias(tmdb_id, imdb_id, best_alias, content_type, season)
-                    filtered_results = best_results
-                    if best_filtered_out:
-                        filtered_out_results = best_filtered_out
+                        best_alias_results = filtered_results
+                        if filtered_out_results:
+                            all_filtered_out_results.extend(filtered_out_results)
 
-        # Sanitize results for return
-        def sanitize_result(result):
-            def sanitize_value(value):
-                if isinstance(value, (str, int, float, bool, type(None))):
-                    return value
-                elif isinstance(value, dict):
-                    return {k: sanitize_value(v) for k, v in value.items()}
-                elif isinstance(value, list):
-                    return [sanitize_value(item) for item in value]
-                return str(value)
+            # If we found a better alias, update it as preferred and add its results
+            if best_alias and best_alias_results:
+                logging.info(f"Setting new preferred alias: {best_alias}")
+                update_preferred_alias(tmdb_id, imdb_id, best_alias, content_type, season)
+                all_filtered_results.extend(best_alias_results)
 
-            sanitized = {key: sanitize_value(value) for key, value in result.items()}
-            if 'score_breakdown' in result:
-                sanitized['score_breakdown'] = result['score_breakdown']
-            return sanitized
+        # Deduplicate final results while preserving order
+        seen = set()
+        deduplicated_results = []
+        for result in all_filtered_results:
+            result_key = result.get('original_title', '')
+            if result_key not in seen:
+                seen.add(result_key)
+                deduplicated_results.append(result)
 
-        filtered_results = [sanitize_result(result) for result in filtered_results]
-        filtered_out_results = [sanitize_result(result) for result in filtered_out_results] if filtered_out_results else None
+        # Parse scraping settings for final sorting
+        scraping_versions = get_setting('Scraping', 'versions', {})
+        version_settings = scraping_versions.get(version, None)
+        if version_settings is None:
+            version_settings = {
+                'enable_hdr': True,
+                'max_resolution': '2160p',
+                'resolution_wanted': '<=',
+                'resolution_weight': '3',
+                'hdr_weight': '3',
+                'similarity_weight': '3',
+                'size_weight': '3',
+                'bitrate_weight': '3',
+                'min_size_gb': 0.01,
+                'max_size_gb': None,
+                'similarity_threshold_anime': 0.35,
+                'similarity_threshold': 0.8,
+                'filter_in': [],
+                'filter_out': [],
+                'preferred_filter_in': [],
+                'preferred_filter_out': []
+            }
 
-        if version == None:
-            # Sort by size in descending order (largest first)
-            filtered_results.sort(key=lambda x: float(x.get('size_gb', 0)), reverse=True)
+        # Sort all results together
+        def stable_rank_key(x):
+            return rank_result_key(x, deduplicated_results, title, year, season, episode, multi, content_type, version_settings)
+
+        # Apply ultimate sort order if present
+        if get_setting('Scraping', 'ultimate_sort_order')=='Size: large to small':
+            deduplicated_results = sorted(deduplicated_results, key=stable_rank_key)
+            deduplicated_results = sorted(deduplicated_results, key=lambda x: x.get('size', 0), reverse=True)
+        elif get_setting('Scraping', 'ultimate_sort_order')=='Size: small to large':
+            deduplicated_results = sorted(deduplicated_results, key=stable_rank_key)
+            deduplicated_results = sorted(deduplicated_results, key=lambda x: x.get('size', 0))
+        else:
+            deduplicated_results = sorted(deduplicated_results, key=stable_rank_key)
 
         # Log final results
-        logging.debug(f"Total scrape results: {len(filtered_results)}")
-        for result in filtered_results:
+        logging.debug(f"Total scrape results after trying all titles: {len(deduplicated_results)}")
+        for result in deduplicated_results:
             logging.info(f"-- Final result: {result.get('original_title')}")
 
-        return filtered_results, filtered_out_results
+        return deduplicated_results, all_filtered_out_results
 
     except Exception as e:
         logging.error(f"Unexpected error in scrape function for {title} ({year}): {str(e)}", exc_info=True)

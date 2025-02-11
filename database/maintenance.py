@@ -7,6 +7,7 @@ def update_show_ids():
     import os
     from fuzzywuzzy import fuzz
     import re
+    import json
     api = DirectAPI()
 
     logging.info("Starting show ID update task")

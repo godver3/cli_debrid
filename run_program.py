@@ -33,6 +33,11 @@ from api_tracker import api  # Add this import for the api module
 from plexapi.server import PlexServer
 from database.core import get_db_connection
 import json
+from utilities.post_processing import handle_state_change
+from content_checkers.content_cache_management import (
+    load_source_cache, save_source_cache, 
+    should_process_item, update_cache_for_item
+)
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -413,10 +418,19 @@ class ProgramRunner:
     def process_content_source(self, source, data):
         source_type = source.split('_')[0]
         versions = data.get('versions', {})
+        source_media_type = data.get('media_type', 'All')
 
-        logging.debug(f"Processing content source: {source} (type: {source_type})")
+        logging.debug(f"Processing content source: {source} (type: {source_type}, media_type: {source_media_type})")
 
         try:
+            # Load cache for this source
+            source_cache = load_source_cache(source)
+            logging.debug(f"Initial cache state for {source}: {len(source_cache)} entries")
+            cache_skipped = 0
+            items_processed = 0
+            total_items = 0
+            media_type_skipped = 0
+
             wanted_content = []
             if source_type == 'Overseerr':
                 wanted_content = get_wanted_from_overseerr()
@@ -430,7 +444,6 @@ class ProgramRunner:
                     wanted_content = get_wanted_from_trakt_watchlist()
                 except (ValueError, api.exceptions.RequestException) as e:
                     logging.error(f"Failed to fetch Trakt watchlist: {str(e)}")
-                    # Don't raise here - allow other content sources to be processed
                     return
             elif source_type == 'Trakt Lists':
                 trakt_lists = data.get('trakt_lists', '').split(',')
@@ -440,7 +453,6 @@ class ProgramRunner:
                         wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
                     except (ValueError, api.exceptions.RequestException) as e:
                         logging.error(f"Failed to fetch Trakt list {trakt_list}: {str(e)}")
-                        # Continue to next list instead of failing completely
                         continue
             elif source_type == 'Trakt Collection':
                 wanted_content = get_wanted_from_trakt_collection()
@@ -480,46 +492,96 @@ class ProgramRunner:
                 logging.warning(f"Unknown source type: {source_type}")
                 return
 
-            if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
-                # For tuple-based content sources (like Plex), count actual items in tuples
-                total_items_found = sum(len(items) for items, _ in wanted_content)
-                logging.debug(f"Retrieved wanted content from {source}: {total_items_found} items")
-            else:
-                logging.debug(f"Retrieved wanted content from {source}: {len(wanted_content)} items")
-
             if wanted_content:
-                total_items = 0
                 if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
-                    # Handle list of tuples
+                    # Handle list of tuples (e.g., from Plex sources)
                     for items, item_versions in wanted_content:
-                        try:
-                            processed_items = process_metadata(items)
+                        logging.debug(f"Processing batch of {len(items)} items from {source}")
+                        
+                        # Filter items by media type first
+                        if source_media_type != 'All' and not source_type.startswith('Collected'):
+                            items = [
+                                item for item in items
+                                if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
+                                   (source_media_type == 'Shows' and item.get('media_type') == 'tv')
+                            ]
+                            media_type_skipped += len(items) - len(items)
+                        
+                        # Then filter items based on cache
+                        items_to_process = [
+                            item for item in items 
+                            if should_process_item(item, source, source_cache)
+                        ]
+                        items_skipped = len(items) - len(items_to_process)
+                        cache_skipped += items_skipped
+                        
+                        if items_to_process:
+                            processed_items = process_metadata(items_to_process)
                             if processed_items:
                                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
+                                
+                                # Set content source and detail for each item
                                 for item in all_items:
                                     item['content_source'] = source
                                     item = append_content_source_detail(item, source_type=source_type)
+                                
+                                # Update cache for the original items (pre-metadata processing)
+                                for item in items_to_process:
+                                    update_cache_for_item(item, source, source_cache)
+                                
                                 add_wanted_items(all_items, item_versions or versions)
                                 total_items += len(all_items)
-                        except Exception as e:
-                            logging.error(f"Error processing items from {source}: {str(e)}")
-                            logging.error(traceback.format_exc())
+                                items_processed += len(items_to_process)
                 else:
                     # Handle single list of items
-                    try:
-                        processed_items = process_metadata(wanted_content)
+                    logging.debug(f"Processing batch of {len(wanted_content)} items from {source}")
+                    
+                    # Filter items by media type first
+                    if source_media_type != 'All' and not source_type.startswith('Collected'):
+                        wanted_content = [
+                            item for item in wanted_content
+                            if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
+                               (source_media_type == 'Shows' and item.get('media_type') == 'tv')
+                        ]
+                        media_type_skipped += len(wanted_content) - len(wanted_content)
+                    
+                    # Then filter items based on cache
+                    items_to_process = [
+                        item for item in wanted_content 
+                        if should_process_item(item, source, source_cache)
+                    ]
+                    items_skipped = len(wanted_content) - len(items_to_process)
+                    cache_skipped += items_skipped
+                    
+                    if items_to_process:
+                        processed_items = process_metadata(items_to_process)
                         if processed_items:
                             all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
+                            
+                            # Set content source and detail for each item
                             for item in all_items:
                                 item['content_source'] = source
                                 item = append_content_source_detail(item, source_type=source_type)
+                            
+                            # Update cache for the original items (pre-metadata processing)
+                            for item in items_to_process:
+                                update_cache_for_item(item, source, source_cache)
+                            
                             add_wanted_items(all_items, versions)
                             total_items += len(all_items)
-                    except Exception as e:
-                        logging.error(f"Error processing items from {source}: {str(e)}")
-                        logging.error(traceback.format_exc())
+                            items_processed += len(items_to_process)
                 
-                logging.info(f"Added {total_items} wanted items from {source}")
+                # Save the updated cache
+                save_source_cache(source, source_cache)
+                logging.debug(f"Final cache state for {source}: {len(source_cache)} entries")
+                
+                stats_msg = f"Added {total_items} wanted items from {source} (processed {items_processed} items"
+                if cache_skipped > 0:
+                    stats_msg += f", skipped {cache_skipped} cached items"
+                if media_type_skipped > 0:
+                    stats_msg += f", skipped {media_type_skipped} items due to media type mismatch"
+                stats_msg += ")"
+                logging.info(stats_msg)
             else:
                 logging.warning(f"No wanted content retrieved from {source}")
 
@@ -900,6 +962,8 @@ class ProgramRunner:
             logging.debug("Skipping Plex file check")
             return
 
+        from database import get_media_item_by_id
+
         plex_file_location = get_setting('Plex', 'mounted_file_location', default='/mnt/zurg/__all__')
         if not os.path.exists(plex_file_location):
             logging.warning(f"Plex file location does not exist: {plex_file_location}")
@@ -947,6 +1011,11 @@ class ProgramRunner:
                 conn.close()
                 updated_items += 1
 
+                # Add post-processing call after state update
+                updated_item = get_media_item_by_id(item['id'])
+                if updated_item:
+                    handle_state_change(dict(updated_item))
+
                 # Send notification for collected item
                 try:
                     from notifications import send_notifications
@@ -979,7 +1048,6 @@ class ProgramRunner:
             if get_setting('Plex', 'disable_plex_library_checks'):
                 logging.info(f"Plex library checks disabled, skipping Plex scans")
                 return
-
 
         if not get_setting('Plex', 'url', default=False):
             return
@@ -1026,14 +1094,20 @@ class ProgramRunner:
 
                 # Update all Plex sections using their root directories
                 for section in sections:
+                    logging.debug(f"Checking section: {section.title} (type: {section.type})")
                     if section in updated_sections:
+                        logging.debug(f"Section {section.title} already updated, skipping")
                         continue
                         
                     try:
+                        logging.debug(f"Section locations for {section.title}: {section.locations}")
                         for location in section.locations:
+                            logging.debug(f"Checking location: {location}")
                             # Try both with and without extension
                             specific_path = os.path.join(location, filled_by_title)
                             specific_path_no_ext = os.path.join(location, title_without_ext)
+                            
+                            logging.debug(f"Checking paths:\n  {specific_path}\n  {specific_path_no_ext}")
                             
                             if os.path.exists(specific_path):
                                 logging.info(f"Updating Plex section '{section.title}' for path: {specific_path}")
@@ -1045,8 +1119,10 @@ class ProgramRunner:
                                 section.update(path=specific_path_no_ext)
                                 updated_sections.add(section)
                                 break
+                            else:
+                                logging.debug(f"Neither path exists for section {section.title}")
                     except Exception as e:
-                        logging.error(f"Failed to update Plex section '{section.title}': {str(e)}")
+                        logging.error(f"Failed to update Plex section '{section.title}': {str(e)}", exc_info=True)
 
             logging.info(f"Plex update summary: {updated_items} items updated, {skipped_items} items skipped (cached), {not_found_items} items not found")
             if len(updated_sections) > 0:
@@ -1251,6 +1327,7 @@ def process_overseerr_webhook(data):
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
         for item in all_items:
             item['content_source'] = 'overseerr_webhook'
+            from content_checkers.content_source_detail import append_content_source_detail
             item = append_content_source_detail(item, source_type='Overseerr')
         add_wanted_items(all_items, versions)
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
@@ -1339,13 +1416,13 @@ def append_runtime_airtime(items):
             logging.error(f"Item details: {item}")
             logging.error(traceback.format_exc())
     
-def get_and_add_all_collected_from_plex():
-    if get_setting('File Management', 'file_collection_management') == 'Plex':
+def get_and_add_all_collected_from_plex(bypass=False):
+    if get_setting('File Management', 'file_collection_management') == 'Plex' or bypass:
         logging.info("Getting all collected content from Plex")
-        collected_content = asyncio.run(run_get_collected_from_plex())
-    elif get_setting('File Management', 'file_collection_management') == 'Zurg':
-        logging.info("Getting all collected content from Zurg")
-        collected_content = asyncio.run(run_get_collected_from_zurg())
+        if bypass:
+            collected_content = asyncio.run(run_get_collected_from_plex(bypass=True))
+        else:
+            collected_content = asyncio.run(run_get_collected_from_plex())
 
     if collected_content:
         movies = collected_content['movies']

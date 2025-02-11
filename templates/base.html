@@ -23,6 +23,53 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/rate_limits.css') }}">
     
+    <style>
+        .advice-section {
+            margin: 15px 0;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+            border-left: 4px solid #4CAF50;
+            overflow: hidden;
+        }
+        
+        .advice-header {
+            padding: 15px;
+            font-weight: bold;
+            color: #4CAF50;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+        
+        .advice-header:hover {
+            background-color: #333;
+        }
+        
+        .advice-content {
+            color: #f1f1f1;
+            line-height: 1.4;
+            padding: 0 15px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+        }
+        
+        .advice-section.expanded .advice-content {
+            padding: 0 15px 15px 15px;
+            max-height: 500px; /* Adjust based on your content */
+        }
+        
+        .advice-header .toggle-icon {
+            transition: transform 0.3s ease;
+        }
+        
+        .advice-section.expanded .toggle-icon {
+            transform: rotate(180deg);
+        }
+    </style>
+    
     {% block head %}{% endblock %}
     
     {% if current_user.is_authenticated %}
@@ -31,6 +78,17 @@
         window.isRateLimited = {{ 'true' if is_rate_limited else 'false' }};
     </script>
     {% endif %}
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.advice-header').forEach(header => {
+                header.addEventListener('click', () => {
+                    const section = header.closest('.advice-section');
+                    section.classList.toggle('expanded');
+                });
+            });
+        });
+    </script>
 </head>
 
 <body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" 
@@ -210,6 +268,9 @@
     </div>
     <button class="task-monitor-toggle" id="taskMonitorToggle">
         <i class="fas fa-tasks"></i>
+    </button>
+    <button class="rate-limits-section-toggle" id="rateLimitsSectionToggle">
+        <i class="fas fa-chart-line"></i>
     </button>
     {% endif %}
 

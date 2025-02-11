@@ -77,7 +77,7 @@ def get_show_status(imdb_id: str) -> str:
 def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
     processed_items = []
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    disable_caching = True  # Hardcoded to True
     cache = {} if disable_caching else load_plex_cache(PLEX_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
     
@@ -142,7 +142,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                 continue
             
             media_type = 'movie' if item.type == 'movie' else 'tv'
-            logging.debug(f"Processing {media_type} '{item.title}' (IMDB: {imdb_id})")
+            #logging.debug(f"Processing {media_type} '{item.title}' (IMDB: {imdb_id})")
             
             # Check if the item is already collected
             item_state = get_media_item_presence(imdb_id=imdb_id)
@@ -182,7 +182,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                     last_processed = cache_item['timestamp']
                     cache_age = current_time - last_processed
                     if cache_age < timedelta(days=CACHE_EXPIRY_DAYS):
-                        logging.debug(f"Skipping {media_type} '{item.title}' (IMDB: {imdb_id}) - cached {cache_age.days} days ago")
+                        #logging.debug(f"Skipping {media_type} '{item.title}' (IMDB: {imdb_id}) - cached {cache_age.days} days ago")
                         cache_skipped += 1
                         continue
                     else:
@@ -215,10 +215,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
         logging.info(f"Items skipped (collected): {collected_skipped}")
         logging.info(f"New items processed: {len(processed_items)}")
         
-        if not disable_caching:
-            logging.info(f"Found {len(processed_items)} new items from Plex watchlist. Skipped {cache_skipped + collected_skipped + skipped_count} items total.")
-        else:
-            logging.info(f"Found {len(processed_items)} items from Plex watchlist. Caching disabled.")
+        logging.info(f"Retrieved {len(processed_items)} wanted items from Plex watchlist source")
         
         all_wanted_items.append((processed_items, versions))
         
@@ -234,7 +231,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
 def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
     processed_items = []
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    disable_caching = True  # Hardcoded to True
     cache = {} if disable_caching else load_plex_cache(OTHER_PLEX_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
     cache_skipped = 0
@@ -268,7 +265,7 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
                     break
             
             if not imdb_id:
-                logging.warning(f"Skipping item from {username}'s watchlist due to missing IMDB ID: {item.title}")
+                #logging.warning(f"Skipping item from {username}'s watchlist due to missing IMDB ID: {item.title}")
                 continue
             
             media_type = 'movie' if item.type == 'movie' else 'tv'
@@ -281,7 +278,7 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
                 if cache_item:
                     last_processed = cache_item['timestamp']
                     if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
-                        logging.debug(f"Skipping recently processed item: {cache_key}")
+                        #logging.debug(f"Skipping recently processed item: {cache_key}")
                         cache_skipped += 1
                         continue
                 
@@ -302,10 +299,7 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
             
             processed_items.append(wanted_item)
             
-        if not disable_caching:
-            logging.info(f"Retrieved {len(processed_items)} items from {username}'s Plex watchlist. Skipped {cache_skipped} items in cache.")
-        else:
-            logging.info(f"Retrieved {len(processed_items)} items from {username}'s Plex watchlist. Caching disabled.")
+        logging.info(f"Retrieved {len(processed_items)} wanted items from {username}'s Plex watchlist source")
         
     except Exception as e:
         logging.error(f"Error fetching {username}'s Plex watchlist: {str(e)}")

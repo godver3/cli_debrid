@@ -376,6 +376,14 @@ def ensure_settings_file():
                 # Optionally set provider to RealDebrid since we found a key
                 config['Debrid Provider']['provider'] = 'RealDebrid'
 
+        config['Reverse Parser'] = {
+            'version_terms': {
+                'Default': []
+            },
+            'default_version': 'Default',
+            'version_order': ['Default']
+        }
+
         # Now try to load and merge .env config
         env_config = load_env_config()
         if env_config:

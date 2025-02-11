@@ -65,6 +65,7 @@ document.head.appendChild(loadingStyles);
 // Global loading object
 const Loading = {
     element: null,
+    messageElement: null,
     
     init: function() {
         // Create loading element if it doesn't exist
@@ -75,11 +76,18 @@ const Loading = {
             this.element.innerHTML = `
                 <div class="loading-content">
                     <div class="spinner"></div>
-                    <p>Processing command in background...</p>
+                    <div class="loading-message">
+                        <p>Processing command in background...</p>
+                        <pre class="loading-details" style="text-align: left; margin-top: 10px; white-space: pre-wrap; color: #ccc;"></pre>
+                    </div>
                     <button class="close-loading">Continue in background</button>
                 </div>
             `;
             document.body.appendChild(this.element);
+            
+            // Store reference to message elements
+            this.messageElement = this.element.querySelector('.loading-message p');
+            this.detailsElement = this.element.querySelector('.loading-details');
             
             // Add click handler for close button
             this.element.querySelector('.close-loading').addEventListener('click', () => {
@@ -88,14 +96,38 @@ const Loading = {
         }
     },
 
-    show: function() {
+    show: function(message, details) {
         this.init();
+        if (message && this.messageElement) {
+            this.messageElement.textContent = message;
+        }
+        if (details && this.detailsElement) {
+            this.detailsElement.textContent = details;
+        } else if (this.detailsElement) {
+            this.detailsElement.textContent = '';
+        }
         this.element.style.display = 'flex';
+    },
+
+    updateMessage: function(message, details) {
+        if (this.messageElement && message) {
+            this.messageElement.textContent = message;
+        }
+        if (this.detailsElement) {
+            if (details) {
+                this.detailsElement.textContent = details;
+            } else {
+                this.detailsElement.textContent = '';
+            }
+        }
     },
 
     hide: function() {
         if (this.element) {
             this.element.style.display = 'none';
+            if (this.detailsElement) {
+                this.detailsElement.textContent = '';
+            }
         }
     }
 };

@@ -71,7 +71,7 @@ def extract_imdb_id(guid: str, title: str = None) -> str:
 def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
     processed_items = []
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    disable_caching = True  # Hardcoded to True
     cache = {} if disable_caching else load_rss_cache(PLEX_RSS_CACHE_FILE)
     current_time = datetime.now()
 
@@ -166,7 +166,6 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
         logging.info(f"Plex RSS Watchlist Summary:")
         logging.info(f"- Total entries: {len(feed.entries)}")
         logging.info(f"- Skipped (no IMDB ID): {skipped_count}")
-        logging.info(f"- Skipped (cached): {cache_skipped}")
         logging.info(f"- Items added to wanted: {sum(len(items) for items, _ in all_wanted_items)}")
 
         return all_wanted_items

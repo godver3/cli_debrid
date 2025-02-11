@@ -455,8 +455,17 @@ class UpgradingQueue:
             # Find our new position after filtering
             current_position = next((index for index, result in enumerate(filtered_results) if result.get('title') == current_title), None)
             if current_position is None:
-                logging.error(f"Lost track of current item after filtering, this should never happen")
-                return
+                logging.warning(f"Lost track of current item after filtering, item may have been part of a multi-pack")
+                # Add current item to filtered results with score 0
+                current_result = {
+                    'title': current_title,
+                    'score_breakdown': {'total_score': 0},
+                    'magnet': item.get('filled_by_magnet', ''),
+                    'version': item.get('version', '')
+                }
+                filtered_results.append(current_result)
+                current_position = len(filtered_results) - 1
+                logging.info(f"Added current item to filtered results with score 0")
 
             # Log all results with their scores for debugging
             for index, result in enumerate(filtered_results):
@@ -502,7 +511,10 @@ class UpgradingQueue:
                 best_result = better_results[0]
 
                 logging.info(f"[{item_identifier}] Updating item state to Adding with best result title: {best_result['title']}")
-                update_media_item_state(item['id'], 'Adding', filled_by_title=best_result['title'], scrape_results=better_results)
+                update_media_item_state(item['id'], 'Adding', 
+                    filled_by_title=best_result['title'], 
+                    scrape_results=better_results,
+                    upgrading_from=item['filled_by_file'])
                 updated_item = get_media_item_by_id(item['id'])
 
                 # Use AddingQueue to attempt the upgrade with updated item

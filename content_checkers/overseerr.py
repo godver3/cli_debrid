@@ -98,8 +98,8 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
     content_sources = get_all_settings().get('Content Sources', {})
     overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
     allow_partial = get_setting('Debug', 'allow_partial_overseerr_requests', 'False')
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
-    logging.info(f"allow_partial: {allow_partial}, disable_caching: {disable_caching}")
+    disable_caching = True  # Hardcoded to True
+    logging.info(f"allow_partial: {allow_partial}")
     
     all_wanted_items = []
     cache = {} if disable_caching else load_overseerr_cache()
@@ -163,10 +163,7 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
                     wanted_items.append(wanted_item)
 
             all_wanted_items.append((wanted_items, versions))
-            if not disable_caching:
-                logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source. Skipped {cache_skipped} items in cache.")
-            else:
-                logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source. Caching disabled.")
+            logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source")
         except Exception as e:
             logging.error(f"Unexpected error while processing Overseerr source: {e}")
 

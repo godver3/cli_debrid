@@ -3,8 +3,133 @@
 {% block content %}
 <div class="onboarding-container">
     <h2 class="onboarding-title">Step 4: Add Content Sources</h2>
+    <div class="advice-section">
+        <div class="advice-header">
+            💡 Want my advice?
+            <i class="fas fa-chevron-down toggle-icon"></i>
+        </div>
+        <div class="advice-content">
+            I prefer Overseerr especially because you can set up a webhook to directly trigger Wanted item additions to the queue, and supports partial series requests. All sources can be configured on a per version basis within the settings menu.
+        </div>
+    </div>
+    <p class="info-message">Content source settings can only be configured when adding a new source. To modify settings, you'll need to delete the existing source and create a new one.</p>
     <button id="add-content-source-btn" class="onboarding-btn">Add Content Source</button>
 </div>
+
+<style>
+    .info-message {
+        background-color: #1a1a1a;
+        border-left: 4px solid #4CAF50;
+        padding: 0.75rem;
+        margin: 0.75rem 0;
+        color: #888;
+        font-size: 0.85rem;
+    }
+    
+    .setting-value[readonly],
+    .setting-value option:disabled {
+        background-color: #2c2c2c;
+        cursor: not-allowed;
+        color: #c1c1c1;
+        opacity: 0.9;
+        pointer-events: none;
+        border: 1px solid #444;
+        font-size: 0.85rem;
+        height: 28px;
+        margin-right: 10px;
+    }
+    
+    .setting-value {
+        width: 100%;
+        padding: 0.2rem 0.4rem;
+        border: 1px solid #444;
+        border-radius: 0.25rem;
+        background-color: #333;
+        color: #f4f4f4;
+        margin: 0;
+    }
+
+    .setting-item {
+        margin-bottom: 0.35rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .setting-item label {
+        min-width: 100px;
+        flex-shrink: 0;
+        color: #aaa;
+        font-size: 0.85rem;
+        padding-left: 10px;
+    }
+
+    .content-source-item {
+        background-color: #1a1a1a;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.5rem;
+        border-radius: 0.25rem;
+        border: 1px solid #333;
+    }
+
+    .content-source-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.35rem;
+        padding: 0 0.25rem 0.35rem;
+        border-bottom: 1px solid #333;
+    }
+
+    .content-source-settings {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        padding: 0.25rem 0;
+        max-width: 600px;
+    }
+
+    select.setting-value {
+        padding-right: 1.5rem;
+    }
+
+    .onboarding-btn-delete {
+        background-color: #dc3545;
+        color: white;
+        border: none;
+        padding: 0.2rem 0.4rem;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        font-size: 0.8rem;
+        opacity: 0.8;
+    }
+
+    .onboarding-btn-delete:hover {
+        background-color: #c82333;
+        opacity: 1;
+    }
+
+    .content-source-header .onboarding-text {
+        font-weight: 500;
+        font-size: 0.95rem;
+        color: #f4f4f4;
+    }
+
+    /* Make the add button more prominent */
+    #add-content-source-btn {
+        opacity: 0.9;
+    }
+    #add-content-source-btn:hover {
+        opacity: 1;
+    }
+
+    .onboarding-title {
+        padding-left: 0.5rem;
+        margin-top: 1rem;
+        margin-bottom: 0.75rem;
+    }
+</style>
 
 <div id="existing-content-sources">
     {% if settings['Content Sources'] %}
@@ -83,12 +208,22 @@ document.addEventListener('DOMContentLoaded', function() {
             if (value.type === 'boolean') {
                 inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${value.default ? 'checked' : ''}>`;
             } else if (value.type === 'string') {
-                inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''}>`;
+                if (value.choices) {
+                    // Handle dropdown fields
+                    inputHtml = `<select id="${key}" name="${key}">`;
+                    value.choices.forEach(choice => {
+                        inputHtml += `<option value="${choice}" ${value.default === choice ? 'selected' : ''}>${choice}</option>`;
+                    });
+                    inputHtml += '</select>';
+                } else {
+                    // Handle regular text/password fields
+                    inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''}>`;
+                }
             }
 
             formHtml += `
                 <div class="form-group">
-                    <label for="${key}">${key}:</label>
+                    <label for="${key}">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</label>
                     ${inputHtml}
                 </div>
             `;
@@ -210,12 +345,32 @@ document.addEventListener('DOMContentLoaded', function() {
                         let settingsHtml = '';
                         for (const [key, value] of Object.entries(source)) {
                             if (key !== 'enabled' && key !== 'type' && key !== 'versions') {
-                                settingsHtml += `
-                                    <div class="setting-item">
-                                        <label class="onboarding-text">${key.charAt(0).toUpperCase() + key.slice(1)}:</label>
-                                        <input type="text" value="${Array.isArray(value) ? value.join(', ') : value}" readonly class="setting-value">
-                                    </div>
-                                `;
+                                const sourceSchema = SETTINGS_SCHEMA['Content Sources'].schema[source.type] || {};
+                                const fieldSchema = sourceSchema[key] || {};
+                                
+                                let displayValue = value;
+                                if (fieldSchema.choices) {
+                                    // For fields with choices (like media_type), show as readonly select
+                                    settingsHtml += `
+                                        <div class="setting-item">
+                                            <label class="onboarding-text">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</label>
+                                            <select class="setting-value" readonly>
+                                                ${fieldSchema.choices.map(choice => 
+                                                    `<option value="${choice}" ${value === choice ? 'selected' : ''} disabled>${choice}</option>`
+                                                ).join('')}
+                                            </select>
+                                        </div>
+                                    `;
+                                } else {
+                                    // For other fields, show as readonly text input
+                                    displayValue = Array.isArray(value) ? value.join(', ') : value;
+                                    settingsHtml += `
+                                        <div class="setting-item">
+                                            <label class="onboarding-text">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</label>
+                                            <input type="text" value="${displayValue}" readonly class="setting-value">
+                                        </div>
+                                    `;
+                                }
                             }
                         }
                         sourceItem.innerHTML = `

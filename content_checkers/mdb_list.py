@@ -72,7 +72,7 @@ def assign_media_type(item: Dict[str, Any]) -> str:
 
 def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    disable_caching = True  # Hardcoded to True
     cache = {} if disable_caching else load_mdblist_cache()
     current_time = datetime.now()
     
@@ -115,10 +115,7 @@ def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> Lis
     if skipped_count > 0:
         logging.info(f"Skipped {skipped_count} items due to missing IMDB IDs")
     
-    if not disable_caching:
-        logging.info(f"Found {len(processed_items)} new items from MDBList. Skipped {cache_skipped} items in cache.")
-    else:
-        logging.info(f"Found {len(processed_items)} items from MDBList. Caching disabled.")
+    logging.info(f"Found {len(processed_items)} items from MDBList")
     all_wanted_items.append((processed_items, versions))
     
     # Save updated cache only if caching is enabled

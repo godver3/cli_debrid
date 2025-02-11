@@ -313,7 +313,7 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
 
     all_wanted_items = []
     trakt_sources = get_trakt_sources()
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    disable_caching = True  # Hardcoded to True
     cache = {} if disable_caching else load_trakt_cache(TRAKT_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
 
@@ -357,6 +357,15 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
                         if current_time - last_processed < timedelta(days=CACHE_EXPIRY_DAYS):
                             cache_skipped += 1
                             continue
+
+                    # Add or update cache entry
+                    cache[cache_key] = {
+                        'timestamp': current_time,
+                        'data': {
+                            'imdb_id': imdb_id,
+                            'media_type': media_type
+                        }
+                    }
 
                 # Check if the item is already collected
                 item_state = get_media_item_presence(imdb_id=imdb_id)
@@ -435,10 +444,7 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
 
             if skipped_count > 0:
                 logging.info(f"Skipped {skipped_count} items due to missing IDs")
-            if not disable_caching:
-                logging.info(f"Found {len(processed_items)} new items from Trakt watchlist. Skipped {cache_skipped} items in cache.")
-            else:
-                logging.info(f"Found {len(processed_items)} items from Trakt watchlist. Caching disabled.")
+            logging.info(f"Found {len(processed_items)} items from Trakt watchlist")
             all_wanted_items.append((processed_items, versions))
 
     # Save updated cache only if caching is enabled
@@ -454,7 +460,7 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
         raise Exception("Failed to obtain a valid Trakt access token")
     
     all_wanted_items = []
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    disable_caching = True  # Hardcoded to True
     cache = {} if disable_caching else load_trakt_cache(TRAKT_LISTS_CACHE_FILE)
     current_time = datetime.now()
     cache_skipped = 0
@@ -512,11 +518,8 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
 
     if skipped_count > 0:
         logging.info(f"Skipped {skipped_count} items due to missing IDs")
-    if not disable_caching:
-        logging.info(f"Found {len(processed_items)} new items from Trakt list. Skipped {cache_skipped} items in cache.")
-    else:
-        logging.info(f"Found {len(processed_items)} items from Trakt list. Caching disabled.")
     
+    logging.info(f"Found {len(processed_items)} items from Trakt list")
     all_wanted_items.append((processed_items, versions))
     
     # Save updated cache only if caching is enabled
@@ -532,7 +535,7 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
         raise Exception("Failed to obtain a valid Trakt access token")
 
     all_wanted_items = []
-    disable_caching = get_setting('Debug', 'disable_content_source_caching', 'False')
+    disable_caching = True  # Hardcoded to True
     cache = {} if disable_caching else load_trakt_cache(TRAKT_COLLECTION_CACHE_FILE)
     current_time = datetime.now()
     cache_skipped = 0
@@ -586,11 +589,8 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
 
     if skipped_count > 0:
         logging.info(f"Skipped {skipped_count} items due to missing IDs")
-    if not disable_caching:
-        logging.info(f"Found {len(processed_items)} new items from Trakt collection. Skipped {cache_skipped} items in cache.")
-    else:
-        logging.info(f"Found {len(processed_items)} items from Trakt collection. Caching disabled.")
-
+    
+    logging.info(f"Found {len(processed_items)} items from Trakt collection")
     all_wanted_items.append((processed_items, {}))
     
     # Save updated cache only if caching is enabled
