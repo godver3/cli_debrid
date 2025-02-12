@@ -197,6 +197,8 @@ class RealDebridProvider(DebridProvider):
                 else:
                     try:
                         self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
+                        from database.torrent_tracking import update_cache_check_removal
+                        update_cache_check_removal(hash_value)
                     except Exception as e:
                         logging.error(f"{log_prefix} Error removing uncached torrent: {str(e)}")
                         self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)

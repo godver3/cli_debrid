@@ -85,7 +85,7 @@ input#imdb_id, button.btn.btn-primary, button.btn.btn-danger {
 }
 
 .btn.btn-link.text-danger.p-0 {
-    background-color: rgba(255, 0, 0, 0.664);
+    background-color: rgba(255, 255, 255, 0.664);
 }
 
 button.btn.btn-danger.btn-sm {

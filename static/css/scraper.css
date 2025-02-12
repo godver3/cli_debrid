@@ -35,6 +35,7 @@ body {
     flex-direction: column;
     align-items: center;
     width: 100%;
+    margin-bottom: 30px;
 }
 
 form#search-form {
@@ -116,18 +117,26 @@ form#search-form input:-ms-input-placeholder {
 }
 
 .movie-list, .show-list {
+    position: relative;
+    padding: var(--spacing-md) 0;
+    margin: 0 calc(-1 * var(--spacing-md));
+    overflow: visible;
+}
+
+.scroll-container {
+    position: relative;
     display: flex;
     overflow-x: auto;
-    gap: var(--spacing-md);
-    padding: var(--spacing-md);
+    gap: 0;
+    padding: 40px var(--spacing-md);
+    margin: -40px 0;
     scroll-behavior: smooth;
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none;  /* IE and Edge */
     -webkit-overflow-scrolling: touch;
 }
 
-.movie-list::-webkit-scrollbar, 
-.show-list::-webkit-scrollbar {
+.scroll-container::-webkit-scrollbar {
     display: none; /* Chrome, Safari and Opera */
 }
 
@@ -137,13 +146,28 @@ form#search-form input:-ms-input-placeholder {
     flex: 0 0 auto;
     width: 176px;
     transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    padding: 16px;
+    margin: -8px 8px;
 }
+
+.media-card:first-child,
+.sresult:first-child {
+    margin-left: 0;
+}
+
+.media-card:last-child,
+.sresult:last-child {
+    margin-right: 0;
+}
+
 
 .media-poster,
 .sresult button {
     position: relative;
     width: 100%;
     cursor: pointer;
+    z-index: 1;
 }
 
 .sresult button {
@@ -154,28 +178,61 @@ form#search-form input:-ms-input-placeholder {
 }
 
 .media-poster-img,
+.sresult img,
+.mediatype-tv,
+.mediatype-mv {
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.media-poster:hover .media-poster-img,
+.media-poster:hover .mediatype-tv,
+.media-poster:hover .mediatype-mv,
+.sresult:hover img,
+.sresult:hover .mediatype-tv,
+.sresult:hover .mediatype-mv {
+    transform: translateY(-8px);
+}
+
+.media-poster:hover .media-poster-img,
+.sresult:hover img {
+    box-shadow: 
+        0 8px 16px rgba(0, 0, 0, 0.3),
+        0 0 40px rgba(255, 255, 255, 0.4);  /* Increased white glow on hover */
+}
+
+.media-poster-img,
 .sresult img {
     width: 176px;
     height: 264px;
     border-radius: var(--border-radius-lg);
     overflow: hidden;
     object-fit: cover;
+    position: relative;
+    z-index: 1;
     box-shadow: 
-        0 4px 6px rgba(0, 0, 0, 0.1),
-        0 12px 16px rgba(0, 0, 0, 0.1),
-        0 0 20px rgba(255, 255, 255, 0.05),
-        0 0 40px rgba(255, 255, 255, 0.03);
-    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        0 4px 6px rgba(0, 0, 0, 0.2),
+        0 0 25px rgba(255, 255, 255, 0.15);  /* Increased base white glow */
 }
 
-.media-poster:hover .media-poster-img,
-.sresult:hover img {
-    transform: translateY(-8px);
-    box-shadow: 
-        0 8px 12px rgba(0, 0, 0, 0.15),
-        0 16px 24px rgba(0, 0, 0, 0.15),
-        0 0 30px rgba(255, 255, 255, 0.08),
-        0 0 50px rgba(255, 255, 255, 0.05);
+.mediatype-tv, .mediatype-mv {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background-color: rgba(0, 0, 0, 0.75);
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    z-index: 2;
+    backdrop-filter: blur(4px);
+    pointer-events: none;  /* Ensure hover works through the badge */
+}
+
+.sresult .mediatype-tv,
+.sresult .mediatype-mv {
+    top: 8px;
+    left: 8px;
 }
 
 .media-title,
@@ -191,6 +248,10 @@ form#search-form input:-ms-input-placeholder {
     transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
     backdrop-filter: blur(4px);
+}
+
+.searchresult-info {
+    display: none;
 }
 
 .media-title {
@@ -221,20 +282,6 @@ h2.searchresult-item {
     font-weight: 500;
     line-height: 1.2;
     color: var(--text-primary);
-}
-
-.mediatype-tv, .mediatype-mv {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    padding: 4px 8px;
-    border-radius: 12px;
-    background-color: rgba(0, 0, 0, 0.75);
-    color: var(--text-primary);
-    font-size: 0.75rem;
-    font-weight: 600;
-    z-index: 2;
-    backdrop-filter: blur(4px);
 }
 
 .season-info-container {
@@ -512,30 +559,57 @@ h2.episode-title {
     width: 100%;
     border-collapse: collapse;
     margin-top: 15px;
-    table-layout: fixed; /* Added to ensure fixed column widths */
+    table-layout: fixed; /* Ensures fixed column widths */
 }
 
 .overlay-content th,
 .overlay-content td {
     padding: 12px;
     text-align: left;
-    overflow: hidden; /* Added to handle overflow */
-    text-overflow: ellipsis; /* Added to show ellipsis for overflowing text */
+    overflow: hidden;
+    text-overflow: ellipsis;
     border-bottom: none;
+    width: auto; /* Allow columns to size naturally */
 }
 
-/* Add styles for the title column */
+/* Title column - allow wrapping */
 .overlay-content td:first-child {
-    white-space: normal; /* Allow wrapping for the title column */
-    max-height: 4.5em; /* Approximately 3 lines of text */
+    width: 90%; /* Give title column more space */
+    white-space: normal;
+    max-height: 4.5em;
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
 }
 
-.overlay-content tr {
-    border: 1px solid #444;
+/* Cache status column */
+.overlay-content td:nth-child(2) {
+    width: 25%;
+    text-align: center;
+}
+
+/* Action column */
+.overlay-content td:last-child {
+    width: 25%;
+    text-align: center;
+}
+
+/* Cache status badges */
+.cache-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin: 5px 0;
+    width: 90%; /* Take up most of the cell width */
+    max-width: 200px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Update button styles */
@@ -546,7 +620,8 @@ h2.episode-title {
     font-size: 0.85em;
     font-weight: bold;
     text-transform: uppercase;
-    min-width: 120px;
+    width: 90%; /* Take up most of the cell width */
+    max-width: 200px;
     text-align: center;
     white-space: nowrap;
     overflow: hidden;

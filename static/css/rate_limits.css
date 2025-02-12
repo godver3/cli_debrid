@@ -152,14 +152,52 @@
 /* Mobile responsiveness */
 @media (max-width: 768px) {
     .rate-limits-section {
-        transform: translateX(-50%) translateY(-100%);
-        opacity: 0;
-        pointer-events: none;
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        position: fixed !important;
+        z-index: -9999 !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        clip: rect(0 0 0 0) !important;
+        transform: none !important;
     }
+
     .rate-limits-section.show {
-        transform: translateX(-50%) translateY(0);
-        opacity: 1;
-        pointer-events: auto;
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+    }
+
+    .rate-limits-container {
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        position: fixed !important;
+        z-index: -9999 !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        clip: rect(0 0 0 0) !important;
+    }
+
+    .rate-limits-container.show {
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+    }
+
+    .rate-limits-section-toggle {
+        display: none !important;
+    }
+
+    .rate-limits-toggle {
+        display: none !important;
     }
 }
 

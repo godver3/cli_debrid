@@ -136,6 +136,12 @@
     text-align: center;
 }
 
+/* Trigger column alignment */
+.tracking-table th:nth-child(3),
+.tracking-table td:nth-child(3) {
+    text-align: left;
+}
+
 .tracking-table tr:hover {
     background-color: #333;
 }
@@ -230,6 +236,16 @@
 
 .trigger-badge.queue_upgrade, .trigger-badge.QUEUE_UPGRADE {
     background-color: #fd7e14;
+    color: white;
+}
+
+.trigger-badge.cache_check, .trigger-badge.CACHE_CHECK {
+    background-color: #4aa2ff;
+    color: white;
+}
+
+.trigger-badge.adding_error, .trigger-badge.ADDING_ERROR {
+    background-color: #dc3545;  /* Using red to indicate error */
     color: white;
 }
 

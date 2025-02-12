@@ -1,5 +1,22 @@
 /* Mobile-specific styles */
 @media (max-width: 768px) {
+    /* Rate Limits Container - Mobile Disable */
+    .rate-limits-section {
+        display: none !important;
+        pointer-events: none;
+        visibility: hidden;
+        position: absolute;
+        z-index: -1;
+    }
+
+    .rate-limits-container {
+        display: none !important;
+        pointer-events: none;
+        visibility: hidden;
+        position: absolute;
+        z-index: -1;
+    }
+
     /* Overlay and Container Styles */
     .overlay-content {
         position: fixed;
@@ -15,6 +32,8 @@
         top: 10%;
     }
 
+
+
     .close-btn {
         top: 16px;
         right: 16px;
@@ -23,11 +42,14 @@
         font-size: 28px;
     }
 
-    /* Prevent horizontal scrolling */
+    /* Prevent horizontal scrolling but allow vertical */
     html, body {
         overflow-x: hidden;
+        overflow-y: auto;
         width: 100%;
         position: relative;
+        overscroll-behavior-x: none;
+        -webkit-overflow-scrolling: touch;
     }
 
     /* Search Results Styles */
@@ -231,11 +253,14 @@
     /* Trending Section Styles */
     .trending-container {
         padding-top: 10px;
+        overscroll-behavior: none;
+        -webkit-overflow-scrolling: none;
     }
 
     .trending-movies,
     .trending-shows {
         padding: 10px;
+        overscroll-behavior: none;
     }
 
     .media-card {
@@ -254,10 +279,10 @@
         display: none;
     }
 
+    /* Lock scrolling in containers */
     .movie-list, .show-list {
         display: flex;
-        overflow-x: scroll;
-        -webkit-overflow-scrolling: touch;
+        overflow-x: auto;  /* Restore horizontal scroll */
         scroll-behavior: smooth;
         scrollbar-width: none;
         -ms-overflow-style: none;
@@ -266,18 +291,23 @@
         margin: 0;
         width: 100%;
         flex-wrap: nowrap;
-        touch-action: pan-x pan-y;
+        touch-action: pan-x;  /* Allow horizontal touch scrolling only */
         cursor: grab;
         will-change: transform;
+        overscroll-behavior-x: none;  /* Prevent bounce */
+        -webkit-overflow-scrolling: touch;  /* Smooth scrolling on iOS */
     }
 
-    .movie-list:active,
-    .show-list:active {
-        cursor: grabbing;
+    .scroll-container {
+        overflow-x: auto;
+        overscroll-behavior-x: none;
+        touch-action: pan-x;
+        -webkit-overflow-scrolling: touch;
     }
 
     .movie-list::-webkit-scrollbar, 
-    .show-list::-webkit-scrollbar {
+    .show-list::-webkit-scrollbar,
+    .scroll-container::-webkit-scrollbar {
         display: none;
     }
 
@@ -338,6 +368,7 @@
     .cache-status {
         margin: 10px auto 5px auto;
         display: block;
+        width: auto;
     }
 
     #overlayContent {
@@ -371,26 +402,33 @@
         padding: 10px;
         align-items: center;
         justify-content: center;
+        margin: 0;
+        box-sizing: border-box;
     }
     
+    form#search-form input,
+    form#search-form select,
+    form#search-form button {
+        margin: 0;
+        box-sizing: border-box;
+        min-height: 44px; /* Increased touch target size */
+        padding: 0 10px;
+    }
+
     form#search-form input {
-        min-height: 35px;
         width: 40%;
         min-width: 120px;
     }
 
     form#search-form select {
-        min-height: 35px;
         width: 30%;
         min-width: 90px;
-        padding-right: 25px; /* Space for the dropdown arrow */
+        padding-right: 25px;
     }
 
     form#search-form button {
-        min-height: 35px;
         width: 20%;
         min-width: 70px;
-        padding: 0 8px;
     }
 
     /* Override base.css background gradient with fixed height */
@@ -400,4 +438,52 @@
         padding-top: 35px;
     }
 
+    /* Override any potential positioning from the base styles */
+    #scraper-container {
+        padding-top: 0;
+    }
+
+    form#search-form {
+        position: static;
+        transform: none;
+        top: auto;
+        left: auto;
+    }
+
+    form#search-form input,
+    form#search-form select,
+    form#search-form button {
+        position: static;
+        transform: none;
+    }
+}
+
+@media (hover: none) {
+    /* Disable hover effects for touch devices */
+    .media-poster:hover .media-poster-img,
+    .media-poster:hover .mediatype-tv,
+    .media-poster:hover .mediatype-mv,
+    .sresult:hover img,
+    .sresult:hover .mediatype-tv,
+    .sresult:hover .mediatype-mv {
+        transform: none;
+        box-shadow: none;
+    }
+
+    .media-poster:hover .media-title,
+    .sresult:hover .searchresult-info {
+        opacity: 0;
+        transform: none;
+    }
+
+    .torresult:hover {
+        transform: none;
+        box-shadow: none;
+    }
+
+    .close-btn:hover {
+        color: var(--text-secondary);
+        background-color: transparent;
+        transform: none;
+    }
 }

@@ -111,6 +111,34 @@ def mark_torrent_removed(torrent_hash: str, removal_reason: str):
     finally:
         conn.close()
 
+def update_cache_check_removal(torrent_hash: str):
+    """
+    Update the tracking record for a torrent that was removed during cache check.
+    This should be called after mark_torrent_removed when a torrent is removed due to not being cached.
+    
+    Args:
+        torrent_hash: The hash of the removed torrent
+    """
+    return update_torrent_tracking(
+        torrent_hash=torrent_hash,
+        trigger_source="cache_check",
+        rationale="Removed during cache check"
+    )
+
+def update_adding_error(torrent_hash: str):
+    """
+    Update the tracking record for a torrent that failed during the adding process.
+    This should be called after mark_torrent_removed when a torrent is removed due to adding errors.
+    
+    Args:
+        torrent_hash: The hash of the removed torrent
+    """
+    return update_torrent_tracking(
+        torrent_hash=torrent_hash,
+        trigger_source="adding_error",
+        rationale="Failed to add item - see removal reason"
+    )
+
 def get_torrent_history(torrent_hash: str) -> list:
     """
     Get the complete history of a specific torrent.
