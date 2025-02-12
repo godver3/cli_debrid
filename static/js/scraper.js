@@ -606,6 +606,11 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Add event listener for search button
+    const searchButton = document.getElementById('searchformButton');
+    if (searchButton) {
+        searchButton.addEventListener('click', searchMedia);
+    }
 
     // Close the overlay when the close button is clicked
     const closeButton = document.querySelector('.close-btn');

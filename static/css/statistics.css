@@ -328,6 +328,10 @@ input:checked + .toggle-slider:before {
     min-width: 0;
 }
 
+.recently-upgraded-section {
+    margin-bottom: 20px;
+}
+
 /* File details */
 .file-details {
     flex: 1;

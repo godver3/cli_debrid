@@ -116,7 +116,7 @@
     }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
-        <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">
+        <form id="search-form">
             <input type="hidden" id="tmdb_api_key_set" value="{{ 'True' if tmdb_api_key_set else 'False' }}">
             <input type="text" name="search_term" placeholder="Enter search term" required>
             <select name="version" id="version-select">
@@ -125,7 +125,7 @@
                 {% endfor %}
                 <option value="No Version">No Version</option>
             </select>
-            <button id="searchformButton" type="submit">Search</button>
+            <button id="searchformButton" type="button">Search</button>
         </form>
         {% if not compact_view and not tmdb_api_key_set %}
         <div class="tmdb-info">
@@ -145,7 +145,9 @@
                         </button>
                     </div>
                 </div>
-                <div id="movieContainer" class="movie-list"></div>
+                <div class="movie-list">
+                    <div class="scroll-container" id="movieContainer"></div>
+                </div>
             </div>
             <div class="trending-shows">
                 <div class="trending-header">
@@ -159,7 +161,9 @@
                         </button>
                     </div>
                 </div>
-                <div id="showContainer" class="show-list"></div>
+                <div class="show-list">
+                    <div class="scroll-container" id="showContainer"></div>
+                </div>
             </div>
         </div>
         <div id="seasonResults" style="display: none;">

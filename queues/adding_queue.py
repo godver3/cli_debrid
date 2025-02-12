@@ -13,6 +13,7 @@ from database import update_media_item, get_all_media_items, get_media_item_by_i
 from settings import get_setting
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
+from database.torrent_tracking import update_adding_error
 
 class AddingQueue:
     """Manages the queue of items being added to the debrid service"""
@@ -111,6 +112,12 @@ class AddingQueue:
             )
             logging.info(f"Successfully removed unwanted torrent {torrent_id}")
             
+            # Update tracking record with adding error
+            try:
+                update_adding_error(hash_value)
+            except Exception as e:
+                logging.error(f"Failed to update tracking record for adding error: {str(e)}")
+            
         except Exception as e:
             logging.error(f"Failed to remove unwanted torrent {torrent_id}: {str(e)}", exc_info=True)
                 
@@ -176,6 +183,7 @@ class AddingQueue:
                 
                 if (not torrent_info or not magnet) and (not updated_item or updated_item.get('state') != 'Pending Uncached'):
                     logging.error(f"No valid torrent info or magnet found for {item_identifier}")
+                    item['torrent_id'] = torrent_info.get('id')
                     self._handle_failed_item(item, "No valid results found", queue_manager)
                     continue
                     
