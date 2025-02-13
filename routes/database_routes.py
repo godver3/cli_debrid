@@ -14,7 +14,7 @@ from utilities.plex_functions import remove_file_from_plex
 from database.database_reading import get_media_item_by_id
 import os
 from datetime import datetime
-from time import sleep
+
 database_bp = Blueprint('database', __name__)
 
 @database_bp.route('/', methods=['GET', 'POST'])
@@ -160,83 +160,49 @@ def bulk_queue_action():
     action = request.form.get('action')
     target_queue = request.form.get('target_queue')
     selected_items = request.form.getlist('selected_items')
-    blacklist = request.form.get('blacklist', 'false').lower() == 'true'
 
     if not action or not selected_items:
         return jsonify({'success': False, 'error': 'Action and selected items are required'})
 
     # Process items in batches to avoid SQLite parameter limits
     BATCH_SIZE = 450  # Stay well under SQLite's 999 parameter limit
-    total_processed = 0
+    total_affected = 0
     error_count = 0
-    errors = []
     
     try:
         for i in range(0, len(selected_items), BATCH_SIZE):
             batch = selected_items[i:i + BATCH_SIZE]
-            
-            if action == 'delete':
-                # Process each item in the batch through delete_item
-                for item_id in batch:
-                    try:
-                        # Create a new request with our data
-                        with current_app.test_request_context(
-                            method='POST',
-                            data=json.dumps({
-                                'item_id': item_id,
-                                'blacklist': blacklist
-                            }),
-                            content_type='application/json'
-                        ):
-                            response = delete_item()
-                            
-                            if isinstance(response, tuple):
-                                success = response[0].json.get('success', False)
-                            else:
-                                success = response.json.get('success', False)
-                                
-                            if success:
-                                total_processed += 1
-                            else:
-                                error_count += 1
-                                error_msg = response.json.get('error', 'Unknown error')
-                                errors.append(f"Error processing item {item_id}: {error_msg}")
-                                
-                    except Exception as e:
-                        error_count += 1
-                        errors.append(f"Error processing item {item_id}: {str(e)}")
-                        logging.error(f"Error processing item {item_id} in bulk delete: {str(e)}")
-                        
-            elif action == 'move' and target_queue:
-                # Keep existing move functionality
-                conn = get_db_connection()
-                try:
-                    cursor = conn.cursor()
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                if action == 'delete':
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(f'DELETE FROM media_items WHERE id IN ({placeholders})', batch)
+                    total_affected += cursor.rowcount
+                elif action == 'move' and target_queue:
                     placeholders = ','.join('?' * len(batch))
                     cursor.execute(
                         f'UPDATE media_items SET state = ?, last_updated = ? WHERE id IN ({placeholders})',
                         [target_queue, datetime.now()] + batch
                     )
-                    total_processed += cursor.rowcount
-                    conn.commit()
-                except Exception as e:
-                    error_count += 1
-                    conn.rollback()
-                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                finally:
-                    conn.close()
-            else:
-                return jsonify({'success': False, 'error': 'Invalid action or missing target queue'})
+                    total_affected += cursor.rowcount
+                else:
+                    return jsonify({'success': False, 'error': 'Invalid action or missing target queue'})
+
+                conn.commit()
+            except Exception as e:
+                error_count += 1
+                conn.rollback()
+                logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+            finally:
+                conn.close()
 
         if error_count > 0:
-            message = f"Completed with {error_count} errors. Successfully processed {total_processed} items."
-            if errors:
-                message += f" First few errors: {'; '.join(errors[:3])}"
+            message = f"Completed with {error_count} batch errors. Successfully processed {total_affected} items."
             return jsonify({'success': True, 'message': message, 'warning': True})
         else:
             action_text = "deleted" if action == "delete" else f"moved to {target_queue} queue"
-            message = f"Successfully {action_text} {total_processed} items"
+            message = f"Successfully {action_text} {total_affected} items"
             return jsonify({'success': True, 'message': message})
 
     except Exception as e:
@@ -247,75 +213,23 @@ def bulk_queue_action():
 def delete_item():
     data = request.json
     item_id = data.get('item_id')
-    blacklist = data.get('blacklist', False)
     
     if not item_id:
         return jsonify({'success': False, 'error': 'No item ID provided'}), 400
 
-    try:
-        item = get_media_item_by_id(item_id)
-        if not item:
-            return jsonify({'success': False, 'error': 'Item not found'}), 404
-
-        # Get file management settings
-        file_management = get_setting('File Management', 'file_collection_management', 'Plex')
-        mounted_location = get_setting('Plex', 'mounted_file_location', get_setting('File Management', 'original_files_path', ''))
-        original_files_path = get_setting('File Management', 'original_files_path', '')
-        symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '')
-
-        # Handle file deletion based on management type
-        if file_management == 'Plex' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
-            if mounted_location and item.get('location_on_disk'):
-                try:
-                    if os.path.exists(item['location_on_disk']):
-                        os.remove(item['location_on_disk'])
-                except Exception as e:
-                    logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
-
-            sleep(1)
-
-            if item['type'] == 'movie':
-                remove_file_from_plex(item['title'], item['filled_by_file'])
-            elif item['type'] == 'episode':
-                remove_file_from_plex(item['title'], item['filled_by_file'], item['episode_title'])
-
-        elif file_management == 'Symlinked/Local' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
-            # Handle symlink removal
-            if item.get('location_on_disk'):
-                try:
-                    if os.path.exists(item['location_on_disk']) and os.path.islink(item['location_on_disk']):
-                        os.unlink(item['location_on_disk'])
-                except Exception as e:
-                    logging.error(f"Error removing symlink at {item['location_on_disk']}: {str(e)}")
-
-            # Handle original file removal
-            if item.get('original_path_for_symlink'):
-                try:
-                    if os.path.exists(item['original_path_for_symlink']):
-                        os.remove(item['original_path_for_symlink'])
-                except Exception as e:
-                    logging.error(f"Error deleting original file at {item['original_path_for_symlink']}: {str(e)}")
-
-            sleep(1)
-
-            # Remove from Plex if configured
-            plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
-            if plex_url:
+    try:        
+        if get_setting('Sync Deletions', 'sync_deletions', False):
+            item = get_media_item_by_id(item_id)
+            if item['state'] == 'Collected':
                 if item['type'] == 'movie':
-                    remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']))
+                    remove_file_from_plex(item['title'], item['filled_by_file'])
                 elif item['type'] == 'episode':
-                    remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']), item['episode_title'])
+                    remove_file_from_plex(item['title'], item['filled_by_file'], item['episode_title'])
 
-        # Handle database operation based on blacklist flag
-        if blacklist:
-            update_media_item_state(item_id, 'Blacklisted')
-        else:
-            remove_from_media_items(item_id)
-
+        remove_from_media_items(item_id)
         return jsonify({'success': True})
-
     except Exception as e:
-        logging.error(f"Error processing delete request: {str(e)}")
+        logging.error(f"Error deleting item: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def perform_database_migration():

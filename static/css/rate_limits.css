@@ -11,24 +11,11 @@
     pointer-events: none;
     transition: transform 0.3s ease, opacity 0.3s ease;
     transform-origin: top;
-    visibility: hidden;
 }
 
 .rate-limits-section.show {
     transform: translateX(-50%) translateY(0);
     opacity: 1;
-    visibility: visible;
-}
-
-/* Keep the toggle button always clickable when section is shown */
-.rate-limits-section.show .rate-limits-toggle {
-    pointer-events: auto;
-}
-
-/* Container only gets pointer events when explicitly shown */
-.rate-limits-container.show {
-    opacity: 1;
-    visibility: visible;
     pointer-events: auto;
 }
 
@@ -82,8 +69,12 @@
     padding: 0;
     opacity: 0;
     visibility: hidden;
-    pointer-events: none;
     transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.rate-limits-container.show {
+    opacity: 1;
+    visibility: visible;
 }
 
 .rate-limits-header {
