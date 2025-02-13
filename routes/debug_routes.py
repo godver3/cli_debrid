@@ -631,7 +631,7 @@ def get_and_add_wanted_content(source_id):
 
     wanted_content = []
     if source_type == 'Overseerr':
-        wanted_content = get_wanted_from_overseerr(versions)
+        wanted_content = get_wanted_from_overseerr()
     elif source_type == 'My Plex Watchlist':
         wanted_content = get_wanted_from_plex_watchlist(versions)
     elif source_type == 'My Plex RSS Watchlist':
@@ -659,7 +659,7 @@ def get_and_add_wanted_content(source_id):
             wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
     elif source_type == 'Trakt Watchlist':
         update_trakt_settings(content_sources)
-        wanted_content = get_wanted_from_trakt_watchlist(versions)
+        wanted_content = get_wanted_from_trakt_watchlist()
     elif source_type == 'Trakt Lists':
         update_trakt_settings(content_sources)
         trakt_lists = source_data.get('trakt_lists', '').split(',')
@@ -668,7 +668,7 @@ def get_and_add_wanted_content(source_id):
             wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
     elif source_type == 'Trakt Collection':
         update_trakt_settings(content_sources)
-        wanted_content = get_wanted_from_trakt_collection(versions)
+        wanted_content = get_wanted_from_trakt_collection()
     elif source_type == 'Collected':
         wanted_content = get_wanted_from_collected()
 
@@ -1009,7 +1009,6 @@ def run_task():
         'task_update_show_titles': program_runner.task_update_show_titles,
         'task_get_plex_watch_history': program_runner.task_get_plex_watch_history,
         'task_check_database_health': program_runner.task_check_database_health,
-        'task_run_library_maintenance': program_runner.task_run_library_maintenance,
     }
 
     if task_name not in tasks:
@@ -1032,7 +1031,7 @@ def get_available_tasks():
         'task_generate_airtime_report', 'task_check_service_connectivity', 'task_send_notifications',
         'task_check_trakt_early_releases', 'task_reconcile_queues', 'task_check_plex_files',
         'task_update_show_ids', 'task_update_show_titles', 'task_get_plex_watch_history',
-        'task_check_database_health', 'task_run_library_maintenance'
+        'task_check_database_health'
     ]
     return jsonify({'tasks': tasks}), 200
 
