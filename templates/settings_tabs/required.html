@@ -56,7 +56,8 @@
                            {% if settings.get('File Management', {}).get(key) %}checked{% endif %}>
                 {% elif value.choices %}
                     <select id="file management-{{ key }}" name="File Management.{{ key }}" class="settings-input"
-                            data-section="File Management" data-key="{{ key }}">
+                            data-section="File Management" data-key="{{ key }}"
+                            {% if key == 'file_collection_management' %}data-previous-value="{{ settings.get('File Management', {}).get(key, '') }}"{% endif %}>
                         {% for choice in value.choices %}
                             <option value="{{ choice }}" {% if settings.get('File Management', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
                         {% endfor %}
@@ -195,5 +196,91 @@ document.addEventListener('DOMContentLoaded', function() {
     // Add event listeners
     updatePlexOnDiscovery.addEventListener('change', handlePlexSettingsChange);
     disablePlexChecks.addEventListener('change', handlePlexSettingsChange);
+});
+</script>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Get the file collection management select element
+    const collectionTypeSelect = document.querySelector('select[name="File Management.file_collection_management"]');
+    
+    if (collectionTypeSelect) {
+        // Initial UI setup based on current value
+        updateUIVisibility(collectionTypeSelect.value);
+        
+        collectionTypeSelect.addEventListener('change', async function(event) {
+            // Prevent any immediate changes
+            event.preventDefault();
+            event.stopPropagation();
+            
+            const previousValue = this.getAttribute('data-previous-value');
+            const newValue = this.value;
+            
+            // Immediately set back to previous value to prevent UI flicker
+            this.value = previousValue;
+            
+            if (previousValue !== newValue) {
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    title: '⚠️ Change Collection Management Type',
+                    message: 'Changing between Plex and Symlinked/Local management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?',
+                    confirmText: 'Yes, Change',
+                    cancelText: 'No, Keep Current',
+                    onConfirm: () => {
+                        // Update the select value
+                        this.value = newValue;
+                        
+                        // Update the previous value attribute
+                        this.setAttribute('data-previous-value', newValue);
+                        
+                        // Manually trigger the settings change event for the UI
+                        const event = new CustomEvent('settings-changed', {
+                            detail: {
+                                section: 'File Management',
+                                key: 'file_collection_management',
+                                value: newValue
+                            }
+                        });
+                        document.dispatchEvent(event);
+                        
+                        // Update UI based on the new value
+                        updateUIVisibility(newValue);
+                    },
+                    onCancel: () => {
+                        // Value is already set back to previous, no need to do anything
+                    }
+                });
+            }
+        });
+    }
+    
+    // Function to update UI visibility
+    function updateUIVisibility(value) {
+        const plexSection = document.getElementById('plex-settings-section');
+        const symlinkFields = [
+            document.querySelector('div.settings-form-group:has(#file\\ management-original_files_path)'),
+            document.querySelector('div.settings-form-group:has(#file\\ management-symlinked_files_path)'),
+            document.querySelector('div.settings-form-group:has(#file\\ management-plex_url_for_symlink)'),
+            document.querySelector('div.settings-form-group:has(#file\\ management-plex_token_for_symlink)')
+        ];
+
+        if (value === 'Plex') {
+            // Show Plex section
+            plexSection.style.display = 'block';
+            // Hide symlink fields
+            symlinkFields.forEach(field => {
+                if (field) field.style.display = 'none';
+            });
+        } else {
+            // Hide Plex section
+            plexSection.style.display = 'none';
+            // Show symlink fields
+            symlinkFields.forEach(field => {
+                if (field) field.style.display = 'block';
+            });
+        }
+    }
 });
 </script>

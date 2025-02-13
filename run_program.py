@@ -110,6 +110,7 @@ class ProgramRunner:
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
             'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
             'task_check_database_health': 3600,  # Run every hour
+            'task_run_library_maintenance': 12 * 60 * 60,  # Run every twelve hours
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -147,6 +148,9 @@ class ProgramRunner:
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
             self.enabled_tasks.add('task_get_plex_watch_history')
+
+        if get_setting('Debug', 'enable_library_maintenance_task', False):
+            self.enabled_tasks.add('task_run_library_maintenance')
         
         # Add this line to store content sources
         self.content_sources = None
@@ -433,7 +437,7 @@ class ProgramRunner:
 
             wanted_content = []
             if source_type == 'Overseerr':
-                wanted_content = get_wanted_from_overseerr()
+                wanted_content = get_wanted_from_overseerr(versions)
             elif source_type == 'MDBList':
                 mdblist_urls = data.get('urls', '').split(',')
                 for mdblist_url in mdblist_urls:
@@ -441,7 +445,7 @@ class ProgramRunner:
                     wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
             elif source_type == 'Trakt Watchlist':
                 try:
-                    wanted_content = get_wanted_from_trakt_watchlist()
+                    wanted_content = get_wanted_from_trakt_watchlist(versions)
                 except (ValueError, api.exceptions.RequestException) as e:
                     logging.error(f"Failed to fetch Trakt watchlist: {str(e)}")
                     return
@@ -455,7 +459,7 @@ class ProgramRunner:
                         logging.error(f"Failed to fetch Trakt list {trakt_list}: {str(e)}")
                         continue
             elif source_type == 'Trakt Collection':
-                wanted_content = get_wanted_from_trakt_collection()
+                wanted_content = get_wanted_from_trakt_collection(versions)
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected()
             elif source_type == 'My Plex Watchlist':
@@ -1258,6 +1262,11 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error running task {task_name}: {str(e)}")
             raise
+
+    def task_run_library_maintenance(self):
+        """Run library maintenance tasks."""
+        from database.maintenance import run_library_maintenance
+        run_library_maintenance()
 
     def task_check_database_health(self):
         """Periodic task to verify database health and handle any corruption."""
