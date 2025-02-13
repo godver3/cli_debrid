@@ -304,7 +304,7 @@ def check_for_updates(list_url: str = None) -> bool:
 
     return False
 
-def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt watchlist")
     access_token = ensure_trakt_auth()
     if access_token is None:
@@ -327,7 +327,6 @@ def get_wanted_from_trakt_watchlist() -> List[Tuple[List[Dict[str, Any]], Dict[s
     # Process Trakt Watchlist
     for watchlist_source in trakt_sources['watchlist']:
         if watchlist_source.get('enabled', False):
-            versions = watchlist_source.get('versions', {})
             watchlist_items = fetch_items_from_trakt("/sync/watchlist")
             
             processed_items = []
@@ -459,6 +458,10 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
         logging.error("Failed to obtain a valid Trakt access token")
         raise Exception("Failed to obtain a valid Trakt access token")
     
+    # Skip processing if URL contains 'asc'
+    if 'asc' in trakt_list_url:
+        return [([], versions)]
+    
     all_wanted_items = []
     disable_caching = True  # Hardcoded to True
     cache = {} if disable_caching else load_trakt_cache(TRAKT_LISTS_CACHE_FILE)
@@ -527,7 +530,7 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
         save_trakt_cache(cache, TRAKT_LISTS_CACHE_FILE)
     return all_wanted_items
 
-def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_trakt_collection(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt collection")
     access_token = ensure_trakt_auth()
     if access_token is None:
@@ -591,7 +594,7 @@ def get_wanted_from_trakt_collection() -> List[Tuple[List[Dict[str, Any]], Dict[
         logging.info(f"Skipped {skipped_count} items due to missing IDs")
     
     logging.info(f"Found {len(processed_items)} items from Trakt collection")
-    all_wanted_items.append((processed_items, {}))
+    all_wanted_items.append((processed_items, versions))
     
     # Save updated cache only if caching is enabled
     if not disable_caching:

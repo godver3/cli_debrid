@@ -168,10 +168,19 @@ function updateBodyPadding() {
 function toggleRateLimitsSection() {
     const section = document.querySelector('.rate-limits-section');
     const button = document.getElementById('rateLimitsSectionToggle');
+    const container = document.getElementById('rate-limits-container');
+    
     if (section && button) {
         const isHidden = !section.classList.contains('show');
-        section.classList.toggle('show');
-        button.classList.toggle('active');
+        
+        if (isHidden) {
+            section.classList.add('show');
+            button.classList.add('active');
+        } else {
+            section.classList.remove('show');
+            container.classList.remove('show'); // Also hide container when hiding section
+            button.classList.remove('active');
+        }
         
         // Store the state in localStorage
         localStorage.setItem('rateLimitsSectionVisible', isHidden ? 'true' : 'false');
@@ -187,11 +196,18 @@ function initializeRateLimitsSection() {
         // Set initial state based on localStorage or default to visible
         const shouldBeVisible = localStorage.getItem('rateLimitsSectionVisible') !== 'false';
         const section = document.querySelector('.rate-limits-section');
-        if (section) {
+        const container = document.getElementById('rate-limits-container');
+        
+        if (section && container) {
             if (shouldBeVisible) {
                 section.classList.add('show');
+                button.classList.add('active');
+                // Don't show container by default, only section
+            } else {
+                section.classList.remove('show');
+                container.classList.remove('show');
+                button.classList.remove('active');
             }
-            button.classList.toggle('active', !shouldBeVisible);
         }
         
         button.addEventListener('click', toggleRateLimitsSection);
