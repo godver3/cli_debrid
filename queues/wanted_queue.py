@@ -18,12 +18,12 @@ class WantedQueue:
 
     def _calculate_scrape_times(self):
         for item in self.items:
-            if not item['release_date'] or item['release_date'].lower() == "unknown":
+            if not item.get('release_date') or str(item.get('release_date')).lower() in ["unknown", "none"]:
                 item['scrape_time'] = "Unknown"
                 continue
 
             try:
-                release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+                release_date = datetime.strptime(str(item['release_date']), '%Y-%m-%d').date()
                 
                 if item['type'] == 'movie':
                     if get_setting("Queue", "movie_airtime_offset", 19) == '':
@@ -43,8 +43,12 @@ class WantedQueue:
                         # First try HH:MM:SS format
                         airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
                     except ValueError:
-                        # If that fails, try HH:MM format
-                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                        try:
+                            # If that fails, try HH:MM format
+                            airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                        except ValueError:
+                            # If both formats fail, use default time
+                            airtime = datetime.strptime("19:00", '%H:%M').time()
                     airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(hours=episode_airtime_offset)).time()
                 else:
                     airtime_cutoff = datetime.now().time()

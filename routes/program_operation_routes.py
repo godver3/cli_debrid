@@ -23,6 +23,7 @@ from notifications import (
     send_queue_start_notification,
     send_queue_stop_notification
 )
+import platform
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -182,13 +183,26 @@ def signal_handler(signum, frame):
     stop_program()
     sys.exit(0)
 
-def run_server():
+def run_server(host='0.0.0.0'):
     from extensions import app
     
     # Get port from environment variable or use default
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
     try:
-        app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port)
+        if platform.system() == 'Windows':
+            # On Windows, try to bind to the specific IP address of the machine
+            # This is more network-friendly than 0.0.0.0 while still allowing remote access
+            try:
+                hostname = socket.gethostname()
+                host_ip = socket.gethostbyname(hostname)
+                logging.info(f"Binding to specific IP address on Windows: {host_ip}")
+                app.run(debug=True, use_reloader=False, host=host_ip, port=port)
+            except Exception as e:
+                logging.warning(f"Failed to bind to specific IP, falling back to localhost: {str(e)}")
+                app.run(debug=True, use_reloader=False, host='127.0.0.1', port=port)
+        else:
+            # On non-Windows systems, bind to all interfaces
+            app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port)
     except Exception as e:
         logging.error(f"Error running server: {str(e)}")
         cleanup_port(port)
@@ -196,18 +210,31 @@ def run_server():
 def start_server():
     from extensions import app
     import socket
+    import platform
     
     # Get port from environment variable or use default
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
     max_retries = 3
     retry_delay = 2  # seconds
     
+    # Determine the host to bind to
+    if platform.system() == 'Windows':
+        try:
+            hostname = socket.gethostname()
+            host = socket.gethostbyname(hostname)
+            logging.info(f"Using specific IP address on Windows: {host}")
+        except Exception as e:
+            logging.warning(f"Failed to get specific IP, using localhost: {str(e)}")
+            host = '127.0.0.1'
+    else:
+        host = '0.0.0.0'
+    
+    # Check if port is available
     for attempt in range(max_retries):
-        # Check if port is available
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)
-            result = sock.connect_ex(('0.0.0.0', port))
+            result = sock.connect_ex((host, port))
             sock.close()
             
             if result != 0:  # Port is free
@@ -225,7 +252,7 @@ def start_server():
         except Exception as e:
             logging.error(f"Error checking port {port}: {e}")
             return False
-        
+    
     # Setup signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -235,9 +262,24 @@ def start_server():
         initialize_app()
     
     global server_thread
-    server_thread = threading.Thread(target=run_server)
+    server_thread = threading.Thread(target=lambda: run_server(host))
     server_thread.daemon = True
     server_thread.start()
+    
+    # Log access URLs
+    if platform.system() == 'Windows':
+        try:
+            hostname = socket.gethostname()
+            host_ip = socket.gethostbyname(hostname)
+            logging.info(f"Server started. Access URLs:")
+            logging.info(f"Local:   http://localhost:{port}")
+            logging.info(f"Network: http://{host_ip}:{port}")
+        except Exception:
+            logging.info(f"Server started. Access URL:")
+            logging.info(f"Local only: http://localhost:{port}")
+    else:
+        logging.info(f"Server started on all interfaces (port {port})")
+    
     return True
 
 def check_service_connectivity():
