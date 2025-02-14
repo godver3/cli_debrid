@@ -17,6 +17,14 @@
         border-radius: 4px;
     }
 
+    #bulk-early-release {
+        background-color: #cd864f;
+    }
+
+    #bulk-early-release:hover {
+        background-color: #f07238;
+    }    
+    
     #column-selector {
         background-color: #444;
         padding: 15px;
