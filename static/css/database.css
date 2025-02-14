@@ -18,11 +18,11 @@
     }
 
     #bulk-early-release {
-        background-color: #cd864f;
+        background-color: #e67e22;
     }
 
     #bulk-early-release:hover {
-        background-color: #f07238;
+        background-color: #d35400;
     }    
     
     #column-selector {
@@ -341,7 +341,7 @@
     }
 
     .bulk-action-btn:disabled {
-        background-color: #666;
+        background-color: #666 !important;
         cursor: not-allowed;
     }
 
