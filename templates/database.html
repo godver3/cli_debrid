@@ -20,6 +20,7 @@
                 <option value="Pending Uncached">Pending Uncached</option>
                 <option value="Upgrading">Upgrading</option>
             </select>
+            <button id="bulk-early-release" class="bulk-action-btn" disabled>Mark Selected as Early Release</button>
         </div>
     </div>
     <div id="column-selector-wrapper">
@@ -647,6 +648,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const selectAllBtn = document.getElementById('select-all');
     const bulkDeleteBtn = document.getElementById('bulk-delete');
     const bulkMoveQueue = document.getElementById('bulk-move-queue');
+    const bulkEarlyReleaseBtn = document.getElementById('bulk-early-release');
     let lastChecked = null;
     let allSelected = false;
 
@@ -705,6 +707,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedCount = document.querySelectorAll('.item-select:checked').length;
         bulkDeleteBtn.disabled = selectedCount === 0;
         bulkMoveQueue.disabled = selectedCount === 0;
+        bulkEarlyReleaseBtn.disabled = selectedCount === 0;
     }
 
     async function processBatchedItems(items, action, targetQueue = null) {
@@ -852,6 +855,47 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Reset the select element
         this.value = '';
+    });
+
+    // Handle bulk early release
+    bulkEarlyReleaseBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Early Release',
+            message: `
+                <div>Are you sure you want to mark ${selectedItems.length} item(s) as early release?</div>
+            `,
+            confirmText: 'Mark',
+            cancelText: 'Cancel',
+            onConfirm: async () => {
+                Loading.show();
+                try {
+                    const result = await processBatchedItems(selectedItems, 'early_release');
+                    showPopup({
+                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        message: result.message,
+                        title: result.warning ? 'Partial Success' : 'Success',
+                    });
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } catch (error) {
+                    console.error('Error:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: error.message,
+                        title: 'Error',
+                    });
+                } finally {
+                    Loading.hide();
+                }
+            },
+        });
     });
 
     // Initial attachment of event listeners
