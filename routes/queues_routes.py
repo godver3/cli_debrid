@@ -176,9 +176,12 @@ def api_queue_contents():
         elif queue_name == 'Wanted':
             for item in items:
                 if 'scrape_time' in item:
-                    if item['scrape_time'] != "Unknown" and item['scrape_time'] != "Invalid date":
-                        scrape_time = datetime.strptime(item['scrape_time'], '%Y-%m-%d %H:%M:%S')
-                        item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
+                    if item['scrape_time'] not in ["Unknown", "Invalid date or time"]:
+                        try:
+                            scrape_time = datetime.strptime(item['scrape_time'], '%Y-%m-%d %H:%M:%S')
+                            item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
+                        except ValueError:
+                            item['formatted_scrape_time'] = item['scrape_time']
                     else:
                         item['formatted_scrape_time'] = item['scrape_time']
         elif queue_name == 'Checking':
@@ -262,9 +265,12 @@ def queue_stream():
                     elif queue_name == 'Wanted':
                         for item in items:
                             if 'scrape_time' in item:
-                                if item['scrape_time'] != "Unknown" and item['scrape_time'] != "Invalid date":
-                                    scrape_time = datetime.strptime(item['scrape_time'], '%Y-%m-%d %H:%M:%S')
-                                    item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
+                                if item['scrape_time'] not in ["Unknown", "Invalid date or time"]:
+                                    try:
+                                        scrape_time = datetime.strptime(item['scrape_time'], '%Y-%m-%d %H:%M:%S')
+                                        item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
+                                    except ValueError:
+                                        item['formatted_scrape_time'] = item['scrape_time']
                                 else:
                                     item['formatted_scrape_time'] = item['scrape_time']
                     elif queue_name == 'Checking':
