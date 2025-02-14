@@ -53,11 +53,24 @@ class RequestIDMiddleware:
         self.wrapped_app = app.wsgi_app if isinstance(app, Flask) else app
 
     def __call__(self, environ, start_response):
-        with self.flask_app.request_context(environ):
-            g.request_id = str(uuid.uuid4())
-            def request_id_start_response(status, headers, exc_info=None):
-                headers.append(('X-Request-ID', g.request_id))
-                return start_response(status, headers, exc_info)
+        request_id = str(uuid.uuid4())
+        
+        def request_id_start_response(status, headers, exc_info=None):
+            headers.append(('X-Request-ID', request_id))
+            return start_response(status, headers, exc_info)
+            
+        def set_request_id():
+            if not hasattr(g, 'request_id'):
+                g.request_id = request_id
+                
+        # Push a request context if we don't have one
+        if not self.flask_app.request_context(environ):
+            with self.flask_app.request_context(environ):
+                set_request_id()
+                return self.wrapped_app(environ, request_id_start_response)
+        else:
+            # We're already in a request context (e.g. streaming response)
+            set_request_id()
             return self.wrapped_app(environ, request_id_start_response)
 
 MAX_REDIRECTS = 10
@@ -109,6 +122,10 @@ class RedirectLoopProtection:
     def __call__(self, environ, start_response):
         def custom_start_response(status, headers, exc_info=None):
             try:
+                # Skip redirect loop detection for streaming responses
+                if environ.get('wsgi.multithread') or environ.get('wsgi.multiprocess'):
+                    return start_response(status, headers, exc_info)
+                    
                 with self.flask_app.request_context(environ):
                     response = self.flask_app.response_class()
                     response.status = status
@@ -222,9 +239,9 @@ app = Flask(__name__)
 base_wsgi_app = app.wsgi_app
 base_wsgi_app = ProxyFix(base_wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 base_wsgi_app = SecurityHeadersMiddleware(base_wsgi_app)
-base_wsgi_app = RedirectLoopProtection(app)  # Needs Flask app for request context
 base_wsgi_app = SameSiteMiddleware(base_wsgi_app)
 base_wsgi_app = RequestIDMiddleware(app)  # Needs Flask app for request context
+base_wsgi_app = RedirectLoopProtection(app)  # Needs Flask app for request context
 
 # Set the final middleware chain
 app.wsgi_app = base_wsgi_app
