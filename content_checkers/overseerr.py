@@ -94,7 +94,7 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
     logging.info(f"Found {len(wanted_content)} wanted items from Overseerr")
     return wanted_content
 
-def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     content_sources = get_all_settings().get('Content Sources', {})
     overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
     allow_partial = get_setting('Debug', 'allow_partial_overseerr_requests', 'False')
@@ -108,7 +108,6 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
     for source in overseerr_sources:
         overseerr_url = source.get('url')
         overseerr_api_key = source.get('api_key')
-        versions = source.get('versions', {})
         
         if not overseerr_url or not overseerr_api_key:
             logging.error(f"Overseerr URL or API key not set for source: {source}. Please configure in settings.")
@@ -171,5 +170,4 @@ def get_wanted_from_overseerr() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
     if not disable_caching:
         save_overseerr_cache(cache)
     logging.info(f"Retrieved items from {len(all_wanted_items)} Overseerr sources.")
-    
     return all_wanted_items
