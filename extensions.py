@@ -1,4 +1,4 @@
-from flask import Flask, redirect, request, jsonify, url_for, session, g
+from flask import Flask, redirect, request, jsonify, url_for, session
 from flask_login import LoginManager
 import time
 from sqlalchemy import inspect
@@ -13,141 +13,10 @@ from datetime import timedelta
 import os
 from tld import get_tld
 from tld.exceptions import TldDomainNotFound, TldBadUrl
-from werkzeug.exceptions import HTTPException
 
 # Configure logging at INFO level only
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - [%(request_id)s] - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-class RequestIDFilter(logging.Filter):
-    def filter(self, record):
-        record.request_id = getattr(g, 'request_id', 'no_request_id')
-        return True
-
-logger.addFilter(RequestIDFilter())
-
-class SecurityHeadersMiddleware:
-    def __init__(self, app):
-        self.wrapped_app = app
-
-    def __call__(self, environ, start_response):
-        def security_headers_start_response(status, headers, exc_info=None):
-            security_headers = [
-                ('X-Content-Type-Options', 'nosniff'),
-                ('X-Frame-Options', 'SAMEORIGIN'),
-                ('X-XSS-Protection', '1; mode=block'),
-                ('Referrer-Policy', 'strict-origin-when-cross-origin'),
-                ('Permissions-Policy', 'geolocation=(), microphone=(), camera=()'),
-                ('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';")
-            ]
-            headers.extend(security_headers)
-            return start_response(status, headers, exc_info)
-        return self.wrapped_app(environ, security_headers_start_response)
-
-class RequestIDMiddleware:
-    def __init__(self, app):
-        self.flask_app = app
-        self.wrapped_app = app.wsgi_app if isinstance(app, Flask) else app
-
-    def __call__(self, environ, start_response):
-        request_id = str(uuid.uuid4())
-        
-        def request_id_start_response(status, headers, exc_info=None):
-            headers.append(('X-Request-ID', request_id))
-            return start_response(status, headers, exc_info)
-            
-        def set_request_id():
-            if not hasattr(g, 'request_id'):
-                g.request_id = request_id
-                
-        # Push a request context if we don't have one
-        if not self.flask_app.request_context(environ):
-            with self.flask_app.request_context(environ):
-                set_request_id()
-                return self.wrapped_app(environ, request_id_start_response)
-        else:
-            # We're already in a request context (e.g. streaming response)
-            set_request_id()
-            return self.wrapped_app(environ, request_id_start_response)
-
-MAX_REDIRECTS = 10
-REDIRECT_TIMEOUT = 30  # seconds
-
-def is_redirect_loop(response):
-    """Check if we're in a redirect loop based on session data"""
-    # Check if status code indicates a redirect (3xx)
-    is_redirect = 300 <= int(response.status.split()[0]) < 400
-    
-    if not is_redirect:
-        # Reset redirect tracking on non-redirect responses
-        session.pop('redirect_count', None)
-        session.pop('first_redirect_time', None)
-        return False
-        
-    current_time = time.time()
-    redirect_count = session.get('redirect_count', 0)
-    first_redirect_time = session.get('first_redirect_time')
-    
-    if not first_redirect_time:
-        session['first_redirect_time'] = current_time
-        session['redirect_count'] = 1
-        return False
-        
-    # Check if we should reset the counter due to timeout
-    if current_time - first_redirect_time > REDIRECT_TIMEOUT:
-        session['first_redirect_time'] = current_time
-        session['redirect_count'] = 1
-        return False
-        
-    # Increment redirect count
-    redirect_count += 1
-    session['redirect_count'] = redirect_count
-    
-    # Check if we've hit the maximum redirects
-    if redirect_count >= MAX_REDIRECTS:
-        session.pop('redirect_count', None)
-        session.pop('first_redirect_time', None)
-        return True
-        
-    return False
-
-class RedirectLoopProtection:
-    def __init__(self, app):
-        self.flask_app = app
-        self.wrapped_app = app.wsgi_app if isinstance(app, Flask) else app
-        
-    def __call__(self, environ, start_response):
-        def custom_start_response(status, headers, exc_info=None):
-            try:
-                # Skip redirect loop detection for streaming responses
-                if environ.get('wsgi.multithread') or environ.get('wsgi.multiprocess'):
-                    return start_response(status, headers, exc_info)
-                    
-                with self.flask_app.request_context(environ):
-                    response = self.flask_app.response_class()
-                    response.status = status
-                    response.headers = headers
-                    
-                    if is_redirect_loop(response):
-                        logging.error(f"Detected redirect loop at: {request.path}")
-                        # Return a 508 Loop Detected error
-                        error_response = jsonify({
-                            'error': 'Redirect Loop Detected',
-                            'message': 'The server detected an infinite redirect loop',
-                            'path': request.path
-                        })
-                        error_response.status_code = 508
-                        return error_response(environ, start_response)
-                        
-            except Exception as e:
-                logging.error(f"Error in redirect loop detection: {str(e)}")
-                
-            return start_response(status, headers, exc_info)
-            
-        return self.wrapped_app(environ, custom_start_response)
+#logging.basicConfig(level=logging.INFO)
+#logger = logging.getLogger(__name__)
 
 def get_root_domain(host):
     """Get the root domain from a hostname."""
@@ -175,7 +44,7 @@ def get_root_domain(host):
 
 class SameSiteMiddleware:
     def __init__(self, app):
-        self.wrapped_app = app
+        self.app = app
 
     def __call__(self, environ, start_response):
         def custom_start_response(status, headers, exc_info=None):
@@ -227,24 +96,15 @@ class SameSiteMiddleware:
             
             return start_response(status, new_headers, exc_info)
         
-        return self.wrapped_app(environ, custom_start_response)
+        return self.app(environ, custom_start_response)
 
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
 app = Flask(__name__)
 
-# Create middleware chain in correct order
-# Each middleware wraps the previous one
-base_wsgi_app = app.wsgi_app
-base_wsgi_app = ProxyFix(base_wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-base_wsgi_app = SecurityHeadersMiddleware(base_wsgi_app)
-base_wsgi_app = SameSiteMiddleware(base_wsgi_app)
-base_wsgi_app = RequestIDMiddleware(app)  # Needs Flask app for request context
-base_wsgi_app = RedirectLoopProtection(app)  # Needs Flask app for request context
-
-# Set the final middleware chain
-app.wsgi_app = base_wsgi_app
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
 
 # Configure session
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -432,48 +292,3 @@ class SimpleTaskQueue:
         return self.tasks.get(task_id, {'status': 'NOT_FOUND'})
 
 task_queue = SimpleTaskQueue()
-
-def init_error_handlers(app):
-    @app.errorhandler(Exception)
-    def handle_exception(e):
-        # Log the error with request ID
-        logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
-        
-        # Pass through HTTP errors
-        if isinstance(e, HTTPException):
-            return e
-
-        # Return generic error response
-        return jsonify({
-            'error': 'Internal Server Error',
-            'request_id': getattr(g, 'request_id', None),
-            'message': 'An unexpected error occurred'
-        }), 500
-
-    @app.errorhandler(429)
-    def handle_rate_limit(e):
-        return jsonify({
-            'error': 'Too Many Requests',
-            'request_id': getattr(g, 'request_id', None),
-            'message': 'Rate limit exceeded'
-        }), 429
-
-def cleanup_expired_sessions():
-    """Cleanup expired sessions periodically"""
-    session_dir = app.config['SESSION_FILE_DIR']
-    if os.path.exists(session_dir):
-        current_time = time.time()
-        for filename in os.listdir(session_dir):
-            filepath = os.path.join(session_dir, filename)
-            try:
-                if os.path.getctime(filepath) + app.config['PERMANENT_SESSION_LIFETIME'].total_seconds() < current_time:
-                    os.remove(filepath)
-            except OSError:
-                pass
-
-# Initialize error handlers
-init_error_handlers(app)
-
-# Schedule session cleanup
-cleanup_thread = threading.Thread(target=cleanup_expired_sessions, daemon=True)
-cleanup_thread.start()
