@@ -517,10 +517,20 @@ document.addEventListener('DOMContentLoaded', function() {
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Confirm Deletion',
-            message: 'Are you sure you want to delete this item?',
+            message: `
+                <div>Are you sure you want to delete this item?</div>
+                <div style="margin-top: 10px;">
+                    <label>
+                        <input type="checkbox" id="blacklist-item-checkbox"> Blacklist item to avoid re-addition?
+                    </label>
+                </div>
+            `,
             confirmText: 'Delete',
             cancelText: 'Cancel',
-            onConfirm: () => deleteItem(itemId),
+            onConfirm: () => {
+                const blacklistItem = document.getElementById('blacklist-item-checkbox').checked;
+                deleteItem(itemId, blacklistItem);
+            },
             onCancel: () => {} // Do nothing on cancel
         });
     }
@@ -537,14 +547,17 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function deleteItem(itemId) {
+    function deleteItem(itemId, blacklistItem) {
         Loading.show();
         fetch('{{ url_for('database.delete_item') }}', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ item_id: itemId })
+            body: JSON.stringify({ 
+                item_id: itemId,
+                blacklist: blacklistItem 
+            })
         })
         .then(response => {
             if (!response.ok) {
@@ -746,17 +759,41 @@ document.addEventListener('DOMContentLoaded', function() {
 
         showPopup({
             type: POPUP_TYPES.CONFIRM,
-            message: `Are you sure you want to delete ${selectedItems.length} item(s)?`,
             title: 'Confirm Deletion',
+            message: `
+                <div>Are you sure you want to delete ${selectedItems.length} item(s)?</div>
+                <div style="margin-top: 10px;">
+                    <label>
+                        <input type="checkbox" id="bulk-blacklist-checkbox"> Blacklist item to avoid re-addition?
+                    </label>
+                </div>
+            `,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
             onConfirm: async () => {
                 Loading.show();
+                const blacklistItems = document.getElementById('bulk-blacklist-checkbox').checked;
+                
+                const formData = new FormData();
+                formData.append('action', 'delete');
+                formData.append('blacklist', blacklistItems);
+                selectedItems.forEach(id => {
+                    formData.append('selected_items', id);
+                });
+
                 try {
-                    const result = await processBatchedItems(selectedItems, 'delete');
-                    showPopup({
-                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
-                        message: result.message,
-                        title: result.warning ? 'Partial Success' : 'Success',
+                    const response = await fetch('/database/bulk_queue_action', {
+                        method: 'POST',
+                        body: formData,
                     });
+                    const data = await response.json();
+                    
+                    showPopup({
+                        type: data.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        message: data.message,
+                        title: data.warning ? 'Partial Success' : 'Success',
+                    });
+                    
                     setTimeout(() => {
                         window.location.reload();
                     }, 2000);

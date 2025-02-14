@@ -131,7 +131,7 @@ SETTINGS_SCHEMA = {
         "tab": "Additional Settings",
         "sync_deletions": {
             "type": "boolean",
-            "description": "Sync deletions from the Database to Plex",
+            "description": "[DEPRECATED - Defaults to true] Sync deletions from the Database to Plex",
             "default": False
         }
     },
@@ -310,6 +310,11 @@ SETTINGS_SCHEMA = {
             "description": "Sort results by uncached status over cached status",
             "default": False
         },
+        "enable_plex_removal_caching": {
+            "type": "boolean",
+            "description": "Enable caching of Plex removal operations before executing them",
+            "default": True
+        },
         "content_source_check_period": {
             "type": "dict",
             "description": "Override Content Source checking period (in minutes) - note that a minimum of 5 minutes is recommended",
@@ -325,7 +330,7 @@ SETTINGS_SCHEMA = {
         },
         "rescrape_missing_files": {
             "type": "boolean",
-            "description": "Rescrape items that are missing their associated file (i.e. if Plex Library cleanup is enabled)",
+            "description": "[DEPRECATED - Handled through library maintenance task] Rescrape items that are missing their associated file (i.e. if Plex Library cleanup is enabled)",
             "default": False
         },
         "enable_reverse_order_scraping": {
@@ -412,6 +417,11 @@ SETTINGS_SCHEMA = {
         "enable_crash_test": {
             "type": "boolean",
             "description": "Enable crash test",
+            "default": False
+        },
+        "enable_library_maintenance_task": {
+            "type": "boolean",
+            "description": "Enable library maintenance task to run periodically. This is a destructive process and should be used with caution",
             "default": False
         },
         "enable_detailed_notification_information": {
