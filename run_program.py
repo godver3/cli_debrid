@@ -1461,6 +1461,15 @@ def get_and_add_recent_collected_from_plex():
         
         logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes")
         
+        # Check and fix any unmatched items before adding to database if enabled
+        if get_setting('Debug', 'enable_unmatched_items_check', True):
+            logging.info("Checking and fixing unmatched items before adding to database")
+            from utilities.plex_matching_functions import check_and_fix_unmatched_items
+            collected_content = check_and_fix_unmatched_items(collected_content)
+            # Get updated counts after matching check
+            movies = collected_content['movies']
+            episodes = collected_content['episodes']
+        
         # Don't return None if some items were skipped during add_collected_items
         if len(movies) > 0 or len(episodes) > 0:
             add_collected_items(movies + episodes, recent=True)

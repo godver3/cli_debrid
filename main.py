@@ -1023,6 +1023,26 @@ def main():
             save_config(config)
             logging.info("Successfully migrated notifications to include all notify_on settings")
 
+    # Add migration for version wake_count setting
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            # Check if wake_count is missing or is string "None"
+            if 'wake_count' not in version_config or version_config['wake_count'] == "None":
+                version_config['wake_count'] = None  # Set to actual None value
+                versions_updated = True
+                logging.info(f"Adding/fixing wake_count setting to version {version_name}")
+            # Also convert string "None" to actual None if it exists
+            elif isinstance(version_config['wake_count'], str) and version_config['wake_count'].lower() == "none":
+                version_config['wake_count'] = None
+                versions_updated = True
+                logging.info(f"Converting string 'None' to actual None for version {version_name}")
+
+        # Save the updated config if changes were made
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include wake_count")
+
     # Get battery port from environment variable
     battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
     

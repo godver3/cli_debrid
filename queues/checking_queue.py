@@ -329,9 +329,6 @@ class CheckingQueue:
                         if items_to_scan:
                             logging.info("Full library scan disabled for now")
 
-                    else:
-                        get_and_add_recent_collected_from_plex()
-
                 # Check if we've exceeded the checking queue period for non-actively-downloading items
                 if current_progress == 100:
                     oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
@@ -444,6 +441,12 @@ class CheckingQueue:
         # Remove processed items from the Checking queue
         for item in items_to_remove:
             self.remove_item(item)
+
+        # After processing all torrents, check if we need to run Plex scan
+        if not get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            # Only run Plex scan if we have any completed torrents
+            if any(self.get_torrent_progress(torrent_id) == 100 for torrent_id in items_by_torrent.keys()):
+                get_and_add_recent_collected_from_plex()
 
         #logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
 

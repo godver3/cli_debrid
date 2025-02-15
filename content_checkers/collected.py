@@ -53,6 +53,10 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
 
         for item in all_items:
             imdb_id = item['imdb_id']
+            if not imdb_id:  # Skip items with no IMDB ID
+                logging.warning(f"Skipping item with missing IMDB ID: {item}")
+                continue
+                
             if imdb_id not in consolidated_items:
                 if not disable_caching:
                     # Check cache for this item
