@@ -236,8 +236,6 @@ SETTINGS_SCHEMA = {
         },
         "versions": {
             "type": "dict",
-
-
             "description": "Scraping versions configuration",
             "default": {},
             "schema": {
@@ -264,7 +262,14 @@ SETTINGS_SCHEMA = {
                 "filter_in": {"type": "list", "default": []},
                 "filter_out": {"type": "list", "default": []},
                 "min_size_gb": {"type": "float", "default": 0.01, "min": 0},
-                "max_size_gb": {"type": "float", "default": float('inf'), "min": 0}
+                "max_size_gb": {"type": "float", "default": float('inf'), "min": 0},
+                "wake_count": {
+                    "type": "integer", 
+                    "default": None, 
+                    "min": -1, 
+                    "nullable": True,
+                    "description": "Override global wake count limit. -1 disables sleeping queue (only search once), empty uses global setting."
+                }
             }
         }
     },
@@ -433,6 +438,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Enable granular version additions for Wanted items",
             "default": False
+        },
+        "enable_unmatched_items_check": {
+            "type": "boolean",
+            "description": "Enable checking and fixing of unmatched items in Plex during collection scans",
+            "default": True
         },
         "cinesync_path": {
             "type": "string",

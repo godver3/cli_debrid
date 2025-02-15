@@ -607,7 +607,8 @@ def add_version():
         'filter_in': [],
         'filter_out': [],
         'min_size_gb': 0.01,
-        'max_size_gb': ''
+        'max_size_gb': '',
+        'wake_count': None  # Add default wake_count as None
     }
 
     save_config(config)
@@ -749,6 +750,16 @@ def save_version_settings():
             config['Scraping'] = {}
         if 'versions' not in config['Scraping']:
             config['Scraping']['versions'] = {}
+        
+        # Handle wake_count conversion
+        if 'wake_count' in settings:
+            if settings['wake_count'] == '' or settings['wake_count'] == 'None' or settings['wake_count'] is None:
+                settings['wake_count'] = None
+            else:
+                try:
+                    settings['wake_count'] = int(settings['wake_count'])
+                except (ValueError, TypeError):
+                    settings['wake_count'] = None
         
         config['Scraping']['versions'][version] = settings
         save_config(config)

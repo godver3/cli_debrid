@@ -8,7 +8,6 @@ from .database_writing import add_to_collected_notifications, update_media_item_
 from reverse_parser import parser_approximation
 from settings import get_setting
 from typing import Dict, Any, List
-from .unmatched_helper import find_matching_item_in_db
 from utilities.post_processing import handle_state_change
 
 def add_collected_items(media_items_batch, recent=False):

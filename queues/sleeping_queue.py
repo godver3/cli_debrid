@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from database import get_all_media_items, get_media_item_by_id
 from settings import get_setting
 from wake_count_manager import wake_count_manager
+from config_manager import load_config
 
 class SleepingQueue:
     def __init__(self):
@@ -64,20 +65,33 @@ class SleepingQueue:
     def process(self, queue_manager):
         #logging.debug("Processing sleeping queue")
         current_time = datetime.now()
-        wake_limit = int(get_setting("Queue", "wake_limit", default=3))
+        default_wake_limit = int(get_setting("Queue", "wake_limit", default=3))
         sleep_duration = timedelta(minutes=30)
 
         items_to_wake = []
         items_to_blacklist = []
+        config = load_config()
 
         for item in self.items:
             item_id = item['id']
             item_identifier = queue_manager.generate_identifier(item)
             #logging.debug(f"Processing sleeping item: {item_identifier}")
 
+            # Get version-specific wake limit if it exists
+            version = item.get('version', 'Default')
+            version_settings = config.get('Scraping', {}).get('versions', {}).get(version, {})
+            version_wake_count = version_settings.get('wake_count')
+            # Use version wake count if it's a positive number, -1 means never sleep
+            if version_wake_count == -1:
+                # Move directly to blacklist if wake_count is -1 (never sleep)
+                items_to_blacklist.append(item)
+                continue
+            # Otherwise use version wake count if positive, or default
+            wake_limit = version_wake_count if version_wake_count and version_wake_count > 0 else default_wake_limit
+
             time_asleep = current_time - self.sleeping_queue_times[item_id]
             wake_count = wake_count_manager.get_wake_count(item_id)
-            logging.debug(f"Item {item_identifier} has been asleep for {time_asleep}. Current wake count: {wake_count}")
+            logging.debug(f"Item {item_identifier} has been asleep for {time_asleep}. Current wake count: {wake_count}/{wake_limit}")
 
             if time_asleep >= sleep_duration:
                 if wake_count < wake_limit:

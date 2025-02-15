@@ -81,7 +81,7 @@ class ScraperManager:
             old_nyaa_enabled = old_nyaa_settings.get('enabled', False) if old_nyaa_settings else False
             
             if nyaa_enabled or old_nyaa_enabled:
-                logging.info(f"Using Nyaa/OldNyaa exclusively for anime episode: {title}")
+                logging.info(f"Trying Nyaa/OldNyaa first for anime episode: {title}")
                 
                 if old_nyaa_enabled:
                     try:
@@ -118,10 +118,13 @@ class ScraperManager:
                             all_results.extend(results)
                     except Exception as e:
                         logging.error(f"Error scraping with Nyaa: {str(e)}")
-                        
-            return all_results
+                
+                # Only return early if we found results from anime scrapers
+                if all_results:
+                    return all_results
+                logging.info("No results from anime scrapers, falling back to other scrapers")
 
-        # For all other cases (anime movies or non-anime content), proceed with appropriate scrapers
+        # For all other cases (anime movies, non-anime content, or anime episodes with no results from anime scrapers)
         for instance, settings in self.config.get('Scrapers', {}).items():
             current_settings = self.get_scraper_settings(instance)
             

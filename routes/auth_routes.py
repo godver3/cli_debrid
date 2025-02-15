@@ -75,7 +75,6 @@ def load_user(user_id):
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
-
     if not is_user_system_enabled():
         return redirect(url_for('root.root'))
 
@@ -83,42 +82,56 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('root.root'))
 
-    show_login_reminder = User.query.filter_by(is_default=False).count() == 0
+    # Clear any existing cookies before processing login
+    response = make_response(render_template('login.html', 
+        show_login_reminder=User.query.filter_by(is_default=False).count() == 0))
+    
+    from extensions import get_root_domain
+    domain = get_root_domain(request.host) if hasattr(request, 'host') else None
+    
+    # Clear existing cookies on GET request to ensure clean state
+    if request.method == 'GET':
+        response.set_cookie('session', '', expires=0, path='/', domain=domain)
+        response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
+        return response
 
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
         remember = bool(request.form.get('remember_me'))
-
         
         user = User.query.filter_by(username=username).first()
-        if user:
-
-            if check_password_hash(user.password, password):
-                
-                # Always set session as permanent
-                session.permanent = True
-                
-                login_user(user, remember=remember)
-                
-                # Force session save
-                session.modified = True
-                
-                if not user.onboarding_complete:
-                    response = redirect(url_for('onboarding.onboarding_step', step=1))
-                else:
-                    response = redirect(url_for('root.root'))
-                
-                return response
+        if user and check_password_hash(user.password, password):
+            # Clear session first
+            session.clear()
+            
+            # Always set session as permanent
+            session.permanent = True
+            
+            login_user(user, remember=remember)
+            
+            # Force session save
+            session.modified = True
+            
+            if not user.onboarding_complete:
+                response = make_response(redirect(url_for('onboarding.onboarding_step', step=1)))
+            else:
+                response = make_response(redirect(url_for('root.root')))
+            
+            # Add security headers
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            
+            return response
             
         flash('Please check your login details and try again.')
-    
-    return render_template('login.html', show_login_reminder=show_login_reminder)
+        
+    return response
 
 @auth_bp.route('/logout', methods=['POST'])
 @login_required
 def logout():
-
     if not is_user_system_enabled():
         return redirect(url_for('root.root'))
     
@@ -129,13 +142,22 @@ def logout():
     logout_user()
         
     # Create response with redirect
-    response = redirect(url_for('auth.login'))
+    response = make_response(redirect(url_for('auth.login')))
     
     from extensions import get_root_domain
-    # Explicitly clear cookies with matching domain
+    # Get domain for cookie cleanup
     domain = get_root_domain(request.host) if hasattr(request, 'host') else None
+    
+    # Clear all possible variations of cookies
     response.set_cookie('session', '', expires=0, path='/', domain=domain)
     response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
+    response.set_cookie('session', '', expires=0, path='/')  # Also clear without domain
+    response.set_cookie('remember_token', '', expires=0, path='/')
+    
+    # Add cache control headers
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     
     return response
 
