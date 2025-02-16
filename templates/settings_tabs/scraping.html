@@ -302,6 +302,13 @@
                                    {% if value %}checked{% endif %}>
                             {{ key|replace('_', ' ')|title }}
                         </label>
+                        {% if key == 'enable_upgrading' %}
+                            <p class="settings-description">Enable upgrading of items in the queue.</p>
+                        {% elif key == 'enable_upgrading_cleanup' %}
+                            <p class="settings-description">Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid).</p>
+                        {% elif key == 'require_physical_release' %}
+                            <p class="settings-description">Only mark as Wanted after physical release date is available.</p>
+                        {% endif %}
                     {% elif key == 'max_resolution' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">Resolution Value:</label>
                         <select id="scraping-{{ version }}-{{ key }}" 
@@ -367,16 +374,6 @@
                                class="settings-input"
                                data-section="Scraping" 
                                data-key="versions.{{ version }}.{{ key }}">
-                    {% endif %}
-                    {% if key == 'enable_upgrading' %}
-                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
-                        <p class="settings-description">Enable upgrading of items in the queue.</p>
-                    {% endif %}
-                    {% if key == 'enable_upgrading_cleanup' %}
-                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <input type="checkbox" id="scraping-{{ version }}-{{ key }}" name="Scraping.versions.{{ version }}.{{ key }}" {% if value %}checked{% endif %}>
-                        <p class="settings-description">Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid).</p>
                     {% endif %}
                 </div>
                 

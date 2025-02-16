@@ -269,6 +269,11 @@ SETTINGS_SCHEMA = {
                     "min": -1, 
                     "nullable": True,
                     "description": "Override global wake count limit. -1 disables sleeping queue (only search once), empty uses global setting."
+                },
+                "require_physical_release": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Only mark as Wanted after physical release date is available"
                 }
             }
         }

@@ -172,8 +172,9 @@ def delete_database():
         conn.commit()
         conn.close()
         
-        # Recreate tables
-        create_tables()
+        # Recreate all necessary tables
+        from database.schema_management import verify_database
+        verify_database()  # This will recreate all tables including torrent_additions
         
         # Delete cache files and not wanted files
         db_content_dir = os.environ['USER_DB_CONTENT']

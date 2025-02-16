@@ -437,11 +437,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 if item_type == 'movie':
                     conn.execute('''
                         INSERT INTO media_items
-                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'), item.get('country', '').lower(), item.get('content_source'), item.get('content_source_detail')
+                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'), item.get('country', '').lower(), item.get('content_source'), item.get('content_source_detail'), item.get('physical_release_date')
                     ))
                     items_added += 1
                 else:
@@ -615,7 +615,7 @@ def process_batch(conn, batch_items, versions, processed):
                         item.get('year'), item.get('release_date'), 'Wanted', 'movie', 
                         datetime.now(), version, genres, item.get('runtime'), 
                         item.get('country', '').lower(), item.get('content_source'),
-                        item.get('content_source_detail')
+                        item.get('content_source_detail'), item.get('physical_release_date')
                     ))
         else:
             for version, enabled in versions.items():
@@ -637,8 +637,8 @@ def process_batch(conn, batch_items, versions, processed):
         conn.executemany('''
             INSERT INTO media_items
             (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, 
-             version, genres, runtime, country, content_source, content_source_detail)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             version, genres, runtime, country, content_source, content_source_detail, physical_release_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', movie_items)
         processed['movies'] += len(movie_items)
     

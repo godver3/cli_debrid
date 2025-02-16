@@ -49,9 +49,11 @@ The core functionality of the software. When started, it:
 
 ### dev vs main
 
-dev is the latest version of cli_debrid, and is built for arm64 and amd64. It is not recommended for production use.
+dev is the latest version of cli_debrid. It is not recommended for production use, unless you are brave.
 
-main is the stable version of cli_debrid, and is built for amd64. It is recommended for production use.
+main is the stable version of cli_debrid. It is recommended for production use.
+
+Development generally works on a 2-3 week cycle, with dev being moved to main at the end of each cycle.
 
 ### Library Management
 

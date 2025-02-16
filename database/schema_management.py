@@ -120,6 +120,9 @@ def migrate_schema():
         if 'content_source_detail' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN content_source_detail TEXT')
             logging.info("Successfully added content_source_detail column to media_items table.")
+        if 'physical_release_date' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN physical_release_date DATE')
+            logging.info("Successfully added physical_release_date column to media_items table.")
         
         # logging.info("Successfully added new columns to media_items table.")
 
@@ -233,7 +236,8 @@ def create_tables():
                 resolution TEXT,
                 imdb_aliases TEXT,
                 title_aliases TEXT,
-                disable_not_wanted_check BOOLEAN DEFAULT FALSE
+                disable_not_wanted_check BOOLEAN DEFAULT FALSE,
+                physical_release_date DATE
             )
         ''')
 

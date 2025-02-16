@@ -104,9 +104,15 @@ class MediaMatcher:
             genres = [genres]
         is_anime = any('anime' in genre.lower() for genre in genres)
         
-        # Apply relaxed matching for anime or when explicitly enabled
-        use_relaxed_matching = is_anime or self.relaxed_matching
-        logging.debug(f"Using relaxed matching ({is_anime}/{self.relaxed_matching})")
+        # Check if using Plex library management
+        from settings import get_setting
+        file_collection_management = get_setting('File Management', 'file_collection_management')
+        using_plex = file_collection_management == 'Plex'
+        
+        # Apply relaxed matching only if not using Plex and either it's anime or relaxed matching is enabled
+        use_relaxed_matching = not using_plex and (is_anime or self.relaxed_matching)
+        #logging.debug(f"Using relaxed matching ({use_relaxed_matching}) - Plex: {using_plex}, Anime: {is_anime}, Relaxed: {self.relaxed_matching}")
+        
         if not all([series_title, item_episode is not None]):
             logging.debug(f"Missing required TV info for {series_title}")
             return []
