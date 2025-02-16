@@ -233,6 +233,46 @@ class CheckingQueue:
             del self.progress_checks[torrent_id]
             logging.debug(f"Cleaned up progress checks for torrent {torrent_id} as it has no more associated items")
 
+    def _calculate_dynamic_queue_period(self, items):
+        """Calculate a dynamic queue period based on the number of items.
+        Base period from settings + 1 minute per item in the checking queue.
+        Only applies dynamic timing when not using Symlinked/Local file management.
+        For items added in batches, considers when each item was added."""
+        base_period = get_setting('Debug', 'checking_queue_period', default=3600)
+        
+        # Only use dynamic timing if NOT using Symlinked/Local file management
+        if get_setting('File Management', 'file_collection_management') != 'Symlinked/Local':
+            items_count = len(items)
+            # Get the time each item has been in the queue
+            current_time = time.time()
+            item_times = []
+            for item in items:
+                item_add_time = self.checking_queue_times.get(item['id'], current_time)
+                time_in_queue = current_time - item_add_time
+                item_times.append(time_in_queue)
+            
+            # Sort times to find the newest item
+            item_times.sort()
+            newest_item_time = item_times[0] if item_times else 0
+            
+            # Calculate remaining items that still need processing time
+            # Only count items that have been in queue for less than base_period
+            remaining_items = sum(1 for t in item_times if t < base_period)
+            
+            # Add 60 seconds per remaining item, measured from the newest item's add time
+            dynamic_period = base_period + (remaining_items * 60)
+            
+            # Adjust the period based on the newest item's time in queue
+            # This ensures newer items get their full processing time
+            if newest_item_time < base_period:
+                dynamic_period = max(dynamic_period - newest_item_time, base_period)
+            
+            logging.debug(f"Using dynamic queue period: {dynamic_period}s (base: {base_period}s + {remaining_items} remaining items * 60s, newest item age: {newest_item_time:.1f}s)")
+            return dynamic_period
+        else:
+            logging.debug(f"Using static queue period: {base_period}s (Symlinked/Local file management)")
+            return base_period
+
     def process(self, queue_manager):
         if self.items:
             item = self.items[0]
@@ -333,16 +373,16 @@ class CheckingQueue:
                 if current_progress == 100:
                     oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
                     time_in_queue = current_time - oldest_item_time
-                    checking_queue_limit = get_setting('Debug', 'checking_queue_period')
+                    checking_queue_limit = self._calculate_dynamic_queue_period(items)
                     
-                    logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (limit: {checking_queue_limit} seconds)")
+                    logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (dynamic limit: {checking_queue_limit} seconds for {len(items)} items)")
                     
                     if time_in_queue > checking_queue_limit:
-                        logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds")
+                        logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(items)} items)")
                         try:
                             self.debrid_provider.remove_torrent(
                                 torrent_id,
-                                removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds"
+                                removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds (dynamic limit for {len(items)} items)"
                             )
                         except Exception as e:
                             logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")

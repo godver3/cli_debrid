@@ -978,6 +978,18 @@ def main():
             save_config(config)
             logging.info("Successfully migrated content sources to include media_type setting")
 
+    # Add require_physical_release to existing versions
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        modified = False
+        for version in config['Scraping']['versions']:
+            if 'require_physical_release' not in config['Scraping']['versions'][version]:
+                config['Scraping']['versions'][version]['require_physical_release'] = False
+                modified = True
+        
+        if modified:
+            save_config(config)
+            logging.info("Added require_physical_release setting to existing versions")
+
     # Add migration for notification settings
     if 'Notifications' in config:
         notifications_updated = False

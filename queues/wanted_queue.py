@@ -80,6 +80,18 @@ class WantedQueue:
                     item_identifier = queue_manager.generate_identifier(item)
                     release_date_str = item.get('release_date')
                     airtime_str = item.get('airtime')
+                    version = item.get('version')
+
+                    # Check if version requires physical release
+                    scraping_versions = get_setting('Scraping', 'versions', {})
+                    version_settings = scraping_versions.get(version, {})
+                    require_physical = version_settings.get('require_physical_release', False)
+                    physical_release_date = item.get('physical_release_date')
+                    
+                    if require_physical and not physical_release_date:
+                        logging.info(f"Item {item_identifier} requires physical release date but none available. Moving to Unreleased queue.")
+                        items_to_move_unreleased.append(item)
+                        continue
 
                     if not release_date_str or (isinstance(release_date_str, str) and release_date_str.lower() == 'unknown'):
                         logging.debug(f"Item {item_identifier} has no scrape time. Moving to Unreleased queue.")
@@ -87,7 +99,17 @@ class WantedQueue:
                         continue  # Skip further processing for this item
 
                     try:
-                        release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                        # If physical release is required, use that date instead
+                        if require_physical and physical_release_date:
+                            try:
+                                release_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
+                                logging.info(f"Item {item_identifier} using physical release date: {release_date}")
+                            except ValueError:
+                                logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
+                                items_to_move_unreleased.append(item)
+                                continue
+                        else:
+                            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
                         
                         # Handle case where airtime is None or invalid
                         if airtime_str:

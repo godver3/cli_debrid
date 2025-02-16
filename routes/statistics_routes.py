@@ -18,8 +18,6 @@ from database.statistics import get_cached_download_stats
 import json
 import math
 from functools import wraps
-from zoneinfo import ZoneInfo
-from tzlocal import get_localzone
 
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
@@ -141,12 +139,8 @@ def get_recently_aired_and_airing_soon():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Get timezone from system or override
-    timezone = get_setting('Debug', 'timezone_override', '')
-    if timezone: 
-        local_tz = ZoneInfo(timezone)
-    else:
-        local_tz = get_localzone()
+    # Get timezone using our robust function
+    local_tz = _get_local_timezone()
     now = datetime.now(local_tz)
     two_days_ago = now - timedelta(days=2)
     
@@ -221,14 +215,9 @@ def get_recently_aired_and_airing_soon():
                 logging.warning(f"Invalid airtime format for {title}: {airtime}. Using default.")
                 airtime = datetime.strptime("19:00", '%H:%M').time()
             
-            # Create datetime in system timezone first
-            system_tz = get_localzone()
+            # Create datetime in local timezone
             air_datetime = datetime.combine(release_date.date(), airtime)
-            air_datetime = system_tz.localize(air_datetime) if hasattr(system_tz, 'localize') else air_datetime.replace(tzinfo=system_tz)
-            
-            # Convert to display timezone if different
-            if local_tz != system_tz:
-                air_datetime = air_datetime.astimezone(local_tz)
+            air_datetime = air_datetime.replace(tzinfo=local_tz)
             
             # Create a key for grouping
             show_key = f"{title}_{season}_{release_date.date()}"
@@ -336,12 +325,8 @@ def root():
     # Get all statistics data
     stats = {}
     
-    # Get timezone from system or override
-    timezone = get_setting('Debug', 'timezone_override', '')
-    if timezone: 
-        local_tz = ZoneInfo(timezone)
-    else:
-        local_tz = get_localzone()
+    # Get timezone using our robust function
+    local_tz = _get_local_timezone()
     stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)
     
@@ -780,47 +765,54 @@ def format_datetime_preference(date_input, use_24hour_format):
     if not date_input:
         return ''
     try:
-        # Get timezone from system or override
-        timezone = get_setting('Debug', 'timezone_override', '')
-        if timezone: 
-            local_tz = ZoneInfo(timezone)
-        else:
-            local_tz = get_localzone()
+        # Get timezone using our robust function
+        local_tz = _get_local_timezone()
+        
+        # Convert string to datetime if necessary
         if isinstance(date_input, str):
-            date = datetime.fromisoformat(date_input.rstrip('Z'))  # Remove 'Z' if present
-        elif isinstance(date_input, datetime):
-            date = date_input
-        else:
-            return str(date_input)
+            try:
+                # Try parsing with microseconds
+                date_input = datetime.strptime(date_input, '%Y-%m-%d %H:%M:%S.%f')
+            except ValueError:
+                try:
+                    # Try parsing without microseconds
+                    date_input = datetime.strptime(date_input, '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    try:
+                        # Try parsing ISO format
+                        date_input = datetime.fromisoformat(date_input.rstrip('Z'))
+                    except ValueError:
+                        return str(date_input)  # Return original string if all parsing fails
         
         # Ensure the datetime is timezone-aware
-        if date.tzinfo is None:
-            date = local_tz.localize(date) if hasattr(local_tz, 'localize') else date.replace(tzinfo=local_tz)
+        if date_input.tzinfo is None:
+            date_input = local_tz.localize(date_input) if hasattr(local_tz, 'localize') else date_input.replace(tzinfo=local_tz)
         
         now = datetime.now(local_tz)
         today = now.date()
         yesterday = today - timedelta(days=1)
         tomorrow = today + timedelta(days=1)
 
-        if date.date() == today:
+        if date_input.date() == today:
             day_str = "Today"
-        elif date.date() == yesterday:
+        elif date_input.date() == yesterday:
             day_str = "Yesterday"
-        elif date.date() == tomorrow:
+        elif date_input.date() == tomorrow:
             day_str = "Tomorrow"
         else:
-            day_str = date.strftime("%a, %d %b %Y")
+            day_str = date_input.strftime("%a, %d %b %Y")
 
         time_format = "%H:%M" if use_24hour_format else "%I:%M %p"
-        formatted_time = date.strftime(time_format)
+        formatted_time = date_input.strftime(time_format)
         
         # Remove leading zero from hour in 12-hour format
         if not use_24hour_format:
             formatted_time = formatted_time.lstrip("0")
         
         return f"{day_str} {formatted_time}"
-    except ValueError:
-        return str(date_input)  # Return original string if parsing fails
+    except Exception as e:
+        logging.error(f"Error formatting datetime: {str(e)}")
+        return str(date_input)  # Return original string if any error occurs
 
 def format_bytes(bytes_value, decimals=2):
     """Format bytes to human readable string"""
@@ -858,12 +850,8 @@ def index_api():
     """API endpoint that returns the same data as the index route but in JSON format"""
     stats = {}
     
-    # Get timezone and uptime info
-    timezone = get_setting('Debug', 'timezone_override', '')
-    if timezone:
-        local_tz = ZoneInfo(timezone)
-    else:
-        local_tz = get_localzone()
+    # Get timezone using our robust function
+    local_tz = _get_local_timezone()
     stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)
     

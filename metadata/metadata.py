@@ -224,24 +224,52 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
     return episode_item
 
 def _get_local_timezone():
-    """Get the local timezone in a cross-platform way with fallback to settings."""
+    """Get the local timezone in a cross-platform way with multiple fallbacks."""
     # Suppress tzlocal debug messages
     import logging
     logging.getLogger('tzlocal').setLevel(logging.WARNING)
     
     from tzlocal import get_localzone
     from settings import get_setting
+    from datetime import timezone
+    import os
     
-    # Check for override in settings
-    #timezone_override = '' # get_setting('Debug', 'timezone_override', '')
-    #if timezone_override:
-    #    try:
-    #        from zoneinfo import ZoneInfo
-    #        return ZoneInfo(timezone_override)
-    #    except ZoneInfoNotFoundError:
-    #        logging.error(f"Invalid timezone override: {timezone_override}, falling back to system timezone")
+    # First try: Check for override in settings
+    timezone_override = get_setting('Debug', 'timezone_override', '')
+    if timezone_override:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(timezone_override)
+        except (ImportError, ZoneInfoNotFoundError) as e:
+            logging.error(f"Invalid timezone override: {timezone_override}, falling back to system timezone")
     
-    return get_localzone()
+    # Second try: Try getting from environment variable
+    tz_env = os.environ.get('TZ')
+    if tz_env:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(tz_env)
+        except (ImportError, ZoneInfoNotFoundError) as e:
+            logging.error(f"Invalid TZ environment variable: {tz_env}, trying next fallback")
+    
+    # Third try: Try tzlocal with exception handling
+    try:
+        return get_localzone()
+    except Exception as e:
+        logging.error(f"Error getting local timezone from tzlocal: {str(e)}, trying next fallback")
+    
+    # Fourth try: Try common timezone files directly
+    common_zones = ['America/New_York', 'UTC', 'Etc/UTC']
+    for zone in common_zones:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(zone)
+        except (ImportError, ZoneInfoNotFoundError):
+            continue
+    
+    # Final fallback: Use UTC
+    logging.warning("All timezone detection methods failed, falling back to UTC")
+    return timezone.utc
 
 def update_existing_episodes_states(conn, tmdb_id: str, all_requested_seasons: set):
     """Update states of existing episodes based on requested seasons."""
@@ -291,6 +319,27 @@ def update_existing_episodes_states(conn, tmdb_id: str, all_requested_seasons: s
         logging.error(f"Error updating existing episodes states: {str(e)}")
         conn.rollback()
 
+def get_physical_release_date(imdb_id: Optional[str] = None) -> Optional[str]:
+    """Get the earliest physical release date for a movie."""
+    if not imdb_id:
+        return None
+
+    release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
+    if not release_dates:
+        return None
+
+    physical_releases = []
+    for country, country_releases in release_dates.items():
+        for release in country_releases:
+            if release.get('type', '').lower() == 'physical' and release.get('date'):
+                try:
+                    release_date = datetime.strptime(release.get('date'), "%Y-%m-%d")
+                    physical_releases.append(release_date)
+                except ValueError:
+                    continue
+
+    return min(physical_releases).strftime("%Y-%m-%d") if physical_releases else None
+
 def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     from database.database_writing import update_blacklisted_date, update_media_item
     from database.core import get_db_connection
@@ -318,6 +367,10 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                 continue
 
             if item['media_type'].lower() == 'movie':
+                # Get physical release date if it's a movie
+                physical_release_date = get_physical_release_date(metadata.get('imdb_id'))
+                if physical_release_date:
+                    metadata['physical_release_date'] = physical_release_date
                 processed_items['movies'].append(metadata)
                 logging.debug(f"Added movie with content_source_detail={metadata.get('content_source_detail')}")
             elif item['media_type'].lower() in ['tv', 'show']:
