@@ -32,8 +32,6 @@
         top: 10%;
     }
 
-
-
     .close-btn {
         top: 16px;
         right: 16px;
@@ -456,6 +454,143 @@
         position: static;
         transform: none;
     }
+
+    /* Media Card Reset and Mobile Styles */
+    .media-card,
+    .sresult {
+        width: 140px !important;
+        min-width: 140px !important;
+        max-width: 140px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        transform: none !important;
+    }
+
+    .media-poster,
+    .sresult button {
+        width: 140px !important;
+        min-width: 140px !important;
+        max-width: 140px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        transform: none !important;
+        position: relative !important;
+    }
+
+    .media-poster-img,
+    .sresult img {
+        width: 140px !important;
+        height: 210px !important;
+        transform: none !important;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        border-radius: var(--border-radius-lg);
+        margin: 0 !important;
+        padding: 0 !important;
+        display: block !important;
+    }
+
+    .media-title,
+    .searchresult-info {
+        position: absolute !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        opacity: 1 !important;
+        transform: none !important;
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.7) 60%, transparent 100%) !important;
+        padding: 30px 8px 8px !important;
+        min-height: auto;
+        width: 140px !important;
+        text-align: center;
+        margin: 0 !important;
+        border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+    }
+
+    .media-title h2,
+    .searchresult-info h2,
+    .searchresult-item {
+        font-size: 0.9rem;
+        line-height: 1.2;
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-align: center;
+        color: #fff !important;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .media-title p,
+    .searchresult-info p,
+    .searchresult-year {
+        font-size: 0.8rem;
+        margin: 4px 0 0;
+        padding: 0;
+        width: 100%;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.8) !important;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Movie and Show List Container Adjustments */
+    .movie-list,
+    .show-list {
+        padding: 10px 0;
+        margin: 0;
+        gap: 10px;
+    }
+
+    .scroll-container {
+        padding: 10px;
+        margin: 0;
+        gap: 10px;
+    }
+
+    /* Disable hover effects */
+    .media-poster:hover .media-poster-img,
+    .media-poster:hover .media-title,
+    .sresult:hover img,
+    .sresult:hover .searchresult-info {
+        transform: none !important;
+        opacity: 1;
+    }
+
+    /* Ensure titles are always visible */
+    .media-title,
+    .searchresult-info {
+        display: block !important;
+        opacity: 1 !important;
+    }
+
+    /* Trending sections adjustments */
+    .trending-movies,
+    .trending-shows {
+        padding: 0;
+        margin: 0;
+    }
+
+    .trending-header {
+        padding: 10px;
+        margin: 0;
+    }
+
+    .trending-title {
+        font-size: 1.2rem;
+        margin: 0;
+    }
+
+    /* Adjust navigation buttons */
+    .trending-navigation {
+        gap: 8px;
+    }
+
+    .trending-nav-button {
+        width: 32px;
+        height: 32px;
+        padding: 4px;
+    }
 }
 
 @media (hover: none) {
@@ -485,5 +620,20 @@
         color: var(--text-secondary);
         background-color: transparent;
         transform: none;
+    }
+
+    /* Touch device specific styles */
+    .media-poster:hover .media-poster-img,
+    .media-poster:hover .media-title,
+    .sresult:hover img,
+    .sresult:hover .searchresult-info {
+        transform: none !important;
+        opacity: 1;
+    }
+
+    .media-title,
+    .searchresult-info {
+        display: block !important;
+        opacity: 1 !important;
     }
 }

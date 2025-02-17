@@ -253,12 +253,71 @@ def check_service_connectivity():
 
     services_reachable = True
 
+    # Check Symlink paths if using symlink management
+    if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+        original_path = get_setting('File Management', 'original_files_path')
+        symlinked_path = get_setting('File Management', 'symlinked_files_path')
+        
+        # Check original files path
+        if not os.path.exists(original_path):
+            logging.error(f"Cannot access original files path: {original_path}")
+            services_reachable = False
+        elif not os.listdir(original_path):
+            logging.warning(f"Original files path is empty: {original_path}")
+            
+        # Check symlinked files path
+        if not os.path.exists(symlinked_path):
+            try:
+                os.makedirs(symlinked_path, exist_ok=True)
+                logging.info(f"Created symlinked files path: {symlinked_path}")
+            except Exception as e:
+                logging.error(f"Cannot create symlinked files path: {symlinked_path}. Error: {str(e)}")
+                services_reachable = False
+                
+        # Check Plex connectivity for symlink updates if enabled
+        plex_url_symlink = get_setting('File Management', 'plex_url_for_symlink')
+        plex_token_symlink = get_setting('File Management', 'plex_token_for_symlink')
+        
+        if plex_url_symlink and plex_token_symlink:
+            try:
+                response = api.get(f"{plex_url_symlink}?X-Plex-Token={plex_token_symlink}", timeout=5)
+                response.raise_for_status()
+                
+                # Verify we got a valid Plex response by checking for required attributes
+                root = ET.fromstring(response.text)
+                if not root.get('machineIdentifier') or not root.get('myPlexSigninState'):
+                    error_msg = "Invalid Plex response for symlink updates - token may be incorrect"
+                    logging.error(error_msg)
+                    services_reachable = False
+                else:
+                    logging.info(f"Successfully validated Plex connection for symlink updates (Server: {root.get('friendlyName', 'Unknown')})")
+            except (RequestException, ET.ParseError) as e:
+                error_msg = f"Cannot connect to Plex server for symlink updates. Error: {str(e)}"
+                logging.error(error_msg)
+                services_reachable = False
+
     # Check Plex connectivity and libraries
     if get_setting('File Management', 'file_collection_management') == 'Plex':
         try:
-            # First check basic connectivity
+            # First check basic connectivity and token validity
             response = api.get(f"{plex_url}?X-Plex-Token={plex_token}", timeout=5)
             response.raise_for_status()
+            
+            # Verify we got a valid Plex response by checking for required attributes
+            try:
+                root = ET.fromstring(response.text)
+                if not root.get('machineIdentifier') or not root.get('myPlexSigninState'):
+                    error_msg = "Invalid Plex response - token may be incorrect"
+                    logging.error(error_msg)
+                    services_reachable = False
+                    return services_reachable
+                else:
+                    logging.info(f"Successfully validated Plex connection (Server: {root.get('friendlyName', 'Unknown')})")
+            except ET.ParseError as e:
+                error_msg = f"Invalid Plex response format: {str(e)}"
+                logging.error(error_msg)
+                services_reachable = False
+                return services_reachable
 
             # Then check library existence
             libraries_response = api.get(f"{plex_url}/library/sections?X-Plex-Token={plex_token}", timeout=5)
@@ -267,10 +326,6 @@ def check_service_connectivity():
             # Get configured library names
             movie_libraries = [lib.strip() for lib in get_setting('Plex', 'movie_libraries', '').split(',') if lib.strip()]
             show_libraries = [lib.strip() for lib in get_setting('Plex', 'shows_libraries', '').split(',') if lib.strip()]
-            
-            #logging.info("Configured Plex libraries:")
-            #logging.info(f"Movie libraries: {movie_libraries}")
-            #logging.info(f"TV Show libraries: {show_libraries}")
             
             try:
                 # Get actual library names from Plex (XML format)
@@ -285,10 +340,6 @@ def check_service_connectivity():
                         library_id_to_title[library_key] = library_title
                         logging.info(f"Found Plex library: ID={library_key}, Title='{library_title}', Type={directory.get('type')}")
                 
-                #logging.info("Available Plex libraries:")
-                #logging.info(f"Found libraries: {available_libraries}")
-                #logging.info(f"Library ID mapping: {library_id_to_title}")
-                        
                 if not available_libraries:
                     logging.error("No libraries found in Plex response")
                     services_reachable = False

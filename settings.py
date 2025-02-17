@@ -356,9 +356,14 @@ def ensure_settings_file():
         if 'Scraping' not in config:
             config['Scraping'] = {}
         if 'versions' not in config['Scraping'] or not config['Scraping']['versions'] or is_new_file:
+            # Get the default version settings from schema
+            version_defaults = SETTINGS_SCHEMA['Scraping']['versions']['schema']
+            default_version_config = {}
+            for key, value in version_defaults.items():
+                default_version_config[key] = value.get('default')
+            
             config['Scraping']['versions'] = {
-                'Default': {
-                }
+                'Default': default_version_config
             }
 
         # Ensure Debrid Provider is set to Real-Debrid if not already set

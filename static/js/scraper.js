@@ -42,7 +42,7 @@ function displaySearchResults(results, version) {
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     function handleScreenChange(e) {
         if (e.matches) {
-    gridContainer.style.justifyContent = 'center';
+            gridContainer.style.justifyContent = 'center';
         } else {
             gridContainer.style.justifyContent = 'flex-start';
         }
@@ -77,8 +77,9 @@ function displaySearchResults(results, version) {
             <img src="${posterUrl}" 
                 alt="${item.title}" 
                 class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
-            <div class="searchresult-info">
-                <h2 class="searchresult-item">${item.title} (${item.year || 'N/A'})</h2>
+            <div class="searchresult-info" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                <h2 class="searchresult-item">${item.title}</h2>
+                <p class="searchresult-year">${item.year || 'N/A'}</p>
             </div></button>                
         `;
         console.log('Created HTML:', searchResDiv.innerHTML);  // Debug log
@@ -91,7 +92,6 @@ function displaySearchResults(results, version) {
         };
         gridContainer.appendChild(searchResDiv);
     });
-
 }
 
 function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path, genre_ids, vote_average, backdrop_path, show_overview) {
@@ -678,8 +678,13 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="media-poster">
                 <span id="trending-rating">${(data.rating).toFixed(1)}</span>
                 <span id="trending-watchers">👁 ${data.watcher_count}</span>
-                <span class="media-title">${data.title}</br><span style="font-size: 14px; opacity: 0.8;">${data.year}</span></span>
-                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" alt="${data.title}" class="media-poster-img">
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
+                    alt="${data.title}" 
+                    class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+                <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                    <h2>${data.title}</h2>
+                    <p>${data.year}</p>
+                </div>
             </div>
         `;
         movieElement.onclick = function() {
@@ -695,8 +700,13 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="media-poster">
                 <span id="trending-rating">${(data.rating).toFixed(1)}</span>
                 <span id="trending-watchers">👁 ${data.watcher_count}</span>
-                <span class="media-title">${data.title}</br><span style="font-size: 14px; opacity: 0.8;">${data.year}</span></span>
-                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" alt="${data.title}" class="media-poster-img">
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
+                    alt="${data.title}" 
+                    class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+                <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                    <h2>${data.title}</h2>
+                    <p>${data.year}</p>
+                </div>
             </div>
         `;
         movieElement.onclick = function() {

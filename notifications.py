@@ -141,6 +141,7 @@ def format_notification_content(notifications, notification_type, notification_c
         new_state = item.get('new_state', '')
         content_source = item.get('content_source')
         content_source_detail = item.get('content_source_detail')
+        filled_by_file = item.get('filled_by_file')
         
         # Choose prefix based on state and upgrade status
         if new_state == 'Downloading':
@@ -169,6 +170,8 @@ def format_notification_content(notifications, notification_type, notification_c
                 formatted_title += f"\nSource: {content_source}"
             if content_source_detail:
                 formatted_title += f"\nRequested by: {content_source_detail}"
+            if filled_by_file:
+                formatted_title += f"\nFile: {filled_by_file}"
                 
         return formatted_title
 

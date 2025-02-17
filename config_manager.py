@@ -72,23 +72,39 @@ def sync_plex_settings(config):
         }
     }
 
-    # Check both directions and sync non-empty values
-    for source_section, source_mappings in shared_fields.items():
-        target_section = 'File Management' if source_section == 'Plex' else 'Plex'
-        target_mappings = shared_fields[target_section]
+    # Determine which section should take precedence based on file management mode
+    file_management = config.get('File Management', {}).get('file_collection_management', 'Plex')
+    primary_section = 'File Management' if file_management == 'Symlinked/Local' else 'Plex'
+    secondary_section = 'Plex' if primary_section == 'File Management' else 'File Management'
+
+    # Store original values before making any changes
+    original_values = {
+        'Plex': {k: config['Plex'].get(k, '') for k in shared_fields['Plex']},
+        'File Management': {k: config['File Management'].get(k, '') for k in shared_fields['File Management']}
+    }
+
+    # For each shared field name (url, token)
+    for shared_name in set(shared_fields['Plex'].values()):
+        # Get the corresponding fields in each section
+        plex_field = next(k for k, v in shared_fields['Plex'].items() if v == shared_name)
+        fm_field = next(k for k, v in shared_fields['File Management'].items() if v == shared_name)
         
-        for source_field, shared_name in source_mappings.items():
-            target_field = next(k for k, v in shared_fields[target_section].items() if v == shared_name)
-            
-            source_value = config[source_section].get(source_field, '')
-            target_value = config[target_section].get(target_field, '')
-            
-            # If source has a value and target is empty, or source has changed
-            if source_value and (not target_value or source_value != target_value):
-                config[target_section][target_field] = source_value
-            # If target has a value and source is empty
-            elif target_value and not source_value:
-                config[source_section][source_field] = target_value
+        primary_value = original_values[primary_section][plex_field if primary_section == 'Plex' else fm_field]
+        secondary_value = original_values[secondary_section][plex_field if secondary_section == 'Plex' else fm_field]
+        
+        # If primary section has a value, use it
+        if primary_value:
+            if primary_section == 'Plex':
+                config['File Management'][fm_field] = primary_value
+            else:
+                config['Plex'][plex_field] = primary_value
+        # If only secondary section has a value, use it
+        elif secondary_value:
+            if secondary_section == 'Plex':
+                config['File Management'][fm_field] = secondary_value
+            else:
+                config['Plex'][plex_field] = secondary_value
+        # If both are empty, no action needed
 
     return config
 
