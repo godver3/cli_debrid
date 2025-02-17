@@ -454,6 +454,18 @@ SETTINGS_SCHEMA = {
             "description": "Absolute path to your CineSync MediaHub main.py file (e.g. /path/to/CineSync/MediaHub/main.py)",
             "default": ""
         },
+        "emby_url": {
+            "type": "string",
+            "description": "Emby server URL for library updates (e.g. http://localhost:8096)",
+            "default": "",
+            "validate": "url"
+        },
+        "emby_token": {
+            "type": "string",
+            "description": "Emby API key/token for authentication",
+            "default": "",
+            "sensitive": True
+        },
     },
     "Scrapers": {
         "tab": "Scrapers",

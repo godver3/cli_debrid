@@ -339,12 +339,17 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     try:
                         os.unlink(old_dest)
                         logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
-                        # Wait for Plex to detect the removed symlink
+                        # Wait for media server to detect the removed symlink
                         time.sleep(1)
-                        # Remove the old file from Plex
-                        from utilities.plex_functions import remove_file_from_plex
-                        # Sleep for 0.5 seconds to give plex time to remove the file
-                        remove_file_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
+                        
+                        # Remove the old file from Plex or Emby
+                        if get_setting('Debug', 'emby_url', default=False):
+                            from utilities.emby_functions import remove_file_from_emby
+                            remove_file_from_emby(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
+                        elif get_setting('File Management', 'plex_url_for_symlink', default=False):
+                            from utilities.plex_functions import remove_file_from_plex
+                            remove_file_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
+
                     except Exception as e:
                         logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
                 else:

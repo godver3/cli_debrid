@@ -5,6 +5,7 @@ from database import get_all_media_items
 from run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
 from utilities.local_library_scan import check_local_file_for_item, local_library_scan
 from utilities.plex_functions import plex_update_item
+from utilities.emby_functions import emby_update_item
 from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from queues.adding_queue import AddingQueue
 from debrid import get_debrid_provider
@@ -347,9 +348,14 @@ class CheckingQueue:
                             if file_found:
                                 logging.info(f"Local file found and symlinked for item {item['id']}")
 
-                                if get_setting('File Management', 'plex_url_for_symlink', default=False):
+                                # Check for Plex or Emby configuration and update accordingly
+                                if get_setting('Debug', 'emby_url', default=False):
+                                    # Call Emby update for the item if we have an Emby URL
+                                    emby_update_item(item)
+                                elif get_setting('File Management', 'plex_url_for_symlink', default=False):
                                     # Call Plex update for the item if we have a Plex URL
                                     plex_update_item(item)
+
 
                                 # Check if the item was marked for upgrading by check_local_file_for_item
                                 from database.core import get_db_connection
