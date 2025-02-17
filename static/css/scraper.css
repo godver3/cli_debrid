@@ -161,16 +161,13 @@ form#search-form input:-ms-input-placeholder {
     margin-right: 0;
 }
 
-
 .media-poster,
 .sresult button {
     position: relative;
-    width: 100%;
+    width: 176px;
     cursor: pointer;
     z-index: 1;
-}
-
-.sresult button {
+    display: block;
     padding: 0;
     margin: 0;
     border: none;
@@ -182,22 +179,7 @@ form#search-form input:-ms-input-placeholder {
 .mediatype-tv,
 .mediatype-mv {
     transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.media-poster:hover .media-poster-img,
-.media-poster:hover .mediatype-tv,
-.media-poster:hover .mediatype-mv,
-.sresult:hover img,
-.sresult:hover .mediatype-tv,
-.sresult:hover .mediatype-mv {
-    transform: translateY(-8px);
-}
-
-.media-poster:hover .media-poster-img,
-.sresult:hover img {
-    box-shadow: 
-        0 8px 16px rgba(0, 0, 0, 0.3),
-        0 0 40px rgba(255, 255, 255, 0.4);  /* Increased white glow on hover */
+    transform: translateY(0);
 }
 
 .media-poster-img,
@@ -211,7 +193,7 @@ form#search-form input:-ms-input-placeholder {
     z-index: 1;
     box-shadow: 
         0 4px 6px rgba(0, 0, 0, 0.2),
-        0 0 25px rgba(255, 255, 255, 0.15);  /* Increased base white glow */
+        0 0 25px rgba(255, 255, 255, 0.15);
 }
 
 .mediatype-tv, .mediatype-mv {
@@ -239,7 +221,8 @@ form#search-form input:-ms-input-placeholder {
 .searchresult-info {
     position: absolute;
     bottom: 0;
-    width: 100%;
+    left: 0;
+    right: 0;
     padding: var(--spacing-md);
     background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
     color: var(--text-primary);
@@ -248,25 +231,62 @@ form#search-form input:-ms-input-placeholder {
     transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
     backdrop-filter: blur(4px);
+    z-index: 2;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
 }
 
 .searchresult-info {
-    display: none;
+    display: block;
 }
 
 .media-title {
-    display: none;
+    display: block;
+}
+
+.media-poster:hover .media-poster-img,
+.media-poster:hover .mediatype-tv,
+.media-poster:hover .mediatype-mv,
+.sresult:hover img,
+.sresult button:hover .mediatype-tv,
+.sresult button:hover .mediatype-mv {
+    transform: translateY(-8px);
+}
+
+.media-poster:hover .media-poster-img,
+.sresult:hover img {
+    box-shadow: 
+        0 8px 16px rgba(0, 0, 0, 0.3),
+        0 0 40px rgba(255, 255, 255, 0.4);
 }
 
 .media-poster:hover .media-title,
 .sresult:hover .searchresult-info {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(-8px);
+}
+
+/* Ensure the badge stays visible for placeholder posters */
+.no-tmdb-api .mediatype-tv,
+.no-tmdb-api .mediatype-mv,
+.placeholder-poster + .mediatype-tv,
+.placeholder-poster + .mediatype-mv {
+    opacity: 1;
 }
 
 .no-tmdb-api .media-title,
-.no-tmdb-api .searchresult-info {
+.no-tmdb-api .searchresult-info,
+.placeholder-poster + .media-title,
+.placeholder-poster + .searchresult-info {
     opacity: 1;
+    transform: translateY(0);
+    display: block;
+}
+
+.no-tmdb-api .media-poster:hover .media-title,
+.no-tmdb-api .sresult:hover .searchresult-info,
+.placeholder-poster:hover + .media-title,
+.placeholder-poster:hover + .searchresult-info {
+    transform: translateY(-8px);
 }
 
 /* Add styles for placeholder images */
@@ -432,12 +452,11 @@ body {
     background-color: var(--surface-color);
     border-radius: var(--border-radius-md);
     overflow: hidden;
-    opacity: 70%;
 }
 
 .episode button {
     border-radius: var(--border-radius-md);
-    background-color: rgba(22, 21, 21, 0.66);
+    background-color: rgba(22, 21, 21, 0.5);
     padding: 8px;
     border: none;
     width: 100%;
@@ -710,10 +729,30 @@ p.torresult-title {
         width: 140px;
     }
     
+    .media-poster,
+    .sresult button {
+        width: 140px;
+    }
+    
     .media-poster-img,
     .sresult img {
         width: 140px;
         height: 210px;
+    }
+    
+    .media-title,
+    .searchresult-info {
+        padding: var(--spacing-sm);
+    }
+    
+    .media-title h2,
+    .searchresult-info h2 {
+        font-size: 0.9rem;
+    }
+    
+    .media-title p,
+    .searchresult-info p {
+        font-size: 0.8rem;
     }
     
     .show-rating {
@@ -739,4 +778,34 @@ p.torresult-title {
     background: linear-gradient(135deg, rgba(64, 64, 64, 0.95), rgba(32, 32, 32, 0.85));
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
     z-index: 2;
+}
+
+.media-title h2,
+.searchresult-info h2 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.media-title p,
+.searchresult-info p {
+    margin: 4px 0 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.placeholder-poster {
+    background-color: var(--surface-color);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Ensure title is always visible for placeholder posters */
+.placeholder-poster + .media-title,
+.placeholder-poster + .searchresult-info {
+    opacity: 1;
+    transform: translateY(0);
+    display: block;
 }

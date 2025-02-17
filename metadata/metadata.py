@@ -234,40 +234,63 @@ def _get_local_timezone():
     from datetime import timezone
     import os
     
-    # First try: Check for override in settings
-    timezone_override = get_setting('Debug', 'timezone_override', '')
-    if timezone_override:
-        try:
-            from zoneinfo import ZoneInfo
-            return ZoneInfo(timezone_override)
-        except (ImportError, ZoneInfoNotFoundError) as e:
-            logging.error(f"Invalid timezone override: {timezone_override}, falling back to system timezone")
-    
-    # Second try: Try getting from environment variable
-    tz_env = os.environ.get('TZ')
-    if tz_env:
-        try:
-            from zoneinfo import ZoneInfo
-            return ZoneInfo(tz_env)
-        except (ImportError, ZoneInfoNotFoundError) as e:
-            logging.error(f"Invalid TZ environment variable: {tz_env}, trying next fallback")
-    
-    # Third try: Try tzlocal with exception handling
     try:
-        return get_localzone()
-    except Exception as e:
-        logging.error(f"Error getting local timezone from tzlocal: {str(e)}, trying next fallback")
-    
-    # Fourth try: Try common timezone files directly
-    common_zones = ['America/New_York', 'UTC', 'Etc/UTC']
-    for zone in common_zones:
+        def is_valid_timezone(tz_str):
+            """Check if a timezone string is valid by attempting to create a ZoneInfo object."""
+            if not tz_str:
+                return False
+            try:
+                from zoneinfo import ZoneInfo
+                ZoneInfo(tz_str)
+                return True
+            except Exception:
+                return False
+        
+        # First try: Check for override in settings
+        timezone_override = get_setting('Debug', 'timezone_override', '')
+        if timezone_override and is_valid_timezone(timezone_override):
+            try:
+                from zoneinfo import ZoneInfo
+                return ZoneInfo(timezone_override)
+            except Exception as e:
+                logging.error(f"Error creating ZoneInfo for override {timezone_override}: {e}")
+        
+        # Second try: Try getting from environment variable
+        tz_env = os.environ.get('TZ')
+        if tz_env and is_valid_timezone(tz_env):
+            try:
+                from zoneinfo import ZoneInfo
+                return ZoneInfo(tz_env)
+            except Exception as e:
+                logging.error(f"Error creating ZoneInfo from TZ env {tz_env}: {e}")
+        
+        # Third try: Try tzlocal with exception handling
         try:
-            from zoneinfo import ZoneInfo
-            return ZoneInfo(zone)
-        except (ImportError, ZoneInfoNotFoundError):
-            continue
+            local_tz = get_localzone()
+            if hasattr(local_tz, 'zone') and is_valid_timezone(local_tz.zone):
+                try:
+                    from zoneinfo import ZoneInfo
+                    return ZoneInfo(local_tz.zone)
+                except Exception:
+                    return local_tz
+            return local_tz
+        except Exception as e:
+            logging.error(f"Error getting local timezone from tzlocal: {str(e)}")
+        
+        # Fourth try: Try common timezone files directly
+        common_zones = ['America/New_York', 'UTC', 'Etc/UTC']
+        for zone in common_zones:
+            if is_valid_timezone(zone):
+                try:
+                    from zoneinfo import ZoneInfo
+                    return ZoneInfo(zone)
+                except Exception:
+                    continue
     
-    # Final fallback: Use UTC
+    except Exception as e:
+        logging.error(f"Unexpected error in timezone detection: {str(e)}")
+    
+    # Final fallback: Always return UTC if everything else fails
     logging.warning("All timezone detection methods failed, falling back to UTC")
     return timezone.utc
 
@@ -613,7 +636,7 @@ def refresh_release_dates():
             
             logging.info("Getting release date")
             if media_type == 'movie':
-                new_release_date = get_release_date(metadata, imdb_id)
+                new_release_date = get_release_date(metadata, imdb_date)
 
                 # Store original values for comparison
                 item_dict['early_release_original'] = item_dict.get('early_release', False)

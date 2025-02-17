@@ -225,7 +225,10 @@
                     year: item.year,
                     versions: new Set(),
                     seasons: new Set(),
-                    release_date: item.release_date
+                    release_date: item.release_date,
+                    physical_release_date: item.physical_release_date,
+                    scraping_versions: item.scraping_versions,
+                    version: item.version
                 };
             }
             consolidatedItems[key].versions.add(item.version);
@@ -234,13 +237,60 @@
             }
         });
 
-        return Object.values(consolidatedItems).map(item => `
-            <div class="item">
-                ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
-                ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
-                ${queueName === 'Unreleased' ? ` - Release Date: ${item.release_date}` : ''}
-            </div>
-        `).join('');
+        return Object.values(consolidatedItems).map(item => {
+            let releaseInfo = item.release_date;
+            
+            // Check if version requires physical release
+            const scraping_versions = item.scraping_versions || {};
+            const version_settings = scraping_versions[item.version] || {};
+            const require_physical = version_settings.require_physical_release || false;
+            
+            if (require_physical) {
+                releaseInfo += ` <span class="physical-release">(Physical: ${item.physical_release_date || 'Unknown'})</span>`;
+            }
+            
+            return `
+                <div class="item">
+                    ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
+                    ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
+                    ${queueName === 'Unreleased' ? ` - Release Date: ${releaseInfo}` : ''}
+                </div>
+            `;
+        }).join('');
+    }
+
+    function generateQueueContent(queueName, items) {
+        if (queueName === 'Blacklisted' || queueName === 'Unreleased') {
+            return items.map(item => {
+                let releaseInfo = item.release_date;
+                if (releaseInfo === null || releaseInfo === 'null' || releaseInfo === '') {
+                    releaseInfo = 'Unknown';
+                }
+                
+                // Check if version requires physical release
+                const scraping_versions = item.scraping_versions || {};
+                const version_settings = scraping_versions[item.version] || {};
+                const require_physical = version_settings.require_physical_release || false;
+                
+                if (require_physical) {
+                    let physicalDate = item.physical_release_date;
+                    if (physicalDate === null || physicalDate === 'null' || physicalDate === '') {
+                        physicalDate = 'Unknown';
+                    }
+                    releaseInfo += ` <span class="physical-release">(Physical: ${physicalDate})</span>`;
+                }
+                
+                return `
+                    <div class="item">
+                        ${item.title} (${item.year}) - Version(s): ${item.versions.join(', ')}
+                        ${item.seasons.length > 0 ? ` - Season(s): ${item.seasons.join(', ')}` : ''}
+                        ${queueName === 'Unreleased' ? ` - Release Date: ${releaseInfo}` : ''}
+                    </div>
+                `;
+            }).join('');
+        } else {
+            return generateRegularItems(queueName, items);
+        }
     }
 
     function generateRegularItems(queueName, items) {
@@ -308,9 +358,30 @@
                 seasonEpisode = ` S${season}E${episode}`;
             }
 
+            let releaseInfo = '';
+            // Check if version requires physical release
+            const scraping_versions = item.scraping_versions || {};
+            const version_settings = scraping_versions[item.version] || {};
+            const require_physical = version_settings.require_physical_release || false;
+            
+            let releaseDate = item.release_date;
+            if (releaseDate === null || releaseDate === 'null' || releaseDate === '') {
+                releaseDate = 'Unknown';
+            }
+            
+            if (require_physical) {
+                let physicalDate = item.physical_release_date;
+                if (physicalDate === null || physicalDate === 'null' || physicalDate === '') {
+                    physicalDate = 'Unknown';
+                }
+                releaseInfo = ` - Release Date: ${releaseDate} <span class="physical-release">(Physical: ${physicalDate})</span>`;
+            } else if (releaseDate) {
+                releaseInfo = ` - Release Date: ${releaseDate}`;
+            }
+
             let itemContent = `
                 <div class="item">
-                    ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}
+                    ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}${releaseInfo}
             `;
 
             if (queueName === 'Checking' && item.filled_by_file) {
@@ -320,12 +391,9 @@
             if (queueName === 'Upgrading') {
                 let formattedTime = 'N/A';
                 if (item.time_added) {
-                    // Convert the timestamp to a Date object and format it
                     formattedTime = new Date(item.time_added).toLocaleString();
                 }
-                itemContent += `
-                    - Time Added: ${formattedTime}
-                `;
+                itemContent += ` - Time Added: ${formattedTime}`;
             }
 
             if (queueName === 'Pending Uncached') {
@@ -337,9 +405,7 @@
             }
 
             if (queueName === 'Sleeping') {
-                itemContent += `
-                    - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}
-                `;
+                itemContent += ` - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}`;
             }
 
             if (queueName === 'Wanted' && item.formatted_scrape_time) {
@@ -437,20 +503,6 @@
         } else {
             initStatus.classList.remove('alert-danger');
             initStatus.classList.add('alert-info');
-        }
-    }
-
-    function generateQueueContent(queueName, items) {
-        if (queueName === 'Blacklisted' || queueName === 'Unreleased') {
-            return items.map(item => `
-                <div class="item">
-                    ${item.title} (${item.year}) - Version(s): ${item.versions.join(', ')}
-                    ${item.seasons.length > 0 ? ` - Season(s): ${item.seasons.join(', ')}` : ''}
-                    ${queueName === 'Unreleased' ? ` - Release Date: ${item.release_date}` : ''}
-                </div>
-            `).join('');
-        } else {
-            return generateRegularItems(queueName, items);
         }
     }
     
