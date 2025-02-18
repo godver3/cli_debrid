@@ -5,7 +5,6 @@ import sys, os
 import json
 import time
 from settings import get_setting
-import content_checkers.trakt as trakt
 import re
 import pytz
 import time
@@ -598,6 +597,7 @@ def get_imdb_id_if_missing(item: Dict[str, Any]) -> Optional[str]:
 
 def refresh_release_dates():
     from database import get_all_media_items, update_release_date_and_state
+    import content_checkers.trakt as trakt
     logging.info("Starting refresh_release_dates function")
     
     logging.info("Fetching items to refresh")
@@ -636,7 +636,7 @@ def refresh_release_dates():
             
             logging.info("Getting release date")
             if media_type == 'movie':
-                new_release_date = get_release_date(metadata, imdb_date)
+                new_release_date = get_release_date(metadata, imdb_id)
 
                 # Store original values for comparison
                 item_dict['early_release_original'] = item_dict.get('early_release', False)

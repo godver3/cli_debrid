@@ -11,7 +11,7 @@ from .settings import Settings
 import json
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSON, insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 import iso8601
 from collections import defaultdict
 from .settings import Settings
@@ -41,30 +41,61 @@ class MetadataManager:
     @staticmethod
     def _update_metadata_with_session(item, metadata_dict, provider, session):
         """Internal method to update metadata using an existing session"""
-        success = False
-        for key, value in metadata_dict.items():
-            metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
-            if not metadata:
-                metadata = Metadata(item_id=item.id, key=key)
-                session.add(metadata)
+        try:
+            success = False
+            # Delete existing metadata first
+            session.query(Metadata).filter_by(item_id=item.id).delete()
+            session.flush()
             
-            # Convert complex objects to JSON strings
-            if isinstance(value, (dict, list)):
-                value = json.dumps(value)
-            else:
-                value = str(value)
+            # Add new metadata in batches
+            batch_size = 50
+            metadata_entries = []
             
-            metadata.value = value
-            metadata.provider = provider
-            metadata.last_updated = func.now()
-            success = True
-        
-        if not success:
-            logger.warning(f"No metadata entries were updated for {item.title} ({item.imdb_id})")
-        return success
+            # Get current timestamp once for all entries
+            from metadata.metadata import _get_local_timezone
+            current_time = datetime.now(_get_local_timezone())
+            
+            for key, value in metadata_dict.items():
+                # Convert complex objects to JSON strings
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value)
+                else:
+                    value = str(value)
+                
+                metadata = Metadata(
+                    item_id=item.id,
+                    key=key,
+                    value=value,
+                    provider=provider,
+                    last_updated=current_time
+                )
+                metadata_entries.append(metadata)
+                
+                # Process in batches to avoid long transactions
+                if len(metadata_entries) >= batch_size:
+                    session.bulk_save_objects(metadata_entries)
+                    session.flush()
+                    metadata_entries = []
+                    success = True
+            
+            # Process any remaining entries
+            if metadata_entries:
+                session.bulk_save_objects(metadata_entries)
+                session.flush()
+                success = True
+            
+            if not success:
+                logger.warning(f"No metadata entries were updated for {item.title} ({item.imdb_id})")
+            return success
+        except Exception as e:
+            logger.error(f"Error in _update_metadata_with_session for item {item.imdb_id}: {str(e)}")
+            session.rollback()
+            raise
 
     @staticmethod
     def is_metadata_stale(last_updated):
+        from metadata.metadata import _get_local_timezone
+
         settings = Settings()
         if last_updated is None:
             logger.debug("Item has no last_updated timestamp, considering stale")
@@ -72,9 +103,9 @@ class MetadataManager:
         
         # Convert last_updated to UTC if it's not already
         if last_updated.tzinfo is None or last_updated.tzinfo.utcoffset(last_updated) is None:
-            last_updated = last_updated.replace(tzinfo=timezone.utc)
-        
-        now = datetime.now(timezone.utc)
+            last_updated = last_updated.replace(tzinfo=_get_local_timezone())
+
+        now = datetime.now(_get_local_timezone())
         
         # Add random variation to the staleness threshold
         day_variation = random.choice([-5, -3, -1, 1, 3, 5])
@@ -218,6 +249,8 @@ class MetadataManager:
 
     @staticmethod
     def add_or_update_seasons_and_episodes(imdb_id, seasons_data):
+        from metadata.metadata import _get_local_timezone
+
         with DbSession() as session:
             try:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
@@ -226,7 +259,7 @@ class MetadataManager:
                     return False
 
                 # Update item's timestamp
-                item.updated_at = datetime.now(timezone.utc)
+                item.updated_at = datetime.now(_get_local_timezone())
 
                 # Update metadata timestamp
                 metadata = session.query(Metadata).filter_by(item_id=item.id, key='seasons').first()
@@ -235,7 +268,7 @@ class MetadataManager:
                     session.add(metadata)
                 metadata.value = json.dumps(seasons_data)
                 metadata.provider = 'trakt'
-                metadata.last_updated = datetime.now(timezone.utc)
+                metadata.last_updated = datetime.now(_get_local_timezone())
 
                 for season_number, season_info in seasons_data.items():
                     season = session.query(Season).filter_by(item_id=item.id, season_number=season_number).first()
@@ -387,7 +420,13 @@ class MetadataManager:
             return {key: json.loads(metadata.value)}
 
     @staticmethod
-    def refresh_metadata(imdb_id):
+    def refresh_metadata(imdb_id, existing_session=None):
+        """
+        Refresh metadata for an item.
+        Args:
+            imdb_id: The IMDb ID of the item
+            existing_session: Optional existing session to use instead of creating a new one
+        """
         trakt = TraktMetadata()
         logger.debug(f"Refreshing metadata for {imdb_id}")
         new_metadata = trakt.refresh_metadata(imdb_id)
@@ -399,47 +438,62 @@ class MetadataManager:
                 logger.error(f"Invalid metadata format received for {imdb_id}")
                 return None
             
-            with DbSession() as session:
-                item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-                if item:
-                    logger.debug(f"Before update: {item.title} last_updated={item.updated_at}")
-                    # Update metadata with the same session
-                    MetadataManager._update_metadata_with_session(item, metadata_to_store, 'Trakt', session)
-                    # Use func.now() for consistency
-                    item.updated_at = func.now()
-                    session.commit()
+            try:
+                # Use existing session if provided, otherwise create a new one
+                if existing_session:
+                    session = existing_session
+                    should_commit = False  # Don't commit if using existing session
+                else:
+                    session = DbSession()
+                    should_commit = True  # Commit if we created the session
+                
+                try:
+                    # Disable autoflush to prevent premature flushes
+                    session.autoflush = False
                     
-                    # Verify the update by requerying
-                    session.refresh(item)
-                    logger.debug(f"After update: {item.title} last_updated={item.updated_at}")
+                    item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                    if item:
+                        logger.debug(f"Before update: {item.title} last_updated={item.updated_at}")
+                        
+                        # Update metadata with the same session
+                        try:
+                            success = MetadataManager._update_metadata_with_session(item, metadata_to_store, 'Trakt', session)
+                            if success:
+                                # Use Python datetime for consistency
+                                from metadata.metadata import _get_local_timezone
+                                item.updated_at = datetime.now(_get_local_timezone())
+                                
+                                if should_commit:
+                                    session.commit()
+                                else:
+                                    session.flush()
+                                
+                                # Re-query the item instead of using refresh
+                                item = session.query(Item).get(item.id)
+                                if item:
+                                    logger.debug(f"After update: {item.title} last_updated={item.updated_at}")
+                                else:
+                                    logger.error(f"Failed to re-query item {imdb_id} after update")
+                            else:
+                                logger.error(f"Failed to update metadata for {imdb_id}")
+                                session.rollback()
+                                return None
+                        except OperationalError as e:
+                            if "database is locked" in str(e).lower():
+                                logger.warning(f"Database locked while updating metadata for {imdb_id}. Will retry later.")
+                                session.rollback()
+                                return new_metadata
+                            raise
+                finally:
+                    # Only close the session if we created it
+                    if not existing_session:
+                        session.close()
+            except Exception as e:
+                logger.error(f"Error updating metadata for {imdb_id}: {str(e)}")
+                return None
         else:
             logger.warning(f"No new metadata received for {imdb_id}")
         return new_metadata
-
-    @staticmethod
-    def _update_metadata_with_session(item, metadata_dict, provider, session):
-        """Internal method to update metadata using an existing session"""
-        success = False
-        for key, value in metadata_dict.items():
-            metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
-            if not metadata:
-                metadata = Metadata(item_id=item.id, key=key)
-                session.add(metadata)
-            
-            # Convert complex objects to JSON strings
-            if isinstance(value, (dict, list)):
-                value = json.dumps(value)
-            else:
-                value = str(value)
-            
-            metadata.value = value
-            metadata.provider = provider
-            metadata.last_updated = func.now()
-            success = True
-        
-        if not success:
-            logger.warning(f"No metadata entries were updated for {item.title} ({item.imdb_id})")
-        return success
 
     @staticmethod
     def refresh_trakt_metadata(self, imdb_id: str) -> None:
@@ -747,8 +801,9 @@ class MetadataManager:
                         if aliases:
                             metadata = Metadata(item_id=item.id, key='aliases', value=json.dumps(aliases), provider='Trakt')
                             session.add(metadata)
-                
-                item.updated_at = datetime.now(timezone.utc)
+
+                from metadata.metadata import _get_local_timezone
+                item.updated_at = datetime.now(_get_local_timezone())
                 session.commit()
                 return new_metadata, "trakt"
             logger.warning(f"Could not fetch metadata for movie {imdb_id} from Trakt")
@@ -756,7 +811,8 @@ class MetadataManager:
 
     @staticmethod
     def update_movie_metadata(item, movie_data, session):
-        item.updated_at = datetime.now(timezone.utc)
+        from metadata.metadata import _get_local_timezone
+        item.updated_at = datetime.now(_get_local_timezone())
         session.query(Metadata).filter_by(item_id=item.id).delete()
         for key, value in movie_data.items():
             if isinstance(value, (list, dict)):
@@ -848,7 +904,8 @@ class MetadataManager:
     @staticmethod
     def update_show_metadata(item, show_data, session):
         try:
-            item.updated_at = datetime.now(timezone.utc)
+            from metadata.metadata import _get_local_timezone
+            item.updated_at = datetime.now(_get_local_timezone())
             # Delete existing metadata in a separate query
             session.query(Metadata).filter_by(item_id=item.id).delete()
             session.flush()  # Ensure the delete is processed
@@ -870,7 +927,7 @@ class MetadataManager:
                     key=key,
                     value=str(value),
                     provider='trakt',
-                    last_updated=datetime.now(timezone.utc)
+                    last_updated=datetime.now(_get_local_timezone())
                 )
                 metadata_entries.append(metadata)
                 #logger.debug(f"Added metadata entry for {item.imdb_id}: {key}")
@@ -940,7 +997,8 @@ class MetadataManager:
                 
                 metadata.value = json.dumps(show_data['aliases'])
                 metadata.provider = 'trakt'
-                metadata.last_updated = datetime.now(timezone.utc)
+                from metadata.metadata import _get_local_timezone
+                metadata.last_updated = datetime.now(_get_local_timezone())
                 session.commit()
                 
                 return show_data['aliases'], "trakt"
@@ -981,7 +1039,8 @@ class MetadataManager:
                 
                 metadata.value = json.dumps(movie_data['aliases'])
                 metadata.provider = 'trakt'
-                metadata.last_updated = datetime.now(timezone.utc)
+                from metadata.metadata import _get_local_timezone
+                metadata.last_updated = datetime.now(_get_local_timezone())
                 session.commit()
                 
                 return movie_data['aliases'], "trakt"
@@ -1010,8 +1069,9 @@ class MetadataManager:
                             value = json.dumps(value)
                         metadata = Metadata(item_id=item.id, key=key, value=str(value), provider='trakt')
                         session.add(metadata)
-                    
-                    item.updated_at = datetime.now(timezone.utc)
+
+                    from metadata.metadata import _get_local_timezone
+                    item.updated_at = datetime.now(_get_local_timezone())
                     session.commit()
                     return show_data, "trakt"
                 
@@ -1020,3 +1080,4 @@ class MetadataManager:
         except Exception as e:
             logger.error(f"Error in refresh_show_metadata for IMDb ID {imdb_id}: {str(e)}")
             return None, None
+            

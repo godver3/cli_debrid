@@ -6,6 +6,19 @@ import traceback
 import runpy
 import time
 import appdirs
+import socket
+
+# Default ports configuration
+DEFAULT_PORTS = {
+    'win32': {
+        'main': 8585,
+        'battery': 8586
+    },
+    'default': {
+        'main': 5000,
+        'battery': 5001
+    }
+}
 
 # Set up logging to write to a file
 log_file = os.path.join(
@@ -24,6 +37,13 @@ console.setLevel(logging.INFO)
 logging.getLogger('').addHandler(console)
 
 def setup_environment():
+    # Set default ports based on platform
+    ports = DEFAULT_PORTS.get(sys.platform, DEFAULT_PORTS['default'])
+    if 'CLI_DEBRID_PORT' not in os.environ:
+        os.environ['CLI_DEBRID_PORT'] = str(ports['main'])
+    if 'CLI_DEBRID_BATTERY_PORT' not in os.environ:
+        os.environ['CLI_DEBRID_BATTERY_PORT'] = str(ports['battery'])
+
     if sys.platform.startswith('win'):
         app_name = "cli_debrid"
         app_author = "cli_debrid"
@@ -77,7 +97,25 @@ def get_script_path(script_name):
         base_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_dir, script_name)
 
-def run_script(script_name, port=None, battery_port=None):
+def is_port_available(port):
+    """Check if a port is available."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('127.0.0.1', port))
+            return True
+        except OSError:
+            return False
+
+def find_available_port(start_port):
+    """Find the next available port starting from start_port."""
+    port = start_port
+    while not is_port_available(port):
+        port += 1
+        if port > 65535:
+            raise RuntimeError("No available ports found")
+    return port
+
+def run_script(script_name, port=None, battery_port=None, host=None):
     script_path = get_script_path(script_name)
     logging.info(f"Running script: {script_path}")
     try:
@@ -89,11 +127,13 @@ def run_script(script_name, port=None, battery_port=None):
         # Set up environment before running the script
         setup_environment()
         
-        # Set environment variables for ports
+        # Set environment variables for ports and host
         if port:
             os.environ['CLI_DEBRID_PORT'] = str(port)
         if battery_port:
             os.environ['CLI_DEBRID_BATTERY_PORT'] = str(battery_port)
+        if host:
+            os.environ['CLI_DEBRID_HOST'] = host
             
         runpy.run_path(script_path, run_name='__main__')
     except Exception as e:
@@ -108,11 +148,36 @@ def run_main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, help='Port for main web server')
     parser.add_argument('--battery-port', type=int, help='Port for battery web server')
+    parser.add_argument('--local-only', action='store_true', help='Bind to localhost only (127.0.0.1)')
     args = parser.parse_args()
     
-    # Set the battery port in the environment before starting any processes
-    if args.battery_port:
-        os.environ['CLI_DEBRID_BATTERY_PORT'] = str(args.battery_port)
+    # On Windows, use different default ports and check availability
+    if sys.platform.startswith('win'):
+        default_main_port = 8585  # Different from the common 5000 port
+        default_battery_port = 8586
+        
+        main_port = args.port or default_main_port
+        battery_port = args.battery_port or default_battery_port
+        
+        # Check if ports are available and find alternatives if needed
+        if not is_port_available(main_port):
+            logging.warning(f"Port {main_port} is not available")
+            main_port = find_available_port(main_port + 1)
+            logging.info(f"Using alternative port {main_port} for main server")
+            
+        if not is_port_available(battery_port):
+            logging.warning(f"Port {battery_port} is not available")
+            battery_port = find_available_port(battery_port + 1)
+            logging.info(f"Using alternative port {battery_port} for battery server")
+    else:
+        main_port = args.port
+        battery_port = args.battery_port
+    
+    # Determine the host binding
+    host = '127.0.0.1' if args.local_only else '0.0.0.0'
+    os.environ['CLI_DEBRID_HOST'] = host
+    
+    logging.info(f"Binding to host: {host}")
     
     script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
     processes = []
@@ -120,21 +185,25 @@ def run_main():
     # Start both processes in parallel with appropriate ports
     for script_name in script_names:
         if 'cli_battery' in script_name:
-            # For battery process, pass the battery port
             process = multiprocessing.Process(
                 target=run_script, 
                 args=(script_name,),
-                kwargs={'battery_port': args.battery_port}
+                kwargs={
+                    'battery_port': battery_port,
+                    'host': host
+                }
             )
-            logging.info(f"Starting battery process on port {args.battery_port}")
+            logging.info(f"Starting battery process on {host}:{battery_port}")
         else:
-            # For main process, pass the main port
             process = multiprocessing.Process(
                 target=run_script, 
                 args=(script_name,),
-                kwargs={'port': args.port}
+                kwargs={
+                    'port': main_port,
+                    'host': host
+                }
             )
-            logging.info(f"Starting main process on port {args.port}")
+            logging.info(f"Starting main process on {host}:{main_port}")
         
         processes.append(process)
         process.start()
