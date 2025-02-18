@@ -2,7 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Foreign
 from sqlalchemy.orm import sessionmaker, scoped_session, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from flask import current_app, jsonify
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import or_, func, cast, String
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -15,6 +15,15 @@ import random
 from functools import wraps
 from typing import Optional
 
+def get_timezone_aware_now():
+    """Get current datetime with proper timezone handling"""
+    try:
+        from metadata.metadata import _get_local_timezone
+        return datetime.now(_get_local_timezone())
+    except ImportError:
+        # Fallback to UTC if metadata module is not available
+        return datetime.now(timezone.utc)
+
 def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2):
     def decorator(func):
         @wraps(func)
@@ -24,7 +33,7 @@ def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2):
                 try:
                     return func(*args, **kwargs)
                 except OperationalError as e:
-                    if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                    if "database is locked" in str(e).lower() and attempt < max_attempts - 1:
                         attempt += 1
                         wait_time = initial_wait * (backoff_factor ** attempt) + random.uniform(0, 0.1)
                         logger.warning(f"Database locked. Retrying in {wait_time:.2f} seconds... (Attempt {attempt + 1}/{max_attempts})")
@@ -54,21 +63,27 @@ def init_db():
     connection_string = f'sqlite:///{db_path}'
 
     try:
-        #logger.info(f"Attempting to connect to database: {connection_string}")
         engine = create_engine(
             connection_string,
             echo=False,
             connect_args={
-                'timeout': 30,  # Increase SQLite busy timeout
+                'timeout': 60,  # Increased SQLite busy timeout to 60 seconds
                 'check_same_thread': False,  # Allow multi-threaded access
-            }
+            },
+            pool_size=20,  # Set a reasonable pool size
+            max_overflow=10,  # Allow some overflow connections
+            pool_timeout=30,  # Wait up to 30 seconds for a connection
+            pool_recycle=1800  # Recycle connections every 30 minutes
         )
 
-        # Configure PRAGMA settings once during initialization
+        # Configure PRAGMA settings for better concurrency handling
         with engine.connect() as conn:
-            conn.execute(text("PRAGMA journal_mode=WAL"))
-            conn.execute(text("PRAGMA busy_timeout=30000"))
-            conn.execute(text("PRAGMA synchronous=NORMAL"))
+            conn.execute(text("PRAGMA journal_mode=WAL"))  # Use Write-Ahead Logging
+            conn.execute(text("PRAGMA busy_timeout=60000"))  # 60 second busy timeout
+            conn.execute(text("PRAGMA synchronous=NORMAL"))  # Faster synchronization with reasonable safety
+            conn.execute(text("PRAGMA cache_size=-2000"))  # Use 2MB of memory for cache
+            conn.execute(text("PRAGMA temp_store=MEMORY"))  # Store temp tables and indices in memory
+            conn.execute(text("PRAGMA mmap_size=268435456"))  # Use memory-mapped I/O (256MB)
             conn.commit()
 
         # Configure the session with the engine
@@ -78,7 +93,6 @@ def init_db():
         # Create tables
         Base.metadata.create_all(engine)
 
-        #logger.info(f"Successfully connected to cli_battery database: {connection_string}")
         return engine
     except Exception as e:
         logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
@@ -96,8 +110,8 @@ class Item(Base):
     title = Column(String, nullable=False)
     year = Column(Integer)
     type = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_timezone_aware_now)
+    updated_at = Column(DateTime, default=get_timezone_aware_now, onupdate=get_timezone_aware_now)
     item_metadata = relationship("Metadata", back_populates="item", cascade="all, delete-orphan")
     seasons = relationship("Season", back_populates="item", cascade="all, delete-orphan")
     poster = relationship("Poster", back_populates="item", uselist=False, cascade="all, delete-orphan")
@@ -110,7 +124,7 @@ class Metadata(Base):
     key = Column(String, nullable=False)
     value = Column(JSON, nullable=False)  # Ensure JSON type is compatible
     provider = Column(String)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_updated = Column(DateTime, default=get_timezone_aware_now, onupdate=get_timezone_aware_now)
     item = relationship("Item", back_populates="item_metadata")
 
 class Season(Base):
@@ -147,7 +161,7 @@ class Poster(Base):
     id = Column(Integer, primary_key=True)
     item_id = Column(Integer, ForeignKey('items.id'), nullable=False, unique=True)
     image_data = Column(LargeBinary)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_updated = Column(DateTime, default=get_timezone_aware_now, onupdate=get_timezone_aware_now)
     item = relationship("Item", back_populates="poster")
 
 class TMDBToIMDBMapping(Base):
@@ -178,7 +192,7 @@ class DatabaseManager:
                         item.year = year
                     if item_type is not None:
                         item.type = item_type
-                    item.updated_at = datetime.utcnow()
+                    item.updated_at = get_timezone_aware_now()
                 else:
                     item = Item(imdb_id=imdb_id, title=title, year=year, type=item_type)
                     session.add(item)
@@ -207,7 +221,7 @@ class DatabaseManager:
                 else:
                     item.type = 'movie'
 
-                now = datetime.utcnow()
+                now = get_timezone_aware_now()
                 for key, value in metadata_dict.items():
                     if key != 'type':
                         metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
@@ -252,7 +266,7 @@ class DatabaseManager:
             poster = session.query(Poster).filter_by(item_id=item_id).first()
             if poster:
                 poster.image_data = image_data
-                poster.last_updated = datetime.utcnow()
+                poster.last_updated = get_timezone_aware_now()
             else:
                 poster = Poster(item_id=item_id, image_data=image_data)
                 session.add(poster)
@@ -282,6 +296,7 @@ class DatabaseManager:
                 return False
 
     @staticmethod
+    @retry_on_db_lock(max_attempts=10, initial_wait=0.2)  # Increased retries and initial wait time
     def remove_metadata(imdb_id: str) -> bool:
         """Remove all metadata entries for a given IMDB ID."""
         with Session() as session:
@@ -292,7 +307,16 @@ class DatabaseManager:
                     logger.warning(f"No item found with IMDB ID {imdb_id}")
                     return False
 
-                # Delete the item itself - this will cascade delete all metadata, seasons, episodes, and poster
+                # Delete metadata first in smaller batches
+                batch_size = 50
+                metadata_items = session.query(Metadata).filter_by(item_id=item.id).all()
+                for i in range(0, len(metadata_items), batch_size):
+                    batch = metadata_items[i:i + batch_size]
+                    for metadata in batch:
+                        session.delete(metadata)
+                    session.flush()
+
+                # Delete the item itself - this will cascade delete remaining related items
                 session.delete(item)
                 session.commit()
                 

@@ -385,9 +385,10 @@ class TraktMetadata:
                 if country and release_date:
                     try:
                         date = iso8601.parse_date(release_date)
-                        # Convert to UTC if necessary
+                        # Convert to local timezone if necessary
                         if date.tzinfo is not None:
-                            date = date.astimezone(timezone.utc)
+                            from metadata.metadata import _get_local_timezone
+                            date = date.astimezone(_get_local_timezone())
                         formatted_releases[country].append({
                             'date': date.date().isoformat(),
                             'type': release_type
