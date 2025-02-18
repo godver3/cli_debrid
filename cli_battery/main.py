@@ -1,6 +1,6 @@
 from app import create_app
 from app.database import init_db, Session, Base
-from app.background_jobs import background_jobs
+from app.background_jobs import background_jobs, BackgroundScheduler
 import logging
 import time
 from sqlalchemy import inspect, text
@@ -10,6 +10,7 @@ from app.logger_config import logger
 import sys
 import atexit
 import os
+from datetime import timezone
 
 def initialize_database(app):
     max_retries = 5
@@ -62,7 +63,16 @@ def main():
             try:
                 # Initialize and start background jobs with Flask app
                 background_jobs.init_app(app)
-                background_jobs.start()
+                try:
+                    background_jobs.start()
+                except Exception as e:
+                    if "Invalid TZif file" in str(e):
+                        logger.warning("Timezone initialization failed, reconfiguring scheduler with UTC")
+                        # Force scheduler to use UTC
+                        background_jobs.scheduler = BackgroundScheduler(timezone=timezone.utc)
+                        background_jobs.start()
+                    else:
+                        raise
                 
                 # Ensure background jobs are stopped and database connections are cleaned up on exit
                 def cleanup():

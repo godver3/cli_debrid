@@ -947,6 +947,42 @@ def main():
     # Add migration for media_type setting
     from config_manager import load_config, save_config
     config = load_config()
+
+    # Add migration for folder locations
+    if 'Debug' in config:
+        updated = False
+        
+        # Define the default folder names
+        default_folders = {
+            'movies_folder_name': 'Movies',
+            'tv_shows_folder_name': 'TV Shows',
+            'anime_movies_folder_name': 'Anime Movies',
+            'anime_tv_shows_folder_name': 'Anime TV Shows'
+        }
+        
+        # Ensure all folder name keys exist with default values
+        for folder_key, default_value in default_folders.items():
+            if folder_key not in config['Debug']:
+                config['Debug'][folder_key] = default_value
+                updated = True
+                logging.info(f"Created missing folder key {folder_key} with default value: {default_value}")
+        
+        # Create a copy of the items to iterate over
+        debug_items = list(config['Debug'].items())
+        for key, value in debug_items:
+            if key.endswith('_folder_name'):
+                # Get the base key without _folder_name
+                base_key = key.replace('_folder_name', '')
+                # Create new key by appending _folder_name
+                new_key = base_key + '_folder_name'
+                # Set the value based on the base key
+                config['Debug'][new_key] = default_folders.get(new_key, value)
+                updated = True
+        
+        if updated:
+            save_config(config)
+            logging.info("Successfully migrated folder name settings")
+
     if 'Content Sources' in config:
         updated = False
         for source_id, source_config in config['Content Sources'].items():

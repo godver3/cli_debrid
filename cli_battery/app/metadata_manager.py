@@ -250,7 +250,6 @@ class MetadataManager:
     @staticmethod
     def add_or_update_seasons_and_episodes(imdb_id, seasons_data):
         from metadata.metadata import _get_local_timezone
-
         with DbSession() as session:
             try:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
