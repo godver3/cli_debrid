@@ -164,8 +164,8 @@ def format_notification_content(notifications, notification_type, notification_c
         if media_type == 'movie':
             formatted_title += f" [{version}]"
             
-        # Add content source information if enabled and available and item is collected
-        if enable_detailed_info and new_state == 'Collected':
+        # Add content source information if enabled and available for collected or upgraded items
+        if enable_detailed_info and (new_state == 'Collected' or new_state == 'Upgraded'):
             if content_source:
                 formatted_title += f"\nSource: {content_source}"
             if content_source_detail:

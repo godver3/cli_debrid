@@ -409,6 +409,31 @@ SETTINGS_SCHEMA = {
             "description": "Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)",
             "default": False
         },
+        "enabled_separate_anime_folders": {
+            "type": "boolean",
+            "description": "Create separate anime folders for anime content when organizing symlinks",
+            "default": False
+        },
+        "movies_folder_name": {
+            "type": "string",
+            "description": "Custom name for the Movies folder (default: 'Movies')",
+            "default": "Movies"
+        },
+        "tv_shows_folder_name": {
+            "type": "string",
+            "description": "Custom name for the TV Shows folder (default: 'TV Shows')",
+            "default": "TV Shows"
+        },
+        "anime_movies_folder_name": {
+            "type": "string",
+            "description": "Custom name for the Anime Movies folder (default: 'Anime Movies')",
+            "default": "Anime Movies"
+        },
+        "anime_tv_shows_folder_name": {
+            "type": "string",
+            "description": "Custom name for the Anime TV Shows folder (default: 'Anime TV Shows')",
+            "default": "Anime TV Shows"
+        },
         "check_for_updates": {
             "type": "boolean",
             "description": "Check for updates and display update indicator in header",

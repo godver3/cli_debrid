@@ -26,9 +26,11 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
     """Get the full path for the symlink based on settings and metadata."""
     try:
         logging.debug(f"get_symlink_path received item with filename_real_path: {item.get('filename_real_path')}")
+        logging.debug(f"Input item: type={item.get('type')}, genres={item.get('genres')}")
         
         symlinked_path = get_setting('File Management', 'symlinked_files_path')
         organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)
+        logging.debug(f"Settings: symlinked_path={symlinked_path}, enabled_separate_anime_folders={get_setting('Debug', 'enabled_separate_anime_folders', False)}")
         
         # Get the original extension
         _, extension = os.path.splitext(original_file)
@@ -37,9 +39,60 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         parts = []
         media_type = item.get('type', 'movie')
         
-        # Add Movies/TV Shows root folder if enabled
-        if organize_by_type:
-            parts.append('Movies' if media_type == 'movie' else 'TV Shows')
+        # Check if this is an anime
+        genres = item.get('genres', '') or ''
+        # Handle both string and list formats of genres
+        if isinstance(genres, str):
+            try:
+                # Try to parse as JSON first (for database-stored genres)
+                import json
+                genres = json.loads(genres)
+            except json.JSONDecoder:
+                # If not JSON, split by comma (for comma-separated strings)
+                genres = [g.strip() for g in genres.split(',') if g.strip()]
+        # Ensure genres is a list
+        if not isinstance(genres, list):
+            genres = [str(genres)]
+        # Check for anime in any genre
+        is_anime = any('anime' in genre.lower() for genre in genres)
+        logging.debug(f"Content type: {'Anime' if is_anime else 'Regular'} {media_type}")
+        
+        # Determine the appropriate root folder
+        # If it's anime and we have separate folders enabled, use anime folders
+        if is_anime and get_setting('Debug', 'enabled_separate_anime_folders', False):
+            if media_type == 'movie':
+                folder_name = get_setting('Debug', 'anime_movies_folder_name', 'Anime Movies')
+                logging.debug(f"Using anime movies folder name: {folder_name}")
+            else:
+                folder_name = get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows')
+                logging.debug(f"Using anime TV shows folder name: {folder_name}")
+        # Otherwise use regular folders
+        else:
+            if media_type == 'movie':
+                folder_name = get_setting('Debug', 'movies_folder_name', 'Movies')
+                logging.debug(f"Using movies folder name: {folder_name}")
+            else:
+                folder_name = get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')
+                logging.debug(f"Using TV shows folder name: {folder_name}")
+
+        # Validate folder name
+        if not folder_name or folder_name.strip() == '':
+            logging.error("Invalid folder name: folder name is empty")
+            return None
+            
+        folder_name = folder_name.strip()
+        parts.append(folder_name)
+        logging.debug(f"parts after adding folder name: {parts}")
+        
+        # Create root folder if it doesn't exist
+        root_folder_path = os.path.join(symlinked_path, folder_name)
+        if not os.path.exists(root_folder_path):
+            try:
+                os.makedirs(root_folder_path, exist_ok=True)
+                logging.info(f"Created root folder: {root_folder_path}")
+            except Exception as e:
+                logging.error(f"Failed to create root folder {root_folder_path}: {str(e)}")
+                return None
         
         # Prepare common template variables
         template_vars = {
@@ -133,6 +186,14 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         
         # Create the directory path first
         dir_path = os.path.join(symlinked_path, *parts)
+        
+        # Ensure the full directory path exists
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+            logging.debug(f"Ensured directory path exists: {dir_path}")
+        except Exception as e:
+            logging.error(f"Failed to create directory path {dir_path}: {str(e)}")
+            return None
         
         # Then join with the final filename
         base_path = os.path.join(dir_path, os.path.splitext(final_filename)[0])
