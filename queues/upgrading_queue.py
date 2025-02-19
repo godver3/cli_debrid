@@ -320,17 +320,25 @@ class UpgradingQueue:
                     
                     logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
 
-                    # Check if the item has been in the queue for more than 24 hours
-                    if time_in_queue > timedelta(hours=24):
-                        logging.info(f"Item {item_id} has been in the Upgrading queue for over 24 hours.")
+                    # Get the configured duration from settings, default to 24 hours
+                    queue_duration_hours = int(get_setting('Debug', 'upgrade_queue_duration_hours', '24'))
+                    max_duration = timedelta(hours=queue_duration_hours)
+                    logging.info(f"Configured duration: {max_duration}")
+
+                    # Check if the item has been in the queue for more than the configured duration
+                    if time_in_queue > max_duration:
+                        logging.info(f"Item {item_id} has been in the Upgrading queue for over {queue_duration_hours} hours.")
                                             
                         # Remove the item from the queue
                         self.remove_item(item)
                         
                         update_media_item_state(item_id, state="Collected")
 
-                        logging.info(f"Moved item {item_id} to Collected state after 24 hours in Upgrading queue.")
+                        logging.info(f"Moved item {item_id} to Collected state after {queue_duration_hours} hours in Upgrading queue.")
                     
+                    if time_in_queue <= max_duration:
+                        logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
+
                     # Check if an hour has passed since the last scrape
                     elif self.should_perform_hourly_scrape(item_id, current_time):
                         self.hourly_scrape(item, queue_manager)
@@ -424,7 +432,12 @@ class UpgradingQueue:
             
             # Get similarity threshold from settings, default to 95%
             similarity_threshold = 0.95
-            upgrading_percentage_threshold = float(get_setting('Scraping', 'upgrading_percentage_threshold', '0.1'))
+            try:
+                threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
+                upgrading_percentage_threshold = float(threshold_value) if threshold_value.strip() else 0.1
+            except (ValueError, AttributeError):
+                logging.warning("Invalid upgrading_percentage_threshold setting, using default value of 0.1")
+                upgrading_percentage_threshold = 0.1
 
             # Apply filtering to all results except our current item
             filtered_results = []
