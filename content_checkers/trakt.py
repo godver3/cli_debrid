@@ -15,6 +15,7 @@ from datetime import datetime, date, timedelta
 from settings import get_setting
 import random
 from time import sleep
+from content_checkers.plex_watchlist import get_show_status
 
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
@@ -334,6 +335,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
             shows_to_remove = []
             skipped_count = 0
             cache_skipped = 0
+            collected_skipped = 0
             
             for item in watchlist_items:
                 media_type = assign_media_type(item)
@@ -370,20 +372,27 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
                 item_state = get_media_item_presence(imdb_id=imdb_id)
                 if item_state == "Collected" and should_remove:
                     # If it's a TV show and we want to keep series, skip removal
-                    if media_type == 'tv' and keep_series:
-                        logging.debug(f"Keeping TV series: {imdb_id}")
-                        processed_items.append({
-                            'imdb_id': imdb_id,
-                            'media_type': media_type
-                        })
-                    else:
-                        # Add to removal list
-                        item_type = 'show' if media_type == 'tv' else media_type
-                        removal_item = {"ids": item[item_type]['ids']}
-                        if media_type == 'tv':
-                            shows_to_remove.append(removal_item)
+                    if media_type == 'tv':
+                        if keep_series:
+                            logging.debug(f"Keeping TV series: {imdb_id}")
+                            collected_skipped += 1
+                            continue
                         else:
-                            movies_to_remove.append(removal_item)
+                            # Check if the show has ended before removing
+                            show_status = get_show_status(imdb_id)
+                            if show_status != 'ended':
+                                logging.debug(f"Keeping ongoing TV series: {imdb_id} - status: {show_status}")
+                                collected_skipped += 1
+                                continue
+                            logging.debug(f"Removing ended TV series: {imdb_id} - status: {show_status}")
+                    
+                    # Add to removal list
+                    item_type = 'show' if media_type == 'tv' else media_type
+                    removal_item = {"ids": item[item_type]['ids']}
+                    if media_type == 'tv':
+                        shows_to_remove.append(removal_item)
+                    else:
+                        movies_to_remove.append(removal_item)
                 else:
                     if not disable_caching:
                         # Add or update cache entry
@@ -443,6 +452,10 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
 
             if skipped_count > 0:
                 logging.info(f"Skipped {skipped_count} items due to missing IDs")
+            if cache_skipped > 0:
+                logging.info(f"Skipped {cache_skipped} items due to cache")
+            if collected_skipped > 0:
+                logging.info(f"Skipped {collected_skipped} items that were already collected")
             logging.info(f"Found {len(processed_items)} items from Trakt watchlist")
             all_wanted_items.append((processed_items, versions))
 

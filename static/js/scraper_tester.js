@@ -445,7 +445,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function createInputElements(key, value) {
         let originalInput, modifiedInput;
     
-        if (key === 'enable_hdr') {
+        if (typeof value === 'boolean') {
             originalInput = document.createElement('input');
             originalInput.type = 'checkbox';
             originalInput.checked = value;
@@ -484,6 +484,21 @@ document.addEventListener('DOMContentLoaded', function() {
         } else if (['preferred_filter_in', 'preferred_filter_out'].includes(key)) {
             originalInput = createPreferredFilterList(key, value, true);
             modifiedInput = createPreferredFilterList(key, value, false);
+        } else if (key === 'max_size_gb' || key === 'min_size_gb') {
+            // Handle size fields
+            if (value === '' || value === null) {
+                originalInput = document.createElement('input');
+                originalInput.type = 'text';
+                originalInput.value = '';
+                modifiedInput = originalInput.cloneNode(true);
+            } else {
+                const numValue = parseFloat(value);
+                originalInput = document.createElement('input');
+                originalInput.type = 'number';
+                originalInput.step = '0.01';  // Allow decimal values
+                originalInput.value = isNaN(numValue) ? null : numValue;
+                modifiedInput = originalInput.cloneNode(true);
+            }
         } else {
             originalInput = document.createElement('input');
             originalInput.type = typeof value === 'number' ? 'number' : 'text';
@@ -682,6 +697,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     const weight = parseInt(item.querySelector('.filter-weight').value);
                     return term && !isNaN(weight) ? [term, weight] : null;
                 }).filter(Boolean);
+            } else if (settingKey === 'max_size_gb' || settingKey === 'min_size_gb') {
+                // Handle size fields
+                if (input.value === '' || input.value === null) {
+                    settings[settingKey] = null;
+                } else {
+                    const numValue = parseFloat(input.value);
+                    settings[settingKey] = isNaN(numValue) ? null : numValue;
+                }
             } else {
                 settings[settingKey] = input.value;
             }
