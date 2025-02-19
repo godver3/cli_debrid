@@ -125,13 +125,35 @@ def find_available_port(start_port):
             raise RuntimeError("No available ports found")
     return port
 
+def is_service_ready(port, max_attempts=30, delay=0.5):
+    """Check if a service is listening on the specified port."""
+    for _ in range(max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect(('127.0.0.1', port))
+                return True
+        except (ConnectionRefusedError, OSError):
+            time.sleep(delay)
+    return False
+
 def create_tunnel(remote_port, local_port, buffer_size=4096):
     """Creates a tunnel from a remote port to a local port."""
     def handle_client(client_sock, local_port):
         try:
-            # Connect to local service
+            # Connect to local service with retry
             local_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            local_sock.connect(('127.0.0.1', local_port))
+            retry_count = 0
+            max_retries = 5
+            while retry_count < max_retries:
+                try:
+                    local_sock.connect(('127.0.0.1', local_port))
+                    break
+                except ConnectionRefusedError:
+                    retry_count += 1
+                    if retry_count == max_retries:
+                        logging.error(f"Failed to connect to local service after {max_retries} attempts")
+                        return
+                    time.sleep(0.5)
             
             while True:
                 # Wait for data from either socket
@@ -149,8 +171,9 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
                         other_sock.sendall(data)
                     except:
                         return
-        except:
-            logging.error(f"Error in tunnel connection: {traceback.format_exc()}")
+        except Exception as e:
+            logging.error(f"Error in tunnel connection: {str(e)}")
+            logging.debug(f"Detailed error: {traceback.format_exc()}")
         finally:
             try:
                 client_sock.close()
@@ -176,10 +199,12 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
                     )
                     client_thread.daemon = True
                     client_thread.start()
-                except:
-                    logging.error(f"Error accepting connection: {traceback.format_exc()}")
-        except:
-            logging.error(f"Error in tunnel server: {traceback.format_exc()}")
+                except Exception as e:
+                    logging.error(f"Error accepting connection: {str(e)}")
+                    logging.debug(f"Detailed error: {traceback.format_exc()}")
+        except Exception as e:
+            logging.error(f"Error in tunnel server: {str(e)}")
+            logging.debug(f"Detailed error: {traceback.format_exc()}")
         finally:
             try:
                 server.close()
@@ -256,37 +281,7 @@ def run_main():
     os.environ['CLI_DEBRID_PORT'] = str(main_port)
     os.environ['CLI_DEBRID_BATTERY_PORT'] = str(battery_port)
     
-    # Set up tunnels unless explicitly disabled
-    tunnel_threads = []
-    if not args.no_tunnel:
-        # Use provided ports or defaults for tunneling
-        tunnel_main_port = args.port if args.port else ports['tunnel_main']
-        tunnel_battery_port = args.battery_port if args.battery_port else ports['tunnel_battery']
-        
-        # Update environment with tunnel ports
-        os.environ['CLI_DEBRID_TUNNEL_PORT'] = str(tunnel_main_port)
-        os.environ['CLI_DEBRID_BATTERY_TUNNEL_PORT'] = str(tunnel_battery_port)
-        
-        if is_port_available(tunnel_main_port):
-            tunnel_threads.append(create_tunnel(tunnel_main_port, main_port))
-            logging.info(f"Created tunnel from port {tunnel_main_port} to main service on {main_port}")
-        else:
-            logging.error(f"Tunnel port {tunnel_main_port} is not available")
-            
-        if is_port_available(tunnel_battery_port):
-            tunnel_threads.append(create_tunnel(tunnel_battery_port, battery_port))
-            logging.info(f"Created tunnel from port {tunnel_battery_port} to battery service on {battery_port}")
-        else:
-            logging.error(f"Tunnel port {tunnel_battery_port} is not available")
-    else:
-        # If tunneling is disabled, remove tunnel port environment variables
-        os.environ.pop('CLI_DEBRID_TUNNEL_PORT', None)
-        os.environ.pop('CLI_DEBRID_BATTERY_TUNNEL_PORT', None)
-    
-    # Log binding information
-    logging.info(f"Main service binding to: {main_host}:{main_port}")
-    logging.info(f"Battery service binding to: {battery_host}:{battery_port}")
-    
+    # Start services first
     script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
     processes = []
 
@@ -315,6 +310,43 @@ def run_main():
         
         processes.append(process)
         process.start()
+
+    # Wait for services to be ready
+    logging.info("Waiting for services to be ready...")
+    main_ready = is_service_ready(main_port)
+    battery_ready = is_service_ready(battery_port)
+    
+    if not main_ready:
+        logging.error(f"Main service failed to start on port {main_port}")
+    if not battery_ready:
+        logging.error(f"Battery service failed to start on port {battery_port}")
+    
+    # Set up tunnels only if services are ready
+    tunnel_threads = []
+    if not args.no_tunnel and (main_ready or battery_ready):
+        # Use provided ports or defaults for tunneling
+        tunnel_main_port = args.port if args.port else ports['tunnel_main']
+        tunnel_battery_port = args.battery_port if args.battery_port else ports['tunnel_battery']
+        
+        # Update environment with tunnel ports
+        os.environ['CLI_DEBRID_TUNNEL_PORT'] = str(tunnel_main_port)
+        os.environ['CLI_DEBRID_BATTERY_TUNNEL_PORT'] = str(tunnel_battery_port)
+        
+        if main_ready and is_port_available(tunnel_main_port):
+            tunnel_threads.append(create_tunnel(tunnel_main_port, main_port))
+            logging.info(f"Created tunnel from port {tunnel_main_port} to main service on {main_port}")
+        else:
+            logging.error(f"Cannot create tunnel for main service: Service ready: {main_ready}, Port available: {is_port_available(tunnel_main_port)}")
+            
+        if battery_ready and is_port_available(tunnel_battery_port):
+            tunnel_threads.append(create_tunnel(tunnel_battery_port, battery_port))
+            logging.info(f"Created tunnel from port {tunnel_battery_port} to battery service on {battery_port}")
+        else:
+            logging.error(f"Cannot create tunnel for battery service: Service ready: {battery_ready}, Port available: {is_port_available(tunnel_battery_port)}")
+    else:
+        # If tunneling is disabled, remove tunnel port environment variables
+        os.environ.pop('CLI_DEBRID_TUNNEL_PORT', None)
+        os.environ.pop('CLI_DEBRID_BATTERY_TUNNEL_PORT', None)
 
     try:
         # Wait for both processes to complete
