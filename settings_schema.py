@@ -474,6 +474,12 @@ SETTINGS_SCHEMA = {
             "description": "Enable checking and fixing of unmatched items in Plex during collection scans",
             "default": True
         },
+        "upgrade_queue_duration_hours": {
+            "type": "integer",
+            "description": "Duration in hours to keep items in the upgrade queue before moving them to Collected state (default: 24)",
+            "default": 24,
+            "min": 1
+        },
         "cinesync_path": {
             "type": "string",
             "description": "Absolute path to your CineSync MediaHub main.py file (e.g. /path/to/CineSync/MediaHub/main.py)",

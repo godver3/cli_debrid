@@ -192,7 +192,6 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
             while True:
                 try:
                     client_sock, addr = server.accept()
-                    logging.info(f"New tunnel connection from {addr}")
                     client_thread = threading.Thread(
                         target=handle_client,
                         args=(client_sock, local_port)

@@ -1098,6 +1098,12 @@ def main():
             save_config(config)
             logging.info("Successfully migrated version settings to include wake_count")
 
+    # Check and set upgrading_percentage_threshold if blank
+    threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
+    if not threshold_value.strip():
+        set_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
+        logging.info("Set blank upgrading_percentage_threshold to default value of 0.1")
+
     # Get battery port from environment variable
     battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
     
