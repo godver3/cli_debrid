@@ -1021,10 +1021,17 @@ def main():
             if 'require_physical_release' not in config['Scraping']['versions'][version]:
                 config['Scraping']['versions'][version]['require_physical_release'] = False
                 modified = True
+            # Convert string "true"/"false" to boolean
+            elif isinstance(config['Scraping']['versions'][version]['require_physical_release'], str):
+                str_value = str(config['Scraping']['versions'][version]['require_physical_release']).lower()
+                # Let Python's bool and json.dump handle the casing
+                config['Scraping']['versions'][version]['require_physical_release'] = str_value in ('true', 'True', 'TRUE')
+                modified = True
+                logging.info(f"Converting string '{str_value}' to boolean for require_physical_release in version {version}")
         
         if modified:
             save_config(config)
-            logging.info("Added require_physical_release setting to existing versions")
+            logging.info("Added/fixed require_physical_release setting in existing versions")
 
     # Add migration for notification settings
     if 'Notifications' in config:

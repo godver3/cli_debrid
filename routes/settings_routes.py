@@ -608,7 +608,8 @@ def add_version():
         'filter_out': [],
         'min_size_gb': 0.01,
         'max_size_gb': '',
-        'wake_count': None  # Add default wake_count as None
+        'wake_count': None,
+        'require_physical_release': False  # Add default require_physical_release setting
     }
 
     save_config(config)
@@ -676,7 +677,15 @@ def duplicate_version():
         new_version_id = f"{version_id} Copy {counter}"
         counter += 1
 
-    config['Scraping']['versions'][new_version_id] = config['Scraping']['versions'][version_id].copy()
+    # Create a deep copy of the version settings
+    original_settings = config['Scraping']['versions'][version_id]
+    new_settings = original_settings.copy()
+    
+    # Ensure require_physical_release is included in the copy
+    if 'require_physical_release' not in new_settings:
+        new_settings['require_physical_release'] = False
+
+    config['Scraping']['versions'][new_version_id] = new_settings
     config['Scraping']['versions'][new_version_id]['display_name'] = new_version_id
 
     save_config(config)
