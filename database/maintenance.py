@@ -285,6 +285,283 @@ def update_show_titles():
         cursor.close()
         conn.close()
 
+def update_movie_ids():
+    """Update movie IDs (imdb_id and tmdb_id) in the database if they don't match the direct API."""
+    import sqlite3
+    from cli_battery.app.direct_api import DirectAPI
+    import os
+    from fuzzywuzzy import fuzz
+    import re
+    import json
+    api = DirectAPI()
+
+    logging.info("Starting movie ID update task")
+    # Connect to media_items.db
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    db_path = os.path.join(db_content_dir, 'media_items.db')
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        # Get all movies
+        cursor.execute("""
+            SELECT 
+                id,
+                title,
+                imdb_id,
+                year
+            FROM media_items 
+            WHERE type='movie'
+        """)
+        movies = cursor.fetchall()
+        
+        logging.info(f"Found {len(movies)} movies to check")
+
+        for movie in movies:
+            try:
+                movie_title = movie['title']
+                movie_imdb_id = movie['imdb_id']
+                movie_id = movie['id']
+                movie_year = movie['year']
+
+                # Get movie metadata from direct API
+                metadata, source = api.get_movie_metadata(movie_imdb_id)
+
+                if not metadata:
+                    logging.warning(f"No metadata found in API for movie {movie_title} (imdb_id: {movie_imdb_id})")
+                    # Try searching Trakt directly
+                    from cli_battery.app.trakt_metadata import TraktMetadata
+                    trakt = TraktMetadata()
+                    
+                    sanitized_title = movie_title
+                    if '(' in movie_title:
+                        sanitized_title = movie_title[:movie_title.rfind('(')].strip()
+                    
+                    logging.info(f"Searching Trakt for movie '{sanitized_title}'{f' ({movie_year})' if movie_year else ''}")
+                    url = f"{trakt.base_url}/search/movie?query={sanitized_title}"
+                    response = trakt._make_request(url)
+                    
+                    if response and response.status_code == 200:
+                        results = response.json()
+                        if results:
+                            for result in results:
+                                movie_data = result['movie']
+                                trakt_title = movie_data['title']
+                                trakt_year = movie_data.get('year')
+                                
+                                similarity = fuzz.ratio(sanitized_title.lower(), trakt_title.lower())
+                                
+                                # Log result with year if available
+                                year_match_str = ""
+                                year_match = False
+                                if movie_year and trakt_year:
+                                    year_match = movie_year == trakt_year
+                                    year_match_str = f", year match: {year_match} ({trakt_year})"
+                                logging.info(f"Trakt result: '{trakt_title}' (similarity: {similarity}%{year_match_str})")
+                                
+                                # Consider both title similarity and year match
+                                if similarity >= 85 and (year_match or not movie_year or not trakt_year):
+                                    new_imdb_id = movie_data['ids'].get('imdb')
+                                    if new_imdb_id:
+                                        logging.info(f"Found potential match - Title: '{trakt_title}'{f', Year: {trakt_year}' if trakt_year else ''}, IMDb ID: {new_imdb_id}")
+                                        logging.info(f"Attempting to get metadata with new IMDb ID: {new_imdb_id}")
+                                        new_metadata, new_source = api.get_movie_metadata(new_imdb_id)
+                                        if new_metadata:
+                                            metadata = new_metadata
+                                            source = new_source
+                                            logging.info(f"Successfully retrieved metadata using new IMDb ID for '{trakt_title}'")
+                                            break
+                                        else:
+                                            logging.warning(f"Failed to get metadata for matching movie using new IMDb ID: {new_imdb_id}")
+                                    else:
+                                        logging.warning(f"Matching movie found but no IMDb ID available in Trakt data")
+                                        logging.debug(f"Full Trakt movie data for match: {movie_data}")
+                                        # Try TMDB as fallback if we have TMDB ID
+                                        tmdb_id = movie_data['ids'].get('tmdb')
+                                        if tmdb_id:
+                                            logging.info(f"Attempting to get IMDb ID from TMDB (ID: {tmdb_id})")
+                                            # TMDB API requires an API key - we should get this from config
+                                            from settings import get_setting
+                                            tmdb_api_key = get_setting('TMDB','api_key')
+                                            if tmdb_api_key:
+                                                import requests
+                                                tmdb_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/external_ids?api_key={tmdb_api_key}"
+                                                try:
+                                                    tmdb_response = requests.get(tmdb_url)
+                                                    if tmdb_response.status_code == 200:
+                                                        tmdb_data = tmdb_response.json()
+                                                        logging.debug(f"Full TMDB response: {tmdb_data}")
+                                                        new_imdb_id = tmdb_data.get('imdb_id')
+                                                        if new_imdb_id:
+                                                            logging.info(f"Found IMDb ID from TMDB: {new_imdb_id}")
+                                                            # Try getting metadata with this IMDb ID
+                                                            new_metadata, new_source = api.get_movie_metadata(new_imdb_id)
+                                                            if new_metadata:
+                                                                metadata = new_metadata
+                                                                source = new_source
+                                                                logging.info(f"Successfully retrieved metadata using IMDb ID from TMDB")
+                                                                break
+                                                            else:
+                                                                logging.warning(f"Failed to get metadata using IMDb ID from TMDB: {new_imdb_id}")
+                                                        else:
+                                                            logging.warning("TMDB response did not contain IMDb ID")
+                                                    else:
+                                                        logging.warning(f"Failed to get TMDB data: {tmdb_response.status_code}")
+                                                except Exception as e:
+                                                    logging.warning(f"Error fetching from TMDB API: {str(e)}")
+                                            else:
+                                                logging.warning("TMDB API key not found")
+                                else:
+                                    skip_reason = []
+                                    if similarity < 85:
+                                        skip_reason.append("low similarity")
+                                    if movie_year and trakt_year and movie_year != trakt_year:
+                                        skip_reason.append("year mismatch")
+                                    logging.debug(f"Skipping result '{trakt_title}' due to {' and '.join(skip_reason)}")
+                
+                if not metadata:
+                    logging.warning(f"Could not find movie metadata even after Trakt search")
+                    continue
+
+            except Exception as e:
+                logging.error(f"Error processing movie {movie_title}: {str(e)}")
+                continue
+
+            # Get IDs from the nested 'ids' dictionary
+            api_imdb_id = metadata.get('ids', {}).get('imdb')
+            api_tmdb_id = metadata.get('ids', {}).get('tmdb')
+
+            if not api_imdb_id:
+                logging.warning(f"Movie '{movie_title}' - API returned no IMDB ID (current: {movie_imdb_id})")
+            elif api_imdb_id != movie_imdb_id:
+                logging.warning(f"Movie comparison: {movie_title} - Database IMDB ID: {movie_imdb_id}, API IMDB ID: {api_imdb_id} - MISMATCH")
+                
+                # Get current aliases if any
+                cursor.execute("SELECT imdb_aliases FROM media_items WHERE id = ?", (movie_id,))
+                current_aliases_row = cursor.fetchone()
+                current_aliases = []
+                if current_aliases_row and current_aliases_row[0]:
+                    try:
+                        current_aliases = json.loads(current_aliases_row[0])
+                    except json.JSONDecodeError:
+                        logging.warning(f"Failed to decode existing imdb_aliases for {movie_title}")
+                
+                # Add old IMDb ID to aliases if not already there
+                if movie_imdb_id and movie_imdb_id not in current_aliases:
+                    current_aliases.append(movie_imdb_id)
+                
+                # Update the database with new IDs and aliases
+                cursor.execute("""
+                    UPDATE media_items
+                    SET imdb_id = ?, tmdb_id = ?, imdb_aliases = ?
+                    WHERE id = ?
+                """, [api_imdb_id, api_tmdb_id, json.dumps(current_aliases), movie_id])
+                conn.commit()
+                logging.info(f"Updated movie '{movie_title}' with new IMDb ID: {api_imdb_id} (old ID {movie_imdb_id} added to aliases)")
+            else:
+                logging.info(f"Movie comparison: {movie_title} - Database IMDB ID: {movie_imdb_id}, API IMDB ID: {api_imdb_id} - MATCH")
+
+    except Exception as e:
+        logging.error(f"Error in update_movie_ids: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_movie_titles():
+    """Update movie titles in the database if they don't match the direct API, storing old titles in title_aliases."""
+    import sqlite3
+    from cli_battery.app.direct_api import DirectAPI
+    import os
+    from fuzzywuzzy import fuzz
+    import re
+    import json
+    api = DirectAPI()
+
+    logging.info("Starting movie title update task")
+    # Connect to media_items.db
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    db_path = os.path.join(db_content_dir, 'media_items.db')
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        # Get all movies
+        cursor.execute("""
+            SELECT 
+                id,
+                title,
+                imdb_id,
+                year
+            FROM media_items 
+            WHERE type='movie'
+        """)
+        movies = cursor.fetchall()
+        
+        logging.info(f"Found {len(movies)} movies to check")
+
+        for movie in movies:
+            try:
+                movie_title = str(movie['title']) if movie['title'] is not None else ''  # Convert to string to handle integer titles
+                movie_imdb_id = movie['imdb_id']
+                movie_id = movie['id']
+                movie_year = movie['year']
+
+                # Get movie metadata from direct API
+                metadata, source = api.get_movie_metadata(movie_imdb_id)
+
+                if metadata:
+                    # Get title from metadata
+                    api_title = str(metadata.get('title', ''))  # Convert API title to string as well
+                    
+                    if not api_title:
+                        logging.warning(f"Movie '{movie_title}' - API returned no title")
+                        continue
+                                            
+                    # Compare titles (case-insensitive)
+                    if api_title.lower() != movie_title.lower():
+                        logging.info(f"Movie title mismatch - Database: '{movie_title}', API: '{api_title}'")
+                        
+                        # Get current title aliases if any
+                        cursor.execute("SELECT title_aliases FROM media_items WHERE id = ?", (movie_id,))
+                        current_aliases_row = cursor.fetchone()
+                        current_aliases = []
+                        if current_aliases_row and current_aliases_row[0]:
+                            try:
+                                current_aliases = json.loads(current_aliases_row[0])
+                            except json.JSONDecodeError:
+                                logging.warning(f"Failed to decode existing title_aliases for {movie_title}")
+                        
+                        # Add old title to aliases if not already there
+                        if movie_title and movie_title not in current_aliases:
+                            current_aliases.append(movie_title)
+                        
+                        new_title = api_title
+
+                        # Update the database with new title and aliases
+                        cursor.execute("""
+                            UPDATE media_items
+                            SET title = ?, title_aliases = ?
+                            WHERE id = ?
+                        """, [new_title, json.dumps(current_aliases), movie_id])
+                        conn.commit()
+                        logging.info(f"Updated movie title from '{movie_title}' to '{new_title}' (old title added to aliases)")
+                    else:
+                        logging.info(f"Movie title match - '{movie_title}'")
+                else:
+                    logging.warning(f"No metadata found in API for movie {movie_title} (imdb_id: {movie_imdb_id})")
+
+            except Exception as e:
+                logging.error(f"Error processing movie {movie['title']}: {str(e)}")
+                continue
+
+    except Exception as e:
+        logging.error(f"Error in update_movie_titles: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
 def run_plex_library_maintenance():
     """
     Run maintenance tasks specific to Plex library management.

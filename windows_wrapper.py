@@ -7,16 +7,22 @@ import runpy
 import time
 import appdirs
 import socket
+import select
+import threading
 
 # Default ports configuration
 DEFAULT_PORTS = {
     'win32': {
         'main': 8585,
-        'battery': 8586
+        'battery': 8586,
+        'tunnel_main': 5000,
+        'tunnel_battery': 5001
     },
     'default': {
         'main': 5000,
-        'battery': 5001
+        'battery': 5001,
+        'tunnel_main': 5000,
+        'tunnel_battery': 5001
     }
 }
 
@@ -43,6 +49,10 @@ def setup_environment():
         os.environ['CLI_DEBRID_PORT'] = str(ports['main'])
     if 'CLI_DEBRID_BATTERY_PORT' not in os.environ:
         os.environ['CLI_DEBRID_BATTERY_PORT'] = str(ports['battery'])
+    if 'CLI_DEBRID_TUNNEL_PORT' not in os.environ:
+        os.environ['CLI_DEBRID_TUNNEL_PORT'] = str(ports['tunnel_main'])
+    if 'CLI_DEBRID_BATTERY_TUNNEL_PORT' not in os.environ:
+        os.environ['CLI_DEBRID_BATTERY_TUNNEL_PORT'] = str(ports['tunnel_battery'])
 
     if sys.platform.startswith('win'):
         app_name = "cli_debrid"
@@ -115,6 +125,72 @@ def find_available_port(start_port):
             raise RuntimeError("No available ports found")
     return port
 
+def create_tunnel(remote_port, local_port, buffer_size=4096):
+    """Creates a tunnel from a remote port to a local port."""
+    def handle_client(client_sock, local_port):
+        try:
+            # Connect to local service
+            local_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            local_sock.connect(('127.0.0.1', local_port))
+            
+            while True:
+                # Wait for data from either socket
+                readable, _, exceptional = select.select([client_sock, local_sock], [], [client_sock, local_sock], 60)
+                
+                if exceptional:
+                    break
+                
+                for sock in readable:
+                    other_sock = local_sock if sock is client_sock else client_sock
+                    try:
+                        data = sock.recv(buffer_size)
+                        if not data:
+                            return
+                        other_sock.sendall(data)
+                    except:
+                        return
+        except:
+            logging.error(f"Error in tunnel connection: {traceback.format_exc()}")
+        finally:
+            try:
+                client_sock.close()
+                local_sock.close()
+            except:
+                pass
+
+    def tunnel_server():
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server.bind(('0.0.0.0', remote_port))
+            server.listen(5)
+            logging.info(f"Port forwarding active: {remote_port} -> 127.0.0.1:{local_port}")
+            
+            while True:
+                try:
+                    client_sock, addr = server.accept()
+                    logging.info(f"New tunnel connection from {addr}")
+                    client_thread = threading.Thread(
+                        target=handle_client,
+                        args=(client_sock, local_port)
+                    )
+                    client_thread.daemon = True
+                    client_thread.start()
+                except:
+                    logging.error(f"Error accepting connection: {traceback.format_exc()}")
+        except:
+            logging.error(f"Error in tunnel server: {traceback.format_exc()}")
+        finally:
+            try:
+                server.close()
+            except:
+                pass
+
+    tunnel_thread = threading.Thread(target=tunnel_server)
+    tunnel_thread.daemon = True
+    tunnel_thread.start()
+    return tunnel_thread
+
 def run_script(script_name, port=None, battery_port=None, host=None):
     script_path = get_script_path(script_name)
     logging.info(f"Running script: {script_path}")
@@ -146,38 +222,70 @@ def run_main():
     # Parse command line arguments
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--port', type=int, help='Port for main web server')
-    parser.add_argument('--battery-port', type=int, help='Port for battery web server')
-    parser.add_argument('--local-only', action='store_true', help='Bind to localhost only (127.0.0.1)')
+    parser.add_argument('--port', '--cli-port', type=int, help='Port for remote access to main service (tunnels to local service)')
+    parser.add_argument('--battery-port', '--cli-battery-port', type=int, help='Port for remote access to battery service (tunnels to local service)')
+    parser.add_argument('--no-tunnel', action='store_true', help='Disable automatic tunneling')
     args = parser.parse_args()
     
     # On Windows, use different default ports and check availability
     if sys.platform.startswith('win'):
-        default_main_port = 8585  # Different from the common 5000 port
-        default_battery_port = 8586
-        
-        main_port = args.port or default_main_port
-        battery_port = args.battery_port or default_battery_port
-        
-        # Check if ports are available and find alternatives if needed
-        if not is_port_available(main_port):
-            logging.warning(f"Port {main_port} is not available")
-            main_port = find_available_port(main_port + 1)
-            logging.info(f"Using alternative port {main_port} for main server")
-            
-        if not is_port_available(battery_port):
-            logging.warning(f"Port {battery_port} is not available")
-            battery_port = find_available_port(battery_port + 1)
-            logging.info(f"Using alternative port {battery_port} for battery server")
+        ports = DEFAULT_PORTS['win32']
     else:
-        main_port = args.port
-        battery_port = args.battery_port
+        ports = DEFAULT_PORTS['default']
+        
+    # Local service ports (always on localhost)
+    main_port = ports['main']
+    battery_port = ports['battery']
     
-    # Determine the host binding
-    host = '127.0.0.1' if args.local_only else '0.0.0.0'
-    os.environ['CLI_DEBRID_HOST'] = host
+    # Check if local ports are available and find alternatives if needed
+    if not is_port_available(main_port):
+        logging.warning(f"Local port {main_port} is not available")
+        main_port = find_available_port(main_port + 1)
+        logging.info(f"Using alternative local port {main_port} for main server")
+        
+    if not is_port_available(battery_port):
+        logging.warning(f"Local port {battery_port} is not available")
+        battery_port = find_available_port(battery_port + 1)
+        logging.info(f"Using alternative local port {battery_port} for battery server")
     
-    logging.info(f"Binding to host: {host}")
+    # Always bind to localhost for security
+    main_host = '127.0.0.1'
+    battery_host = '127.0.0.1'
+    
+    # Update environment with actual local ports
+    os.environ['CLI_DEBRID_PORT'] = str(main_port)
+    os.environ['CLI_DEBRID_BATTERY_PORT'] = str(battery_port)
+    
+    # Set up tunnels unless explicitly disabled
+    tunnel_threads = []
+    if not args.no_tunnel:
+        # Use provided ports or defaults for tunneling
+        tunnel_main_port = args.port if args.port else ports['tunnel_main']
+        tunnel_battery_port = args.battery_port if args.battery_port else ports['tunnel_battery']
+        
+        # Update environment with tunnel ports
+        os.environ['CLI_DEBRID_TUNNEL_PORT'] = str(tunnel_main_port)
+        os.environ['CLI_DEBRID_BATTERY_TUNNEL_PORT'] = str(tunnel_battery_port)
+        
+        if is_port_available(tunnel_main_port):
+            tunnel_threads.append(create_tunnel(tunnel_main_port, main_port))
+            logging.info(f"Created tunnel from port {tunnel_main_port} to main service on {main_port}")
+        else:
+            logging.error(f"Tunnel port {tunnel_main_port} is not available")
+            
+        if is_port_available(tunnel_battery_port):
+            tunnel_threads.append(create_tunnel(tunnel_battery_port, battery_port))
+            logging.info(f"Created tunnel from port {tunnel_battery_port} to battery service on {battery_port}")
+        else:
+            logging.error(f"Tunnel port {tunnel_battery_port} is not available")
+    else:
+        # If tunneling is disabled, remove tunnel port environment variables
+        os.environ.pop('CLI_DEBRID_TUNNEL_PORT', None)
+        os.environ.pop('CLI_DEBRID_BATTERY_TUNNEL_PORT', None)
+    
+    # Log binding information
+    logging.info(f"Main service binding to: {main_host}:{main_port}")
+    logging.info(f"Battery service binding to: {battery_host}:{battery_port}")
     
     script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
     processes = []
@@ -190,20 +298,20 @@ def run_main():
                 args=(script_name,),
                 kwargs={
                     'battery_port': battery_port,
-                    'host': host
+                    'host': battery_host
                 }
             )
-            logging.info(f"Starting battery process on {host}:{battery_port}")
+            logging.info(f"Starting battery process on {battery_host}:{battery_port}")
         else:
             process = multiprocessing.Process(
                 target=run_script, 
                 args=(script_name,),
                 kwargs={
                     'port': main_port,
-                    'host': host
+                    'host': main_host
                 }
             )
-            logging.info(f"Starting main process on {host}:{main_port}")
+            logging.info(f"Starting main process on {main_host}:{main_port}")
         
         processes.append(process)
         process.start()

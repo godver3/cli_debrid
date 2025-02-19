@@ -107,6 +107,8 @@ class ProgramRunner:
             'task_check_plex_files': 60,  # Run every 60 seconds
             'task_update_show_ids': 3600,  # Run every hour
             'task_update_show_titles': 3600,  # Run every hour
+            'task_update_movie_ids': 3600,  # Run every hour
+            'task_update_movie_titles': 3600,  # Run every hour
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
             'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
             'task_check_database_health': 3600,  # Run every hour
@@ -136,6 +138,8 @@ class ProgramRunner:
             'task_refresh_download_stats',
             'task_update_show_ids',
             'task_update_show_titles',
+            'task_update_movie_ids',
+            'task_update_movie_titles',
             'task_refresh_plex_tokens',
             'task_check_database_health'
         }
@@ -1174,6 +1178,22 @@ class ProgramRunner:
             update_show_titles()
         except Exception as e:
             logging.error(f"Error in task_update_show_titles: {str(e)}")
+
+    def task_update_movie_ids(self):
+        """Update movie IDs (imdb_id and tmdb_id) in the database if they don't match the direct API."""
+        try:
+            from database.maintenance import update_movie_ids
+            update_movie_ids()
+        except Exception as e:
+            logging.error(f"Error in task_update_movie_ids: {str(e)}")
+
+    def task_update_movie_titles(self):
+        """Update movie titles in the database if they don't match the direct API, storing old titles in title_aliases."""
+        try:
+            from database.maintenance import update_movie_titles
+            update_movie_titles()
+        except Exception as e:
+            logging.error(f"Error in task_update_movie_titles: {str(e)}")
 
     def trigger_task(self, task_name):
         """Manually trigger a task to run immediately."""
