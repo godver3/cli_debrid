@@ -356,7 +356,6 @@ class CheckingQueue:
                                     # Call Plex update for the item if we have a Plex URL
                                     plex_update_item(item)
 
-
                                 # Check if the item was marked for upgrading by check_local_file_for_item
                                 from database.core import get_db_connection
                                 conn = get_db_connection()

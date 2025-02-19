@@ -165,6 +165,10 @@ async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: D
     all_episodes = []
     for season in seasons:
         season_number = season.get('index')
+        if season_number is None:
+            logger.error(f"Missing season index for show {show_title} in season with ratingKey {season.get('ratingKey')}")
+            continue
+            
         season_key = season['ratingKey']
         
         episodes = await get_season_episodes(session, plex_url, season_key, headers, semaphore)
@@ -176,6 +180,11 @@ async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: D
     return all_episodes
 
 async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str, show_genres: List[str], show_year: int = None) -> List[Dict[str, Any]]:
+    # Validate season_number
+    if season_number is None:
+        logger.error(f"Missing season number for episode {episode.get('title')} in show {show_title}")
+        return []
+
     base_episode_data = {
         'title': show_title,
         'episode_title': episode['title'],
@@ -183,7 +192,7 @@ async def process_episode(episode: Dict[str, Any], show_title: str, season_numbe
         'episode_number': episode.get('index'),
         'year': show_year,  # Use show_year instead of episode's year
         'show_year': show_year,  # Add show_year as a separate field
-        'addedAt': episode['addedAt'],
+        'addedAt': episode.get('addedAt'),  # Use .get() with None as default
         'guid': episode.get('guid'),
         'ratingKey': episode['ratingKey'],
         'release_date': episode.get('originallyAvailableAt'),
