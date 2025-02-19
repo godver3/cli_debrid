@@ -11,7 +11,9 @@ PROGRESS_RANGES = {
     'sources': (40, 70), # 2 minutes
     'release': (70, 85), # 30 seconds
     'show_ids': (85, 92),   # 1 minute
-    'show_titles': (92, 100) # 1 minute
+    'show_titles': (92, 99), # 1 minute
+    'movie_ids': (99, 100), # 1 minute
+    'movie_titles': (100, 100) # 1 minute
 }
 
 # Duration for each phase in seconds
@@ -21,13 +23,15 @@ PHASE_DURATIONS = {
     'sources': 120, # 2 minutes
     'release': 30,  # 30 seconds
     'show_ids': 60,    # 1 minute
-    'show_titles': 60  # 1 minute
+    'show_titles': 60,  # 1 minute
+    'movie_ids': 60,    # 1 minute
+    'movie_titles': 60  # 1 minute
 }
 
 # Global variable to track initialization progress
 initialization_status = {
     'current_step': '',
-    'total_steps': 4,
+    'total_steps': 10,
     'current_step_number': 0,
     'progress_value': 0,  # Current progress percentage
     'substep_details': '',
@@ -238,7 +242,7 @@ def initialize(skip_initial_plex_update=False):
     refresh_release_dates()
     complete_phase('release')
     
-    from database.maintenance import update_show_ids, update_show_titles
+    from database.maintenance import update_show_ids, update_show_titles, update_movie_ids, update_movie_titles
 
     # Update Show IDs and Titles (1 minute)
     start_phase('show_ids', 'Update Show IDs', 'Updating show IDs')
@@ -248,6 +252,15 @@ def initialize(skip_initial_plex_update=False):
     start_phase('show_titles', 'Update Show Titles', 'Updating show titles')
     update_show_titles()
     complete_phase('show_titles')
+
+    # Update Movie IDs and Titles (1 minute)
+    start_phase('movie_ids', 'Update Movie IDs', 'Updating movie IDs')
+    update_movie_ids()
+    complete_phase('movie_ids')
+
+    start_phase('movie_titles', 'Update Movie Titles', 'Updating movie titles')
+    update_movie_titles()
+    complete_phase('movie_titles')
 
     # Complete
     final_status = "completed successfully" if plex_success else "completed with Plex update issues"
