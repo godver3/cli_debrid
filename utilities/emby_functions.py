@@ -3,6 +3,7 @@ import os
 import requests
 from typing import Dict, Any
 from settings import get_setting
+from database.database_reading import get_media_item_by_id
 
 def emby_update_item(item: Dict[str, Any]) -> bool:
     """
@@ -22,14 +23,23 @@ def emby_update_item(item: Dict[str, Any]) -> bool:
             logging.warning("Emby URL or token not configured")
             return False
             
-        # Get the file location from the item
-        file_location = item.get('location_on_disk')
+        # Get the fresh item data from the database
+        updated_item = get_media_item_by_id(item['id'])
+        if not updated_item:
+            logging.error(f"Could not get updated item from database for item {item['id']}")
+            return False
+            
+        # Get the file location from the updated item
+        file_location = updated_item['location_on_disk']
+        logging.debug(f"Emby update - Item details: id={item.get('id')}, title={item.get('title')}, location={file_location}")
+        
         if not file_location:
-            logging.error("No file location provided in item")
+            logging.error(f"No file location provided in item: {item}")
             return False
             
         # Get the directory containing the file
         directory = os.path.dirname(file_location)
+        logging.debug(f"Emby update - Scanning directory: {directory}")
         
         # Construct the Emby API URL for refreshing the path
         refresh_url = f"{emby_url.rstrip('/')}/Library/Media/Updated"
