@@ -975,8 +975,11 @@ def main():
                 base_key = key.replace('_folder_name', '')
                 # Create new key by appending _folder_name
                 new_key = base_key + '_folder_name'
-                # Set the value based on the base key
-                config['Debug'][new_key] = default_folders.get(new_key, value)
+                # Keep the existing value if it exists, otherwise use the default
+                if new_key in config['Debug']:
+                    config['Debug'][new_key] = config['Debug'][new_key]  # Preserve existing value
+                else:
+                    config['Debug'][new_key] = default_folders.get(new_key, value)
                 updated = True
         
         if updated:
