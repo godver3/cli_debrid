@@ -65,7 +65,7 @@ class SleepingQueue:
     def process(self, queue_manager):
         #logging.debug("Processing sleeping queue")
         current_time = datetime.now()
-        default_wake_limit = int(get_setting("Queue", "wake_limit", default=3))
+        default_wake_limit = int(get_setting("Queue", "wake_limit", default=24))
         sleep_duration = timedelta(minutes=30)
 
         items_to_wake = []

@@ -1064,6 +1064,8 @@ def add_separate_versions():
         version_4k.update({
             'enable_hdr': True,
             'max_resolution': '2160p',
+            'resolution_wanted': '==',
+            'wake_count': 6,
             'preferred_filter_in': [
                 [
                     'REMUX',
@@ -1108,7 +1110,7 @@ def add_separate_versions():
         # Replace all versions with our two new versions
         config['Scraping']['versions'] = {
             '1080p': version_1080p,
-            '4K HDR': version_4k
+            '2160p': version_4k
         }
         save_config(config)
 
