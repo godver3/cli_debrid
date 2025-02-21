@@ -320,10 +320,13 @@ class UpgradingQueue:
                     
                     logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
 
-                    # Get the configured duration from settings, default to 24 hours
-                    queue_duration_hours = int(get_setting('Debug', 'upgrade_queue_duration_hours', '24'))
+                    # Get the configured duration from settings, default to 24 hours if blank or invalid
+                    try:
+                        setting_value = get_setting('Debug', 'upgrade_queue_duration_hours', '24')
+                        queue_duration_hours = int(setting_value) if setting_value.strip() else 24
+                    except (ValueError, AttributeError):
+                        queue_duration_hours = 24
                     max_duration = timedelta(hours=queue_duration_hours)
-                    logging.info(f"Configured duration: {max_duration}")
 
                     # Check if the item has been in the queue for more than the configured duration
                     if time_in_queue > max_duration:
@@ -336,11 +339,10 @@ class UpgradingQueue:
 
                         logging.info(f"Moved item {item_id} to Collected state after {queue_duration_hours} hours in Upgrading queue.")
                     
-                    if time_in_queue <= max_duration:
-                        logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
 
                     # Check if an hour has passed since the last scrape
                     elif self.should_perform_hourly_scrape(item_id, current_time):
+                        logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
                         self.hourly_scrape(item, queue_manager)
                         self.last_scrape_times[item_id] = current_time
             except Exception as e:
@@ -354,8 +356,18 @@ class UpgradingQueue:
         #return True
         last_scrape_time = self.last_scrape_times.get(item_id)
         if last_scrape_time is None:
+            logging.info(f"Item {item_id} has never been scraped before, running first scrape")
             return True
-        return (current_time - last_scrape_time) >= timedelta(hours=1)
+            
+        time_since_last_scrape = current_time - last_scrape_time
+        should_run = time_since_last_scrape >= timedelta(hours=1)
+        
+        if should_run:
+            logging.info(f"Running scrape for item {item_id} - Last scrape was {time_since_last_scrape} ago")
+        else:
+            logging.info(f"Skipping scrape for item {item_id} - Only {time_since_last_scrape} since last scrape, waiting for 1 hour")
+            
+        return should_run
 
     def log_upgrade(self, item: Dict[str, Any], adding_queue: AddingQueue):
         # Get db_content directory from environment variable with fallback

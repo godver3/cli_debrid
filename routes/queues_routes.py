@@ -229,47 +229,83 @@ def api_queue_contents():
     })
 
 def process_item_for_response(item, queue_name):
-    # Add scraping version settings to each item
-    scraping_versions = get_setting('Scraping', 'versions', {})
-    item['scraping_versions'] = scraping_versions
-    
-    if queue_name == 'Upgrading':
-        upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
-        if upgrade_info:
-            time_added = upgrade_info.get('time_added')
-            if isinstance(time_added, str):
-                item['time_added'] = time_added
-            elif isinstance(time_added, datetime):
+    try:
+        # Add scraping version settings to each item
+        scraping_versions = get_setting('Scraping', 'versions', {})
+        # Handle Infinity values in scraping_versions
+        for version in scraping_versions.values():
+            if isinstance(version, dict):
+                for key, value in version.items():
+                    if value == float('inf'):
+                        version[key] = "Infinity"
+                    elif value == float('-inf'):
+                        version[key] = "-Infinity"
+        
+        item['scraping_versions'] = scraping_versions
+        
+        if queue_name == 'Upgrading':
+            upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
+            if upgrade_info:
+                time_added = upgrade_info.get('time_added')
+                if isinstance(time_added, str):
+                    item['time_added'] = time_added
+                elif isinstance(time_added, datetime):
+                    item['time_added'] = time_added.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    item['time_added'] = str(time_added)
+            else:
+                item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            item['upgrades_found'] = queue_manager.queues['Upgrading'].upgrades_found.get(item['id'], 0)
+        elif queue_name == 'Wanted':
+            if 'scrape_time' in item:
+                if item['scrape_time'] not in ["Unknown", "Invalid date or time"]:
+                    try:
+                        scrape_time = datetime.strptime(item['scrape_time'], '%Y-%m-%d %H:%M:%S')
+                        item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
+                    except ValueError:
+                        item['formatted_scrape_time'] = item['scrape_time']
+                else:
+                    item['formatted_scrape_time'] = item['scrape_time']
+        elif queue_name == 'Checking':
+            # Convert datetime to string for time_added
+            time_added = item.get('time_added', datetime.now())
+            if isinstance(time_added, datetime):
                 item['time_added'] = time_added.strftime('%Y-%m-%d %H:%M:%S')
             else:
                 item['time_added'] = str(time_added)
-        else:
-            item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        item['upgrades_found'] = queue_manager.queues['Upgrading'].upgrades_found.get(item['id'], 0)
-    elif queue_name == 'Wanted':
-        if 'scrape_time' in item:
-            if item['scrape_time'] not in ["Unknown", "Invalid date or time"]:
-                try:
-                    scrape_time = datetime.strptime(item['scrape_time'], '%Y-%m-%d %H:%M:%S')
-                    item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
-                except ValueError:
-                    item['formatted_scrape_time'] = item['scrape_time']
-            else:
-                item['formatted_scrape_time'] = item['scrape_time']
-    elif queue_name == 'Checking':
-        item['time_added'] = item.get('time_added', datetime.now())
-        item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
-        item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
-        item['progress'] = item.get('progress', 0)
-        item['state'] = item.get('state', 'unknown')
-        if item.get('filled_by_torrent_id') and item['filled_by_torrent_id'] != 'Unknown':
-            checking_queue = queue_manager.queues['Checking']
-            item['progress'] = checking_queue.get_torrent_progress(item['filled_by_torrent_id'])
-            item['state'] = checking_queue.get_torrent_state(item['filled_by_torrent_id'])
-    elif queue_name == 'Sleeping':
-        if 'wake_count' not in item or item['wake_count'] is None:
-            item['wake_count'] = queue_manager.get_wake_count(item['id'])
-    return item
+                
+            item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
+            item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
+            item['progress'] = item.get('progress', 0)
+            item['state'] = item.get('state', 'unknown')
+            if item.get('filled_by_torrent_id') and item['filled_by_torrent_id'] != 'Unknown':
+                checking_queue = queue_manager.queues['Checking']
+                item['progress'] = checking_queue.get_torrent_progress(item['filled_by_torrent_id'])
+                item['state'] = checking_queue.get_torrent_state(item['filled_by_torrent_id'])
+        elif queue_name == 'Sleeping':
+            if 'wake_count' not in item or item['wake_count'] is None:
+                item['wake_count'] = queue_manager.get_wake_count(item['id'])
+        
+        # Ensure all values are JSON serializable
+        for key, value in item.items():
+            if isinstance(value, datetime):
+                item[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+            elif value == float('inf'):
+                item[key] = "Infinity"
+            elif value == float('-inf'):
+                item[key] = "-Infinity"
+            elif not isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                item[key] = str(value)
+                
+        return item
+    except Exception as e:
+        logging.error(f"Error processing item in queue {queue_name}: {str(e)}")
+        # Return a safe version of the item
+        return {
+            'id': item.get('id', 'unknown'),
+            'title': item.get('title', 'Error processing item'),
+            'error': str(e)
+        }
 
 @queues_bp.route('/api/queue-stream')
 @user_required

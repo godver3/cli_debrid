@@ -141,8 +141,11 @@ def add_collected_items(media_items_batch, recent=False):
                         item_id = existing_item['id']
                         
                         if existing_item['state'] not in ['Collected', 'Upgrading']:
-                            release_date = datetime.strptime(existing_item['release_date'], '%Y-%m-%d').date()
-                            days_since_release = (datetime.now().date() - release_date).days
+                            if existing_item['release_date'] == 'Unknown':
+                                days_since_release = -1  # Treat unknown dates as unreleased
+                            else:
+                                release_date = datetime.strptime(existing_item['release_date'], '%Y-%m-%d').date()
+                                days_since_release = (datetime.now().date() - release_date).days
 
                             if days_since_release <= 7:
                                 if get_setting("Scraping", "enable_upgrading", default=False): 

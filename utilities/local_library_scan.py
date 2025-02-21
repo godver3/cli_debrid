@@ -47,7 +47,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
                 # Try to parse as JSON first (for database-stored genres)
                 import json
                 genres = json.loads(genres)
-            except json.JSONDecoder:
+            except json.JSONDecodeError:
                 # If not JSON, split by comma (for comma-separated strings)
                 genres = [g.strip() for g in genres.split(',') if g.strip()]
         # Ensure genres is a list
@@ -374,13 +374,27 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     try:
                         from debrid import get_debrid_provider
                         debrid_provider = get_debrid_provider()
-                        debrid_provider.remove_torrent(
-                            item['upgrading_from_torrent_id'],
-                            removal_reason="Removed old torrent after successful upgrade"
-                        )
-                        logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
+                        torrent_info = debrid_provider.get_torrent_info(torrent_id)
+                        if torrent_info:
+                            progress = torrent_info.get('progress', 0)
+                            is_downloading = progress > 0 and progress < 100
                     except Exception as e:
-                        logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
+                        logging.debug(f"Failed to check torrent status: {str(e)}")
+
+                # Only perform cleanup if not downloading
+                if not is_downloading:
+                    # Remove old torrent from debrid service if we have the ID
+                    if item.get('filled_by_torrent_id'):
+                        try:
+                            from debrid import get_debrid_provider
+                            debrid_provider = get_debrid_provider()
+                            debrid_provider.remove_torrent(
+                                item['upgrading_from_torrent_id'],
+                                removal_reason="Removed old torrent after successful upgrade"
+                            )
+                            logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
+                        except Exception as e:
+                            logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
                 
                 # Remove old symlink if it exists
                 # Use the old file's name to get the old symlink path
