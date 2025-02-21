@@ -470,8 +470,31 @@
         <button type="button" class="delete-version-btn" data-version-id="{{ version }}">Delete</button>
     </div>
     <div class="settings-section-content">
-        {% for key, value in config.items() %}
-            {% if key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+        {# Define settings order #}
+        {% set settings_order = [
+            'max_resolution',
+            'resolution_wanted',
+            'enable_hdr',
+            'hdr_weight',
+            'min_size_gb',
+            'max_size_gb',
+            'min_bitrate_mbps',
+            'max_bitrate_mbps',
+            'resolution_weight',
+            'similarity_weight',
+            'similarity_threshold',
+            'similarity_threshold_anime',
+            'size_weight',
+            'bitrate_weight',
+            'wake_count',
+            'require_physical_release'
+        ] %}
+        
+        {# Sort config items based on settings_order #}
+        {% set sorted_keys = (settings_order + config.keys()|list)|unique|list %}
+        {% for key in sorted_keys %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+                {% set value = config[key] %}
                 <div class="settings-form-group">
                     {% if value is boolean %}
                         <label class="settings-title">
@@ -652,7 +675,7 @@
     <div class="settings-section-content">
         <div class="settings-subsection">
             {% for key, value in settings_schema.Scraping.items() %}
-                {% if key not in ['versions', 'tab'] %}
+                {% if key not in ['versions', 'tab', 'upgrade_similarity_threshold'] %}
                     <div class="settings-form-group">
                         <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         {% if value.type == 'boolean' %}

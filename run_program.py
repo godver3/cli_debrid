@@ -158,6 +158,7 @@ class ProgramRunner:
         
         # Add this line to store content sources
         self.content_sources = None
+        self.file_location_cache = {}  # Cache to store known file locations
 
     def task_heartbeat(self):
         random_number = random.randint(1, 100)
@@ -309,7 +310,6 @@ class ProgramRunner:
         self.pause_reason = None  # Clear pause reason on resume
         logging.info("Queue resumed")
 
-    # Update this method to use the cached content sources
     def process_queues(self):
         try:
             # Check connectivity status if we're in a failure state
@@ -1002,10 +1002,30 @@ class ProgramRunner:
                 title_without_ext = os.path.splitext(filled_by_title)[0]
                 file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
                 
+                # Check if we've already found this file before
+                cache_key = f"{filled_by_title}:{filled_by_file}"
+                if cache_key in self.file_location_cache:
+                    cached_location = self.file_location_cache[cache_key]
+                    if cached_location is None:
+                        logging.debug(f"Skipping previously not found file: {filled_by_title}")
+                        not_found_items += 1
+                        continue
+                    elif cached_location == 'exists':
+                        logging.debug(f"Skipping previously verified file: {filled_by_title}")
+                        continue
+
                 if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
-                    not_found_items += 1
-                    logging.debug(f"File not found on disk in either location:\n  {file_path}\n  {file_path_no_ext}")
-                    continue
+                    # Try to find the file anywhere under plex_file_location
+                    from utilities.local_library_scan import find_file
+                    found_path = find_file(filled_by_file, plex_file_location)
+                    if found_path:
+                        logging.info(f"Found file in alternate location: {found_path}")
+                        actual_file_path = found_path
+                    else:
+                        not_found_items += 1
+                        logging.debug(f"File not found on disk in any location:\n  {file_path}\n  {file_path_no_ext}")
+                        self.file_location_cache[cache_key] = None
+                        continue
 
                 # Use the path that exists (prefer original if both exist)
                 actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
@@ -1090,10 +1110,31 @@ class ProgramRunner:
                 title_without_ext = os.path.splitext(filled_by_title)[0]
                 file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
                 
+                # Check if we've already found this file before
+                cache_key = f"{filled_by_title}:{filled_by_file}"
+                if cache_key in self.file_location_cache:
+                    cached_location = self.file_location_cache[cache_key]
+                    if cached_location is None:
+                        logging.debug(f"Skipping previously not found file: {filled_by_title}")
+                        not_found_items += 1
+                        continue
+                    elif cached_location == 'exists':
+                        logging.debug(f"Skipping previously verified file: {filled_by_title}")
+                        skipped_items += 1
+                        continue
+
                 if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
-                    not_found_items += 1
-                    logging.debug(f"File not found on disk in either location:\n  {file_path}\n  {file_path_no_ext}")
-                    continue
+                    # Try to find the file anywhere under plex_file_location
+                    from utilities.local_library_scan import find_file
+                    found_path = find_file(filled_by_file, plex_file_location)
+                    if found_path:
+                        logging.info(f"Found file in alternate location: {found_path}")
+                        actual_file_path = found_path
+                    else:
+                        not_found_items += 1
+                        logging.debug(f"File not found on disk in any location:\n  {file_path}\n  {file_path_no_ext}")
+                        self.file_location_cache[cache_key] = None
+                        continue
 
                 # Use the path that exists (prefer original if both exist)
                 actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext

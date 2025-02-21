@@ -229,6 +229,27 @@
         color: #ddd;
         margin: 5px 0;
     }
+
+    .parse-error {
+        font-family: monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    
+    .error-details {
+        margin-top: 10px;
+        padding: 10px;
+        background: #2d2d2d;
+        border-radius: 4px;
+    }
+    
+    .error-details pre {
+        margin: 10px 0;
+        padding: 10px;
+        background: #1d1d1d;
+        border-radius: 4px;
+        overflow-x: auto;
+    }
 </style>
 
 <script>
@@ -561,7 +582,7 @@
         const queueContents = document.getElementById('queue-contents');
         const initializationStatus = document.getElementById('initialization-status');
         
-        eventSource.onmessage = (event) => {
+        eventSource.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);
                 
@@ -638,21 +659,73 @@
                     queueContents.style.display = 'block';
                     queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
                 }
-            } catch (error) {
-                console.error('Error parsing queue data:', error);
-                if (!hasReceivedFirstResponse) {
-                    loadingIndicator.innerHTML = '<p class="text-danger">Error loading queue data. Please refresh the page.</p>';
+            } catch (e) {
+                console.error('Error parsing queue data:', e);
+                console.error('Raw data causing error:', event.data);
+                
+                // Create a more detailed error message
+                let errorDetails = '';
+                try {
+                    // Try to identify the problematic character
+                    const errorPosition = parseInt(e.message.match(/column (\d+)/)?.[1]);
+                    if (!isNaN(errorPosition)) {
+                        const start = Math.max(0, errorPosition - 50);
+                        const end = Math.min(event.data.length, errorPosition + 50);
+                        const snippet = event.data.substring(start, end);
+                        errorDetails = `
+                            <div class="error-details">
+                                <p>Error Position: ${errorPosition}</p>
+                                <p>Data snippet around error (± 50 chars):</p>
+                                <pre>${escapeHtml(snippet)}</pre>
+                                <p>Character at error position: "${escapeHtml(event.data[errorPosition-1] || '')}"</p>
+                            </div>
+                        `;
+                    }
+                } catch (detailError) {
+                    errorDetails = '<p>Could not extract detailed error information</p>';
                 }
+                
+                // Show error in UI
+                showError(`
+                    <div class="parse-error">
+                        <h4>JSON Parse Error</h4>
+                        <p>${e.message}</p>
+                        ${errorDetails}
+                    </div>
+                `);
             }
         };
 
-        eventSource.onerror = (error) => {
+        eventSource.onerror = function(error) {
             console.error('EventSource failed:', error);
             if (!hasReceivedFirstResponse) {
                 loadingIndicator.innerHTML = '<p class="text-danger">Connection lost. Reconnecting...</p>';
             }
             // EventSource will automatically try to reconnect
         };
+    }
+
+    function showError(message) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'alert alert-danger';
+        errorDiv.innerHTML = message;
+        
+        // Remove any existing error messages
+        const existingErrors = document.querySelectorAll('.alert-danger');
+        existingErrors.forEach(el => el.remove());
+        
+        // Insert the new error at the top of the container
+        const container = document.querySelector('.container');
+        container.insertBefore(errorDiv, container.firstChild);
+    }
+
+    function escapeHtml(unsafe) {
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
     }
 
     function increasePageSize() {

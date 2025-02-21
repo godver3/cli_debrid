@@ -76,7 +76,7 @@ export function initializeProgramControls() {
     }
 
     function updateSettingsManagement(isRunning) {
-        const buttons = document.querySelectorAll('#saveSettingsButton, .add-scraper-link, .add-version-link, .add-source-link, .delete-scraper-btn, .delete-version-btn, .duplicate-version-btn, .delete-source-btn');
+        const buttons = document.querySelectorAll('#saveSettingsButton, .add-scraper-link, .add-version-link, .add-source-link, .delete-scraper-btn, .delete-version-btn, .duplicate-version-btn, .delete-source-btn, .import-versions-link');
         buttons.forEach(button => {
             button.disabled = isRunning;
             button.style.opacity = isRunning ? '0.5' : '1';
