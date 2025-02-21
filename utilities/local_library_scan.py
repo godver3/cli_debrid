@@ -370,10 +370,12 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             if item.get('upgrading_from'):
                 logging.info(f"[UPGRADE] Processing confirmed upgrade for {item_identifier}")
                 # Remove old torrent from debrid service if we have the ID
+                is_downloading = False
                 if item.get('filled_by_torrent_id'):
                     try:
                         from debrid import get_debrid_provider
                         debrid_provider = get_debrid_provider()
+                        torrent_id = item.get('filled_by_torrent_id')
                         torrent_info = debrid_provider.get_torrent_info(torrent_id)
                         if torrent_info:
                             progress = torrent_info.get('progress', 0)

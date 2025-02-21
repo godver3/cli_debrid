@@ -500,7 +500,10 @@ class UpgradingQueue:
                 if 'score_breakdown' in result:
                     total_score = result['score_breakdown'].get('total_score', 0)
                     current_score = filtered_results[current_position]['score_breakdown'].get('total_score', 0)
-                    score_increase = (total_score - current_score) / current_score if current_score > 0 else float('inf')
+                    if current_score != 0:
+                        score_increase = (total_score - current_score) / current_score
+                    else:
+                        score_increase = float('inf')
                     logging.info(f"  Score: {total_score:.2f} ({'+' if score_increase > 0 else ''}{score_increase:.2%} compared to current)")
                     if score_increase > upgrading_percentage_threshold:
                         logging.info(f"  ⬆ Above upgrade threshold ({upgrading_percentage_threshold:.2%})")
@@ -515,7 +518,8 @@ class UpgradingQueue:
             better_results = [
                 result for result in filtered_results[:current_position]
                 if (SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold and
-                    ((result['score_breakdown'].get('total_score', 0) - current_score) / current_score if current_score > 0 else float('inf')) > upgrading_percentage_threshold)
+                    (result['score_breakdown'].get('total_score', 0) > current_score and
+                     ((result['score_breakdown'].get('total_score', 0) - current_score) / current_score if current_score != 0 else float('inf')) > upgrading_percentage_threshold))
             ]
 
             if better_results:
@@ -524,7 +528,10 @@ class UpgradingQueue:
                 for i, result in enumerate(better_results):
                     similarity = SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio()
                     score = result['score_breakdown'].get('total_score', 0)
-                    score_increase = (score - current_score) / current_score
+                    if current_score != 0:
+                        score_increase = (score - current_score) / current_score
+                    else:
+                        score_increase = float('inf')
                     logging.info(f"  {i}: {result['title']}")
                     logging.info(f"     Similarity: {similarity:.2%}")
                     logging.info(f"     Score: {score:.2f} ({'+' if score_increase > 0 else ''}{score_increase:.2%} compared to current)")
@@ -759,7 +766,7 @@ class UpgradingQueue:
             return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{'_'.join(item['version'].split())}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
-        
+
 def log_successful_upgrade(item: Dict[str, Any]):
     # Get db_content directory from environment variable with fallback
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
