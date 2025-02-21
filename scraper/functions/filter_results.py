@@ -285,7 +285,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             
             # Bitrate filters
             min_bitrate_mbps = float(version_settings.get('min_bitrate_mbps', 0.0))
-            max_bitrate_mbps = float(version_settings.get('max_bitrate_mbps', float('inf')))
+            max_bitrate_mbps = float(version_settings.get('max_bitrate_mbps', float('inf')) or float('inf'))
             
             if result.get('bitrate', 0) > 0:
                 if result['bitrate'] < min_bitrate_mbps:
