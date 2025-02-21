@@ -1098,6 +1098,58 @@ def main():
             save_config(config)
             logging.info("Successfully migrated version settings to include wake_count")
 
+    # Add migration for bitrate filter settings in versions
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            # Add min_bitrate_mbps if missing
+            if 'min_bitrate_mbps' not in version_config:
+                version_config['min_bitrate_mbps'] = 0.01
+                versions_updated = True
+                logging.info(f"Adding min_bitrate_mbps setting to version {version_name}")
+            
+            # Add max_bitrate_mbps if missing
+            if 'max_bitrate_mbps' not in version_config:
+                version_config['max_bitrate_mbps'] = float('inf')
+                versions_updated = True
+                logging.info(f"Adding max_bitrate_mbps setting to version {version_name}")
+            
+            # Convert string values to float if needed
+            if isinstance(version_config.get('min_bitrate_mbps'), str):
+                try:
+                    # Handle blank/empty min_bitrate
+                    if not version_config['min_bitrate_mbps'].strip():
+                        version_config['min_bitrate_mbps'] = 0.01
+                    else:
+                        version_config['min_bitrate_mbps'] = float(version_config['min_bitrate_mbps'])
+                    versions_updated = True
+                    logging.info(f"Converting min_bitrate_mbps to float for version {version_name}")
+                except ValueError:
+                    version_config['min_bitrate_mbps'] = 0.01
+                    versions_updated = True
+                    logging.warning(f"Invalid min_bitrate_mbps value in version {version_name}, resetting to 0.01")
+            
+            if isinstance(version_config.get('max_bitrate_mbps'), str):
+                try:
+                    # Handle blank/empty max_bitrate
+                    if not version_config['max_bitrate_mbps'].strip():
+                        version_config['max_bitrate_mbps'] = float('inf')
+                    elif version_config['max_bitrate_mbps'].lower() in ('inf', 'infinity'):
+                        version_config['max_bitrate_mbps'] = float('inf')
+                    else:
+                        version_config['max_bitrate_mbps'] = float(version_config['max_bitrate_mbps'])
+                    versions_updated = True
+                    logging.info(f"Converting max_bitrate_mbps to float for version {version_name}")
+                except ValueError:
+                    version_config['max_bitrate_mbps'] = float('inf')
+                    versions_updated = True
+                    logging.warning(f"Invalid max_bitrate_mbps value in version {version_name}, resetting to infinity")
+
+        # Save the updated config if changes were made
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include bitrate filters")
+
     # Check and set upgrading_percentage_threshold if blank
     threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
     if not threshold_value.strip():

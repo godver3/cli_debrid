@@ -184,6 +184,51 @@
         margin: 0 10px;
         align-self: center;
     }
+
+    .show-more-container {
+        text-align: center;
+        margin-top: 15px;
+        padding: 10px;
+    }
+
+    .show-more-container button {
+        background-color: #444;
+        border: none;
+        padding: 5px 15px;
+        border-radius: 4px;
+        color: #fff;
+        cursor: pointer;
+        transition: background-color 0.3s;
+    }
+
+    .show-more-container button:hover {
+        background-color: #555;
+    }
+
+    .hidden-items-summary {
+        margin-top: 20px;
+        padding: 15px;
+        background: #444;
+        border-radius: 5px;
+    }
+
+    .hidden-items-summary h5 {
+        color: #aaa;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #666;
+        padding-bottom: 5px;
+    }
+
+    .hidden-items-summary ul {
+        list-style: none;
+        padding-left: 0;
+        margin-bottom: 0;
+    }
+
+    .hidden-items-summary li {
+        color: #ddd;
+        margin: 5px 0;
+    }
 </style>
 
 <script>
@@ -548,11 +593,14 @@
                                 queueDiv.setAttribute('data-queue-name', queueName);
                                 let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
                                 
+                                const totalItems = data.queue_counts[queueName];
+                                const hiddenItems = data.hidden_counts[queueName] || 0;
+                                
                                 queueDiv.innerHTML = `
                                     <div class="queue-title" onclick="toggleQueue(this)">
                                         <span>${queueName}</span>
                                         ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
-                                        <span class="queue-count">${data.queue_counts ? data.queue_counts[queueName] : data.contents[queueName].length} items</span>
+                                        <span class="queue-count">${totalItems} items</span>
                                     </div>
                                     <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
                                         ${generateQueueContent(queueName, data.contents[queueName])}
@@ -564,6 +612,22 @@
 
                         if (!hasContent) {
                             queueContents.innerHTML = '<p>Program is running, but no active contents in queues.</p>';
+                        } else {
+                            // Add summary of hidden items if any
+                            const hiddenCounts = data.hidden_counts;
+                            if (Object.keys(hiddenCounts).length > 0) {
+                                let hiddenSummary = document.createElement('div');
+                                hiddenSummary.className = 'hidden-items-summary';
+                                let summaryText = '<h5>Additional Items Not Shown:</h5><ul>';
+                                for (const [queueName, count] of Object.entries(hiddenCounts)) {
+                                    if (count > 0) {
+                                        summaryText += `<li>${queueName}: ${count} items</li>`;
+                                    }
+                                }
+                                summaryText += '</ul>';
+                                hiddenSummary.innerHTML = summaryText;
+                                queueContents.appendChild(hiddenSummary);
+                            }
                         }
                         
                         updateFilenameVisibility();
@@ -589,6 +653,16 @@
             }
             // EventSource will automatically try to reconnect
         };
+    }
+
+    function increasePageSize() {
+        // Get current page size
+        let currentPageSize = parseInt(localStorage.getItem('queue_page_size')) || 50;
+        // Increase by 50, up to max of 100
+        const newPageSize = Math.min(currentPageSize + 50, 100);
+        localStorage.setItem('queue_page_size', newPageSize);
+        // Restart the event stream with new page size
+        setupQueueStream();
     }
 
     // Initial setup

@@ -45,6 +45,10 @@ def get_next_onboarding_step():
     if 'Scrapers' not in config or not config['Scrapers']:
         return 3
     
+    # Step 3a: Check if versions are configured
+    if 'Scraping' not in config or 'versions' not in config['Scraping'] or not config['Scraping']['versions']:
+        return '3a'
+    
     # Step 4: Check if at least one content source is configured
     if 'Content Sources' not in config or not config['Content Sources']:
         return 4
@@ -61,18 +65,36 @@ def get_next_onboarding_step():
 def onboarding():
     return render_template('onboarding.html', is_onboarding=True)
 
-@onboarding_bp.route('/step/<int:step>', methods=['GET', 'POST'])
+@onboarding_bp.route('/step/<step>', methods=['GET', 'POST'])
 @login_required
 def onboarding_step(step):
     from routes.auth_routes import db
 
-    if step < 1 or step > 6:  # Updated max step
+    # Convert step to int if it's not '3a'
+    try:
+        step_num = int(step) if step != '3a' else step
+    except ValueError:
+        abort(404)
+
+    # Validate step range
+    if isinstance(step_num, int) and (step_num < 1 or step_num > 6):
+        abort(404)
+    elif step_num == '3a' and step != '3a':
         abort(404)
     
     config = load_config()
     can_proceed = False
 
-    if step == 1:
+    # Handle step 6 (final step)
+    if step_num == 6:
+        can_proceed = True  # Always allow finishing the onboarding process
+        return render_template('onboarding_step_6.html', 
+                             current_step=step_num, 
+                             can_proceed=can_proceed, 
+                             is_onboarding=True)
+
+    # Handle other steps...
+    if step_num == 1:
         admin_created = not current_user.is_default
         can_proceed = admin_created
 
@@ -98,12 +120,12 @@ def onboarding_step(step):
                 return jsonify({'success': False, 'error': 'Passwords do not match'})
 
         return render_template('onboarding_step_1.html', 
-                               current_step=step, 
+                               current_step=step_num, 
                                can_proceed=can_proceed, 
                                admin_created=admin_created, 
                                is_onboarding=True)
        
-    if step == 2:
+    elif step_num == 2:
         required_settings = [
             ('Debrid Provider', 'provider'),
             ('Debrid Provider', 'api_key'),
@@ -200,44 +222,49 @@ def onboarding_step(step):
         can_proceed = all(get_setting(category, key) for category, key in required_settings)
         
         return render_template('onboarding_step_2.html', 
-                               current_step=step, 
+                               current_step=step_num, 
                                can_proceed=can_proceed,
                                settings=config, is_onboarding=True)
-    if step == 3:
+
+    elif step_num == 3:
         config = load_config()
         can_proceed = 'Scrapers' in config and bool(config['Scrapers'])
         return render_template('onboarding_step_3.html', 
-                               current_step=step, 
+                               current_step=step_num, 
                                can_proceed=can_proceed, 
                                settings=config, 
                                SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
 
-    if step == 4:
+    elif step_num == '3a':
+        config = load_config()
+        can_proceed = 'Scraping' in config and 'versions' in config['Scraping'] and bool(config['Scraping']['versions'])
+        return render_template('onboarding_step_3a.html', 
+                               current_step=step_num, 
+                               can_proceed=can_proceed, 
+                               settings=config, 
+                               is_onboarding=True)
+
+    elif step_num == 4:
         config = load_config()
         can_proceed = 'Content Sources' in config and bool(config['Content Sources'])
         return render_template('onboarding_step_4.html', 
-                               current_step=step, 
+                               current_step=step_num, 
                                can_proceed=can_proceed, 
                                settings=config, 
                                SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
 
-    elif step == 5:
+    elif step_num == 5:
         # Library Management step
         config = load_config()
         can_proceed = 'Libraries' in config and bool(config['Libraries'])
         return render_template('onboarding_step_5.html', 
-                             current_step=step, 
+                             current_step=step_num, 
                              can_proceed=can_proceed,
                              settings=config, 
                              is_onboarding=True)
 
-    elif step == 6:  # Previous step 5 is now step 6
-        can_proceed = True  # Always allow finishing the onboarding process
-        return render_template('onboarding_step_6.html', 
-                             current_step=step, 
-                             can_proceed=can_proceed, 
-                             is_onboarding=True)
-
+    # If no matching step is found
+    abort(404)
 
 @onboarding_bp.route('/complete', methods=['POST'])
 @login_required
@@ -258,7 +285,7 @@ def update_can_proceed():
     step = data.get('step')
     can_proceed = data.get('can_proceed')
     
-    if step in [1, 2, 3, 4]:
+    if step in [1, 2, 3, '3a', 4]:
         session[f'onboarding_step_{step}_can_proceed'] = can_proceed
         return jsonify({'success': True})
     else:

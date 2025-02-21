@@ -114,7 +114,8 @@
     .add-version-link,
     .duplicate-source-btn,
     .duplicate-scraper-btn,
-    .duplicate-version-btn {
+    .duplicate-version-btn,
+    .import-versions-link {
         composes: btn btn-primary;
         display: inline-flex;
         align-items: center;
@@ -138,8 +139,24 @@
     .add-version-link:hover,
     .duplicate-source-btn:hover,
     .duplicate-scraper-btn:hover,
-    .duplicate-version-btn:hover {
+    .duplicate-version-btn:hover,
+    .import-versions-link:hover {
         background-color: #45a049;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+
+    .import-versions-link, #add-default-version-btn, #add-separate-versions-btn {
+        background-color: #a04598;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+    .import-versions-link:hover, #add-default-version-btn:hover, #add-separate-versions-btn:hover {
+        background-color: #803578;
         border: none !important;
         outline: none;
         box-shadow: none;

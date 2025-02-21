@@ -367,7 +367,8 @@ export function updateSettings() {
                 if (input.type === 'checkbox') {
                     versionData[key] = input.checked;
                 } else if (input.type === 'number') {
-                    if (key === 'max_size_gb') {
+                    // Handle special fields that can be infinity
+                    if (key === 'max_size_gb' || key === 'max_bitrate_mbps') {
                         versionData[key] = input.value === '' ? Infinity : parseFloat(input.value) || 0;
                     } else {
                         versionData[key] = parseFloat(input.value) || 0;

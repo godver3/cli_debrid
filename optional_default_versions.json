@@ -1,0 +1,557 @@
+{
+  "versions": {
+    "2160p REMUX": {
+      "bitrate_weight": "3",
+      "enable_hdr": true,
+      "filter_in": [
+        "REMUX|Remux"
+      ],
+      "filter_out": [
+        "\\b(Fre|Ger|Ita|Spa|Cze|Hun|Pol|Rus|Ukr|MULTI)\\b",
+        "\\b(SDR)\\b",
+        "\\b(BEN.THE.MEN)\\b",
+        "\\b(ESP|Esp|LATINO)\\b",
+        "\\b(RGzsRutracker)\\b",
+        "\\b(3D)\\b",
+        "www"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "2160p",
+      "max_size_gb": null,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
+          2000
+        ],
+        [
+          "\\b(Flights|NCmt|playBD|SiCFoI|SURFINBIRD|TEPES)\\b",
+          1500
+        ],
+        [
+          "\\b(decibeL|EPSiLON|HiFi|iFT|KRaLiMaRKo|PTP|SumVision|TOA|TRiToN|NTb)\\b",
+          1000
+        ],
+        [
+          "\\b(DV)\\b",
+          1000
+        ],
+        [
+          "\\b(FGT|NOGRP)\\b",
+          500
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ]
+      ],
+      "require_physical_release": true,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "1080p REMUX": {
+      "bitrate_weight": "3",
+      "enable_hdr": false,
+      "filter_in": [
+        "REMUX|Remux"
+      ],
+      "filter_out": [
+        "\\b(HONE|MP4|SDR|Rus|Russian|BenTheMen|Ben.The.Men)\\b",
+        "\\b(x265|HEVC|h265)\\b",
+        "RGzsRutracker",
+        "www"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "1080p",
+      "max_size_gb": null,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
+          2000
+        ],
+        [
+          "\\b(Flights|NCmt|playBD|SiCFoI|SURFINBIRD|TEPES)\\b",
+          1500
+        ],
+        [
+          "\\b(decibeL|EPSiLON|HiFi|iFT|KRaLiMaRKo|PTP|SumVision|TOA|TRiToN|NTb)\\b",
+          1000
+        ],
+        [
+          "\\b(FGT|NOGRP)\\b",
+          500
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ]
+      ],
+      "require_physical_release": true,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "1080p WEB": {
+      "bitrate_weight": "3",
+      "enable_hdr": false,
+      "filter_in": [
+        "WEB|Web"
+      ],
+      "filter_out": [
+        "\\b(x265|HEVC|MP4|mp4|HDR|H265|h256|3D|10bit)\\b",
+        "RGzsRutracker",
+        "www.Torrenting.com"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "1080p",
+      "max_size_gb": null,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(WEBRip)\\b",
+          100
+        ],
+        [
+          "\\b(ABBIE|AJP69|APEX|PAXA|PEXA|XEPA|BLUTONiUM|CMRG|CRFW|CRUD|FLUX|GNOME|HONE|KiNGS|Kitsune|NOSiViD|NTb|NTG|SiC|TEPES)\\b",
+          500
+        ],
+        [
+          "\\b(dB|Flights|MiU|monkee|MZABI|PHOENiX|playWEB|SbR|SMURF|TOMMY|XEBEC|4KBEC|CEBEX)\\b",
+          400
+        ],
+        [
+          "\\b(BYNDR|GNOMiSSiON|NINJACENTRAL|ROCCaT|SiGMA|SLiGNOME|SwAgLaNdEr)\\b",
+          300
+        ],
+        [
+          "\\b(WEB|WEB-DL|Web-DL)\\b",
+          250
+        ],
+        [
+          "\\b(CAKES|GGEZ|GGWP|GLHF|GOSSIP|NAISU|KOGI|PECULATE|SLOT|EDITH|ETHEL|ELEANOR|B2B|SPAMnEGGS|FTP|DiRT|SYNCOPY|BAE|SuccessfulCrab|NHTFS|SURCODE|B0MBARDIERS|DEFLATE|INFLATE)\\b",
+          480
+        ],
+        [
+          "\\b(Arg0|BTW|CasStudio|CiT|Coo7|DEEP|DRACULA|END|ETHiCS|FC|FGT|HDT|iJP|iKA|iT00NZ|JETIX|KHN|KiMCHI|LAZY|Legion|legi0n|LYS1TH3A|NPMS|NYH|OZR|orbitron|PSiG|RTFM|RTN|SCY|SDCC|SPiRiT|T4H|T6D|TVSmash|Vanilla|ViSiON|ViSUM|Vodes|WELP|ZeroBuild|NOGRP|BTN)\\b",
+          100
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "\\b(MULTI)\\b",
+          200
+        ],
+        [
+          "\\b(RUS|RUSSIAN|Russian|Rus|PLSUB|Ger|Esp|Fre|Latino|LATINO|SPANISH|HINDI|KAZAKH|ITA|POR|Cze|Hun|Pol|Ukr)\\b",
+          1000
+        ],
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "www",
+          1000
+        ]
+      ],
+      "require_physical_release": false,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "2160p WEB": {
+      "bitrate_weight": "3",
+      "enable_hdr": true,
+      "filter_in": [
+        "WEB|Web"
+      ],
+      "filter_out": [
+        "\\b(MP4|mp4|3D|SDR)\\b",
+        "www",
+        "RGzsRutracker",
+        "www.Torrenting.com"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "2160p",
+      "max_size_gb": null,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(AMZN)\\b",
+          5
+        ],
+        [
+          "DV",
+          50
+        ],
+        [
+          "DV.HDR.2160p.WEB.H265",
+          25
+        ],
+        [
+          "DV.2160p.WEB.H265",
+          50
+        ],
+        [
+          "\\b(WEBRip)\\b",
+          100
+        ],
+        [
+          "\\b(ABBIE|AJP69|APEX|PAXA|PEXA|XEPA|BLUTONiUM|CMRG|CRFW|CRUD|FLUX|GNOME|HONE|KiNGS|Kitsune|NOSiViD|NTb|NTG|SiC|TEPES)\\b",
+          500
+        ],
+        [
+          "\\b(dB|Flights|MiU|monkee|MZABI|PHOENiX|playWEB|SbR|SMURF|TOMMY|XEBEC|4KBEC|CEBEX)\\b",
+          400
+        ],
+        [
+          "\\b(BYNDR|GNOMiSSiON|NINJACENTRAL|ROCCaT|SiGMA|SLiGNOME|SwAgLaNdEr)\\b",
+          300
+        ],
+        [
+          "\\b(WEB|WEB-DL|Web-DL)\\b",
+          250
+        ],
+        [
+          "\\b(CAKES|GGEZ|GGWP|GLHF|GOSSIP|NAISU|KOGI|PECULATE|SLOT|EDITH|ETHEL|ELEANOR|B2B|SPAMnEGGS|FTP|DiRT|SYNCOPY|BAE|SuccessfulCrab|NHTFS|SURCODE|B0MBARDIERS|DEFLATE|INFLATE)\\b",
+          495
+        ],
+        [
+          "\\b(Arg0|BTW|CasStudio|CiT|Coo7|DEEP|DRACULA|END|ETHiCS|FC|FGT|HDT|iJP|iKA|iT00NZ|JETIX|KHN|KiMCHI|LAZY|Legion|legi0n|LYS1TH3A|NPMS|NYH|OZR|orbitron|PSiG|RTFM|RTN|SCY|SDCC|SPiRiT|T4H|T6D|TVSmash|Vanilla|ViSiON|ViSUM|Vodes|WELP|ZeroBuild|NOGRP|BTN)\\b",
+          100
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "\\b(RUS|RUSSIAN|Russian|Rus|PLSUB|Ger|Esp|Fre|Latino|LATINO|SPANISH|HINDI|KAZAKH|ITA|POR|Cze|Hun|Pol|Ukr)\\b",
+          1000
+        ],
+        [
+          "\\b(MULTI)\\b",
+          200
+        ]
+      ],
+      "require_physical_release": false,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "1080p ENCODE": {
+      "enable_hdr": false,
+      "max_resolution": "1080p",
+      "resolution_wanted": "==",
+      "resolution_weight": 3,
+      "hdr_weight": 3,
+      "similarity_weight": 3,
+      "size_weight": 3,
+      "bitrate_weight": 3,
+      "preferred_filter_in": [],
+      "preferred_filter_out": [],
+      "filter_in": [
+        "1080p.BluRay|1080p.bluray"
+      ],
+      "filter_out": [
+        "x265",
+        "h265",
+        "hevc",
+        "HEVC"
+      ],
+      "min_size_gb": 0,
+      "max_size_gb": null,
+      "similarity_threshold_anime": 0.35,
+      "similarity_threshold": 0.8,
+      "wake_count": 0,
+      "require_physical_release": true
+    },
+    "2160p BEST": {
+      "bitrate_weight": "3",
+      "enable_hdr": true,
+      "filter_in": [],
+      "filter_out": [
+        "\\b(MP4|mp4|3D|SDR)\\b",
+        "www",
+        "RGzsRutracker",
+        "www.Torrenting.com"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "2160p",
+      "max_size_gb": null,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(WEBRip)\\b",
+          100
+        ],
+        [
+          "DV",
+          50
+        ],
+        [
+          "REPACK",
+          50
+        ],
+        [
+          "DV.HDR.2160p.WEB.H265",
+          25
+        ],
+        [
+          "HYBRID",
+          25
+        ],
+        [
+          "DV.2160p.WEB.H265",
+          50
+        ],
+        [
+          "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
+          2000
+        ],
+        [
+          "\\b(Flights|NCmt|playBD|SiCFoI|SURFINBIRD|TEPES)\\b",
+          1800
+        ],
+        [
+          "\\b(decibeL|EPSiLON|HiFi|iFT|KRaLiMaRKo|PTP|SumVision|TOA|TRiToN)\\b",
+          1600
+        ],
+        [
+          "REMUX|Remux",
+          1500
+        ],
+        [
+          "\\b(BBQ|BMF|c0kE|Chotab|CRiSC|CtrlHD|D-Z0N3|Dariush|decibeL|DON|EbP|EDPH|Geek|LolHD|NCmt|PTer|TayTO|TDD|TnP|VietHD|ZQ)\\b",
+          1000
+        ],
+        [
+          "\\b(EA|HiDt|HiSD|iFT|QOQ|SA89|sbR)\\b",
+          900
+        ],
+        [
+          "\\b(BHDStudio|hallowed|HONE|LoRD|playHD|SPHD|W4NK3R)\\b",
+          800
+        ],
+        [
+          "\\b(Bluray|BLURAY)\\b",
+          500
+        ],
+        [
+          "\\b(ABBIE|AJP69|APEX|PAXA|PEXA|XEPA|BLUTONiUM|CMRG|CRFW|CRUD|FLUX|GNOME|HONE|KiNGS|Kitsune|NOSiViD|NTb|NTG|SiC|TEPES)\\b",
+          500
+        ],
+        [
+          "\\b(dB|Flights|MiU|monkee|MZABI|PHOENiX|playWEB|SbR|SMURF|TOMMY|XEBEC|4KBEC|CEBEX)\\b",
+          400
+        ],
+        [
+          "\\b(BYNDR|GNOMiSSiON|NINJACENTRAL|ROCCaT|SiGMA|SLiGNOME|SwAgLaNdEr)\\b",
+          300
+        ],
+        [
+          "\\b(WEB|WEB-DL|Web-DL)\\b",
+          250
+        ],
+        [
+          "\\b(CAKES|GGEZ|GGWP|GLHF|GOSSIP|NAISU|KOGI|PECULATE|SLOT|EDITH|ETHEL|ELEANOR|B2B|SPAMnEGGS|FTP|DiRT|SYNCOPY|BAE|SuccessfulCrab|NHTFS|SURCODE|B0MBARDIERS|DEFLATE|INFLATE)\\b",
+          495
+        ],
+        [
+          "SCENE",
+          1
+        ],
+        [
+          "\\b(Arg0|BTW|CasStudio|CiT|Coo7|DEEP|DRACULA|END|ETHiCS|FC|FGT|HDT|iJP|iKA|iT00NZ|JETIX|KHN|KiMCHI|LAZY|Legion|legi0n|LYS1TH3A|NPMS|NYH|OZR|orbitron|PSiG|RTFM|RTN|SCY|SDCC|SPiRiT|T4H|T6D|TVSmash|Vanilla|ViSiON|ViSUM|Vodes|WELP|ZeroBuild|NOGRP|BTN)\\b",
+          100
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "\\b(HDR10Plus)\\b",
+          25
+        ],
+        [
+          "\\b(DVP7|P7|P7)\\b",
+          100
+        ],
+        [
+          "\\b(DVP8|P8|P8)\\b",
+          100
+        ],
+        [
+          "\\b(HDR10+)\\b",
+          100
+        ],
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "\\b(RUS|RUSSIAN|Russian|Rus|PLSUB|Ger|Esp|Fre|Latino|LATINO|SPANISH|HINDI|KAZAKH|ITA|POR|Cze|Hun|Pol|Ukr)\\b",
+          1000
+        ],
+        [
+          "\\b(MULTI)\\b",
+          200
+        ]
+      ],
+      "require_physical_release": false,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "1080p BEST": {
+      "bitrate_weight": "3",
+      "enable_hdr": false,
+      "filter_in": [],
+      "filter_out": [
+        "\\b(x265|HEVC|MP4|mp4|HDR|H265|h256|3D|10bit)\\b",
+        "RGzsRutracker"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "1080p",
+      "max_size_gb": null,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(WEBRip)\\b",
+          100
+        ],
+        [
+          "REMUX|Remux",
+          100
+        ],
+        [
+          "NORDIC",
+          25
+        ],
+        [
+          "REPACK",
+          50
+        ],
+        [
+          "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
+          2000
+        ],
+        [
+          "\\b(Flights|NCmt|playBD|SiCFoI|SURFINBIRD|TEPES)\\b",
+          1800
+        ],
+        [
+          "\\b(decibeL|EPSiLON|HiFi|iFT|KRaLiMaRKo|PTP|SumVision|TOA|TRiToN)\\b",
+          1600
+        ],
+        [
+          "REMUX|Remux",
+          1500
+        ],
+        [
+          "\\b(BBQ|BMF|c0kE|Chotab|CRiSC|CtrlHD|D-Z0N3|Dariush|decibeL|DON|EbP|EDPH|Geek|LolHD|NCmt|PTer|TayTO|TDD|TnP|VietHD|ZQ)\\b",
+          1000
+        ],
+        [
+          "\\b(EA|HiDt|HiSD|iFT|QOQ|SA89|sbR)\\b",
+          900
+        ],
+        [
+          "\\b(BHDStudio|hallowed|HONE|LoRD|playHD|SPHD|W4NK3R)\\b",
+          800
+        ],
+        [
+          "\\b(Bluray|BLURAY)\\b",
+          500
+        ],
+        [
+          "\\b(ABBIE|AJP69|APEX|PAXA|PEXA|XEPA|BLUTONiUM|CMRG|CRFW|CRUD|FLUX|GNOME|HONE|KiNGS|Kitsune|NOSiViD|NTb|NTG|SiC|TEPES)\\b",
+          500
+        ],
+        [
+          "\\b(dB|Flights|MiU|monkee|MZABI|PHOENiX|playWEB|SbR|SMURF|TOMMY|XEBEC|4KBEC|CEBEX)\\b",
+          400
+        ],
+        [
+          "\\b(BYNDR|GNOMiSSiON|NINJACENTRAL|ROCCaT|SiGMA|SLiGNOME|SwAgLaNdEr)\\b",
+          300
+        ],
+        [
+          "\\b(WEB|WEB-DL|Web-DL)\\b",
+          250
+        ],
+        [
+          "\\b(CAKES|GGEZ|GGWP|GLHF|GOSSIP|NAISU|KOGI|PECULATE|SLOT|EDITH|ETHEL|ELEANOR|B2B|SPAMnEGGS|FTP|DiRT|SYNCOPY|BAE|SuccessfulCrab|NHTFS|SURCODE|B0MBARDIERS|DEFLATE|INFLATE)\\b",
+          480
+        ],
+        [
+          "SCENE",
+          1
+        ],
+        [
+          "\\b(Arg0|BTW|CasStudio|CiT|Coo7|DEEP|DRACULA|END|ETHiCS|FC|FGT|HDT|iJP|iKA|iT00NZ|JETIX|KHN|KiMCHI|LAZY|Legion|legi0n|LYS1TH3A|NPMS|NYH|OZR|orbitron|PSiG|RTFM|RTN|SCY|SDCC|SPiRiT|T4H|T6D|TVSmash|Vanilla|ViSiON|ViSUM|Vodes|WELP|ZeroBuild|NOGRP|BTN)\\b",
+          100
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "\\b(MULTI)\\b",
+          200
+        ],
+        [
+          "\\b(RUS|RUSSIAN|Russian|Rus|PLSUB|Ger|Esp|Fre|Latino|LATINO|SPANISH|HINDI|KAZAKH|ITA|POR|Cze|Hun|Pol|Ukr)\\b",
+          1000
+        ],
+        [
+          "BDRip",
+          1000
+        ],
+        [
+          "EN-TR",
+          1000
+        ],
+        [
+          "www",
+          1000
+        ],
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ]
+      ],
+      "require_physical_release": false,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    }
+  }
+}

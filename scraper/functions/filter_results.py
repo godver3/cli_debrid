@@ -283,6 +283,21 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     continue
             #logging.debug("✓ Passed size checks")
             
+            # Bitrate filters
+            min_bitrate_mbps = float(version_settings.get('min_bitrate_mbps', 0.0))
+            max_bitrate_mbps = float(version_settings.get('max_bitrate_mbps', float('inf')))
+            
+            if result.get('bitrate', 0) > 0:
+                if result['bitrate'] < min_bitrate_mbps:
+                    result['filter_reason'] = f"Bitrate too low: {result['bitrate']:.2f} Mbps (min: {min_bitrate_mbps} Mbps)"
+                    logging.debug(f"❌ Failed: Bitrate {result['bitrate']:.2f}Mbps below minimum {min_bitrate_mbps}Mbps")
+                    continue
+                if result['bitrate'] > max_bitrate_mbps:
+                    result['filter_reason'] = f"Bitrate too high: {result['bitrate']:.2f} Mbps (max: {max_bitrate_mbps} Mbps)"
+                    logging.debug(f"❌ Failed: Bitrate {result['bitrate']:.2f}Mbps above maximum {max_bitrate_mbps}Mbps")
+                    continue
+            #logging.debug("✓ Passed bitrate checks")
+            
             # Pattern matching
             normalized_filter_title = normalize_title(original_title)
             
