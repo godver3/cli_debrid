@@ -515,7 +515,7 @@ class UpgradingQueue:
             better_results = [
                 result for result in filtered_results[:current_position]
                 if (SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold and
-                    (result['score_breakdown'].get('total_score', 0) - current_score) / current_score > upgrading_percentage_threshold)
+                    ((result['score_breakdown'].get('total_score', 0) - current_score) / current_score if current_score > 0 else float('inf')) > upgrading_percentage_threshold)
             ]
 
             if better_results:
