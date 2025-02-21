@@ -148,7 +148,7 @@ SETTINGS_SCHEMA = {
         "wake_limit": {
             "type": "string",
             "description": "Number of times to wake items before blacklisting",
-            "default": "3"
+            "default": "24"
         },
         "movie_airtime_offset": {
             "type": "string",
