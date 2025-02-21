@@ -263,6 +263,8 @@ SETTINGS_SCHEMA = {
                 "filter_out": {"type": "list", "default": []},
                 "min_size_gb": {"type": "float", "default": 0.01, "min": 0},
                 "max_size_gb": {"type": "float", "default": float('inf'), "min": 0},
+                "min_bitrate_mbps": {"type": "float", "default": 0.01, "min": 0},
+                "max_bitrate_mbps": {"type": "float", "default": float('inf'), "min": 0},
                 "wake_count": {
                     "type": "integer", 
                     "default": None, 

@@ -631,6 +631,36 @@ def delete_version():
     else:
         return jsonify({'success': False, 'error': 'Version not found'}), 404
 
+@settings_bp.route('/versions/import_defaults', methods=['POST'])
+def import_default_versions():
+    try:
+        # Read the default versions from the JSON file
+        with open('optional_default_versions.json', 'r') as f:
+            default_versions = json.load(f)
+        
+        if not isinstance(default_versions, dict) or 'versions' not in default_versions:
+            return jsonify({'success': False, 'error': 'Invalid default versions format'}), 400
+            
+        # Load current config
+        config = load_config()
+        if 'Scraping' not in config:
+            config['Scraping'] = {}
+            
+        # Replace all versions with defaults
+        config['Scraping']['versions'] = default_versions['versions']
+        
+        # Save the updated config
+        save_config(config)
+        
+        return jsonify({'success': True, 'message': 'Default versions imported successfully'})
+    except FileNotFoundError:
+        return jsonify({'success': False, 'error': 'Default versions file not found'}), 404
+    except json.JSONDecodeError:
+        return jsonify({'success': False, 'error': 'Invalid JSON in default versions file'}), 400
+    except Exception as e:
+        logging.error(f"Error importing default versions: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @settings_bp.route('/versions/rename', methods=['POST'])
 def rename_version():
     data = request.json
@@ -911,4 +941,177 @@ def update_notification_defaults():
         return jsonify({'success': True, 'message': 'Notification defaults updated successfully'})
     except Exception as e:
         logging.error(f"Error updating notification defaults: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/versions/add_default', methods=['POST'])
+def add_default_version():
+    try:
+        config = load_config()
+        if 'Scraping' not in config:
+            config['Scraping'] = {}
+
+        # Get the default version settings from the schema
+        version_schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']
+        default_version = {
+            'enable_hdr': version_schema['enable_hdr']['default'],
+            'max_resolution': version_schema['max_resolution']['default'],
+            'resolution_wanted': version_schema['resolution_wanted']['default'],
+            'resolution_weight': version_schema['resolution_weight']['default'],
+            'hdr_weight': version_schema['hdr_weight']['default'],
+            'similarity_weight': version_schema['similarity_weight']['default'],
+            'similarity_threshold': version_schema['similarity_threshold']['default'],
+            'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
+            'size_weight': version_schema['size_weight']['default'],
+            'bitrate_weight': version_schema['bitrate_weight']['default'],
+            'preferred_filter_in': version_schema['preferred_filter_in']['default'],
+            'preferred_filter_out': version_schema['preferred_filter_out']['default'],
+            'filter_in': version_schema['filter_in']['default'],
+            'filter_out': version_schema['filter_out']['default'],
+            'min_size_gb': version_schema['min_size_gb']['default'],
+            'max_size_gb': version_schema['max_size_gb']['default'],
+            'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
+            'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
+            'wake_count': version_schema['wake_count']['default'],
+            'require_physical_release': version_schema['require_physical_release']['default']
+        }
+
+        # Replace all versions with just the default version
+        config['Scraping']['versions'] = {'Default': default_version}
+        save_config(config)
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/versions/add_separate_versions', methods=['POST'])
+def add_separate_versions():
+    try:
+        config = load_config()
+        if 'Scraping' not in config:
+            config['Scraping'] = {}
+
+        # Get the default version settings from the schema
+        version_schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']
+        base_version = {
+            'resolution_wanted': version_schema['resolution_wanted']['default'],
+            'resolution_weight': version_schema['resolution_weight']['default'],
+            'hdr_weight': version_schema['hdr_weight']['default'],
+            'similarity_weight': version_schema['similarity_weight']['default'],
+            'similarity_threshold': version_schema['similarity_threshold']['default'],
+            'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
+            'size_weight': version_schema['size_weight']['default'],
+            'bitrate_weight': version_schema['bitrate_weight']['default'],
+            'preferred_filter_in': [],
+            'preferred_filter_out': [],
+            'filter_in': [],
+            'filter_out': [],
+            'min_size_gb': version_schema['min_size_gb']['default'],
+            'max_size_gb': version_schema['max_size_gb']['default'],
+            'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
+            'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
+            'wake_count': version_schema['wake_count']['default'],
+            'require_physical_release': version_schema['require_physical_release']['default']
+        }
+
+        # Create 1080p version
+        version_1080p = base_version.copy()
+        version_1080p.update({
+            'enable_hdr': False,
+            'max_resolution': '1080p',
+            'preferred_filter_in': [
+                [
+                    'REMUX',
+                    100
+                ],
+                [
+                    'WebDL',
+                    50
+                ],
+                [
+                    'Web-DL',
+                    50
+                ]
+            ],
+            'preferred_filter_out': [
+                [
+                    '720p',
+                    5
+                ],
+                [
+                    'TrueHD',
+                    3
+                ],
+                [
+                    'SDR',
+                    5
+                ]
+            ],
+            'filter_out': [
+                'Telesync',
+                '3D',
+                '(?i)\\bHDTS\\b',
+                'HD-TS',
+                '\\.TS\\.',
+                '\\.CAM\\.',
+                'HDCAM',
+                'Telecine',
+                '(?i).*\\bTS\\b$'
+            ]
+        })
+
+        # Create 4K version
+        version_4k = base_version.copy()
+        version_4k.update({
+            'enable_hdr': True,
+            'max_resolution': '2160p',
+            'preferred_filter_in': [
+                [
+                    'REMUX',
+                    100
+                ],
+                [
+                    'WebDL',
+                    50
+                ],
+                [
+                    'Web-DL',
+                    50
+                ]
+            ],
+            'preferred_filter_out': [
+                [
+                    '720p',
+                    5
+                ],
+                [
+                    'TrueHD',
+                    3
+                ],
+                [
+                    'SDR',
+                    5
+                ]
+            ],
+            'filter_out': [
+                'Telesync',
+                '3D',
+                '(?i)\\bHDTS\\b',
+                'HD-TS',
+                '\\.TS\\.',
+                '\\.CAM\\.',
+                'HDCAM',
+                'Telecine',
+                '(?i).*\\bTS\\b$'
+            ]
+        })
+
+        # Replace all versions with our two new versions
+        config['Scraping']['versions'] = {
+            '1080p': version_1080p,
+            '4K HDR': version_4k
+        }
+        save_config(config)
+
+        return jsonify({'success': True})
+    except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

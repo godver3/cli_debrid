@@ -226,6 +226,24 @@ def bulk_queue_action():
                     logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
                 finally:
                     conn.close()
+            elif action == 'change_version' and target_queue:  # target_queue contains the version in this case
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'UPDATE media_items SET version = ?, last_updated = ? WHERE id IN ({placeholders})',
+                        [target_queue, datetime.now()] + batch
+                    )
+                    total_processed += cursor.rowcount
+                    conn.commit()
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                finally:
+                    conn.close()
             elif action == 'early_release':
                 # Handle early release action
                 conn = get_db_connection()
@@ -254,7 +272,7 @@ def bulk_queue_action():
                 message += f" First few errors: {'; '.join(errors[:3])}"
             return jsonify({'success': True, 'message': message, 'warning': True})
         else:
-            action_text = "deleted" if action == "delete" else "moved to {target_queue} queue" if action == "move" else "marked as early release and moved to Wanted queue"
+            action_text = "deleted" if action == "delete" else "moved to {target_queue} queue" if action == "move" else "marked as early release and moved to Wanted queue" if action == "early_release" else f"changed to version {target_queue}"
             message = f"Successfully {action_text} {total_processed} items"
             return jsonify({'success': True, 'message': message})
 

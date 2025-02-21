@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% block title %}Onboarding - Step 3a{% endblock %}
+{% block content %}
+
+<style>
+    .version-management-buttons {
+        display: flex;
+        gap: 1rem;
+        margin: 1rem 0;
+    }
+
+    #add-default-version-btn, #import-default-versions-btn, #add-separate-versions-btn {
+        background-color: #a04598;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+    
+    #add-default-version-btn:hover, #import-default-versions-btn:hover, #add-separate-versions-btn:hover {
+        background-color: #803578;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+    .version-item {
+        background-color: #1a1a1a;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border-radius: 0.25rem;
+        border: 1px solid #333;
+    }
+
+    .version-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #333;
+    }
+
+    .version-settings {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 0.75rem;
+    }
+
+    .setting-item {
+        display: flex;
+        gap: 0.5rem;
+        align-items: baseline;
+    }
+
+    .setting-item label {
+        color: #888;
+        min-width: 180px;
+        font-size: 0.9em;
+    }
+
+    .setting-item span {
+        color: #f4f4f4;
+        font-size: 0.9em;
+        font-family: monospace;
+    }
+
+    .filter-section {
+        margin-top: 1rem;
+        border-top: 1px solid #333;
+        padding-top: 1rem;
+    }
+
+    .filter-section h5 {
+        color: #888;
+        margin-bottom: 0.5rem;
+        font-size: 0.9em;
+    }
+
+    .filter-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        margin-bottom: 1rem;
+        font-size: 0.85em;
+    }
+
+    .filter-list label {
+        color: #888;
+        margin-bottom: 0.25rem;
+        font-size: 0.9em;
+    }
+
+    .filter-item {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        background: #2a2a2a;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        color: #aaa;
+        font-family: monospace;
+        font-size: 0.9em;
+        border: 1px solid #333;
+    }
+
+    .no-versions-message {
+        color: #888;
+        font-style: italic;
+        text-align: center;
+        margin: 2rem 0;
+    }
+</style>
+
+<div class="onboarding-container">
+    <h2 class="onboarding-title">Step 3a: Configure Versions</h2>
+    <div class="advice-section">
+        <div class="advice-header">
+            💡 Want my advice?
+            <i class="fas fa-chevron-down toggle-icon"></i>
+        </div>
+        <div class="advice-content">
+            The default version is a great starting point! It includes optimized settings for quality and source types. You can customize all settings later in the Settings page under the Versions tab. For more advanced setups, you can choose to import alternate default versions that include comprehensive 2160p, REMUX and WEB versions, or set up separate 1080p and 4K versions. The 1080p and 4K versions are "godver3's own".
+            <br><br>
+            <i>Why can't I customize the version settings here?</i><br>💥 <i>It was too much of a pain.</i>
+        </div>
+    </div>
+    <p class="info-message">Versions determine what quality and type of releases cli_debrid will look for. Versions can be customized in the Settings page under Scraping. Make sure to remove any that you don't plan on using.</p>
+
+    <div class="version-management-buttons">
+        <button id="add-default-version-btn" class="onboarding-btn">Use Default Version</button>
+        <button id="add-separate-versions-btn" class="onboarding-btn">Use Separate 1080p/4K Versions</button>
+        <button id="import-default-versions-btn" class="onboarding-btn">Use Alternate Default Versions</button>
+    </div>
+
+    <div id="existing-versions">
+        {% if settings.Scraping and settings.Scraping.versions %}
+            <h3 class="onboarding-title">Current Versions</h3>
+            {% for version, config in settings.Scraping.versions.items() %}
+            <div class="version-item">
+                <div class="version-header">
+                    <span class="onboarding-text">{{ version }}</span>
+                </div>
+                <div class="version-settings">
+                    {% for key, value in config.items() %}
+                        {% if key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+                            <div class="setting-item">
+                                <label>{{ key|replace('_', ' ')|title }}:</label>
+                                <span>{{ value }}</span>
+                            </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+                {% if config.filter_in or config.filter_out or config.preferred_filter_in or config.preferred_filter_out %}
+                    <div class="filter-section">
+                        <h5>Filters</h5>
+                        {% if config.filter_in %}
+                            <div class="filter-list">
+                                <label>Filter In:</label>
+                                {% for filter in config.filter_in %}
+                                    <div class="filter-item">{{ filter }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        {% if config.filter_out %}
+                            <div class="filter-list">
+                                <label>Filter Out:</label>
+                                {% for filter in config.filter_out %}
+                                    <div class="filter-item">{{ filter }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        {% if config.preferred_filter_in %}
+                            <div class="filter-list">
+                                <label>Preferred Filter In:</label>
+                                {% for filter in config.preferred_filter_in %}
+                                    <div class="filter-item">{{ filter[0] }} (Weight: {{ filter[1] }})</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        {% if config.preferred_filter_out %}
+                            <div class="filter-list">
+                                <label>Preferred Filter Out:</label>
+                                {% for filter in config.preferred_filter_out %}
+                                    <div class="filter-item">{{ filter[0] }} (Weight: {{ filter[1] }})</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="no-versions-message">No versions configured yet. Add the default version to get started.</p>
+        {% endif %}
+    </div>
+</div>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+// Define the handler functions outside of any event listener
+const defaultVersionHandler = function(event) {
+    event.preventDefault();
+    showAddDefaultVersionConfirmation();
+};
+
+const importVersionsHandler = function(event) {
+    event.preventDefault();
+    showImportConfirmation();
+};
+
+const separateVersionsHandler = function(event) {
+    event.preventDefault();
+    showSeparateVersionsConfirmation();
+};
+
+// Single initialization function
+function initializeVersionButtons() {
+    const addDefaultButton = document.querySelector('#add-default-version-btn');
+    const importButton = document.querySelector('#import-default-versions-btn');
+    const addSeparateButton = document.querySelector('#add-separate-versions-btn');
+
+    // Remove existing listeners first
+    if (addDefaultButton) {
+        addDefaultButton.removeEventListener('click', defaultVersionHandler);
+        addDefaultButton.addEventListener('click', defaultVersionHandler);
+    }
+
+    if (importButton) {
+        importButton.removeEventListener('click', importVersionsHandler);
+        importButton.addEventListener('click', importVersionsHandler);
+    }
+
+    if (addSeparateButton) {
+        addSeparateButton.removeEventListener('click', separateVersionsHandler);
+        addSeparateButton.addEventListener('click', separateVersionsHandler);
+    }
+}
+
+function showAddDefaultVersionConfirmation() {
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Add Default Version',
+        message: 'This will replace any existing versions with a single default version with recommended settings. You can customize these settings later in the Settings page.',
+        confirmText: 'Replace',
+        cancelText: 'Cancel',
+        onConfirm: () => {
+            addDefaultVersion();
+        }
+    });
+}
+
+function showImportConfirmation() {
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Import Alternate Default Versions',
+        message: 'These alternates include comprehensive 2160p, REMUX and WEB versions for the connoisseur. Are you sure you want to continue?',
+        confirmText: 'Import',
+        cancelText: 'Cancel',
+        onConfirm: () => {
+            importDefaultVersions();
+        }
+    });
+}
+
+function showSeparateVersionsConfirmation() {
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Add Separate Versions',
+        message: 'This will create two separate versions: one for 1080p content and another for 4K HDR content. You can customize these settings later in the Settings page.',
+        confirmText: 'Create Versions',
+        cancelText: 'Cancel',
+        onConfirm: () => {
+            addSeparateVersions();
+        }
+    });
+}
+
+function updateCanProceed() {
+    fetch('/onboarding/update_can_proceed', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            step: '3a', 
+            can_proceed: true 
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const nextStepBtn = document.querySelector('.next-step-btn');
+            if (nextStepBtn) {
+                nextStepBtn.disabled = false;
+            }
+        }
+    })
+    .catch(error => console.error('Error updating can_proceed status:', error));
+}
+
+function addDefaultVersion() {
+    fetch('/settings/versions/add_default', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            updateCanProceed();
+            window.location.reload();
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .catch(error => {
+        console.error('Error adding default version:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            message: 'Error adding default version: ' + error.message
+        });
+    });
+}
+
+function importDefaultVersions() {
+    fetch('/settings/versions/import_defaults', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            updateCanProceed();
+            window.location.reload();
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .catch(error => {
+        console.error('Error importing default versions:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            message: 'Error importing default versions: ' + error.message
+        });
+    });
+}
+
+function addSeparateVersions() {
+    fetch('/settings/versions/add_separate_versions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            updateCanProceed();
+            window.location.reload();
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .catch(error => {
+        console.error('Error adding separate versions:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            message: 'Error adding separate versions: ' + error.message
+        });
+    });
+}
+
+// Initialize on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', function() {
+    initializeVersionButtons();
+    // Check if we have any versions and update can_proceed accordingly
+    const existingVersions = document.querySelector('#existing-versions');
+    if (existingVersions && existingVersions.querySelector('.version-item')) {
+        updateCanProceed();
+    }
+});
+
+// Re-initialize when content is updated
+document.addEventListener('scrapingContentLoaded', initializeVersionButtons);
+</script>
+
+{% include 'onboarding_navigation.html' %}
+{% endblock %} 

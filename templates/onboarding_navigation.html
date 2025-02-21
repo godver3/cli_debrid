@@ -1,13 +1,16 @@
 <div class="onboarding-container">
     <div class="onboarding-navigation">
-        {% if current_step > 1 %}
-            <button class="onboarding-btn prev-step-btn">Previous Step</button>
+        {% set step_num = current_step if current_step != '3a' else 3.5 %}
+        {% if step_num|float > 1 %}
+            <button class="prev-step-btn onboarding-btn">Previous Step</button>
         {% endif %}
-        {% if current_step < 5 %}
-            <button class="onboarding-btn next-step-btn" {% if not can_proceed %}disabled{% endif %}>Next Step</button>
+        {% if step_num|float < 6 %}
+            <button class="next-step-btn onboarding-btn" {% if not session.get('onboarding_step_' ~ current_step ~ '_can_proceed', False) %}disabled{% endif %}>
+                {% if current_step == 3 %}Configure Versions{% else %}Next Step{% endif %}
+            </button>
         {% endif %}
-        {% if current_step == 5 %}
-            <button id="finish-setup" class="onboarding-btn finish-setup-btn" disabled>Finish Setup</button>
+        {% if step_num|float == 6 %}
+            <button class="finish-setup-btn onboarding-btn">Finish Setup</button>
         {% endif %}
     </div>
 </div>
@@ -24,20 +27,41 @@
 document.addEventListener('DOMContentLoaded', function() {
     const prevStepBtn = document.querySelector('.prev-step-btn');
     const nextStepBtn = document.querySelector('.next-step-btn');
-    const finishSetupBtn = document.getElementById('finish-setup');
+    const finishSetupBtn = document.querySelector('.finish-setup-btn');
 
     if (prevStepBtn) {
         prevStepBtn.addEventListener('click', function() {
-            window.location.href = '{{ url_for("onboarding.onboarding_step", step=current_step-1) }}';
+            const currentStep = '{{ current_step }}';
+            if (currentStep === '4') {
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step="3a") }}';
+            } else if (currentStep === '3a') {
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step=3) }}';
+            } else {
+                const prevStep = parseInt(currentStep) - 1;
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step="") }}' + prevStep;
+            }
         });
     }
 
     if (nextStepBtn) {
-        const currentStep = parseInt('{{ current_step }}');
-        if (currentStep !== 2) {
+        const currentStep = '{{ current_step }}';
+        if (currentStep === '3') {
             nextStepBtn.addEventListener('click', function() {
                 if (!this.disabled) {
-                    window.location.href = '{{ url_for("onboarding.onboarding_step", step=current_step+1) }}';
+                    window.location.href = '{{ url_for("onboarding.onboarding_step", step="3a") }}';
+                }
+            });
+        } else if (currentStep === '3a') {
+            nextStepBtn.addEventListener('click', function() {
+                if (!this.disabled) {
+                    window.location.href = '{{ url_for("onboarding.onboarding_step", step=4) }}';
+                }
+            });
+        } else if (currentStep !== '2') {
+            nextStepBtn.addEventListener('click', function() {
+                if (!this.disabled) {
+                    const nextStep = parseInt(currentStep) + 1;
+                    window.location.href = '{{ url_for("onboarding.onboarding_step", step="") }}' + nextStep;
                 }
             });
         }

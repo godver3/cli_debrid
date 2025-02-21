@@ -777,13 +777,8 @@
 
     function setupOptionSelection() {
         const options = document.querySelectorAll('.setup-option');
-        const finishSetupBtn = document.getElementById('finish-setup');
+        const nextStepBtn = document.querySelector('.next-step-btn');
         const optionsContainer = document.querySelector('.setup-options-container');
-
-        if (!finishSetupBtn) {
-            console.error('Finish setup button not found');
-            return;
-        }
 
         options.forEach(option => {
             option.addEventListener('click', () => {
@@ -814,43 +809,35 @@
                         infoSection.classList.add('active');
                     }, 50);
 
-                    // Control finish button state based on setup type
-                        if (setupType === 'convert-to-symlink') {
+                    // Control next step button state based on setup type
+                    if (setupType === 'convert-to-symlink') {
                         // For conversion, disable until conversion is complete
-                        finishSetupBtn.disabled = true;
                         window.conversionComplete = false;
+                        if (nextStepBtn) nextStepBtn.disabled = true;
                     } else if (setupType === 'plex-symlink') {
                         // For existing symlink library, disable until scan is complete
-                        finishSetupBtn.disabled = true;
                         window.scanComplete = false;
+                        if (nextStepBtn) nextStepBtn.disabled = true;
                     } else {
                         // For all other options, enable immediately
-                        finishSetupBtn.disabled = false;
+                        if (nextStepBtn) nextStepBtn.disabled = false;
+                        // Update can_proceed in the session
+                        fetch('/onboarding/update_can_proceed', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                step: '5',
+                                can_proceed: true
+                            })
+                        });
                     }
                 } else {
                     console.error('Info section not found for:', setupType);
                 }
             });
         });
-    }
-
-    // Add these functions to handle completion states
-    function markScanComplete() {
-        window.scanComplete = true;
-        const finishSetupBtn = document.getElementById('finish-setup');
-        const selectedOption = document.querySelector('.setup-option.selected');
-        if (selectedOption && selectedOption.dataset.option === 'plex-symlink') {
-            finishSetupBtn.disabled = false;
-        }
-    }
-
-    function markConversionComplete() {
-        window.conversionComplete = true;
-        const finishSetupBtn = document.getElementById('finish-setup');
-        const selectedOption = document.querySelector('.setup-option.selected');
-        if (selectedOption && selectedOption.dataset.option === 'convert-to-symlink') {
-            finishSetupBtn.disabled = false;
-        }
     }
 
     function setupConversionHandlers() {
@@ -999,8 +986,20 @@
                                                 scanResults.insertAdjacentHTML('afterend', nextStepsHtml);
                                             }
 
-                                            // Mark conversion as complete and enable finish button
-                                            markConversionComplete();
+                                            // Mark conversion as complete
+                                            window.conversionComplete = true;
+                                            
+                                            // Update can_proceed in the session
+                                            fetch('/onboarding/update_can_proceed', {
+                                                method: 'POST',
+                                                headers: {
+                                                    'Content-Type': 'application/json',
+                                                },
+                                                body: JSON.stringify({
+                                                    step: '5',
+                                                    can_proceed: true
+                                                })
+                                            });
                                         } else if (progress.status === 'error') {
                                             showPopup({
                                                 type: POPUP_TYPES.ERROR,
@@ -1040,6 +1039,26 @@
                         });
                     }
                 });
+            });
+        }
+    }
+
+    // Add these functions to handle completion states
+    function markScanComplete() {
+        window.scanComplete = true;
+        const nextStepBtn = document.querySelector('.next-step-btn');
+        if (nextStepBtn) {
+            nextStepBtn.disabled = false;
+            // Update can_proceed in the session
+            fetch('/onboarding/update_can_proceed', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    step: '5',
+                    can_proceed: true
+                })
             });
         }
     }

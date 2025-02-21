@@ -274,7 +274,9 @@ def process_item_for_response(item, queue_name):
 @queues_bp.route('/api/queue-stream')
 @user_required
 def queue_stream():
-    """Stream queue updates. No caching for streaming endpoints."""
+    """Stream queue updates with a fixed limit of 500 items per queue."""
+    ITEMS_LIMIT = 500  # Fixed limit of 500 items per queue
+
     def generate():
         while True:
             try:
@@ -300,11 +302,22 @@ def queue_stream():
                 
                 # Process all queues with their specific logic
                 queue_counts = {}
+                hidden_counts = {}
                 for queue_name, items in queue_contents.items():
-                    queue_counts[queue_name] = len(items)
+                    # Store total count
+                    total_count = len(items)
+                    queue_counts[queue_name] = total_count
+                    
+                    # Calculate hidden items
+                    hidden_count = max(0, total_count - ITEMS_LIMIT)
+                    if hidden_count > 0:
+                        hidden_counts[queue_name] = hidden_count
+                    
+                    # Apply fixed limit to items
+                    limited_items = items[:ITEMS_LIMIT]
                     
                     # Process each item in the queue
-                    processed_items = [process_item_for_response(item, queue_name) for item in items]
+                    processed_items = [process_item_for_response(item, queue_name) for item in limited_items]
                     queue_contents[queue_name] = processed_items
                     
                     # Pre-consolidate data for specific queues
@@ -318,6 +331,7 @@ def queue_stream():
                 data = {
                     "contents": queue_contents,
                     "queue_counts": queue_counts,
+                    "hidden_counts": hidden_counts,
                     "program_running": program_running,
                     "program_initializing": program_initializing,
                     "initialization_status": initialization_status

@@ -351,7 +351,6 @@ def delete_scraper(scraper_id):
         return True
     return False
 
-# Add this function if it doesn't exist
 def save_version_settings(version, settings):
     config = load_config()
     if 'Scraping' not in config:
@@ -359,12 +358,20 @@ def save_version_settings(version, settings):
     if 'versions' not in config['Scraping']:
         config['Scraping']['versions'] = {}
     
-    # Ensure max_size_gb is properly handled
-    if 'max_size_gb' in settings:
-        if settings['max_size_gb'] == '' or settings['max_size_gb'] is None:
-            settings['max_size_gb'] = float('inf')
-        else:
-            settings['max_size_gb'] = float(settings['max_size_gb'])
+    # Handle infinity values for max_size_gb and max_bitrate_mbps
+    for field in ['max_size_gb', 'max_bitrate_mbps']:
+        if field in settings:
+            if settings[field] == '' or settings[field] is None:
+                settings[field] = float('inf')
+            else:
+                try:
+                    if isinstance(settings[field], str) and settings[field].lower() in ('inf', 'infinity'):
+                        settings[field] = float('inf')
+                    else:
+                        settings[field] = float(settings[field])
+                except (ValueError, TypeError):
+                    settings[field] = float('inf')
+                    logging.warning(f"Invalid {field} value, setting to infinity")
     
     config['Scraping']['versions'][version] = settings
     save_config(config)
@@ -375,9 +382,10 @@ def get_version_settings(version):
     versions = scraping_config.get('versions', {})
     settings = versions.get(version, {})
     
-    # Convert max_size_gb back to empty string if it's infinity
-    if 'max_size_gb' in settings and settings['max_size_gb'] == float('inf'):
-        settings['max_size_gb'] = ''
+    # Convert infinity values back to empty string for both fields
+    for field in ['max_size_gb', 'max_bitrate_mbps']:
+        if field in settings and settings[field] == float('inf'):
+            settings[field] = ''
     
     logging.debug(f"Fetched settings for version '{version}': {settings}")
     

@@ -750,6 +750,17 @@ def run_scrape():
         updated_version_settings = original_version_settings.copy()
         updated_version_settings.update(modified_settings)
 
+        # Handle special values for max_bitrate_mbps and min_bitrate_mbps
+        for key in ['max_bitrate_mbps', 'min_bitrate_mbps']:
+            if key in updated_version_settings:
+                if updated_version_settings[key] == '' or updated_version_settings[key] is None:
+                    updated_version_settings[key] = float('inf') if key.startswith('max_') else 0.0
+                else:
+                    try:
+                        updated_version_settings[key] = float(updated_version_settings[key])
+                    except (ValueError, TypeError):
+                        updated_version_settings[key] = float('inf') if key.startswith('max_') else 0.0
+
         # Save modified settings temporarily
         config['Scraping']['versions'][version] = updated_version_settings
         save_config(config)
