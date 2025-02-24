@@ -198,84 +198,6 @@
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
-// Define the handler functions outside of any event listener
-const defaultVersionHandler = function(event) {
-    event.preventDefault();
-    showAddDefaultVersionConfirmation();
-};
-
-const importVersionsHandler = function(event) {
-    event.preventDefault();
-    showImportConfirmation();
-};
-
-const separateVersionsHandler = function(event) {
-    event.preventDefault();
-    showSeparateVersionsConfirmation();
-};
-
-// Single initialization function
-function initializeVersionButtons() {
-    const addDefaultButton = document.querySelector('#add-default-version-btn');
-    const importButton = document.querySelector('#import-default-versions-btn');
-    const addSeparateButton = document.querySelector('#add-separate-versions-btn');
-
-    // Remove existing listeners first
-    if (addDefaultButton) {
-        addDefaultButton.removeEventListener('click', defaultVersionHandler);
-        addDefaultButton.addEventListener('click', defaultVersionHandler);
-    }
-
-    if (importButton) {
-        importButton.removeEventListener('click', importVersionsHandler);
-        importButton.addEventListener('click', importVersionsHandler);
-    }
-
-    if (addSeparateButton) {
-        addSeparateButton.removeEventListener('click', separateVersionsHandler);
-        addSeparateButton.addEventListener('click', separateVersionsHandler);
-    }
-}
-
-function showAddDefaultVersionConfirmation() {
-    showPopup({
-        type: POPUP_TYPES.CONFIRM,
-        title: 'Add Default Version',
-        message: 'This will replace any existing versions with a single default version with recommended settings. You can customize these settings later in the Settings page.',
-        confirmText: 'Replace',
-        cancelText: 'Cancel',
-        onConfirm: () => {
-            addDefaultVersion();
-        }
-    });
-}
-
-function showImportConfirmation() {
-    showPopup({
-        type: POPUP_TYPES.CONFIRM,
-        title: 'Import Alternate Default Versions',
-        message: 'These alternates include comprehensive 2160p, REMUX and WEB versions for the connoisseur. Are you sure you want to continue?',
-        confirmText: 'Import',
-        cancelText: 'Cancel',
-        onConfirm: () => {
-            importDefaultVersions();
-        }
-    });
-}
-
-function showSeparateVersionsConfirmation() {
-    showPopup({
-        type: POPUP_TYPES.CONFIRM,
-        title: 'Add Separate Versions',
-        message: 'This will create two separate versions: one for 1080p content and another for 4K HDR content. You can customize these settings later in the Settings page.',
-        confirmText: 'Create Versions',
-        cancelText: 'Cancel',
-        onConfirm: () => {
-            addSeparateVersions();
-        }
-    });
-}
-
 function updateCanProceed() {
     fetch('/onboarding/update_can_proceed', {
         method: 'POST',
@@ -300,7 +222,8 @@ function updateCanProceed() {
 }
 
 function addDefaultVersion() {
-    fetch('/settings/versions/add_default', {
+    // First clear all versions
+    fetch('/settings/versions/clear_all', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -309,48 +232,38 @@ function addDefaultVersion() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            updateCanProceed();
-            window.location.reload();
+            // Then add the default version
+            return fetch('/settings/versions/add_default', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
         } else {
-            throw new Error(data.error || 'Unknown error');
-        }
-    })
-    .catch(error => {
-        console.error('Error adding default version:', error);
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            message: 'Error adding default version: ' + error.message
-        });
-    });
-}
-
-function importDefaultVersions() {
-    fetch('/settings/versions/import_defaults', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
+            throw new Error(data.error || 'Failed to clear versions');
         }
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
             updateCanProceed();
-            window.location.reload();
+            location.reload();
         } else {
-            throw new Error(data.error || 'Unknown error');
+            throw new Error(data.error || 'Failed to add default version');
         }
     })
     .catch(error => {
-        console.error('Error importing default versions:', error);
+        console.error('Error:', error);
         showPopup({
             type: POPUP_TYPES.ERROR,
-            message: 'Error importing default versions: ' + error.message
+            message: 'Error: ' + error.message
         });
     });
 }
 
 function addSeparateVersions() {
-    fetch('/settings/versions/add_separate_versions', {
+    // First clear all versions
+    fetch('/settings/versions/clear_all', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -359,34 +272,145 @@ function addSeparateVersions() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            updateCanProceed();
-            window.location.reload();
+            // Then add the separate versions
+            return fetch('/settings/versions/add_separate_versions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
         } else {
-            throw new Error(data.error || 'Unknown error');
+            throw new Error(data.error || 'Failed to clear versions');
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            updateCanProceed();
+            location.reload();
+        } else {
+            throw new Error(data.error || 'Failed to add separate versions');
         }
     })
     .catch(error => {
-        console.error('Error adding separate versions:', error);
+        console.error('Error:', error);
         showPopup({
             type: POPUP_TYPES.ERROR,
-            message: 'Error adding separate versions: ' + error.message
+            message: 'Error: ' + error.message
         });
     });
 }
 
-// Initialize on DOMContentLoaded
+function importDefaultVersions() {
+    // First clear all versions
+    fetch('/settings/versions/clear_all', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Then import the default versions
+            return fetch('/settings/versions/import_defaults', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
+        } else {
+            throw new Error(data.error || 'Failed to clear versions');
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            updateCanProceed();
+            location.reload();
+        } else {
+            throw new Error(data.error || 'Failed to import versions');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            message: 'Error: ' + error.message
+        });
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-    initializeVersionButtons();
-    // Check if we have any versions and update can_proceed accordingly
+    // Initialize advice section toggle
+    const adviceHeader = document.querySelector('.advice-header');
+    const adviceContent = document.querySelector('.advice-content');
+    const toggleIcon = document.querySelector('.toggle-icon');
+    
+    if (adviceHeader && adviceContent && toggleIcon) {
+        adviceHeader.addEventListener('click', function() {
+            adviceContent.style.display = adviceContent.style.display === 'none' ? 'block' : 'none';
+            toggleIcon.style.transform = adviceContent.style.display === 'none' ? 'rotate(0deg)' : 'rotate(180deg)';
+        });
+    }
+    
+    // Check if we already have versions and enable the next button if we do
     const existingVersions = document.querySelector('#existing-versions');
     if (existingVersions && existingVersions.querySelector('.version-item')) {
         updateCanProceed();
     }
-});
 
-// Re-initialize when content is updated
-document.addEventListener('scrapingContentLoaded', initializeVersionButtons);
+    // Initialize version buttons
+    const defaultVersionBtn = document.getElementById('add-default-version-btn');
+    const separateVersionsBtn = document.getElementById('add-separate-versions-btn');
+    const importVersionsBtn = document.getElementById('import-default-versions-btn');
+    
+    if (defaultVersionBtn) {
+        defaultVersionBtn.addEventListener('click', function() {
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: 'Use Default Version',
+                message: 'This will apply a single default version with recommended settings.',
+                confirmText: 'Replace',
+                cancelText: 'Cancel',
+                onConfirm: () => {
+                    addDefaultVersion();
+                }
+            });
+        });
+    }
+    
+    if (separateVersionsBtn) {
+        separateVersionsBtn.addEventListener('click', function() {
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: 'Use Separate Versions',
+                message: 'This will apply two separate versions: one for 1080p content and another for 4K HDR content.',
+                confirmText: 'Replace',
+                cancelText: 'Cancel',
+                onConfirm: () => {
+                    addSeparateVersions();
+                }
+            });
+        });
+    }
+    
+    if (importVersionsBtn) {
+        importVersionsBtn.addEventListener('click', function() {
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: 'Use Alternate Default Versions',
+                message: 'This apply alternate versions that include comprehensive 2160p, REMUX and WEB versions for the connoisseur.',
+                confirmText: 'Replace',
+                cancelText: 'Cancel',
+                onConfirm: () => {
+                    importDefaultVersions();
+                }
+            });
+        });
+    }
+});
 </script>
 
 {% include 'onboarding_navigation.html' %}
-{% endblock %} 
+{% endblock %}

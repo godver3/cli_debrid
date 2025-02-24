@@ -26,7 +26,13 @@ class DirectAPI:
 
     @staticmethod
     def get_show_metadata(imdb_id):
+        import logging
+        logging.info(f"DirectAPI.get_show_metadata called for {imdb_id}")
         metadata, source = MetadataManager.get_show_metadata(imdb_id)
+        if metadata and 'seasons' in metadata:
+            logging.info(f"DirectAPI got {len(metadata['seasons'])} seasons")
+            for season_num in metadata['seasons'].keys():
+                logging.info(f"Season {season_num} has {len(metadata['seasons'][season_num].get('episodes', {}))} episodes")
         return metadata, source
 
     @staticmethod

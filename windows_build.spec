@@ -36,7 +36,8 @@ individual_files = [
     ('branch_id', '.'),
     ('tooltip_schema.json', '.'),
     ('main.py', '.'),
-    ('cli_battery/main.py', 'cli_battery')
+    ('cli_battery/main.py', 'cli_battery'),
+    ('optional_default_versions.json', '.')
 ]
 
 for src, dst in individual_files:

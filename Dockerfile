@@ -5,7 +5,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install build dependencies and supervisor
-RUN apt-get update && apt-get install -y gcc supervisor ffmpeg gosu && \
+RUN apt-get update && apt-get install -y gcc supervisor gosu && \
     rm -rf /var/lib/apt/lists/*
 
 # Set default environment variables for PUID/PGID

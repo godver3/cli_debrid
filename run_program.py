@@ -1004,15 +1004,9 @@ class ProgramRunner:
                 
                 # Check if we've already found this file before
                 cache_key = f"{filled_by_title}:{filled_by_file}"
-                if cache_key in self.file_location_cache:
-                    cached_location = self.file_location_cache[cache_key]
-                    if cached_location is None:
-                        logging.debug(f"Skipping previously not found file: {filled_by_title}")
-                        not_found_items += 1
-                        continue
-                    elif cached_location == 'exists':
-                        logging.debug(f"Skipping previously verified file: {filled_by_title}")
-                        continue
+                if cache_key in self.file_location_cache and self.file_location_cache[cache_key] == 'exists':
+                    logging.debug(f"Skipping previously verified file: {filled_by_title}")
+                    continue
 
                 if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
                     # Try to find the file anywhere under plex_file_location
@@ -1021,15 +1015,17 @@ class ProgramRunner:
                     if found_path:
                         logging.info(f"Found file in alternate location: {found_path}")
                         actual_file_path = found_path
+                        self.file_location_cache[cache_key] = 'exists'
                     else:
                         not_found_items += 1
                         logging.debug(f"File not found on disk in any location:\n  {file_path}\n  {file_path_no_ext}")
-                        self.file_location_cache[cache_key] = None
                         continue
 
                 # Use the path that exists (prefer original if both exist)
                 actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
                 logging.info(f"Found file on disk: {actual_file_path}")
+                self.file_location_cache[cache_key] = 'exists'
+                
                 # Update item state to Collected
                 conn = get_db_connection()
                 cursor = conn.cursor()
@@ -1078,7 +1074,7 @@ class ProgramRunner:
                 return
 
         if not get_setting('Plex', 'url', default=False):
-            return
+                return
 
         try:
             plex_url = get_setting('Plex', 'url', default='')
@@ -1088,14 +1084,23 @@ class ProgramRunner:
                 logging.warning("Plex URL or token not configured")
                 return
 
-            # Connect to Plex server
+            # Connect to Plex server and log library information
             plex = PlexServer(plex_url, plex_token)
             sections = plex.library.sections()
             logging.info(f"Connected to Plex server, found {len(sections)} library sections")
+            
+            # Log detailed information about each library section
+            for section in sections:
+                logging.info(f"Library Section: {section.title}")
+                logging.info(f"  Type: {section.type}")
+                logging.info(f"  Locations:")
+                for location in section.locations:
+                    logging.info(f"    - {location}")
+                    if not os.path.exists(location):
+                        logging.warning(f"    Warning: Location does not exist: {location}")
 
             updated_sections = set()  # Track which sections we've updated
             updated_items = 0
-            skipped_items = 0
             not_found_items = 0
 
             for item in items:
@@ -1112,16 +1117,9 @@ class ProgramRunner:
                 
                 # Check if we've already found this file before
                 cache_key = f"{filled_by_title}:{filled_by_file}"
-                if cache_key in self.file_location_cache:
-                    cached_location = self.file_location_cache[cache_key]
-                    if cached_location is None:
-                        logging.debug(f"Skipping previously not found file: {filled_by_title}")
-                        not_found_items += 1
-                        continue
-                    elif cached_location == 'exists':
-                        logging.debug(f"Skipping previously verified file: {filled_by_title}")
-                        skipped_items += 1
-                        continue
+                if cache_key in self.file_location_cache and self.file_location_cache[cache_key] == 'exists':
+                    logging.debug(f"Skipping previously verified file: {filled_by_title}")
+                    continue
 
                 if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
                     # Try to find the file anywhere under plex_file_location
@@ -1130,79 +1128,49 @@ class ProgramRunner:
                     if found_path:
                         logging.info(f"Found file in alternate location: {found_path}")
                         actual_file_path = found_path
+                        self.file_location_cache[cache_key] = 'exists'
                     else:
                         not_found_items += 1
                         logging.debug(f"File not found on disk in any location:\n  {file_path}\n  {file_path_no_ext}")
-                        self.file_location_cache[cache_key] = None
                         continue
 
                 # Use the path that exists (prefer original if both exist)
                 actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
                 logging.info(f"Found file on disk: {actual_file_path}")
-                updated_items += 1
-
-                # Update all Plex sections using their root directories
+                self.file_location_cache[cache_key] = 'exists'
+                
+                # Update relevant Plex sections
                 for section in sections:
-                    logging.debug(f"Checking section: {section.title} (type: {section.type})")
                     if section in updated_sections:
-                        logging.debug(f"Section {section.title} already updated, skipping")
+                        logging.debug(f"Section {section.title} already updated this run, skipping")
                         continue
-                        
+                    
                     try:
-                        logging.debug(f"Section locations for {section.title}: {section.locations}")
+                        # Update each library location with the expected path structure
                         for location in section.locations:
-                            logging.debug(f"Checking location: {location}")
-                            # Try both with and without extension
-                            specific_path = os.path.join(location, filled_by_title)
-                            specific_path_no_ext = os.path.join(location, title_without_ext)
+                            expected_path = os.path.join(location, filled_by_title, filled_by_file)
+                            logging.debug(f"Updating Plex section '{section.title}' to scan:")
+                            logging.debug(f"  Location: {location}")
+                            logging.debug(f"  Expected path: {expected_path}")
                             
-                            logging.debug(f"Checking paths:\n  {specific_path}\n  {specific_path_no_ext}")
+                            section.update(path=expected_path)
+                            updated_sections.add(section)
+                            break  # Only need to update each section once
                             
-                            if os.path.exists(specific_path):
-                                logging.info(f"Updating Plex section '{section.title}' for path: {specific_path}")
-                                section.update(path=specific_path)
-                                updated_sections.add(section)
-                                break
-                            elif os.path.exists(specific_path_no_ext):
-                                logging.info(f"Updating Plex section '{section.title}' for path: {specific_path_no_ext}")
-                                section.update(path=specific_path_no_ext)
-                                updated_sections.add(section)
-                                break
-                            else:
-                                logging.debug(f"Neither path exists for section {section.title}")
                     except Exception as e:
                         logging.error(f"Failed to update Plex section '{section.title}': {str(e)}", exc_info=True)
 
-            logging.info(f"Plex update summary: {updated_items} items updated, {skipped_items} items skipped (cached), {not_found_items} items not found")
-            if len(updated_sections) > 0:
+            # Log summary of operations
+            logging.info(f"Plex update summary: {updated_items} items updated, {not_found_items} items not found")
+            if updated_sections:
                 logging.info("Updated Plex sections:")
                 for section in updated_sections:
                     logging.info(f"  - {section.title}")
-
-                # Send notification for Plex library update
-                try:
-                    from notifications import send_notifications
-                    from routes.settings_routes import get_enabled_notifications_for_category
-                    from extensions import app
-
-                    with app.app_context():
-                        response = get_enabled_notifications_for_category('plex')
-                        if response.json['success']:
-                            enabled_notifications = response.json['enabled_notifications']
-                            if enabled_notifications:
-                                notification_data = {
-                                    'updated_items': updated_items,
-                                    'skipped_items': skipped_items,
-                                    'not_found_items': not_found_items,
-                                    'updated_sections': [section.title for section in updated_sections],
-                                    'new_state': 'PlexUpdated'
-                                }
-                                send_notifications([notification_data], enabled_notifications, notification_category='plex')
-                except Exception as e:
-                    logging.error(f"Failed to send Plex update notification: {str(e)}")
+            else:
+                logging.info("No Plex sections required updates")
 
         except Exception as e:
-            logging.error(f"Error in task_check_plex_files: {str(e)}")
+            logging.error(f"Error during Plex library update: {str(e)}", exc_info=True)
 
     def task_update_show_ids(self):
         """Update show IDs (imdb_id and tmdb_id) in the database if they don't match the direct API."""

@@ -344,7 +344,20 @@ def manual_blacklist():
     
     # Get blacklist and sort by title
     blacklist = get_manual_blacklist()
-    sorted_blacklist = dict(sorted(blacklist.items(), key=lambda x: x[1]['title'].lower()))
+    
+    # Add error handling for sorting
+    def get_sort_key(item):
+        try:
+            title = item[1].get('title', '')
+            if not isinstance(title, str):
+                logging.warning(f"Invalid title type for IMDb ID {item[0]}: {type(title)}")
+                title = ''
+            return title.lower()
+        except Exception as e:
+            logging.error(f"Error getting sort key for blacklist item {item[0]}: {str(e)}")
+            return ''
+    
+    sorted_blacklist = dict(sorted(blacklist.items(), key=get_sort_key))
     
     # Fetch season information for TV shows
     direct_api = DirectAPI()
@@ -356,6 +369,7 @@ def manual_blacklist():
                     logging.debug(f"Seasons data for {imdb_id}: {seasons_data}")
                     if isinstance(seasons_data, str):
                         seasons_data = json.loads(seasons_data)
+                        
                     # Handle the new format where seasons are direct keys
                     if isinstance(seasons_data, dict) and all(str(k).isdigit() for k in seasons_data.keys()):
                         item['available_seasons'] = sorted([int(season) for season in seasons_data.keys()])

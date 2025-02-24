@@ -259,6 +259,8 @@ def get_recently_aired_and_airing_soon():
         # Format episode ranges
         episode_parts = []
         for start, end in ranges:
+            if start is None or end is None:
+                continue
             if start == end:
                 episode_parts.append(f"E{start:02d}")
             else:

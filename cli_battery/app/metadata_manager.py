@@ -416,7 +416,15 @@ class MetadataManager:
                 new_metadata = MetadataManager.refresh_metadata(imdb_id)
                 return {key: new_metadata.get(key, json.loads(metadata.value))}
 
-            return {key: json.loads(metadata.value)}
+            try:
+                # Always try to parse as JSON first, fall back to string if it fails
+                try:
+                    return {key: json.loads(metadata.value)}
+                except json.JSONDecodeError:
+                    return {key: metadata.value}
+            except Exception as e:
+                logger.error(f"Error processing metadata for key {key}: {str(e)}")
+                return {key: metadata.value}
 
     @staticmethod
     def refresh_metadata(imdb_id, existing_session=None):
@@ -693,8 +701,13 @@ class MetadataManager:
                 show_metadata = {}
                 for m in show.item_metadata:
                     try:
-                        show_metadata[m.key] = json.loads(m.value) if isinstance(m.value, str) else m.value
-                    except json.JSONDecodeError:
+                        # Always try to parse as JSON first, fall back to string if it fails
+                        try:
+                            show_metadata[m.key] = json.loads(m.value)
+                        except json.JSONDecodeError:
+                            show_metadata[m.key] = m.value
+                    except Exception as e:
+                        logger.error(f"Error processing metadata for key {m.key}: {str(e)}")
                         show_metadata[m.key] = m.value
 
                 episode_data = {
@@ -752,20 +765,23 @@ class MetadataManager:
     def get_movie_metadata(imdb_id):
         with DbSession() as session:
             item = session.query(Item).options(joinedload(Item.item_metadata)).filter_by(imdb_id=imdb_id, type='movie').first()
-            if not item:
-                return MetadataManager.refresh_movie_metadata(imdb_id)
+            if item:
+                metadata = {}
+                for m in item.item_metadata:
+                    try:
+                        # Always try to parse as JSON first, fall back to string if it fails
+                        try:
+                            metadata[m.key] = json.loads(m.value)
+                        except json.JSONDecodeError:
+                            metadata[m.key] = m.value
+                    except Exception as e:
+                        logger.error(f"Error processing metadata for key {m.key}: {str(e)}")
+                        metadata[m.key] = m.value
 
-            metadata = {}
-            for m in item.item_metadata:
-                try:
-                    metadata[m.key] = json.loads(m.value)
-                except json.JSONDecodeError:
-                    metadata[m.key] = m.value
+                if MetadataManager.is_metadata_stale(item.updated_at):
+                    return MetadataManager.refresh_movie_metadata(imdb_id)
 
-            if MetadataManager.is_metadata_stale(item.updated_at):
-                return MetadataManager.refresh_movie_metadata(imdb_id)
-
-            return metadata, "battery"
+                return metadata, "battery"
             
     @staticmethod
     def refresh_movie_metadata(imdb_id):
@@ -824,6 +840,8 @@ class MetadataManager:
     @staticmethod
     def get_show_metadata(imdb_id):
         try:
+            import logging
+            logging.info(f"MetadataManager.get_show_metadata called for {imdb_id}")
             with DbSession() as session:
                 item = session.query(Item).filter_by(imdb_id=imdb_id, type='show').first()
                 if item:
@@ -831,45 +849,41 @@ class MetadataManager:
                     if item.updated_at.tzinfo is None:
                         item.updated_at = item.updated_at.replace(tzinfo=timezone.utc)
                     
+                    metadata = {}
+                    for m in item.item_metadata:
+                        try:
+                            # Always try to parse JSON first, fall back to string if it fails
+                            try:
+                                metadata[m.key] = json.loads(m.value)
+                            except json.JSONDecodeError:
+                                metadata[m.key] = m.value
+                        except Exception as e:
+                            logger.error(f"Error processing metadata for key {m.key}: {str(e)}")
+                            metadata[m.key] = m.value
+
                     if MetadataManager.is_metadata_stale(item.updated_at):
+                        logging.info("Metadata is stale, refreshing from Trakt")
                         trakt = TraktMetadata()
                         show_data = trakt.get_show_metadata(imdb_id)
                         if show_data:
-                            # Begin a new transaction for the update
                             try:
                                 MetadataManager.update_show_metadata(item, show_data, session)
-                                # Verify the data was saved by re-querying
-                                session.refresh(item)
-                                metadata = session.query(Metadata).filter_by(item_id=item.id).all()
-                                if not metadata:
-                                    logger.error(f"Failed to save metadata for {imdb_id}")
-                                    return show_data, "trakt (not saved)"
                                 return show_data, "trakt (refreshed)"
                             except Exception as e:
                                 logger.error(f"Error saving show metadata for {imdb_id}: {str(e)}")
                                 session.rollback()
                                 return show_data, "trakt (save failed)"
                     else:
-                        metadata = session.query(Metadata).filter_by(item_id=item.id).all()
-                        metadata_dict = {}
-                        for m in metadata:
-                            try:
-                                metadata_dict[m.key] = json.loads(m.value) if isinstance(m.value, str) else m.value
-                            except json.JSONDecodeError:
-                                metadata_dict[m.key] = m.value
-
-                        # Verify seasons data exists
-                        if 'seasons' not in metadata_dict:
-                            logger.warning(f"No seasons data found in cached metadata for {imdb_id}, refreshing...")
-                            trakt = TraktMetadata()
-                            show_data = trakt.get_show_metadata(imdb_id)
-                            if show_data:
-                                MetadataManager.update_show_metadata(item, show_data, session)
-                                return show_data, "trakt (missing seasons)"
-                        
-                        return metadata_dict, "battery"
+                        if 'seasons' in metadata:
+                            logging.info(f"Found {len(metadata['seasons'])} seasons in cached metadata")
+                            for season_num in metadata['seasons'].keys():
+                                logging.info(f"Cached season {season_num} has {len(metadata['seasons'][season_num].get('episodes', {}))} episodes")
+                        else:
+                            logging.warning("No seasons data in cached metadata")
+                        return metadata, "battery"
 
                 # Fetch from Trakt if not in database
+                logging.info("No metadata in database, fetching from Trakt")
                 trakt = TraktMetadata()
                 show_data = trakt.get_show_metadata(imdb_id)
                 if show_data:
