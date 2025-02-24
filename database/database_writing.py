@@ -36,7 +36,16 @@ def update_year(item_id: int, year: int):
     finally:
         conn.close()
 
-def update_release_date_and_state(item_id, release_date, new_state, early_release=None):
+def update_release_date_and_state(item_id, release_date, new_state, early_release=None, physical_release_date=None):
+    """Update the release date and state of a media item.
+    
+    Args:
+        item_id: The ID of the media item to update
+        release_date: The new release date
+        new_state: The new state
+        early_release: Optional flag for early release
+        physical_release_date: Optional physical release date for movies
+    """
     conn = get_db_connection()
     try:
         # First, fetch the current item data
@@ -53,6 +62,10 @@ def update_release_date_and_state(item_id, release_date, new_state, early_releas
             if early_release is not None:
                 update_query += ', early_release = ?'
                 params.append(early_release)
+                
+            if physical_release_date is not None:
+                update_query += ', physical_release_date = ?'
+                params.append(physical_release_date)
                 
             update_query += ' WHERE id = ?'
             params.append(item_id)

@@ -645,9 +645,21 @@ def import_default_versions():
         config = load_config()
         if 'Scraping' not in config:
             config['Scraping'] = {}
+        if 'versions' not in config['Scraping']:
+            config['Scraping']['versions'] = {}
             
-        # Replace all versions with defaults
-        config['Scraping']['versions'] = default_versions['versions']
+        # Add each default version with a unique name
+        for version_name, version_config in default_versions['versions'].items():
+            base_name = version_name
+            counter = 1
+            new_name = base_name
+            
+            # Find a unique name for this version
+            while new_name in config['Scraping']['versions']:
+                new_name = f"{base_name} {counter}"
+                counter += 1
+                
+            config['Scraping']['versions'][new_name] = version_config
         
         # Save the updated config
         save_config(config)
@@ -975,8 +987,18 @@ def add_default_version():
             'require_physical_release': version_schema['require_physical_release']['default']
         }
 
-        # Replace all versions with just the default version
-        config['Scraping']['versions'] = {'Default': default_version}
+        # Add the default version while preserving existing versions
+        if 'versions' not in config['Scraping']:
+            config['Scraping']['versions'] = {}
+        
+        # Find a unique name for the default version
+        version_name = 'Default'
+        counter = 1
+        while version_name in config['Scraping']['versions']:
+            version_name = f'Default {counter}'
+            counter += 1
+            
+        config['Scraping']['versions'][version_name] = default_version
         save_config(config)
 
         return jsonify({'success': True})
@@ -1107,13 +1129,41 @@ def add_separate_versions():
             ]
         })
 
-        # Replace all versions with our two new versions
-        config['Scraping']['versions'] = {
-            '1080p': version_1080p,
-            '2160p': version_4k
-        }
+        # Add the new versions while preserving existing versions
+        if 'versions' not in config['Scraping']:
+            config['Scraping']['versions'] = {}
+        
+        # Find unique names for the versions
+        version_1080p_name = '1080p'
+        version_4k_name = '2160p'
+        counter_1080p = 1
+        counter_4k = 1
+        
+        while version_1080p_name in config['Scraping']['versions']:
+            version_1080p_name = f'1080p {counter_1080p}'
+            counter_1080p += 1
+            
+        while version_4k_name in config['Scraping']['versions']:
+            version_4k_name = f'2160p {counter_4k}'
+            counter_4k += 1
+            
+        # Add the new versions
+        config['Scraping']['versions'][version_1080p_name] = version_1080p
+        config['Scraping']['versions'][version_4k_name] = version_4k
         save_config(config)
 
         return jsonify({'success': True})
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/versions/clear_all', methods=['POST'])
+def clear_all_versions():
+    try:
+        config = load_config()
+        if 'Scraping' in config:
+            config['Scraping']['versions'] = {}
+            save_config(config)
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error clearing versions: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

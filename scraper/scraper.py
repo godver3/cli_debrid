@@ -70,26 +70,33 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         if version == "No Version":
             version = None
             
-        # Get preferred alias first
-        preferred_alias = get_preferred_alias(tmdb_id, imdb_id, content_type, season)
-        if preferred_alias:
-            logging.info(f"Found preferred alias: {preferred_alias}")
-
-        # Get all available aliases
-        item_aliases = {}
-        if content_type.lower() == 'movie':
-            item_aliases, _ = direct_api.get_movie_aliases(imdb_id)
+        # Check if alias usage is disabled
+        aliases_disabled = os.path.exists(os.path.join(os.path.dirname(__file__), '.alias_disabled'))
+        if aliases_disabled:
+            logging.info("Alias usage is temporarily disabled")
+            preferred_alias = None
+            matching_aliases = []
         else:
-            item_aliases, _ = direct_api.get_show_aliases(imdb_id)
+            # Get preferred alias first
+            preferred_alias = get_preferred_alias(tmdb_id, imdb_id, content_type, season)
+            if preferred_alias:
+                logging.info(f"Found preferred alias: {preferred_alias}")
 
-        media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
-        logging.info(f"Media country code (aliases): {media_country_code}")
-        
-        matching_aliases = []
-        if item_aliases and media_country_code in item_aliases:
-            matching_aliases = [alias for alias in item_aliases[media_country_code] if alias.lower() != title.lower()]
-            matching_aliases = list(dict.fromkeys(matching_aliases))
-            logging.info(f"Found {len(matching_aliases)} matching aliases: {matching_aliases}")
+            # Get all available aliases
+            item_aliases = {}
+            if content_type.lower() == 'movie':
+                item_aliases, _ = direct_api.get_movie_aliases(imdb_id)
+            else:
+                item_aliases, _ = direct_api.get_show_aliases(imdb_id)
+
+            media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
+            logging.info(f"Media country code (aliases): {media_country_code}")
+            
+            matching_aliases = []
+            if item_aliases and media_country_code in item_aliases:
+                matching_aliases = [alias for alias in item_aliases[media_country_code] if alias.lower() != title.lower()]
+                matching_aliases = list(dict.fromkeys(matching_aliases))
+                logging.info(f"Found {len(matching_aliases)} matching aliases: {matching_aliases}")
 
         # Initialize anime-specific variables
         genres = filter_genres(genres)
@@ -245,7 +252,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # First pass: Try original title and preferred alias together
         titles_to_try = [('original', title)]
-        if preferred_alias:
+        if not aliases_disabled and preferred_alias:
             titles_to_try.append(('preferred_alias', preferred_alias))
 
         for source, search_title in titles_to_try:
@@ -270,7 +277,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     all_filtered_out_results.extend(filtered_out_results)
 
         # If no results from first pass, try aliases
-        if not all_filtered_results and matching_aliases:
+        if not aliases_disabled and not all_filtered_results and matching_aliases:
             logging.info("No results from first pass, trying aliases...")
             best_alias = None
             best_alias_results = []

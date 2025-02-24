@@ -6,9 +6,9 @@
 
 <div class="version-management-buttons">
     <button id="add-version-btn" class="add-version-link">Add New Version</button>
-    <button id="add-default-version-btn" class="add-version-link">Use Default Version</button>
-    <button id="add-separate-versions-btn" class="add-version-link">Use Separate 1080p/4K Versions</button>
-    <button id="import-default-versions-btn" class="import-versions-link">Use Alternate Default Versions</button>
+    <button id="add-default-version-btn" class="add-version-link">Add Default Version</button>
+    <button id="add-separate-versions-btn" class="add-version-link">Add Separate 1080p/4K Versions</button>
+    <button id="import-default-versions-btn" class="import-versions-link">Add Alternate Default Versions</button>
 </div>
 
 <script>
@@ -81,9 +81,9 @@
     function showImportConfirmation() {
         window.showPopup({
             type: POPUP_TYPES.CONFIRM,
-            title: 'Import Alternate Default Versions',
-            message: 'These altnerates include comprehensive 2160p, REMUX and WEB versions for the connoisseur. Are you sure you want to continue?',
-            confirmText: 'Import',
+            title: 'Add Alternate Default Versions',
+            message: 'This will add alternate versions that include comprehensive 2160p, REMUX and WEB versions for the connoisseur.',
+            confirmText: 'Add',
             cancelText: 'Cancel',
             onConfirm: () => {
                 importDefaultVersions();
@@ -95,8 +95,8 @@
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Add Default Version',
-            message: 'This will replace any existing versions with a single default version with recommended settings.',
-            confirmText: 'Replace',
+            message: 'This will add a new version with recommended default settings.',
+            confirmText: 'Add',
             cancelText: 'Cancel',
             onConfirm: () => {
                 addDefaultVersion();
@@ -108,8 +108,8 @@
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Add Separate Versions',
-            message: 'This will create two separate versions: one for 1080p content and another for 4K HDR content.',
-            confirmText: 'Create Versions',
+            message: 'This will add two new versions: one for 1080p content and another for 4K HDR content.',
+            confirmText: 'Add Versions',
             cancelText: 'Cancel',
             onConfirm: () => {
                 addSeparateVersions();

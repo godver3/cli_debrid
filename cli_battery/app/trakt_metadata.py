@@ -174,19 +174,8 @@ class TraktMetadata:
         return None
 
     def get_show_seasons_and_episodes(self, imdb_id):
-        # First search to get the show's Trakt slug
-        logger.debug(f"Searching for show slug with IMDb ID: {imdb_id}")
-        search_result = self._search_by_imdb(imdb_id)
-        if not search_result or search_result['type'] != 'show':
-            logger.warning(f"Could not find show or invalid type for IMDb ID: {imdb_id}")
-            return None, None
-            
-        show = search_result['show']
-        slug = show['ids']['slug']
-        logger.debug(f"Found show slug: {slug}")
-        
-        # Now get the seasons data using the slug
-        url = f"{self.base_url}/shows/{slug}/seasons?extended=full,episodes"
+        # Get seasons data directly using IMDB ID
+        url = f"{self.base_url}/shows/{imdb_id}/seasons?extended=full,episodes"
         logger.debug(f"Fetching seasons data from: {url}")
         response = self._make_request(url)
         if response and response.status_code == 200:
