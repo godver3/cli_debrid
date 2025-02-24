@@ -1,12 +1,14 @@
 import logging
 from typing import Dict, Any, List
 from datetime import datetime, date, timedelta
+import json
 
 from database import get_all_media_items, get_media_item_by_id
 from settings import get_setting
 from scraper.scraper import scrape
 from not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 from wake_count_manager import wake_count_manager
+from cli_battery.app.direct_api import DirectAPI
 
 class ScrapingQueue:
     def __init__(self):
@@ -79,57 +81,65 @@ class ScrapingQueue:
                 if item['type'] == 'episode':
                     logging.info(f"Checking multi-pack eligibility for {item['title']} S{item['season_number']:02d}E{item['episode_number']:02d}")
                     
-                    # Query database for all episodes of this show in this season
-                    from database import get_db_connection
-                    conn = get_db_connection()
-                    try:
-                        cursor = conn.cursor()
-                        # Get all episodes and their states
-                        cursor.execute("""
-                            SELECT episode_number, state, release_date 
-                            FROM media_items 
-                            WHERE imdb_id = ? AND season_number = ? AND type = 'episode'
-                            ORDER BY episode_number
-                        """, (item['imdb_id'], item['season_number']))
-                        episodes = cursor.fetchall()
-                        
-                        if episodes:
-                            # Log episode states
-                            #for ep in episodes:
-                                #logging.info(f"Episode {ep[0]}: State={ep[1]}, Release Date={ep[2]}")
-                            
-                            # Check if all episodes have been released
-                            today = date.today()
-                            all_aired = True
-                            for ep in episodes:
-                                try:
-                                    if ep[2] == 'Unknown':
-                                        all_aired = False
-                                        #logging.info(f"Episode {ep[0]} has unknown release date")
-                                        break
-                                    release_date = datetime.strptime(ep[2], '%Y-%m-%d').date()
-                                    if release_date > today:
-                                        all_aired = False
-                                        #logging.info(f"Episode {ep[0]} hasn't aired yet (releases {release_date})")
-                                        break
-                                except (ValueError, TypeError):
-                                    all_aired = False
-                                    #logging.info(f"Episode {ep[0]} has invalid release date format")
-                                    break
+                    show_metadata, _ = DirectAPI.get_show_metadata(item['imdb_id'])
+                    
+                    if show_metadata and 'seasons' in show_metadata:
+                        season_str = str(item['season_number'])
+                        if season_str in show_metadata['seasons']:
+                            season_data = show_metadata['seasons'][season_str]
+                            if 'episodes' in season_data:
+                                # Check if most episodes have valid air dates and have aired
+                                today = date.today()
+                                total_episodes = len(season_data['episodes'])
+                                valid_air_dates = 0
+                                future_air_dates = 0
+                                
+                                # First pass - log all episode dates
+                                logging.info(f"Checking air dates for {total_episodes} episodes in season {season_str}:")
+                                sorted_episodes = sorted(season_data['episodes'].items(), key=lambda x: int(x[0]))
+                                for ep_num, ep_data in sorted_episodes:
+                                    first_aired = ep_data.get('first_aired', 'unknown')
+                                    if first_aired and first_aired != 'unknown':
+                                        try:
+                                            # Parse ISO 8601 datetime and convert to date
+                                            air_date = datetime.strptime(first_aired.split('T')[0], '%Y-%m-%d').date()
+                                            status = "future" if air_date > today else "aired"
+                                            logging.info(f"  Episode {ep_num}: {air_date} ({status})")
+                                        except (ValueError, TypeError):
+                                            logging.info(f"  Episode {ep_num}: {first_aired} (invalid format)")
+                                    else:
+                                        logging.info(f"  Episode {ep_num}: unknown air date")
 
-                            if all_aired:
-                                is_multi_pack = True
-                                logging.info(f"All {len(episodes)} known episodes have aired, enabling multi-pack")
+                                # Second pass - count valid and future dates
+                                for ep_data in season_data['episodes'].values():
+                                    if 'first_aired' not in ep_data or not ep_data['first_aired']:
+                                        logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has unknown air date")
+                                        continue
+                                    try:
+                                        air_date = datetime.strptime(ep_data['first_aired'].split('T')[0], '%Y-%m-%d').date()
+                                        valid_air_dates += 1
+                                        if air_date > today:
+                                            future_air_dates += 1
+                                            logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} hasn't aired yet (releases {air_date})")
+                                    except (ValueError, TypeError):
+                                        logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has invalid air date format")
+                                        continue
+
+                                # Enable multi-pack if we have valid air dates for >75% of episodes and none are in the future
+                                if valid_air_dates >= total_episodes * 0.75 and future_air_dates == 0:
+                                    is_multi_pack = True
+                                    logging.info(f"Found {valid_air_dates}/{total_episodes} valid air dates, all aired - enabling multi-pack")
+                                else:
+                                    if future_air_dates > 0:
+                                        logging.info(f"Found {future_air_dates} episodes that haven't aired yet, skipping multi-pack")
+                                    else:
+                                        logging.info(f"Only found {valid_air_dates}/{total_episodes} valid air dates, skipping multi-pack")
                             else:
-                                logging.info("Not all episodes have aired yet, skipping multi-pack")
+                                logging.info("No episodes data found in season metadata")
                         else:
-                            logging.info("No episodes found in database, skipping multi-pack")
-
-                    except Exception as e:
-                        logging.error(f"Error checking multi-pack eligibility: {str(e)}")
-                        is_multi_pack = False
-                    finally:
-                        conn.close()
+                            logging.info(f"Season {season_str} not found in show metadata")
+                    else:
+                        logging.info("No seasons data found in show metadata")
 
                 logging.info(f"Scraping for {item_identifier}")
                 results, filtered_out_results = self.scrape_with_fallback(item, is_multi_pack, queue_manager)

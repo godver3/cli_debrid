@@ -33,6 +33,11 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
 
     # Convert TMDB ID to IMDb ID if necessary
     if tmdb_id and not imdb_id:
+        # Skip TMDB to IMDb conversion for episodes since we only need show-level metadata
+        if item_media_type.lower() == 'episode':
+            logging.debug(f"Skipping TMDB to IMDb conversion for episode with TMDB ID {tmdb_id}")
+            return {}
+            
         if item_media_type == "tv":
             converted_item_media_type = "show"
         else:
@@ -48,10 +53,18 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
     try:
         if media_type == 'movie':
             logging.info(f"Fetching movie metadata for IMDb ID: {imdb_id}")
-            metadata, _ = DirectAPI.get_movie_metadata(imdb_id)
+            result = DirectAPI.get_movie_metadata(imdb_id)
+            if result is None:
+                logging.error(f"Failed to get movie metadata for IMDb ID: {imdb_id}")
+                return {}
+            metadata, _ = result
         else:
             logging.info(f"Fetching TV show metadata for IMDb ID: {imdb_id}")
-            metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+            result = DirectAPI.get_show_metadata(imdb_id)
+            if result is None:
+                logging.error(f"Failed to get show metadata for IMDb ID: {imdb_id}")
+                return {}
+            metadata, _ = result
 
         if not metadata:
             logging.warning(f"No metadata returned for IMDb ID: {imdb_id}")
