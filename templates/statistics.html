@@ -186,7 +186,7 @@
                         ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
                             <div class="file-details">
                                 <span class="title">${show.title}</span>
-                                <span class="metadata">S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')} (${show.year}) - Quality: ${show.version}</span>
+                                <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')} (${show.year}) - Quality: ${show.version}` : ''}</span>
                                 <span class="filename">${show.filled_by_file}</span>
                             </div>
                         ` : `
@@ -194,7 +194,7 @@
                                 <img src="${show.poster_url}" alt="${show.title} poster" class="poster" loading="lazy">
                                 <div class="poster-hover">
                                     <span class="title">${show.title}</span>
-                                    <span class="metadata">S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')} (${show.year}) - Quality: ${show.version}</span>
+                                    <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')} (${show.year}) - Quality: ${show.version}` : ''}</span>
                                     <span class="filename">${show.filled_by_file}</span>
                                 </div>
                             </div>
@@ -444,7 +444,7 @@
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ show.title }}</span>
-                            <span class="metadata">S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
+                            <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Quality: {{ show.version }}{% endif %}</span>
                             <span class="filename">{{ show.filled_by_file }}</span>
                         </div>
                         {% else %}
@@ -452,7 +452,7 @@
                             <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ show.title }}</span>
-                                <span class="metadata">S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
+                                <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Quality: {{ show.version }}{% endif %}</span>
                                 <span class="filename">{{ show.filled_by_file }}</span>
                             </div>
                         </div>
@@ -470,7 +470,7 @@
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                            <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
+                            <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
                             <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
                             <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                         </div>
@@ -479,7 +479,7 @@
                             <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                                <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
+                                <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} - {% endif %}Quality: {{ item.version }}</span>
                                 <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
                                 <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                             </div>
