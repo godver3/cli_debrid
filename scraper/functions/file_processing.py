@@ -17,7 +17,34 @@ _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
 def _parse_with_ptt(title: str) -> Dict[str, Any]:
     """Cached PTT parsing"""
     result = parse_title(title)
-    #logging.debug(f"PTT parsed '{title}' into: {result}")
+    
+    # Special handling for shows where the title is a year (e.g. "1923")
+    if result.get('year'):
+        # Handle both space and dot-separated formats
+        first_part = title.split('.')[0].split()[0].strip()
+        
+        # If the first part is a 4-digit number and it matches the detected year
+        if first_part.isdigit() and len(first_part) == 4 and int(first_part) == result['year']:
+            # Check if we have a season/episode pattern
+            has_episode = bool(result.get('episodes')) or bool(result.get('seasons'))
+            current_title = result.get('title', '')
+            
+            # If it's an episode and the current title contains episode-specific information
+            if has_episode and current_title:
+                # For titles that include episode title (e.g. "S02E01 The Killing Season")
+                if 'S' in current_title and any(c.isdigit() for c in current_title):
+                    # Set the show title to the year and clear the year field
+                    result['title'] = first_part
+                    result['year'] = None  # Clear the year since it's actually the title
+                    # Store the episode title if needed
+                    if ' ' in current_title:
+                        _, episode_title = current_title.split(' ', 1)
+                        result['episode_title'] = episode_title
+            elif not current_title or current_title.startswith('S'):
+                # If title is missing or just contains season info
+                result['title'] = first_part
+                result['year'] = None  # Clear the year since it's actually the title
+    
     return result
 
 def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
