@@ -47,12 +47,13 @@
         opacity: 0.7;
         background-color: #1a1a1a;
         border-color: #333;
-        cursor: not-allowed;
+        cursor: default;
     }
 
     .task-tile.disabled .task-name,
     .task-tile.disabled .countdown,
-    .task-tile.disabled small {
+    .task-tile.disabled small,
+    .task-tile.disabled .toggle-label {
         color: #888;
     }
 
@@ -88,6 +89,80 @@
 
     .disabled .interval-badge {
         background-color: #6c757d;
+    }
+
+    .task-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 1rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid #444;
+        position: relative;
+        z-index: 5; /* Ensure it's above other elements */
+    }
+
+    /* Add a hover effect to make it clear this is interactive */
+    .task-toggle:hover .toggle-label {
+        color: #007bff;
+    }
+    
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 40px;
+        height: 20px;
+        cursor: pointer;
+    }
+
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: 0.4s;
+        border-radius: 20px;
+    }
+
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 4px;
+        bottom: 2px;
+        background-color: white;
+        transition: 0.4s;
+        border-radius: 50%;
+    }
+
+    .toggle-switch input:checked + .toggle-slider {
+        background-color: #007bff;
+    }
+
+    .toggle-switch input:checked + .toggle-slider:before {
+        transform: translateX(16px);
+    }
+
+    .toggle-switch input:checked + .toggle-slider {
+        background-color: #007bff;
+    }
+
+    .toggle-switch input:checked + .toggle-slider:before {
+        transform: translateX(16px);
+    }
+
+    .toggle-label {
+        margin-left: 0.5rem;
     }
 
     .tab-container {
@@ -195,6 +270,10 @@
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
+// Make showPopup and POPUP_TYPES available globally
+window.showPopup = showPopup;
+window.POPUP_TYPES = POPUP_TYPES;
+
 document.addEventListener('DOMContentLoaded', function() {
     // Tab switching
     const tabs = document.querySelectorAll('.tab');
@@ -230,10 +309,22 @@ function createTaskTile(taskName, taskData) {
 
     const tile = document.createElement('div');
     tile.className = `task-tile ${enabled ? '' : 'disabled'}`;
+    tile.dataset.taskName = taskName;
     
     // Only add click handler if the task is enabled
     if (enabled) {
-        tile.onclick = () => triggerTask(taskName);
+        tile.onclick = (e) => {
+            // Don't trigger when clicking the toggle switch
+            if (e.target.classList.contains('task-toggle') || 
+                e.target.classList.contains('toggle-slider') ||
+                e.target.classList.contains('toggle-switch') ||
+                e.target.tagName === 'INPUT' ||
+                e.target.classList.contains('toggle-label') ||
+                e.target.closest('.task-toggle')) {
+                return;
+            }
+            triggerTask(taskName);
+        };
     }
 
     tile.innerHTML = `
@@ -250,7 +341,28 @@ function createTaskTile(taskName, taskData) {
             ${formatTime(taskData.next_run_in.hours, taskData.next_run_in.minutes, taskData.next_run_in.seconds)}
         </div>
         <small style="display: block; text-align: center; color: #888;">until next run</small>
+        <div class="task-toggle">
+            <label class="toggle-switch">
+                <input type="checkbox" ${enabled ? 'checked' : ''}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">${enabled ? 'Enabled' : 'Disabled'}</span>
+        </div>
     `;
+    
+    // Add event listener to the toggle after the HTML is set
+    const toggleInput = tile.querySelector('input[type="checkbox"]');
+    toggleInput.addEventListener('change', function(e) {
+        // Stop propagation to prevent triggering the tile's click handler
+        e.stopPropagation();
+        toggleTaskStatus(taskName, this.checked);
+    });
+    
+    // Add click handler to the toggle container to prevent event bubbling
+    const toggleContainer = tile.querySelector('.task-toggle');
+    toggleContainer.addEventListener('click', function(e) {
+        e.stopPropagation();
+    });
 
     return tile;
 }
@@ -326,12 +438,30 @@ function fetchAndUpdateTasks() {
         });
 }
 
-function triggerTask(taskName) {
+// Make triggerTask available globally
+window.triggerTask = function triggerTask(taskName) {
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Trigger Task',
         message: `Do you want to trigger task: ${taskName}?`,
         onConfirm: () => {
+            // Show a small loading indicator on the task tile
+            const taskTile = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
+            if (taskTile) {
+                const countdown = taskTile.querySelector('.countdown');
+                if (countdown) {
+                    const originalText = countdown.textContent;
+                    countdown.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Triggering...';
+                    
+                    // Reset after 3 seconds if no response
+                    setTimeout(() => {
+                        if (countdown.innerHTML.includes('Triggering')) {
+                            countdown.textContent = originalText;
+                        }
+                    }, 3000);
+                }
+            }
+            
             fetch('/program_operation/trigger_task', {
                 method: 'POST',
                 headers: {
@@ -347,6 +477,9 @@ function triggerTask(taskName) {
                         title: 'Success',
                         message: `Successfully triggered task: ${taskName}`
                     });
+                    
+                    // Refresh data after a short delay
+                    setTimeout(fetchAndUpdateTasks, 1000);
                 } else {
                     showPopup({
                         type: POPUP_TYPES.ERROR,
@@ -364,6 +497,84 @@ function triggerTask(taskName) {
                 });
             });
         }
+    });
+}
+
+// Make toggleTaskStatus available globally
+window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
+    const endpoint = enabled ? '/program_operation/enable_task' : '/program_operation/disable_task';
+    const action = enabled ? 'enable' : 'disable';
+    
+    fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `task_name=${encodeURIComponent(taskName)}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Update the UI immediately
+            const taskTile = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
+            if (taskTile) {
+                if (enabled) {
+                    taskTile.classList.remove('disabled');
+                    taskTile.querySelector('.status-indicator').classList.remove('disabled');
+                    taskTile.querySelector('.status-indicator').classList.add('enabled');
+                    taskTile.querySelector('.toggle-label').textContent = 'Enabled';
+                    // Add click handler for triggering
+                    taskTile.onclick = (e) => {
+                        if (e.target.classList.contains('task-toggle') || 
+                            e.target.classList.contains('toggle-slider') ||
+                            e.target.classList.contains('toggle-switch') ||
+                            e.target.tagName === 'INPUT' ||
+                            e.target.classList.contains('toggle-label') ||
+                            e.target.closest('.task-toggle')) {
+                            return;
+                        }
+                        triggerTask(taskName);
+                    };
+                } else {
+                    taskTile.classList.add('disabled');
+                    taskTile.querySelector('.status-indicator').classList.remove('enabled');
+                    taskTile.querySelector('.status-indicator').classList.add('disabled');
+                    taskTile.querySelector('.toggle-label').textContent = 'Disabled';
+                    // Remove click handler
+                    taskTile.onclick = null;
+                }
+            }
+            
+            // Refresh data after a short delay to get updated timings
+            setTimeout(fetchAndUpdateTasks, 1000);
+        } else {
+            // Revert the checkbox state if there was an error
+            const checkbox = document.querySelector(`.task-tile[data-task-name="${taskName}"] input[type="checkbox"]`);
+            if (checkbox) {
+                checkbox.checked = !enabled;
+            }
+            
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: data.error || `Failed to ${action} task`
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        
+        // Revert the checkbox state if there was an error
+        const checkbox = document.querySelector(`.task-tile[data-task-name="${taskName}"] input[type="checkbox"]`);
+        if (checkbox) {
+            checkbox.checked = !enabled;
+        }
+        
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Error',
+            message: `Failed to ${action} task`
+        });
     });
 }
 

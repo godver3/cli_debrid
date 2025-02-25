@@ -9,6 +9,10 @@ from datetime import datetime
 import time
 from threading import Timer, Lock
 import sys
+import json
+from pathlib import Path
+import os
+import uuid
 
 # Global notification buffer
 notification_buffer = []
@@ -17,6 +21,10 @@ safety_valve_timer = None
 buffer_lock = Lock()
 BUFFER_TIMEOUT = 10  # seconds to wait before sending notifications
 SAFETY_VALVE_TIMEOUT = 60  # seconds maximum to wait before forcing send
+
+# Constants
+MAX_NOTIFICATIONS = 20
+NOTIFICATION_FILE = Path(os.getenv('USER_DB_CONTENT', '/user/db_content')) / 'notifications.json'
 
 def safe_format_date(date_value):
     if not date_value:
@@ -299,9 +307,168 @@ def flush_notification_buffer(enabled_notifications, notification_category):
     except Exception as e:
         logging.error(f"Error in flush_notification_buffer: {str(e)}")
 
-def _send_notifications(notifications, enabled_notifications, notification_category='collected'):
+def store_notification(title, message, notification_type='info', link=None):
+    """Store a notification in the JSON file"""
+    try:
+        # Ensure directory exists
+        NOTIFICATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Read existing notifications
+        notifications = {"notifications": []}
+        if NOTIFICATION_FILE.exists():
+            try:
+                with open(NOTIFICATION_FILE) as f:
+                    notifications = json.load(f)
+            except json.JSONDecodeError:
+                logging.error("Invalid JSON in notifications file, starting fresh")
+        
+        # Create new notification
+        new_notification = {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "title": title,
+            "message": message,
+            "type": notification_type,
+            "read": False
+        }
+        if link:
+            new_notification["link"] = link
+            
+        # Add new notification and keep only the most recent MAX_NOTIFICATIONS
+        notifications["notifications"].insert(0, new_notification)
+        notifications["notifications"] = notifications["notifications"][:MAX_NOTIFICATIONS]
+        
+        # Write back to file
+        with open(NOTIFICATION_FILE, 'w') as f:
+            json.dump(notifications, f, indent=2)
+            
+    except Exception as e:
+        logging.error(f"Error storing notification: {str(e)}", exc_info=True)
+
+def _send_notifications(notifications, enabled_notifications, notification_category=None):
     successful = True  # Track if all notifications were sent successfully
     
+    # Store notification in JSON file first
+    try:
+        # Handle system operation notifications
+        if notification_category in ['program_crash', 'program_stop', 'program_start', 
+                                   'queue_pause', 'queue_resume', 'queue_start', 'queue_stop',
+                                   'rate_limit', 'scraping_error', 'content_error', 'database_error']:
+            title = {
+                'program_crash': "Program Crashed",
+                'program_stop': "Program Stopped",
+                'program_start': "Program Started",
+                'queue_pause': "Queue Paused",
+                'queue_resume': "Queue Resumed",
+                'queue_start': "Queue Started",
+                'queue_stop': "Queue Stopped",
+                'rate_limit': "Rate Limit Warning",
+                'scraping_error': "Scraping Error",
+                'content_error': "Content Error",
+                'database_error': "Database Error"
+            }.get(notification_category)
+
+            notification_type = {
+                'program_crash': 'error',
+                'program_stop': 'info',
+                'program_start': 'success',
+                'queue_pause': 'warning',
+                'queue_resume': 'success',
+                'queue_start': 'success',
+                'queue_stop': 'info',
+                'rate_limit': 'warning',
+                'scraping_error': 'error',
+                'content_error': 'error',
+                'database_error': 'error'
+            }.get(notification_category)
+
+            message = notifications if isinstance(notifications, str) else {
+                'program_crash': "Program crashed unexpectedly",
+                'program_stop': "Program has been stopped",
+                'program_start': "Program has been started",
+                'queue_pause': "Queue processing has been paused",
+                'queue_resume': "Queue processing has been resumed",
+                'queue_start': "Queue processing has started",
+                'queue_stop': "Queue processing has stopped",
+                'rate_limit': "API rate limit warning",
+                'scraping_error': "Error occurred during scraping",
+                'content_error': "Error processing content",
+                'database_error': "Database operation failed"
+            }.get(notification_category)
+
+            store_notification(title, message, notification_type)
+            
+        # Handle upgrade failed notifications
+        elif notification_category == 'upgrade_failed':
+            if isinstance(notifications, dict):
+                title = "Upgrade Failed"
+                message = f"Failed to upgrade {notifications.get('title', 'Unknown')} ({notifications.get('year', '')}): {notifications.get('reason', 'Unknown reason')}"
+                store_notification(title, message, 'error', link="/queues")
+
+        # Handle content notifications (collected, upgraded, etc.)
+        else:
+            # For each notification item
+            for notification in notifications:
+                title = notification.get('title', '')
+                year = notification.get('year', '')
+                version = notification.get('version', '').strip('*')
+                media_type = notification.get('type', 'movie')
+                new_state = notification.get('new_state', '')
+                
+                # Base message format
+                message = f"{title} ({year})"
+                if media_type == 'episode':
+                    message += f" S{notification.get('season_number', '00')}E{notification.get('episode_number', '00')}"
+                if version:
+                    message += f" [{version}]"
+                
+                # Determine notification type and title based on state and data
+                if new_state == 'Downloading':
+                    notification_title = "Downloading Content"
+                    notification_type = 'info'
+                    message = f"Started downloading {message}"
+                elif new_state == 'Checking':
+                    notification_title = "Checking Content"
+                    notification_type = 'info'
+                    message = f"Checking {message}"
+                elif new_state == 'Upgrading':
+                    notification_title = "Upgrading Content"
+                    notification_type = 'info'
+                    message = f"Upgrading {message}"
+                    if notification.get('upgrading_from'):
+                        message += f"\nUpgrading from: {notification['upgrading_from']}"
+                elif new_state == 'Upgraded':
+                    notification_title = "Content Upgraded"
+                    notification_type = 'success'
+                    message = f"Successfully upgraded {message}"
+                else:
+                    # Default collection notification
+                    notification_title = "New Content Available"
+                    notification_type = 'success'
+                    if notification.get('is_upgrade'):
+                        message = f"Upgraded and collected {message}"
+                    else:
+                        message = f"Successfully collected {message}"
+                
+                # Add source information if available
+                if notification.get('content_source'):
+                    message += f"\nSource: {notification['content_source']}"
+                if notification.get('content_source_detail'):
+                    message += f"\nRequested by: {notification['content_source_detail']}"
+                if notification.get('filled_by_file'):
+                    message += f"\nFile: {notification['filled_by_file']}"
+                
+                # Store the notification
+                store_notification(notification_title, message, notification_type, link="/queues")
+
+    except Exception as e:
+        logging.error(f"Error storing notification in JSON: {str(e)}", exc_info=True)
+        successful = False
+
+    # Only attempt to send notifications if JSON storage was successful
+    if not successful:
+        return successful
+
     for notification_id, notification_config in enabled_notifications.items():
         if not notification_config.get('enabled', False):
             continue

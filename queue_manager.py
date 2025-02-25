@@ -329,12 +329,15 @@ class QueueManager:
     def get_wake_count(self, item_id):
         return wake_count_manager.get_wake_count(item_id)
 
-    def pause_queue(self):
+    def pause_queue(self, reason=None):
         if not self.paused:
             self.paused = True
-            logging.info("Queue processing paused")
+            pause_message = "Queue processing paused"
+            if reason:
+                pause_message += f": {reason}"
+            logging.info(pause_message)
             from notifications import send_queue_pause_notification
-            send_queue_pause_notification("Queue processing paused")
+            send_queue_pause_notification(pause_message)
         else:
             logging.warning("Queue is already paused")
 

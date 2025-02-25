@@ -265,6 +265,12 @@ def add_torrent_to_debrid():
         if isinstance(debrid_provider, RealDebridProvider):
             # For Real Debrid, use the torrent ID directly
             torrent_info = debrid_provider.get_torrent_info(torrent_id)
+            
+            # Check if the torrent is cached or not
+            is_cached = False
+            if torrent_info:
+                status = torrent_info.get('status', '')
+                is_cached = status == 'downloaded'
         '''
         #tb
         else:
@@ -295,6 +301,13 @@ def add_torrent_to_debrid():
             logging.error(f"Failed to process torrent content: {message}")
             return jsonify({'error': message}), 400
 
+        # Return cache status to the frontend
+        cache_status = {
+            'is_cached': is_cached,
+            'torrent_id': torrent_id,
+            'torrent_hash': torrent_hash
+        }
+        
         # Check if symlinking is enabled
         if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local' or 1==1:
             try:
@@ -440,7 +453,8 @@ def add_torrent_to_debrid():
                                 continue
                     return jsonify({
                         'success': True,
-                        'message': 'Successfully processed season pack'
+                        'message': 'Successfully processed season pack',
+                        'cache_status': cache_status
                     })
                 else:
                     # For single episodes or movies, proceed as normal
@@ -464,7 +478,8 @@ def add_torrent_to_debrid():
         
         return jsonify({
             'success': True,
-            'message': 'Successfully added torrent to debrid provider and processed content'
+            'message': 'Successfully added torrent to debrid provider and processed content',
+            'cache_status': cache_status
         })
 
     except Exception as e:
@@ -780,6 +795,37 @@ def run_scrape():
         for result in original_results + adjusted_results:
             if 'score_breakdown' not in result:
                 result['score_breakdown'] = {'total_score': result.get('score', 0)}
+            
+            # Set default cache status to 'N/A'
+            if 'cached' not in result:
+                result['cached'] = 'N/A'
+        
+        # Check cache status for the first 5 results of each list
+        try:
+            debrid_provider = get_debrid_provider()
+            if isinstance(debrid_provider, RealDebridProvider):
+                # Process original results
+                for i, result in enumerate(original_results[:5]):
+                    if 'magnet' in result:
+                        cache_status = debrid_provider.is_cached(
+                            result['magnet'], 
+                            result_title=result.get('title', ''),
+                            result_index=i
+                        )
+                        result['cached'] = 'Yes' if cache_status is True else 'No' if cache_status is False else 'Unknown'
+                
+                # Process adjusted results
+                for i, result in enumerate(adjusted_results[:5]):
+                    if 'magnet' in result:
+                        cache_status = debrid_provider.is_cached(
+                            result['magnet'], 
+                            result_title=result.get('title', ''),
+                            result_index=i
+                        )
+                        result['cached'] = 'Yes' if cache_status is True else 'No' if cache_status is False else 'Unknown'
+        except Exception as e:
+            logging.error(f"Error checking cache status: {str(e)}", exc_info=True)
+            # Continue without cache status if there's an error
 
         return jsonify({
             'originalResults': original_results,
@@ -788,6 +834,55 @@ def run_scrape():
     except Exception as e:
         logging.error(f"Error in run_scrape: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+@scraper_bp.route('/remove_uncached_item', methods=['POST'])
+def remove_uncached_item():
+    """Remove an uncached item from the database and debrid provider"""
+    try:
+        torrent_id = request.form.get('torrent_id')
+        torrent_hash = request.form.get('torrent_hash')
+        
+        if not torrent_id and not torrent_hash:
+            return jsonify({'error': 'No torrent ID or hash provided'}), 400
+            
+        logging.info(f"Removing uncached item with ID: {torrent_id}, hash: {torrent_hash}")
+        
+        # Remove from debrid provider
+        debrid_provider = get_debrid_provider()
+        if torrent_id:
+            try:
+                debrid_provider.remove_torrent(torrent_id, "User removed uncached item")
+                logging.info(f"Removed torrent {torrent_id} from debrid provider")
+            except Exception as e:
+                logging.error(f"Failed to remove torrent from debrid provider: {e}")
+        
+        # Remove from database if hash is provided
+        if torrent_hash:
+            from database.torrent_tracking import mark_torrent_removed
+            try:
+                mark_torrent_removed(torrent_hash, "User removed uncached item")
+                logging.info(f"Marked torrent {torrent_hash} as removed in database")
+                
+                # Also remove from media items table if it exists
+                from database import get_db_connection
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM media_items WHERE filled_by_magnet LIKE ?", (f"%{torrent_hash}%",))
+                conn.commit()
+                conn.close()
+                logging.info(f"Removed media items with hash {torrent_hash} from database")
+            except Exception as e:
+                logging.error(f"Failed to remove torrent from database: {e}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Successfully removed uncached item'
+        })
+        
+    except Exception as e:
+        error_message = str(e)
+        logging.error(f"Error in remove_uncached_item: {error_message}")
+        return jsonify({'error': error_message}), 500
 
 @scraper_bp.route('/get_tv_details/<tmdb_id>')
 def get_tv_details(tmdb_id):

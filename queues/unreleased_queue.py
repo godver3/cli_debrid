@@ -62,8 +62,17 @@ class UnreleasedQueue:
                         logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
                         continue
 
-                # If it's an early release, move it to Wanted immediately
-                if item.get('early_release', False):
+                # If physical release is required, ignore early release flag
+                if require_physical:
+                    if current_datetime >= release_datetime - timedelta(hours=24):
+                        logging.info(f"Item {item_identifier} is within 24 hours of physical release. Moving to Wanted queue.")
+                        items_to_move.append(item)
+                    else:
+                        time_until_release = release_datetime - current_datetime
+                        logging.debug(f"Item {item_identifier} will be physically released in {time_until_release}. Keeping in Unreleased queue.")
+                        unreleased_report.append((item_identifier, release_datetime, time_until_release))
+                # If no physical release required, check early release flag
+                elif item.get('early_release', False):
                     logging.info(f"Item {item_identifier} is an early release. Moving to Wanted queue immediately.")
                     items_to_move.append(item)
                 # Otherwise check if it's within 24 hours of release

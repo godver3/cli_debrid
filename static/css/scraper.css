@@ -631,6 +631,27 @@ h2.episode-title {
     text-overflow: ellipsis;
 }
 
+/* Cache status badge styles */
+.cache-status.cached {
+    background-color: #4CAF50; /* Green */
+    color: white;
+}
+
+.cache-status.not-cached {
+    background-color: #f44336; /* Red */
+    color: white;
+}
+
+.cache-status.not-checked {
+    background-color: #ff9800; /* Orange */
+    color: white;
+}
+
+.cache-status.check-unavailable, .cache-status.unknown {
+    background-color: #9e9e9e; /* Gray */
+    color: white;
+}
+
 /* Update button styles */
 .overlay-content td button {
     display: inline-block;

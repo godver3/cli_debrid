@@ -16,6 +16,16 @@ class ScrapingQueue:
 
     def update(self):
         self.items = [dict(row) for row in get_all_media_items(state="Scraping")]
+        
+        # Get the queue sort order setting
+        sort_order = get_setting("Queue", "queue_sort_order", "None")
+        
+        # Apply sorting based on the setting
+        if sort_order == "Movies First":
+            self.items.sort(key=lambda x: 0 if x['type'] == 'movie' else 1)
+        elif sort_order == "Episodes First":
+            self.items.sort(key=lambda x: 0 if x['type'] == 'episode' else 1)
+        # For "None", we keep the default order
 
     def get_contents(self):
         return self.items
@@ -64,8 +74,31 @@ class ScrapingQueue:
                     release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
                     today = date.today()
 
-                    # Only check release date if not an early release
-                    if not item.get('early_release', False) and release_date > today:
+                    # Check if version requires physical release
+                    scraping_versions = get_setting('Scraping', 'versions', {})
+                    version_settings = scraping_versions.get(item.get('version', ''), {})
+                    require_physical = version_settings.get('require_physical_release', False)
+                    physical_release_date = item.get('physical_release_date')
+                    
+                    # If physical release is required, use that date instead
+                    if require_physical and physical_release_date:
+                        try:
+                            physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
+                            if physical_date > today:
+                                logging.info(f"Item {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
+                                queue_manager.move_to_wanted(item, "Scraping")
+                                processed_count += 1
+                                return True
+                        except ValueError:
+                            logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
+                    # If physical release is required but no date available, move back to Wanted
+                    elif require_physical and not physical_release_date:
+                        logging.info(f"Item {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
+                        queue_manager.move_to_wanted(item, "Scraping")
+                        processed_count += 1
+                        return True
+                    # Otherwise check normal release timing with early_release flag
+                    elif not item.get('early_release', False) and release_date > today:
                         logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
                         queue_manager.move_to_wanted(item, "Scraping")
                         processed_count += 1
