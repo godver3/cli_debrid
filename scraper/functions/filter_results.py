@@ -130,6 +130,19 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 #logging.debug("✓ Passed year check")
             
             elif is_episode:
+                # Add year check for TV shows
+                parsed_year = parsed_info.get('year')
+                if parsed_year:
+                    if isinstance(parsed_year, list):
+                        if not any(abs(int(py) - year) <= 1 for py in parsed_year):
+                            result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
+                            logging.debug(f"❌ Failed: Year list {parsed_year} doesn't match {year}")
+                            continue
+                    elif abs(int(parsed_year) - year) > 1:
+                        result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
+                        logging.debug(f"❌ Failed: Year {parsed_year} doesn't match {year}")
+                        continue
+
                 season_episode_info = parsed_info.get('season_episode_info', {})
                 #logging.debug(f"Season episode info: {season_episode_info}")
                 
