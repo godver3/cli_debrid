@@ -16,6 +16,7 @@ from flask import request, url_for
 from urllib.parse import urlparse
 from debrid.base import DebridProvider
 from debrid import get_debrid_provider
+from debrid.real_debrid.client import RealDebridProvider
 
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     trakt_client_id = get_setting('Trakt', 'client_id')
@@ -726,6 +727,9 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     debrid_provider = get_debrid_provider()
     supports_cache_check = debrid_provider.supports_direct_cache_check
     supports_bulk_check = debrid_provider.supports_bulk_cache_checking
+    
+    # Check if this is a RealDebridProvider
+    is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
 
     # Check cache status for all hashes
     cache_status = {}
@@ -755,9 +759,56 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 # Fall back to N/A on error
                 cache_status = {hash_value: 'N/A' for hash_value in hashes}
         else:
-            # Mark all results as N/A if provider doesn't support direct checking
-            cache_status = {hash_value: 'N/A' for hash_value in hashes}
-            logging.info("Provider does not support direct cache checking, marking all as N/A")
+            # If provider doesn't support direct checking but is RealDebrid, check first 5 results
+            if is_real_debrid:
+                logging.info("Using RealDebridProvider's is_cached method for first 5 results")
+                cache_status = {hash_value: 'N/A' for hash_value in hashes}  # Initialize all as N/A
+                torrent_ids_to_remove = []  # Track torrent IDs for removal
+                
+                # Only check first 5 results
+                for i, result in enumerate(processed_results[:5]):
+                    if i >= 5:  # Limit to first 5
+                        break
+                        
+                    if 'magnet' in result:
+                        try:
+                            # Use the is_cached method which will add the torrent and return its cache status
+                            magnet_link = result['magnet']
+                            result_hash = result.get('hash')
+                            
+                            # Use the is_cached method which will add the torrent and return its cache status
+                            # But we need to capture the torrent ID for later removal
+                            cache_result = debrid_provider.is_cached(
+                                magnet_link, 
+                                result_title=result.get('title', ''),
+                                result_index=i
+                            )
+                            
+                            if result_hash:
+                                cache_status[result_hash] = cache_result
+                                logging.info(f"Cache status for result {i+1}: {cache_result}")
+                            
+                            # Try to find the torrent ID using the hash
+                            if result_hash:
+                                # We need to extract the torrent ID from the _all_torrent_ids dictionary
+                                torrent_id = debrid_provider._all_torrent_ids.get(result_hash)
+                                if torrent_id:
+                                    torrent_ids_to_remove.append(torrent_id)
+                                    logging.info(f"Added torrent ID {torrent_id} to removal list")
+                        except Exception as e:
+                            logging.error(f"Error checking cache for result {i+1}: {str(e)}")
+                
+                # Remove all torrents after checking (even if they're cached)
+                for torrent_id in torrent_ids_to_remove:
+                    try:
+                        debrid_provider.remove_torrent(torrent_id, "Removed after cache check")
+                        logging.info(f"Removed torrent with ID {torrent_id} after cache check")
+                    except Exception as e:
+                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+            else:
+                # Mark all results as N/A if provider doesn't support direct checking
+                cache_status = {hash_value: 'N/A' for hash_value in hashes}
+                logging.info("Provider does not support direct cache checking, marking all as N/A")
 
     # Update processed_results with cache status
     for result in processed_results:

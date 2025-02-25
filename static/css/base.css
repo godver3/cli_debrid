@@ -845,7 +845,7 @@ tr:hover {
 
     /* Exception for release notes button */
     .action-controls .icon-button#releaseNotesButton,
-    #releaseNotesButton {
+    #releaseNotesButton, #notifications_button {
         display: none;
     }
 

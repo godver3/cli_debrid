@@ -252,6 +252,7 @@ def check_service_connectivity():
     debrid_api_key = get_setting('Debrid Provider', 'api_key')
 
     services_reachable = True
+    failed_services = []
 
     # Check Symlink paths if using symlink management
     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
@@ -262,6 +263,7 @@ def check_service_connectivity():
         if not os.path.exists(original_path):
             logging.error(f"Cannot access original files path: {original_path}")
             services_reachable = False
+            failed_services.append(f"Original files path ({original_path})")
         elif not os.listdir(original_path):
             logging.warning(f"Original files path is empty: {original_path}")
             
@@ -273,6 +275,7 @@ def check_service_connectivity():
             except Exception as e:
                 logging.error(f"Cannot create symlinked files path: {symlinked_path}. Error: {str(e)}")
                 services_reachable = False
+                failed_services.append(f"Symlinked files path ({symlinked_path})")
                 
         # Check Plex connectivity for symlink updates if enabled
         plex_url_symlink = get_setting('File Management', 'plex_url_for_symlink')
@@ -289,12 +292,14 @@ def check_service_connectivity():
                     error_msg = "Invalid Plex response for symlink updates - token may be incorrect"
                     logging.error(error_msg)
                     services_reachable = False
+                    failed_services.append("Plex (for symlink updates)")
                 else:
                     logging.info(f"Successfully validated Plex connection for symlink updates (Server: {root.get('friendlyName', 'Unknown')})")
             except (RequestException, ET.ParseError) as e:
                 error_msg = f"Cannot connect to Plex server for symlink updates. Error: {str(e)}"
                 logging.error(error_msg)
                 services_reachable = False
+                failed_services.append("Plex (for symlink updates)")
 
     # Check Plex connectivity and libraries
     if get_setting('File Management', 'file_collection_management') == 'Plex':
@@ -310,14 +315,16 @@ def check_service_connectivity():
                     error_msg = "Invalid Plex response - token may be incorrect"
                     logging.error(error_msg)
                     services_reachable = False
-                    return services_reachable
+                    failed_services.append("Plex (invalid token)")
+                    return services_reachable, failed_services
                 else:
                     logging.info(f"Successfully validated Plex connection (Server: {root.get('friendlyName', 'Unknown')})")
             except ET.ParseError as e:
                 error_msg = f"Invalid Plex response format: {str(e)}"
                 logging.error(error_msg)
                 services_reachable = False
-                return services_reachable
+                failed_services.append("Plex (invalid response format)")
+                return services_reachable, failed_services
 
             # Then check library existence
             libraries_response = api.get(f"{plex_url}/library/sections?X-Plex-Token={plex_token}", timeout=5)
@@ -343,7 +350,8 @@ def check_service_connectivity():
                 if not available_libraries:
                     logging.error("No libraries found in Plex response")
                     services_reachable = False
-                    return services_reachable
+                    failed_services.append("Plex (no libraries found)")
+                    return services_reachable, failed_services
 
                 # Verify all configured libraries exist (check both IDs and names)
                 missing_libraries = []
@@ -367,18 +375,21 @@ def check_service_connectivity():
                     error_msg += "</ul>Please verify your Plex library names in settings."
                     logging.error(error_msg)
                     services_reachable = False
-                    return services_reachable
+                    failed_services.append(f"Plex (missing libraries: {', '.join(missing_libraries)})")
+                    return services_reachable, failed_services
 
             except ET.ParseError as e:
                 error_msg = f"Failed to parse Plex libraries response (XML): {str(e)}"
                 logging.error(error_msg)
                 services_reachable = False
-                return services_reachable
+                failed_services.append("Plex (invalid libraries response)")
+                return services_reachable, failed_services
 
         except RequestException as e:
             error_msg = f"Cannot start program: Failed to connect to Plex server. Error: {str(e)}"
             logging.error(error_msg)
             services_reachable = False
+            failed_services.append("Plex (connection error)")
 
     # Check Debrid Provider connectivity
     if debrid_provider.lower() == 'realdebrid':
@@ -388,9 +399,11 @@ def check_service_connectivity():
         except RequestException as e:
             logging.error(f"Failed to connect to Real-Debrid API: {str(e)}")
             services_reachable = False
+            failed_services.append("Real-Debrid API")
     else:
         logging.error(f"Unknown debrid provider: {debrid_provider}")
         services_reachable = False
+        failed_services.append(f"Unknown debrid provider ({debrid_provider})")
 
     # Check Metadata Battery connectivity and Trakt authorization
     try:
@@ -405,6 +418,7 @@ def check_service_connectivity():
         if trakt_status != 'authorized':
             logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
             services_reachable = False
+            failed_services.append("Trakt (not authorized)")
     except RequestException as e:
         if hasattr(e, 'response') and e.response is not None:
             logging.error(f"Failed to connect to Metadata Battery: {e.response.status_code} {e.response.reason}")
@@ -412,8 +426,9 @@ def check_service_connectivity():
         else:
             logging.error(f"Failed to connect to Metadata Battery: {str(e)}")
         services_reachable = False
+        failed_services.append("Metadata Battery")
 
-    return services_reachable
+    return services_reachable, failed_services
 
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 def start_program():
@@ -429,7 +444,7 @@ def start_program():
         time.sleep(1)  # 1 second delay for auto-start
 
     # Check service connectivity before starting the program
-    check_result = check_service_connectivity()
+    check_result, failed_services = check_service_connectivity()
     if not check_result:
         # Get the last error message from the logs
         error_message = "Failed to connect to required services. Check the logs for details."
@@ -440,7 +455,7 @@ def start_program():
                     error_message = handler.stream.getvalue().strip().split('\n')[-1]
                 except:
                     pass
-        return jsonify({"status": "error", "message": error_message})
+        return jsonify({"status": "error", "message": error_message, "failed_services": failed_services})
 
     program_runner = ProgramRunner()
     # Start the program runner in a separate thread to avoid blocking the Flask server
@@ -608,5 +623,39 @@ def trigger_task():
         
         program_runner.trigger_task(task_name)
         return jsonify({'success': True, 'message': f'Successfully triggered task: {task_name}'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@program_operation_bp.route('/enable_task', methods=['POST'])
+@admin_required
+def enable_task():
+    task_name = request.form.get('task_name')
+    if not task_name:
+        return jsonify({'success': False, 'error': 'Task name is required'})
+    
+    try:
+        program_runner = get_program_runner()
+        if not program_runner:
+            return jsonify({'success': False, 'error': 'Program is not running'})
+        
+        program_runner.enable_task(task_name)
+        return jsonify({'success': True, 'message': f'Successfully enabled task: {task_name}'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@program_operation_bp.route('/disable_task', methods=['POST'])
+@admin_required
+def disable_task():
+    task_name = request.form.get('task_name')
+    if not task_name:
+        return jsonify({'success': False, 'error': 'Task name is required'})
+    
+    try:
+        program_runner = get_program_runner()
+        if not program_runner:
+            return jsonify({'success': False, 'error': 'Program is not running'})
+        
+        program_runner.disable_task(task_name)
+        return jsonify({'success': True, 'message': f'Successfully disabled task: {task_name}'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})

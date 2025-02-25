@@ -32,6 +32,7 @@ class RealDebridProvider(DebridProvider):
         super().__init__()
         self._cached_torrent_ids = {}  # Store torrent IDs for cached content
         self._cached_torrent_titles = {}  # Store torrent titles for cached content
+        self._all_torrent_ids = {}  # Store all torrent IDs for tracking
         
     def _load_api_key(self) -> str:
         """Load API key from settings"""
@@ -189,6 +190,9 @@ class RealDebridProvider(DebridProvider):
                     torrent_id,
                     TorrentStatus.CACHED if is_cached else TorrentStatus.NOT_CACHED
                 )
+                
+                # Store all torrent IDs for tracking
+                self._all_torrent_ids[hash_value] = torrent_id
                 
                 # Store torrent ID if cached, remove if not cached
                 if is_cached:
@@ -638,6 +642,8 @@ class RealDebridProvider(DebridProvider):
                     del self._cached_torrent_ids[hash_value]
                 if hash_value in self._cached_torrent_titles:
                     del self._cached_torrent_titles[hash_value]
+                if hash_value in self._all_torrent_ids:
+                    del self._all_torrent_ids[hash_value]
                     
         except Exception as e:
             if "404" in str(e):

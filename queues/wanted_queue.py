@@ -200,8 +200,16 @@ class WantedQueue:
 
                         time_until_release = release_datetime - current_datetime
 
-                        # If it's an early release and ready to be scraped, move to scraping
-                        if item.get('early_release', False):
+                        # If physical release is required, ignore early release flag
+                        if require_physical:
+                            if time_until_release <= timedelta():
+                                logging.debug(f"Item {item_identifier} has met its physical release requirement. Moving to Scraping queue.")
+                                items_to_move_scraping.append(item)
+                            elif time_until_release > timedelta(hours=24):
+                                logging.debug(f"Item {item_identifier} is more than 24 hours away from physical release. Moving to Unreleased queue.")
+                                items_to_move_unreleased.append(item)
+                        # If no physical release required, check early release flag
+                        elif item.get('early_release', False):
                             logging.debug(f"Item {item_identifier} is an early release. Moving to Scraping queue.")
                             items_to_move_scraping.append(item)
                         # Otherwise check normal release timing
@@ -211,7 +219,6 @@ class WantedQueue:
                         elif time_until_release > timedelta(hours=24):
                             logging.debug(f"Item {item_identifier} is more than 24 hours away. Moving to Unreleased queue.")
                             items_to_move_unreleased.append(item)
-
                     except ValueError as e:
                         logging.error(f"Error processing item {item_identifier}: {str(e)}")
                         # Add to unreleased if there's an error parsing dates

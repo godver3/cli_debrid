@@ -1,289 +1,3 @@
-function searchMedia(event) {
-    event.preventDefault();
-    showLoadingState();
-    const searchTerm = document.querySelector('input[name="search_term"]').value;
-    const version = document.querySelector('select[name="version"]').value;
-    fetch('/scraper', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `search_term=${encodeURIComponent(searchTerm)}&version=${encodeURIComponent(version)}`
-    })
-    .then(response => response.json())
-    .then(data => {
-        hideLoadingState();
-        console.log('Received data:', JSON.stringify(data, null, 2));  // Pretty print the entire response
-        if (data.error) {
-            displayError(data.error);
-        } else if (data.results && Array.isArray(data.results)) {
-            displaySearchResults(data.results, version);
-        } else {
-            displayError('Invalid response from server');
-        }
-    })
-    .catch(error => {
-        hideLoadingState();
-        console.error('Error:', error);
-        displayError('An error occurred while searching.');
-    });
-}
-
-function displaySearchResults(results, version) {
-    console.log('Displaying results:', results);
-    toggleResultsVisibility('displaySearchResults');
-    const searchResultsDiv = document.getElementById('searchResult');
-    searchResultsDiv.innerHTML = '<div class="search-results-container"></div>';
-    
-    const gridContainer = searchResultsDiv.querySelector('.search-results-container');
-    gridContainer.style.display = 'flex';
-    gridContainer.style.flexWrap = 'wrap';
-    gridContainer.style.gap = '20px';
-    const mediaQuery = window.matchMedia('(max-width: 1024px)');
-    function handleScreenChange(e) {
-        if (e.matches) {
-            gridContainer.style.justifyContent = 'center';
-        } else {
-            gridContainer.style.justifyContent = 'flex-start';
-        }
-    }
-    mediaQuery.addListener(handleScreenChange);
-    handleScreenChange(mediaQuery);
-
-    // Get TMDB API key status
-    const tmdb_api_key_set = document.getElementById('tmdb_api_key_set').value === 'True';
-
-    results.forEach(item => {
-        console.log('Creating element for item:', item);  // Debug log
-        const searchResDiv = document.createElement('div');
-        searchResDiv.className = 'sresult';
-        let posterUrl;
-        // Remove leading slash if present for checking
-        const normalizedPath = item.poster_path.replace(/^\//, '');
-        console.log('Raw poster_path:', item.poster_path);
-        console.log('Normalized path:', normalizedPath);
-        console.log('Starts with static?', normalizedPath.startsWith('static/'));
-        console.log('Starts with http?', normalizedPath.startsWith('http'));
-        if (normalizedPath.startsWith('static/')) {
-            posterUrl = `/${normalizedPath}`;  // Local static image
-        } else if (normalizedPath.startsWith('http')) {
-            posterUrl = item.poster_path;  // Full URL
-        } else {
-            posterUrl = `/scraper/tmdb_image/w300${item.poster_path}`; // Use our proxy route
-        }
-        console.log('Final poster URL:', posterUrl);
-        searchResDiv.innerHTML = `
-            <button>${item.media_type === 'show' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-            <img src="${posterUrl}" 
-                alt="${item.title}" 
-                class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
-            <div class="searchresult-info" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                <h2 class="searchresult-item">${item.title}</h2>
-                <p class="searchresult-year">${item.year || 'N/A'}</p>
-            </div></button>                
-        `;
-        console.log('Created HTML:', searchResDiv.innerHTML);  // Debug log
-        searchResDiv.onclick = function() {
-            if (item.media_type === 'movie') {
-                selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
-            } else {
-                selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, tmdb_api_key_set);
-            }
-        };
-        gridContainer.appendChild(searchResDiv);
-    });
-}
-
-function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path, genre_ids, vote_average, backdrop_path, show_overview) {
-    console.log('Received genre_ids:', genre_ids);
-    const seasonInfo = document.getElementById('season-info');
-
-    // Format genre_ids into a string of genre names
-    let genreString = '';
-    if (Array.isArray(genre_ids)) {
-        genreString = genre_ids
-            .filter(genre => genre) // Filter out null or undefined genres
-            .map(genre => {
-                if (typeof genre === 'string') {
-                    return genre;
-                } else if (typeof genre === 'object' && genre.name) {
-                    return genre.name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-                }
-                return '';
-            })
-            .filter(genre => genre) // Filter out any empty strings
-            .slice(0, 3) // Truncate to 3 genres
-            .join(', ');
-    } else if (typeof genre_ids === 'string') {
-        genreString = genre_ids;
-    }
-
-    // If genreString is empty after processing, set a default message
-    if (!genreString) {
-        genreString = 'Genres not available';
-    }
-
-    seasonInfo.innerHTML = `
-        <div class="season-info-container">
-            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
-            <div class="season-details">
-                <span class="show-rating">${(vote_average).toFixed(1)}</span>
-                <h2>${title} - Season ${season_num}</h2>
-                <p>${genreString}</p>
-                <div class="season-overview">
-                    <p>${season_overview ? season_overview : show_overview}</p>
-                </div>
-            </div>
-        </div>
-        <div class="season-bg-image" style="background-image: url('${backdrop_path.startsWith('http') ? backdrop_path : `/scraper/tmdb_image/w1920_and_h800_multi_faces${backdrop_path}`}');"></div>
-    `;
-}
-
-function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview, tmdb_api_key_set) {
-    showLoadingState();
-    const resultsDiv = document.getElementById('seasonResults');
-    const dropdown = document.getElementById('seasonDropdown');
-    const seasonPackButton = document.getElementById('seasonPackButton');
-    const version = document.getElementById('version-select').value;
-    let formData = new FormData();
-    formData.append('media_id', mediaId);
-    formData.append('title', title);
-    formData.append('year', year);
-    formData.append('media_type', mediaType);
-    if (season !== null) formData.append('season', season);
-    if (episode !== null) formData.append('episode', episode);
-    formData.append('multi', multi);
-    formData.append('version', version);
-
-    fetch('/scraper/select_season', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        hideLoadingState();
-        if (data.error) {
-            displayError(data.error);
-        } else {
-            const seasonResults = data.episode_results || data.results;
-
-            if (!seasonResults || seasonResults.length === 0) {
-                displayError('No season results found');
-                return;
-            }
-
-            dropdown.innerHTML = '';
-            seasonResults.forEach(item => {
-                const option = document.createElement('option');
-                option.value = JSON.stringify(item);
-                option.textContent = `Season: ${item.season_num}`;
-                dropdown.appendChild(option);
-            });
-
-            dropdown.addEventListener('change', function() {
-                const selectedItem = JSON.parse(this.value);
-                if (tmdb_api_key_set) {
-                    displaySeasonInfo(selectedItem.title, selectedItem.season_num, selectedItem.air_date, selectedItem.season_overview, selectedItem.poster_path, genre_ids, vote_average, backdrop_path, show_overview);
-                } else {
-                    displaySeasonInfoTextOnly(selectedItem.title, selectedItem.season_num);
-                }
-                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
-            });
-
-            seasonPackButton.onclick = function() {
-                const selectedItem = JSON.parse(dropdown.value);
-                selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
-            };
-
-            resultsDiv.style.display = 'block';
-
-            // Trigger initial selection
-            if (dropdown.options.length > 0) {
-                dropdown.selectedIndex = 0;
-                dropdown.dispatchEvent(new Event('change'));
-            }
-        }
-    })
-    .catch(error => {
-        hideLoadingState();
-        console.error('Error:', error);
-        displayError('An error occurred while selecting media.');
-    });
-}
-
-// New function to display season info as text-only
-function displaySeasonInfoTextOnly(title, season_num) {
-    const seasonInfo = document.getElementById('season-info');
-    seasonInfo.innerHTML = `
-        <div class="season-info-container text-only">
-            <h2>${title} - Season ${season_num}</h2>
-        </div>
-    `;
-}
-
-function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
-    showLoadingState();
-    const version = document.getElementById('version-select').value;
-    let formData = new FormData();
-    formData.append('media_id', mediaId);
-    formData.append('title', title);
-    formData.append('year', year);
-    formData.append('media_type', mediaType);
-    formData.append('season', season);
-    if (episode !== null) formData.append('episode', episode);
-    formData.append('multi', multi);
-    formData.append('version', version);
-
-    fetch('/scraper/select_episode', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        hideLoadingState();
-        if (data.error) {
-            displayError(data.error);
-        } else if (!data.episode_results) {
-            displayError('No episode results found');
-        } else {
-            displayEpisodeResults(data.episode_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
-        }
-    })
-    .catch(error => {
-        hideLoadingState();
-        console.error('Error:', error);
-        displayError('An error occurred while selecting media.');
-    });
-}
-
-async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
-    showLoadingState();
-    const version = document.getElementById('version-select').value;
-    let formData = new FormData();
-    formData.append('media_id', mediaId);
-    formData.append('title', title);
-    formData.append('year', year);
-    formData.append('media_type', mediaType);
-    if (season !== null) formData.append('season', season);
-    if (episode !== null) formData.append('episode', episode);
-    formData.append('multi', multi);
-    formData.append('version', version);
-    fetch('/scraper/select_media', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        hideLoadingState();
-        displayTorrentResults(data.torrent_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
-    })
-    .catch(error => {
-        hideLoadingState();
-        console.error('Error:', error);
-        displayError('An error occurred while selecting media.');
-    });
-}
-
 function addToRealDebrid(magnetLink, torrent) {
     showPopup({
         type: POPUP_TYPES.CONFIRM,
@@ -323,12 +37,38 @@ function addToRealDebrid(magnetLink, torrent) {
                 if (data.error) {
                     throw new Error(data.error);
                 } else {
-                    showPopup({
-                        type: POPUP_TYPES.SUCCESS,
-                        title: 'Success',
-                        message: data.message,
-                        autoClose: 15000  // 15 seconds
-                    });
+                    // Check if the item is uncached
+                    if (data.cache_status && data.cache_status.is_cached === false) {
+                        // Show prompt for uncached item
+                        showPopup({
+                            type: POPUP_TYPES.CONFIRM,
+                            title: 'Uncached Item',
+                            message: 'This item is not cached on your debrid provider. It will need to be downloaded first. Do you want to keep it?',
+                            confirmText: 'Keep',
+                            cancelText: 'Remove',
+                            onConfirm: () => {
+                                // User chose to keep the uncached item
+                                showPopup({
+                                    type: POPUP_TYPES.SUCCESS,
+                                    title: 'Success',
+                                    message: data.message + ' (Uncached item will be kept)',
+                                    autoClose: 15000  // 15 seconds
+                                });
+                            },
+                            onCancel: () => {
+                                // User chose to remove the uncached item
+                                removeUncachedItem(data.cache_status.torrent_id, data.cache_status.torrent_hash);
+                            }
+                        });
+                    } else {
+                        // Regular success message for cached items
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            title: 'Success',
+                            message: data.message,
+                            autoClose: 15000  // 15 seconds
+                        });
+                    }
                 }
             })
             .catch(error => {
@@ -340,6 +80,51 @@ function addToRealDebrid(magnetLink, torrent) {
                 });
             })
         },
+    });
+}
+
+// Function to remove an uncached item
+function removeUncachedItem(torrentId, torrentHash) {
+    showLoadingState();
+    
+    const formData = new FormData();
+    formData.append('torrent_id', torrentId || '');
+    formData.append('torrent_hash', torrentHash || '');
+    
+    fetch('/scraper/remove_uncached_item', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(errorData => {
+                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+            });
+        }
+        return response.json();
+    })
+    .then(data => {
+        hideLoadingState();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        } else {
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Success',
+                message: 'Uncached item has been removed',
+                autoClose: 5000
+            });
+        }
+    })
+    .catch(error => {
+        hideLoadingState();
+        console.error('Error:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Error',
+            message: `Error removing uncached item: ${error.message}`,
+        });
     });
 }
 
@@ -786,4 +571,290 @@ document.addEventListener('DOMContentLoaded', function() {
 function displayTraktAuthMessage() {
     const trendingContainer = document.getElementById('trendingContainer');
     trendingContainer.innerHTML = '<p>Please authenticate with Trakt to see trending movies and shows.</p>';
+}
+
+function searchMedia(event) {
+    event.preventDefault();
+    showLoadingState();
+    const searchTerm = document.querySelector('input[name="search_term"]').value;
+    const version = document.querySelector('select[name="version"]').value;
+    fetch('/scraper', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `search_term=${encodeURIComponent(searchTerm)}&version=${encodeURIComponent(version)}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoadingState();
+        console.log('Received data:', JSON.stringify(data, null, 2));  // Pretty print the entire response
+        if (data.error) {
+            displayError(data.error);
+        } else if (data.results && Array.isArray(data.results)) {
+            displaySearchResults(data.results, version);
+        } else {
+            displayError('Invalid response from server');
+        }
+    })
+    .catch(error => {
+        hideLoadingState();
+        console.error('Error:', error);
+        displayError('An error occurred while searching.');
+    });
+}
+
+function displaySearchResults(results, version) {
+    console.log('Displaying results:', results);
+    toggleResultsVisibility('displaySearchResults');
+    const searchResultsDiv = document.getElementById('searchResult');
+    searchResultsDiv.innerHTML = '<div class="search-results-container"></div>';
+    
+    const gridContainer = searchResultsDiv.querySelector('.search-results-container');
+    gridContainer.style.display = 'flex';
+    gridContainer.style.flexWrap = 'wrap';
+    gridContainer.style.gap = '20px';
+    const mediaQuery = window.matchMedia('(max-width: 1024px)');
+    function handleScreenChange(e) {
+        if (e.matches) {
+            gridContainer.style.justifyContent = 'center';
+        } else {
+            gridContainer.style.justifyContent = 'flex-start';
+        }
+    }
+    mediaQuery.addListener(handleScreenChange);
+    handleScreenChange(mediaQuery);
+
+    // Get TMDB API key status
+    const tmdb_api_key_set = document.getElementById('tmdb_api_key_set').value === 'True';
+
+    results.forEach(item => {
+        console.log('Creating element for item:', item);  // Debug log
+        const searchResDiv = document.createElement('div');
+        searchResDiv.className = 'sresult';
+        let posterUrl;
+        // Remove leading slash if present for checking
+        const normalizedPath = item.poster_path.replace(/^\//, '');
+        console.log('Raw poster_path:', item.poster_path);
+        console.log('Normalized path:', normalizedPath);
+        console.log('Starts with static?', normalizedPath.startsWith('static/'));
+        console.log('Starts with http?', normalizedPath.startsWith('http'));
+        if (normalizedPath.startsWith('static/')) {
+            posterUrl = `/${normalizedPath}`;  // Local static image
+        } else if (normalizedPath.startsWith('http')) {
+            posterUrl = item.poster_path;  // Full URL
+        } else {
+            posterUrl = `/scraper/tmdb_image/w300${item.poster_path}`; // Use our proxy route
+        }
+        console.log('Final poster URL:', posterUrl);
+        searchResDiv.innerHTML = `
+            <button>${item.media_type === 'show' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
+            <img src="${posterUrl}" 
+                alt="${item.title}" 
+                class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
+            <div class="searchresult-info" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                <h2 class="searchresult-item">${item.title}</h2>
+                <p class="searchresult-year">${item.year || 'N/A'}</p>
+            </div></button>                
+        `;
+        console.log('Created HTML:', searchResDiv.innerHTML);  // Debug log
+        searchResDiv.onclick = function() {
+            if (item.media_type === 'movie') {
+                selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
+            } else {
+                selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, tmdb_api_key_set);
+            }
+        };
+        gridContainer.appendChild(searchResDiv);
+    });
+}
+
+function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview, tmdb_api_key_set) {
+    showLoadingState();
+    const resultsDiv = document.getElementById('seasonResults');
+    const dropdown = document.getElementById('seasonDropdown');
+    const seasonPackButton = document.getElementById('seasonPackButton');
+    const version = document.getElementById('version-select').value;
+    let formData = new FormData();
+    formData.append('media_id', mediaId);
+    formData.append('title', title);
+    formData.append('year', year);
+    formData.append('media_type', mediaType);
+    if (season !== null) formData.append('season', season);
+    if (episode !== null) formData.append('episode', episode);
+    formData.append('multi', multi);
+    formData.append('version', version);
+
+    fetch('/scraper/select_season', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoadingState();
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            const seasonResults = data.episode_results || data.results;
+
+            if (!seasonResults || seasonResults.length === 0) {
+                displayError('No season results found');
+                return;
+            }
+
+            dropdown.innerHTML = '';
+            seasonResults.forEach(item => {
+                const option = document.createElement('option');
+                option.value = JSON.stringify(item);
+                option.textContent = `Season: ${item.season_num}`;
+                dropdown.appendChild(option);
+            });
+
+            dropdown.addEventListener('change', function() {
+                const selectedItem = JSON.parse(this.value);
+                if (tmdb_api_key_set) {
+                    displaySeasonInfo(selectedItem.title, selectedItem.season_num, selectedItem.air_date, selectedItem.season_overview, selectedItem.poster_path, genre_ids, vote_average, backdrop_path, show_overview);
+                } else {
+                    displaySeasonInfoTextOnly(selectedItem.title, selectedItem.season_num);
+                }
+                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
+            });
+
+            seasonPackButton.onclick = function() {
+                const selectedItem = JSON.parse(dropdown.value);
+                selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
+            };
+
+            resultsDiv.style.display = 'block';
+
+            // Trigger initial selection
+            if (dropdown.options.length > 0) {
+                dropdown.selectedIndex = 0;
+                dropdown.dispatchEvent(new Event('change'));
+            }
+        }
+    })
+    .catch(error => {
+        hideLoadingState();
+        console.error('Error:', error);
+        displayError('An error occurred while selecting media.');
+    });
+}
+
+function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path, genre_ids, vote_average, backdrop_path, show_overview) {
+    console.log('Received genre_ids:', genre_ids);
+    const seasonInfo = document.getElementById('season-info');
+
+    // Format genre_ids into a string of genre names
+    let genreString = '';
+    if (Array.isArray(genre_ids)) {
+        genreString = genre_ids
+            .filter(genre => genre) // Filter out null or undefined genres
+            .map(genre => {
+                if (typeof genre === 'string') {
+                    return genre;
+                } else if (typeof genre === 'object' && genre.name) {
+                    return genre.name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+                }
+                return '';
+            })
+            .filter(genre => genre) // Filter out any empty strings
+            .slice(0, 3) // Truncate to 3 genres
+            .join(', ');
+    } else if (typeof genre_ids === 'string') {
+        genreString = genre_ids;
+    }
+
+    // If genreString is empty after processing, set a default message
+    if (!genreString) {
+        genreString = 'Genres not available';
+    }
+
+    seasonInfo.innerHTML = `
+        <div class="season-info-container">
+            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
+            <div class="season-details">
+                <span class="show-rating">${(vote_average).toFixed(1)}</span>
+                <h2>${title} - Season ${season_num}</h2>
+                <p>${genreString}</p>
+                <div class="season-overview">
+                    <p>${season_overview ? season_overview : show_overview}</p>
+                </div>
+            </div>
+        </div>
+        <div class="season-bg-image" style="background-image: url('${backdrop_path.startsWith('http') ? backdrop_path : `/scraper/tmdb_image/w1920_and_h800_multi_faces${backdrop_path}`}');"></div>
+    `;
+}
+
+function displaySeasonInfoTextOnly(title, season_num) {
+    const seasonInfo = document.getElementById('season-info');
+
+    seasonInfo.innerHTML = `
+        <div class="season-info-container text-only">
+            <h2>${title} - Season ${season_num}</h2>
+        </div>
+    `;
+}
+
+function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
+    showLoadingState();
+    const version = document.getElementById('version-select').value;
+    let formData = new FormData();
+    formData.append('media_id', mediaId);
+    formData.append('title', title);
+    formData.append('year', year);
+    formData.append('media_type', mediaType);
+    formData.append('season', season);
+    if (episode !== null) formData.append('episode', episode);
+    formData.append('multi', multi);
+    formData.append('version', version);
+
+    fetch('/scraper/select_episode', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoadingState();
+        if (data.error) {
+            displayError(data.error);
+        } else if (!data.episode_results) {
+            displayError('No episode results found');
+        } else {
+            displayEpisodeResults(data.episode_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
+        }
+    })
+    .catch(error => {
+        hideLoadingState();
+        console.error('Error:', error);
+        displayError('An error occurred while selecting media.');
+    });
+}
+
+async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
+    showLoadingState();
+    const version = document.getElementById('version-select').value;
+    let formData = new FormData();
+    formData.append('media_id', mediaId);
+    formData.append('title', title);
+    formData.append('year', year);
+    formData.append('media_type', mediaType);
+    if (season !== null) formData.append('season', season);
+    if (episode !== null) formData.append('episode', episode);
+    formData.append('multi', multi);
+    formData.append('version', version);
+    fetch('/scraper/select_media', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoadingState();
+        displayTorrentResults(data.torrent_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
+    })
+    .catch(error => {
+        hideLoadingState();
+        console.error('Error:', error);
+        displayError('An error occurred while selecting media.');
+    });
 }

@@ -68,6 +68,187 @@
         .advice-section.expanded .toggle-icon {
             transform: rotate(180deg);
         }
+        
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .modal-content {
+            background-color: #2a2a2a;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #444;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 600px;
+            position: relative;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: #fff;
+        }
+
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: #fff;
+        }
+
+        #notifications-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* Notification button styles */
+        #notifications_button {
+            position: relative;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0px !important;
+            transition: opacity 0.3s ease;
+            min-width: auto !important;
+            gap: 0px !important;
+            margin-left: 5px;
+        }
+
+        #notifications_button:hover {
+            opacity: 0.8;
+        }
+
+        #notifications_button.has-notifications::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            right: -5px;
+            width: 8px;
+            height: 8px;
+            background-color: #ff4444;
+            border-radius: 50%;
+        }
+
+        #releaseNotesButton {
+            min-width: auto !important;
+            gap: 0px !important;
+            padding: 0px !important;
+            margin-left: 0px !important;
+        }
+        
+        /* Notification Styles */
+        .notification {
+            background-color: #333;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .notification:hover {
+            background-color: #404040;
+        }
+
+        .notification.unread {
+            border-left: 3px solid #007bff;
+        }
+
+        .notification.read {
+            opacity: 0.7;
+        }
+
+        .notification-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+        }
+
+        .notification-type {
+            text-transform: capitalize;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
+
+        .notification-type.info { background-color: #17a2b8; }
+        .notification-type.warning { background-color: #ffc107; color: #000; }
+        .notification-type.error { background-color: #dc3545; }
+        .notification-type.success { background-color: #28a745; }
+
+        .notification-time {
+            color: #888;
+        }
+
+        .notification-title {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .notification-message {
+            color: #ddd;
+            font-size: 0.95em;
+            line-height: 1.4;
+        }
+
+        .notification-link {
+            display: inline-block;
+            margin-top: 8px;
+            color: #007bff;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+
+        .notification-link:hover {
+            text-decoration: underline;
+        }
+
+        .no-notifications {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+        }
+
+        #notifications-container {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        /* Modal adjustments */
+        .modal-content {
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+        }
     </style>
     
     {% block head %}{% endblock %}
@@ -87,6 +268,124 @@
                     section.classList.toggle('expanded');
                 });
             });
+        });
+    </script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const modal = document.getElementById('notificationsModal');
+            const btn = document.getElementById('notifications_button');
+            const closeBtn = modal.querySelector('.close');
+            const notificationsContainer = document.getElementById('notifications-container');
+            let notifications = [];
+
+            // Fetch notifications
+            async function fetchNotifications() {
+                try {
+                    const response = await fetch('/base/api/notifications');
+                    const data = await response.json();
+                    notifications = data.notifications || [];
+                    updateNotificationDisplay();
+                    updateNotificationIndicator();
+                } catch (error) {
+                    console.error('Error fetching notifications:', error);
+                }
+            }
+
+            // Update notification display in modal
+            function updateNotificationDisplay() {
+                if (notifications.length === 0) {
+                    notificationsContainer.innerHTML = '<div class="no-notifications">No notifications</div>';
+                    return;
+                }
+
+                notificationsContainer.innerHTML = notifications
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                    .map(notification => `
+                        <div class="notification ${notification.read ? 'read' : 'unread'}" data-id="${notification.id}">
+                            <div class="notification-header">
+                                <span class="notification-type ${notification.type || 'info'}">${notification.type || 'info'}</span>
+                                <span class="notification-time">${formatTimestamp(notification.timestamp)}</span>
+                            </div>
+                            <div class="notification-title">${notification.title}</div>
+                            <div class="notification-message">${notification.message}</div>
+                            ${notification.link ? `<a href="${notification.link}" class="notification-link">View Details</a>` : ''}
+                        </div>
+                    `).join('');
+
+                // Add click handlers for marking as read
+                document.querySelectorAll('.notification.unread').forEach(notif => {
+                    notif.addEventListener('click', async () => {
+                        const id = notif.dataset.id;
+                        await markNotificationRead(id);
+                        notif.classList.remove('unread');
+                        notif.classList.add('read');
+                        updateNotificationIndicator();
+                    });
+                });
+            }
+
+            // Update the notification indicator (red dot)
+            function updateNotificationIndicator() {
+                const hasUnread = notifications.some(n => !n.read);
+                btn.classList.toggle('has-notifications', hasUnread);
+            }
+
+            // Mark notification as read
+            async function markNotificationRead(id) {
+                try {
+                    await fetch('/base/api/notifications/mark-read', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ id }),
+                    });
+                    const notification = notifications.find(n => n.id === id);
+                    if (notification) {
+                        notification.read = true;
+                    }
+                } catch (error) {
+                    console.error('Error marking notification as read:', error);
+                }
+            }
+
+            // Format timestamp
+            function formatTimestamp(timestamp) {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diffHours = Math.abs(now - date) / 36e5;
+
+                if (diffHours < 24) {
+                    return date.toLocaleTimeString();
+                } else if (diffHours < 48) {
+                    return 'Yesterday';
+                } else {
+                    return date.toLocaleDateString();
+                }
+            }
+
+            // Modal controls
+            btn.addEventListener('click', function() {
+                modal.style.display = 'block';
+                fetchNotifications(); // Refresh notifications when opening modal
+            });
+
+            closeBtn.addEventListener('click', function() {
+                modal.style.display = 'none';
+            });
+
+            window.addEventListener('click', function(event) {
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            });
+
+            // Initial fetch
+            fetchNotifications();
+            
+            // Refresh notifications periodically
+            setInterval(fetchNotifications, 30000); // Every 30 seconds
         });
     </script>
 </head>
@@ -207,6 +506,9 @@
                                 <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                             </button>
                         {% endif %}
+                        <button class="icon-button" id="notifications_button" role="button" data-tooltip="global.notificationsButton">
+                            <i class="fas fa-bell" style="color: white;"></i>
+                        </button>
                         <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
                             <i class="fas fa-file-alt"></i>
                         </button>
@@ -226,6 +528,21 @@
         </div>
         {% endif %}
     </header>
+
+    <!-- Notifications Modal -->
+    <div id="notificationsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Notifications</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="notifications-container">
+                    <!-- Notifications will be dynamically inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
 
     {% if not is_user_system_enabled() or (is_user_system_enabled() and current_user.is_authenticated) %}
     {% if not is_onboarding %}
@@ -296,6 +613,28 @@
     <script type="module" src="{{ url_for('static', filename='js/tooltips.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/task_monitor.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const modal = document.getElementById('notificationsModal');
+            const btn = document.getElementById('notifications_button');
+            const closeBtn = modal.querySelector('.close');
+
+            btn.addEventListener('click', function() {
+                modal.style.display = 'block';
+            });
+
+            closeBtn.addEventListener('click', function() {
+                modal.style.display = 'none';
+            });
+
+            window.addEventListener('click', function(event) {
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            });
+        });
+    </script>
     
     {% block scripts %}{% endblock %}
 </body>

@@ -105,10 +105,10 @@ class ProgramRunner:
             #'task_local_library_scan': 900,  # Run every 5 minutes
             'task_refresh_download_stats': 300,  # Run every 5 minutes
             'task_check_plex_files': 60,  # Run every 60 seconds
-            'task_update_show_ids': 3600,  # Run every hour
-            'task_update_show_titles': 3600,  # Run every hour
-            'task_update_movie_ids': 3600,  # Run every hour
-            'task_update_movie_titles': 3600,  # Run every hour
+            'task_update_show_ids': 21600,  # Run every six hours
+            'task_update_show_titles': 21600,  # Run every six hours
+            'task_update_movie_ids': 21600,  # Run every six hours
+            'task_update_movie_titles': 21600,  # Run every six hours
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
             'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
             'task_check_database_health': 3600,  # Run every hour
@@ -237,20 +237,28 @@ class ProgramRunner:
         return should_run
 
     def task_check_service_connectivity(self):
-        # logging.debug("Checking service connectivity")
+        """Check connectivity to required services"""
         from routes.program_operation_routes import check_service_connectivity
-        if check_service_connectivity():
+        connectivity_ok, failed_services = check_service_connectivity()
+        if connectivity_ok:
             logging.debug("Service connectivity check passed")
         else:
             logging.error("Service connectivity check failed")
-            self.handle_connectivity_failure()
+            self.handle_connectivity_failure(failed_services)
 
-    def handle_connectivity_failure(self):
+    def handle_connectivity_failure(self, failed_services=None):
         from routes.program_operation_routes import stop_program, check_service_connectivity
         from extensions import app  # Import the Flask app
 
-        logging.warning("Pausing program queue due to connectivity failure")
-        self.pause_reason = "Connectivity failure - waiting for services to be available"
+        # Create a descriptive message about which services failed
+        if failed_services and len(failed_services) > 0:
+            failed_services_str = ", ".join(failed_services)
+            reason = f"Connectivity failure - {failed_services_str} unavailable"
+        else:
+            reason = "Connectivity failure - waiting for services to be available"
+            
+        logging.warning(f"Pausing program queue due to connectivity failure: {reason}")
+        self.pause_reason = reason
         self.pause_queue()
         
         # Set the initial failure time if not already set
@@ -265,26 +273,29 @@ class ProgramRunner:
 
         if not self.connectivity_failure_time:
             return
-
-        current_time = time.time()
-        time_since_failure = current_time - self.connectivity_failure_time
-        
-        # Check every minute
+            
+        # Check if we should retry connectivity check
+        time_since_failure = time.time() - self.connectivity_failure_time
         if time_since_failure >= 60 * (self.connectivity_retry_count + 1):
             self.connectivity_retry_count += 1
             
             try:
-                if check_service_connectivity():
+                connectivity_ok, failed_services = check_service_connectivity()
+                if connectivity_ok:
                     logging.info("Service connectivity restored")
                     self.connectivity_failure_time = None
                     self.connectivity_retry_count = 0
                     self.resume_queue()
                     return
             except Exception as e:
-                logging.error(f"Error checking connectivity: {str(e)}")
-
+                logging.error(f"Error checking service connectivity: {str(e)}")
+                
             logging.warning(f"Service connectivity check failed. Retry {self.connectivity_retry_count}/5")
-            self.pause_reason = f"Connectivity failure - waiting for services to be available (Retry {self.connectivity_retry_count}/5)"
+            if failed_services and len(failed_services) > 0:
+                failed_services_str = ", ".join(failed_services)
+                self.pause_reason = f"Connectivity failure - {failed_services_str} unavailable (Retry {self.connectivity_retry_count}/5)"
+            else:
+                self.pause_reason = f"Connectivity failure - waiting for services to be available (Retry {self.connectivity_retry_count}/5)"
 
             # After 5 minutes (5 retries), stop the program
             if self.connectivity_retry_count >= 5:
@@ -298,7 +309,7 @@ class ProgramRunner:
     def pause_queue(self):
         from queue_manager import QueueManager
         
-        QueueManager().pause_queue()
+        QueueManager().pause_queue(reason=self.pause_reason)
         self.queue_paused = True
         logging.info("Queue paused")
 
@@ -1291,6 +1302,66 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error running task {task_name}: {str(e)}")
             raise
+            
+    def enable_task(self, task_name):
+        """Enable a task that was previously disabled."""
+        # Normalize task name to match how it's stored in enabled_tasks
+        normalized_name = self._normalize_task_name(task_name)
+        
+        if normalized_name in self.enabled_tasks:
+            logging.info(f"Task {normalized_name} is already enabled")
+            return True
+            
+        # Add to enabled tasks
+        self.enabled_tasks.add(normalized_name)
+        logging.info(f"Enabled task: {normalized_name}")
+        return True
+        
+    def disable_task(self, task_name):
+        """Disable a task to prevent it from running."""
+        # Normalize task name to match how it's stored in enabled_tasks
+        normalized_name = self._normalize_task_name(task_name)
+        
+        if normalized_name not in self.enabled_tasks:
+            logging.info(f"Task {normalized_name} is already disabled")
+            return True
+            
+        # Remove from enabled tasks
+        self.enabled_tasks.remove(normalized_name)
+        logging.info(f"Disabled task: {normalized_name}")
+        return True
+        
+    def _normalize_task_name(self, task_name):
+        """Normalize task name to match how it's stored in enabled_tasks."""
+        task_name_normalized = task_name
+        
+        # Handle queue tasks (which don't have task_ prefix)
+        queue_names = [
+            'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
+            'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'
+        ]
+        
+        # Check if this is a queue name
+        for queue_name in queue_names:
+            if task_name.lower() == queue_name.lower():
+                return queue_name
+                
+        # Handle task_ prefix
+        if task_name.startswith('task_'):
+            task_name_normalized = task_name
+        else:
+            # Check if it's a content source task
+            if '_wanted' in task_name.lower():
+                # Content source tasks have spaces, not underscores
+                task_name_normalized = task_name.replace('_', ' ')
+                if not task_name_normalized.startswith('task_'):
+                    task_name_normalized = f'task_{task_name_normalized}'
+            else:
+                # Regular task - add task_ prefix if not present
+                if not task_name.startswith('task_'):
+                    task_name_normalized = f'task_{task_name}'
+                    
+        return task_name_normalized
 
     def task_run_library_maintenance(self):
         """Run library maintenance tasks."""

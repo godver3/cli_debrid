@@ -10,6 +10,7 @@ from functools import wraps
 import time
 import hashlib
 import json
+from pathlib import Path
 
 # Global cache storage
 _function_cache = {}
@@ -302,6 +303,72 @@ def check_for_update():
             'success': False,
             'error': str(e)
         }
+
+@base_bp.route('/api/notifications')
+@cache_for_seconds(30)  # Cache for 30 seconds
+def get_notifications():
+    """Get notifications from the notification file"""
+    try:
+        db_content_dir = os.getenv('USER_DB_CONTENT', '/user/db_content')
+        notification_file = Path(db_content_dir) / 'notifications.json'
+        
+        if not notification_file.exists():
+            # Create empty notification file if it doesn't exist
+            notification_file.write_text(json.dumps({"notifications": []}))
+            return jsonify({"notifications": []})
+        
+        with open(notification_file) as f:
+            notifications = json.load(f)
+            
+        # Filter out expired notifications
+        current_time = datetime.now().isoformat()
+        if "notifications" in notifications:
+            notifications["notifications"] = [
+                n for n in notifications["notifications"]
+                if "expires" not in n or n["expires"] > current_time
+            ]
+            
+        return jsonify(notifications)
+    except Exception as e:
+        logging.error(f"Error reading notifications: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to read notifications", "notifications": []})
+
+@base_bp.route('/api/notifications/mark-read', methods=['POST'])
+def mark_notification_read():
+    """Mark a notification as read"""
+    try:
+        notification_id = request.json.get('id')
+        if not notification_id:
+            return jsonify({"error": "Notification ID required"}), 400
+            
+        db_content_dir = os.getenv('USER_DB_CONTENT', '/user/db_content')
+        notification_file = Path(db_content_dir) / 'notifications.json'
+        
+        if not notification_file.exists():
+            return jsonify({"error": "No notifications found"}), 404
+            
+        with open(notification_file) as f:
+            notifications = json.load(f)
+            
+        # Mark the notification as read
+        found = False
+        for notification in notifications.get("notifications", []):
+            if notification["id"] == notification_id:
+                notification["read"] = True
+                found = True
+                break
+                
+        if not found:
+            return jsonify({"error": "Notification not found"}), 404
+            
+        # Write back to file
+        with open(notification_file, 'w') as f:
+            json.dump(notifications, f, indent=2)
+            
+        return jsonify({"success": True})
+    except Exception as e:
+        logging.error(f"Error marking notification as read: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to mark notification as read"}), 500
 
 @base_bp.route('/api/task-stream')
 def task_stream():

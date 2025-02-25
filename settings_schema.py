@@ -145,6 +145,12 @@ SETTINGS_SCHEMA = {
     },
     "Queue": {
         "tab": "Additional Settings",
+        "queue_sort_order": {
+            "type": "string",
+            "description": "Sort order for the scraping queue",
+            "default": "None",
+            "choices": ["None", "Movies First", "Episodes First"]
+        },
         "wake_limit": {
             "type": "string",
             "description": "Number of times to wake items before blacklisting",
