@@ -183,7 +183,8 @@ class AddingQueue:
                 
                 if (not torrent_info or not magnet) and (not updated_item or updated_item.get('state') != 'Pending Uncached'):
                     logging.error(f"No valid torrent info or magnet found for {item_identifier}")
-                    item['torrent_id'] = torrent_info.get('id')
+                    # Only try to get torrent ID if torrent_info exists
+                    item['torrent_id'] = torrent_info.get('id') if torrent_info else None
                     self._handle_failed_item(item, "No valid results found", queue_manager)
                     continue
                     
