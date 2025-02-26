@@ -1152,14 +1152,11 @@ class ProgramRunner:
                 
                 # Update relevant Plex sections
                 for section in sections:
-                    if section in updated_sections:
-                        logging.debug(f"Section {section.title} already updated this run, skipping")
-                        continue
-                    
+
                     try:
                         # Update each library location with the expected path structure
                         for location in section.locations:
-                            expected_path = os.path.join(location, filled_by_title, filled_by_file)
+                            expected_path = os.path.join(location, filled_by_title)
                             logging.debug(f"Updating Plex section '{section.title}' to scan:")
                             logging.debug(f"  Location: {location}")
                             logging.debug(f"  Expected path: {expected_path}")

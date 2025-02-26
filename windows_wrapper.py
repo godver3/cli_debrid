@@ -13,10 +13,10 @@ import threading
 # Default ports configuration
 DEFAULT_PORTS = {
     'win32': {
-        'main': 8585,
-        'battery': 8586,
-        'tunnel_main': 5000,
-        'tunnel_battery': 5001
+        'main': 40000,
+        'battery': 40001,
+        'tunnel_main': 40000,
+        'tunnel_battery': 40001
     },
     'default': {
         'main': 5000,
