@@ -219,12 +219,17 @@ def force_match_with_tmdb(title: str, year: str, tmdb_id: str, plex_rating_key: 
                             logging.info(f"Found exact name/year match: {match_name} ({match_year})")
                             break
                 
-                # If no exact match found, take the first result
+                # If no exact match found, take the first result that has a year
                 if not target_match and matches:
-                    target_match = matches[0]
-                    match_name = getattr(target_match, 'name', '')
-                    match_year = getattr(target_match, 'year', '')
-                    logging.info(f"No exact match found, using first result: {match_name} ({match_year})")
+                    # Filter for matches that have a year
+                    valid_matches = [m for m in matches if getattr(m, 'year', '')]
+                    if valid_matches:
+                        target_match = valid_matches[0]
+                        match_name = getattr(target_match, 'name', '')
+                        match_year = getattr(target_match, 'year', '')
+                        logging.info(f"No exact match found, using first result with year: {match_name} ({match_year})")
+                    else:
+                        logging.warning("No matches found with valid year information")
                 
                 # Apply the match if we found one
                 if target_match:
@@ -455,6 +460,7 @@ def check_and_fix_unmatched_items(collected_content: Dict[str, List[Dict[str, An
                     SELECT tmdb_id, year, title
                     FROM media_items 
                     WHERE filled_by_file LIKE ? 
+                    AND tmdb_id IS NOT NULL 
                     AND state IN ('Collected', 'Upgrading', 'Checking')
                 ''', (f'%{plex_filename}',))
                 db_item = cursor.fetchone()
