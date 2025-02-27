@@ -71,7 +71,11 @@
                     confirmText: 'Add Source',
                     cancelText: 'Cancel',
                     onConfirm: (selectedType) => {
-                        addContentSource({ type: selectedType });
+                        if (selectedType === 'Friends Trakt Watchlist') {
+                            showTraktFriendsDropdown();
+                        } else {
+                            addContentSource({ type: selectedType });
+                        }
                     }
                 });
             })
@@ -82,6 +86,174 @@
                     message: 'Error fetching content source types. Please try again.'
                 });
             });
+    }
+
+    function showTraktFriendsDropdown() {
+        fetch('/settings/content-sources/trakt-friends')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.friends.length > 0) {
+                    const dropdownOptions = data.friends.map(friend => ({
+                        value: friend.auth_id,
+                        text: friend.display_name
+                    }));
+
+                    window.showPopup({
+                        type: POPUP_TYPES.PROMPT,
+                        title: 'Select Trakt Friend',
+                        message: 'Choose a friend\'s Trakt account:',
+                        dropdownOptions: dropdownOptions,
+                        confirmText: 'Continue',
+                        cancelText: 'Cancel',
+                        onConfirm: (selectedAuthId) => {
+                            const selectedFriend = data.friends.find(friend => friend.auth_id === selectedAuthId);
+                            if (selectedFriend) {
+                                showTraktFriendOptions(selectedFriend);
+                            }
+                        }
+                    });
+                } else {
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'No Trakt friends found. Please add friends on the Trakt Friends page first.'
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching Trakt friends:', error);
+                window.showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Error fetching Trakt friends. Please try again.'
+                });
+            });
+    }
+
+    function showTraktFriendOptions(friend) {
+        // Fetch available versions from the backend
+        fetch('/settings/get_scraping_versions')
+            .then(response => response.json())
+            .then(data => {
+                if (data.versions && Array.isArray(data.versions)) {
+                    // Create custom form HTML with versions from backend
+                    const formHtml = `
+                        <form id="friendTraktForm">
+                            <div class="form-group">
+                                <label for="display_name">Display Name</label>
+                                <input type="text" id="display_name" name="display_name" value="${friend.display_name}" placeholder="Display name for this source">
+                            </div>
+                            <div class="form-group">
+                                <label for="media_type">Media Type</label>
+                                <select id="media_type" name="media_type">
+                                    <option value="All">All Media Types</option>
+                                    <option value="Movies">Movies Only</option>
+                                    <option value="Shows">TV Shows Only</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="versions">Versions</label>
+                                <div class="versions-checkboxes">
+                                    ${data.versions.map(version => `
+                                        <div class="checkbox-item">
+                                            <input type="checkbox" id="version_${version}" name="version_${version}" value="${version}">
+                                            <label for="version_${version}">${version}</label>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </form>
+                    `;
+
+                    window.showPopup({
+                        type: POPUP_TYPES.PROMPT,
+                        title: 'Configure Friend\'s Trakt Watchlist',
+                        message: `Configure ${friend.friend_name}'s Trakt watchlist:`,
+                        formHtml: formHtml,
+                        confirmText: 'Add Source',
+                        cancelText: 'Cancel',
+                        onConfirm: (formData) => {
+                            // Process versions from checkboxes
+                            let versions = [];
+                            // Check each version checkbox individually
+                            for (const version of data.versions) {
+                                if (formData[`version_${version}`]) {
+                                    versions.push(version);
+                                }
+                            }
+
+                            // Add the content source
+                            addContentSource({
+                                type: 'Friends Trakt Watchlist',
+                                display_name: formData.display_name,
+                                auth_id: friend.auth_id,
+                                username: friend.username,
+                                media_type: formData.media_type,
+                                versions: versions,
+                                enabled: true
+                            });
+                        }
+                    });
+                } else {
+                    console.error('Failed to fetch versions or invalid response format');
+                    // Fallback to a simple text input if versions can't be fetched
+                    showFallbackTraktFriendOptions(friend);
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching versions:', error);
+                // Fallback to a simple text input if there's an error
+                showFallbackTraktFriendOptions(friend);
+            });
+    }
+
+    function showFallbackTraktFriendOptions(friend) {
+        // Fallback function when versions can't be fetched from the backend
+        const formHtml = `
+            <form id="friendTraktForm">
+                <div class="form-group">
+                    <label for="display_name">Display Name</label>
+                    <input type="text" id="display_name" name="display_name" value="${friend.display_name}" placeholder="Display name for this source">
+                </div>
+                <div class="form-group">
+                    <label for="media_type">Media Type</label>
+                    <select id="media_type" name="media_type">
+                        <option value="All">All Media Types</option>
+                        <option value="Movies">Movies Only</option>
+                        <option value="Shows">TV Shows Only</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="versions">Versions (comma separated)</label>
+                    <input type="text" id="versions" name="versions" placeholder="e.g., 1080p,4K">
+                </div>
+            </form>
+        `;
+
+        window.showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Configure Friend\'s Trakt Watchlist',
+            message: `Configure ${friend.friend_name}'s Trakt watchlist:`,
+            formHtml: formHtml,
+            confirmText: 'Add Source',
+            cancelText: 'Cancel',
+            onConfirm: (formData) => {
+                // Process versions from comma-separated string
+                let versions = [];
+                if (formData.versions) {
+                    versions = formData.versions.split(',').map(v => v.trim()).filter(v => v);
+                }
+
+                // Add the content source
+                addContentSource({
+                    type: 'Friends Trakt Watchlist',
+                    display_name: formData.display_name,
+                    auth_id: friend.auth_id,
+                    username: friend.username,
+                    media_type: formData.media_type,
+                    versions: versions,
+                    enabled: true
+                });
+            }
+        });
     }
 
     function addContentSource(sourceData) {
@@ -167,6 +339,31 @@
         });
     }
 </script>
+
+<style>
+    /* Add your custom styles here */
+    .versions-checkboxes {
+        display: flex;
+        flex-wrap: wrap;
+        max-height: 200px;
+        overflow-y: auto;
+        margin-bottom: 15px;
+        padding: 5px;
+        border: 1px solid #555;
+        border-radius: 4px;
+    }
+    
+    .checkbox-item {
+        display: flex;
+        align-items: center;
+        margin-right: 15px;
+        margin-bottom: 8px;
+    }
+    
+    .checkbox-item input[type="checkbox"] {
+        margin-right: 5px;
+    }
+</style>
 
 {% if settings['Content Sources'] is defined and settings['Content Sources'] is mapping %}
     {% for source_id, config in settings['Content Sources'].items() %}

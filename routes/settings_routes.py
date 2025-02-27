@@ -7,6 +7,7 @@ from routes.models import admin_required, onboarding_required
 from .utils import is_user_system_enabled
 import traceback
 import json
+import os
 
 settings_bp = Blueprint('settings', __name__)
 
@@ -27,6 +28,45 @@ def content_sources_types():
         'source_types': source_types,
         'settings': SETTINGS_SCHEMA['Content Sources']['schema']
     })
+
+@settings_bp.route('/content-sources/trakt-friends')
+def get_trakt_friends():
+    """Get a list of authorized Trakt friends for the dropdown"""
+    try:
+        friends = []
+        trakt_friends_dir = os.environ.get('USER_CONFIG', '/user/config')
+        trakt_friends_dir = os.path.join(trakt_friends_dir, 'trakt_friends')
+        
+        # List all files in the trakt_friends_dir
+        if os.path.exists(trakt_friends_dir):
+            for filename in os.listdir(trakt_friends_dir):
+                if filename.endswith('.json'):
+                    try:
+                        # Extract auth_id from filename
+                        auth_id = filename.replace('.json', '')
+                        
+                        with open(os.path.join(trakt_friends_dir, filename), 'r') as f:
+                            state = json.load(f)
+                        
+                        # Only include authorized accounts
+                        if state.get('status') == 'authorized':
+                            friends.append({
+                                'auth_id': auth_id,
+                                'friend_name': state.get('friend_name', 'Unknown Friend'),
+                                'username': state.get('username', ''),
+                                'display_name': f"{state.get('friend_name', 'Unknown Friend')}'s Watchlist"
+                            })
+                    except Exception as e:
+                        logging.error(f"Error reading friend state file {filename}: {str(e)}")
+        
+        return jsonify({
+            'success': True,
+            'friends': friends
+        })
+    
+    except Exception as e:
+        logging.error(f"Error listing Trakt friends: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/content_sources/add', methods=['POST'])
 def add_content_source_route():

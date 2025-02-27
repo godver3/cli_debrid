@@ -1,4 +1,3 @@
-from .trakt_friends_routes import trakt_friends_bp
 from flask import Blueprint, jsonify, redirect, url_for, render_template, g, request, abort, flash
 from functools import wraps
 import json
@@ -17,7 +16,6 @@ from .user_management_routes import user_management_bp
 from .database_routes import database_bp
 from .statistics_routes import statistics_bp, root_bp
 from .webhook_routes import webhook_bp
-from .trakt_friends_routes import trakt_friends_bp
 from .debug_routes import debug_bp
 from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
@@ -132,7 +130,6 @@ def register_blueprints(app):
         (user_management_bp, '/user_management'),
         (database_bp, '/database'),
         (statistics_bp, '/statistics'),
-        (trakt_friends_bp, '/trakt_friends'),
         (webhook_bp, '/webhook'),
         (debug_bp, '/debug'),
         (trakt_bp, '/trakt'),

@@ -610,6 +610,14 @@ SETTINGS_SCHEMA = {
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
                 "display_name": {"type": "string", "default": "My Friends Plex RSS Watchlist"}
+            },
+            "Friends Trakt Watchlist": {
+                "enabled": {"type": "boolean", "default": False},
+                "auth_id": {"type": "string", "default": ""},
+                "username": {"type": "string", "default": ""},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
+                "display_name": {"type": "string", "default": "Friend's Trakt Watchlist"}
             }
         }
     },

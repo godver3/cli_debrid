@@ -409,6 +409,7 @@ def root():
                     movie['collected_at'], 
                     use_24hour_format
                 )
+                movie['formatted_collected_at'] = movie['formatted_date']
                 recently_added['movies'].append(movie)
         
         # Process shows
@@ -420,18 +421,52 @@ def root():
                 )
                 recently_added['shows'].append(show)
         
-        # Get recently upgraded items with logging
-        #logging.info("Fetching recently upgraded items...")
-        recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
-        #logging.info(f"Raw recently upgraded items: {recently_upgraded}")
-        
-        # Format dates for upgraded items
-        for item in recently_upgraded:
-            item['formatted_date'] = format_datetime_preference(
-                item['last_updated'], 
-                use_24hour_format
-            )
-            #logging.info(f"Formatted upgraded item: {item}")
+        # Get recently upgraded items
+        upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
+        if upgrade_enabled:
+            recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
+            for item in recently_upgraded:
+                # Ensure we have valid collected_at and original_collected_at
+                if item.get('collected_at') is None and item.get('last_updated') is not None:
+                    item['collected_at'] = item['last_updated']
+                
+                # Format the dates
+                item['formatted_date'] = format_datetime_preference(
+                    item['collected_at'] if item.get('collected_at') else item.get('last_updated', ''), 
+                    use_24hour_format
+                )
+                
+                # Check if original_collected_at exists and is not None before formatting
+                if item.get('original_collected_at'):
+                    item['original_collected_at'] = format_datetime_preference(
+                        item['original_collected_at'],
+                        use_24hour_format
+                    )
+                else:
+                    # If original_collected_at is not available, use a date earlier than collected_at
+                    if item.get('collected_at'):
+                        # Parse the collected_at date if it's a string
+                        if isinstance(item['collected_at'], str):
+                            try:
+                                collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
+                            except ValueError:
+                                try:
+                                    collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                                except ValueError:
+                                    collected_date = None
+                        else:
+                            collected_date = item['collected_at']
+                            
+                        if collected_date:
+                            # Set original date to 1 day before collected date
+                            original_date = collected_date - timedelta(days=1)
+                            item['original_collected_at'] = format_datetime_preference(original_date, use_24hour_format)
+                        else:
+                            item['original_collected_at'] = 'Unknown'
+                    else:
+                        item['original_collected_at'] = 'Unknown'
+        else:
+            recently_upgraded = []
     
     finally:
         loop.close()
@@ -537,10 +572,13 @@ def set_time_preference():
                             collected_at = None
                     
                     if collected_at:
+                        item['formatted_date'] = format_datetime_preference(collected_at, use_24hour_format)
                         item['formatted_collected_at'] = format_datetime_preference(collected_at, use_24hour_format)
                     else:
+                        item['formatted_date'] = 'Unknown'
                         item['formatted_collected_at'] = 'Unknown'
                 else:
+                    item['formatted_date'] = 'Unknown'
                     item['formatted_collected_at'] = 'Unknown'
             
             # Get recently aired and upcoming shows
@@ -556,13 +594,50 @@ def set_time_preference():
             for release in upcoming_releases:
                 release['formatted_date'] = format_date(release.get('release_date'))
             
-            # Get recently upgraded items if enabled
-            upgrade_enabled = get_setting('Scraping', 'enable_upgrading', 'False')
+            # Get recently upgraded items
+            upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
             if upgrade_enabled:
                 recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
                 for item in recently_upgraded:
-                    if 'last_updated' in item:
-                        item['formatted_date'] = format_datetime_preference(item['last_updated'], use_24hour_format)
+                    # Ensure we have valid collected_at and original_collected_at
+                    if item.get('collected_at') is None and item.get('last_updated') is not None:
+                        item['collected_at'] = item['last_updated']
+                    
+                    # Format the dates
+                    item['formatted_date'] = format_datetime_preference(
+                        item['collected_at'] if item.get('collected_at') else item.get('last_updated', ''), 
+                        use_24hour_format
+                    )
+                    
+                    # Check if original_collected_at exists and is not None before formatting
+                    if item.get('original_collected_at'):
+                        item['original_collected_at'] = format_datetime_preference(
+                            item['original_collected_at'],
+                            use_24hour_format
+                        )
+                    else:
+                        # If original_collected_at is not available, use a date earlier than collected_at
+                        if item.get('collected_at'):
+                            # Parse the collected_at date if it's a string
+                            if isinstance(item['collected_at'], str):
+                                try:
+                                    collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
+                                except ValueError:
+                                    try:
+                                        collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                                    except ValueError:
+                                        collected_date = None
+                            else:
+                                collected_date = item['collected_at']
+                                
+                            if collected_date:
+                                # Set original date to 1 day before collected date
+                                original_date = collected_date - timedelta(days=1)
+                                item['original_collected_at'] = format_datetime_preference(original_date, use_24hour_format)
+                            else:
+                                item['original_collected_at'] = 'Unknown'
+                        else:
+                            item['original_collected_at'] = 'Unknown'
             else:
                 recently_upgraded = []
                 
@@ -910,12 +985,51 @@ def index_api():
                 recently_added['shows'].append(show)
         
         # Get recently upgraded items
-        recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
-        for item in recently_upgraded:
-            item['formatted_date'] = format_datetime_preference(
-                item['last_updated'],
-                use_24hour_format
-            )
+        upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
+        if upgrade_enabled:
+            recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
+            for item in recently_upgraded:
+                # Ensure we have valid collected_at and original_collected_at
+                if item.get('collected_at') is None and item.get('last_updated') is not None:
+                    item['collected_at'] = item['last_updated']
+                
+                # Format the dates
+                item['formatted_date'] = format_datetime_preference(
+                    item['collected_at'] if item.get('collected_at') else item.get('last_updated', ''), 
+                    use_24hour_format
+                )
+                
+                # Check if original_collected_at exists and is not None before formatting
+                if item.get('original_collected_at'):
+                    item['original_collected_at'] = format_datetime_preference(
+                        item['original_collected_at'],
+                        use_24hour_format
+                    )
+                else:
+                    # If original_collected_at is not available, use a date earlier than collected_at
+                    if item.get('collected_at'):
+                        # Parse the collected_at date if it's a string
+                        if isinstance(item['collected_at'], str):
+                            try:
+                                collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
+                            except ValueError:
+                                try:
+                                    collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                                except ValueError:
+                                    collected_date = None
+                        else:
+                            collected_date = item['collected_at']
+                            
+                        if collected_date:
+                            # Set original date to 1 day before collected date
+                            original_date = collected_date - timedelta(days=1)
+                            item['original_collected_at'] = format_datetime_preference(original_date, use_24hour_format)
+                        else:
+                            item['original_collected_at'] = 'Unknown'
+                    else:
+                        item['original_collected_at'] = 'Unknown'
+        else:
+            recently_upgraded = []
     
     finally:
         loop.close()

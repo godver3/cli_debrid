@@ -702,7 +702,8 @@ document.addEventListener('DOMContentLoaded', function() {
             year: currentItem.year,
             movie_or_episode: isTV ? 'episode' : 'movie',
             version: version,
-            modifiedSettings: modifiedSettings
+            modifiedSettings: modifiedSettings,
+            skip_cache_check: true  // Always skip cache check in scraper tester
         };
     
         // Add TV show specific information
