@@ -1,0 +1,490 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Friend's Trakt Accounts{% endblock %}
+
+{% block head %}
+<style>
+    .trakt-friends-container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    .friend-auth-section {
+        background-color: #2a2a2a;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    
+    .friend-auth-form {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .friend-auth-form input {
+        padding: 10px;
+        border-radius: 4px;
+        border: 1px solid #444;
+        background-color: #333;
+        color: #fff;
+    }
+    
+    .friend-auth-form button {
+        padding: 10px 15px;
+        background-color: #e50914;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+    }
+    
+    .friend-auth-form button:hover {
+        background-color: #f40612;
+    }
+    
+    .auth-code-display {
+        display: none;
+        background-color: #333;
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 20px;
+    }
+    
+    .auth-code-display .url {
+        word-break: break-all;
+        margin: 10px 0;
+    }
+    
+    .auth-code-display .url a {
+        color: #e50914;
+        text-decoration: none;
+    }
+    
+    .auth-code-display .code {
+        font-size: 24px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        color: #e50914;
+        text-align: center;
+        margin: 15px 0;
+    }
+    
+    .auth-status {
+        margin-top: 15px;
+        padding: 10px;
+        border-radius: 4px;
+        text-align: center;
+    }
+    
+    .auth-status.pending {
+        background-color: #3a3a3a;
+        color: #f0ad4e;
+    }
+    
+    .auth-status.success {
+        background-color: #1e3a1e;
+        color: #5cb85c;
+    }
+    
+    .auth-status.error {
+        background-color: #3a1e1e;
+        color: #d9534f;
+    }
+    
+    .friend-list {
+        background-color: #2a2a2a;
+        border-radius: 8px;
+        padding: 20px;
+    }
+    
+    .friend-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px;
+        background-color: #333;
+        border-radius: 4px;
+        margin-bottom: 10px;
+    }
+    
+    .friend-info {
+        flex: 1;
+    }
+    
+    .friend-info h3 {
+        margin: 0 0 5px 0;
+    }
+    
+    .friend-info p {
+        margin: 0;
+        color: #aaa;
+        font-size: 14px;
+    }
+    
+    .friend-actions {
+        display: flex;
+        gap: 10px;
+    }
+    
+    .friend-actions button {
+        padding: 8px 12px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    
+    .refresh-token-btn {
+        background-color: #ffc107;
+        color: #333;
+    }
+    
+    .delete-auth-btn {
+        background-color: #dc3545;
+        color: white;
+    }
+    
+    .add-source-form {
+        display: none;
+        margin-top: 10px;
+        padding: 15px;
+        background-color: #3a3a3a;
+        border-radius: 4px;
+    }
+    
+    .add-source-form select, .add-source-form input {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+        border: 1px solid #444;
+        background-color: #333;
+        color: #fff;
+    }
+    
+    .add-source-form button {
+        padding: 8px 12px;
+        background-color: #28a745;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="trakt-friends-container">
+    <h1>Manage Friend's Trakt Accounts</h1>
+    
+    <div class="friend-auth-section">
+        <h2>Add a Friend's Trakt Account</h2>
+        <p>Add your friend's Trakt account to use their watchlist as a content source.</p>
+        
+        <form class="friend-auth-form" id="friend-auth-form">
+            <input type="text" id="friend-name" name="friend_name" placeholder="Friend's Name (optional)" />
+            <input type="text" id="client-id" name="client_id" placeholder="Trakt Client ID (required)" required />
+            <input type="text" id="client-secret" name="client_secret" placeholder="Trakt Client Secret (required)" required />
+            <button type="submit" id="start-auth-btn">Start Authorization</button>
+        </form>
+        
+        <div class="auth-code-display" id="auth-code-display">
+            <p>Please ask your friend to visit:</p>
+            <p class="url"><a id="verification-url" href="#" target="_blank"></a></p>
+            <p>And enter this code:</p>
+            <p class="code" id="user-code"></p>
+            <p>This code will expire in <span id="expires-in">0</span> minutes.</p>
+            <div class="auth-status pending" id="auth-status">
+                Waiting for authorization...
+            </div>
+        </div>
+    </div>
+    
+    <div class="friend-list" id="friend-list">
+        <h2>Authorized Friends</h2>
+        <div id="friends-container">
+            <!-- Friend items will be added here dynamically -->
+            <p id="no-friends-message">No friends authorized yet.</p>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        const friendAuthForm = document.getElementById('friend-auth-form');
+        const authCodeDisplay = document.getElementById('auth-code-display');
+        const userCodeElement = document.getElementById('user-code');
+        const verificationUrlElement = document.getElementById('verification-url');
+        const expiresInElement = document.getElementById('expires-in');
+        const authStatusElement = document.getElementById('auth-status');
+        const friendsContainer = document.getElementById('friends-container');
+        const noFriendsMessage = document.getElementById('no-friends-message');
+        
+        let currentAuthId = null;
+        let checkAuthInterval = null;
+        let expiresInMinutes = 0;
+        let countdownInterval = null;
+        
+        // Load authorized friends on page load
+        loadAuthorizedFriends();
+        
+        // Handle friend authorization form submission
+        friendAuthForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            
+            const friendName = document.getElementById('friend-name').value;
+            const clientId = document.getElementById('client-id').value;
+            const clientSecret = document.getElementById('client-secret').value;
+            
+            const formData = new FormData();
+            formData.append('friend_name', friendName);
+            formData.append('client_id', clientId);
+            formData.append('client_secret', clientSecret);
+            
+            fetch('/trakt_friends/authorize', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Show the authorization code
+                    authCodeDisplay.style.display = 'block';
+                    userCodeElement.textContent = data.user_code;
+                    verificationUrlElement.textContent = data.verification_url;
+                    verificationUrlElement.href = data.verification_url;
+                    expiresInMinutes = Math.floor(data.expires_in / 60);
+                    expiresInElement.textContent = expiresInMinutes;
+                    
+                    // Set the current auth ID
+                    currentAuthId = data.auth_id;
+                    
+                    // Start checking auth status
+                    if (checkAuthInterval) {
+                        clearInterval(checkAuthInterval);
+                    }
+                    checkAuthInterval = setInterval(() => checkAuthStatus(currentAuthId), 5000);
+                    
+                    // Start countdown
+                    if (countdownInterval) {
+                        clearInterval(countdownInterval);
+                    }
+                    countdownInterval = setInterval(() => {
+                        expiresInMinutes--;
+                        expiresInElement.textContent = expiresInMinutes;
+                        if (expiresInMinutes <= 0) {
+                            clearInterval(countdownInterval);
+                            clearInterval(checkAuthInterval);
+                            authStatusElement.textContent = 'Authorization expired. Please try again.';
+                            authStatusElement.className = 'auth-status error';
+                        }
+                    }, 60000);
+                } else {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Authorization Error',
+                        message: data.error || 'An error occurred during authorization.'
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Authorization Error',
+                    message: 'An error occurred during authorization. Please try again.'
+                });
+            });
+        });
+        
+        function checkAuthStatus(authId) {
+            fetch(`/trakt_friends/check_auth/${authId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    if (data.status === 'authorized') {
+                        // Authorization successful
+                        clearInterval(checkAuthInterval);
+                        clearInterval(countdownInterval);
+                        
+                        authStatusElement.textContent = 'Authorization successful!';
+                        authStatusElement.className = 'auth-status success';
+                        
+                        showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            title: 'Authorization Successful',
+                            message: `${data.friend_name}'s Trakt account has been successfully authorized.`
+                        });
+                        
+                        // Reload the friends list
+                        loadAuthorizedFriends();
+                    }
+                } else {
+                    // Error occurred
+                    clearInterval(checkAuthInterval);
+                    clearInterval(countdownInterval);
+                    
+                    authStatusElement.textContent = 'Authorization failed: ' + data.error;
+                    authStatusElement.className = 'auth-status error';
+                    
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Authorization Failed',
+                        message: data.error || 'An error occurred during authorization.'
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error checking auth status:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Authorization Error',
+                    message: 'An error occurred while checking authorization status.'
+                });
+            });
+        }
+        
+        function loadAuthorizedFriends() {
+            fetch('/trakt_friends/list')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    friendsContainer.innerHTML = '';
+                    
+                    if (data.friends.length === 0) {
+                        friendsContainer.appendChild(noFriendsMessage);
+                    } else {
+                        data.friends.forEach(friend => {
+                            const friendElement = createFriendElement(friend);
+                            friendsContainer.appendChild(friendElement);
+                        });
+                    }
+                } else {
+                    console.error('Error loading friends:', data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+        
+        function createFriendElement(friend) {
+            const friendItem = document.createElement('div');
+            friendItem.className = 'friend-item';
+            
+            const friendInfo = document.createElement('div');
+            friendInfo.className = 'friend-info';
+            
+            const friendName = document.createElement('h3');
+            friendName.textContent = friend.friend_name;
+            
+            const username = document.createElement('p');
+            username.textContent = `Trakt Username: ${friend.username}`;
+            
+            const expiresAt = document.createElement('p');
+            const expiryDate = new Date(friend.expires_at * 1000);
+            expiresAt.textContent = `Token expires: ${expiryDate.toLocaleString()}`;
+            
+            friendInfo.appendChild(friendName);
+            friendInfo.appendChild(username);
+            friendInfo.appendChild(expiresAt);
+            
+            const friendActions = document.createElement('div');
+            friendActions.className = 'friend-actions';
+            
+            const refreshTokenBtn = document.createElement('button');
+            refreshTokenBtn.className = 'refresh-token-btn';
+            refreshTokenBtn.textContent = 'Refresh Token';
+            refreshTokenBtn.addEventListener('click', () => refreshToken(friend.auth_id));
+            
+            const deleteAuthBtn = document.createElement('button');
+            deleteAuthBtn.className = 'delete-auth-btn';
+            deleteAuthBtn.textContent = 'Delete';
+            deleteAuthBtn.addEventListener('click', () => deleteAuth(friend.auth_id));
+            
+            friendActions.appendChild(refreshTokenBtn);
+            friendActions.appendChild(deleteAuthBtn);
+            
+            friendItem.appendChild(friendInfo);
+            friendItem.appendChild(friendActions);
+            
+            return friendItem;
+        }
+        
+        function refreshToken(authId) {
+            fetch(`/trakt_friends/refresh_token/${authId}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Token Refreshed',
+                        message: 'Friend\'s Trakt token has been refreshed successfully.'
+                    });
+                    loadAuthorizedFriends();
+                } else {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error Refreshing Token',
+                        message: data.error || 'An error occurred while refreshing the token.'
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error Refreshing Token',
+                    message: 'An error occurred while refreshing the token. Please try again.'
+                });
+            });
+        }
+        
+        function deleteAuth(authId) {
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: 'Confirm Deletion',
+                message: 'Are you sure you want to delete this friend? This will also remove any content sources using this friend\'s watchlist.',
+                onConfirm: () => {
+                    fetch(`/trakt_friends/delete/${authId}`, {
+                        method: 'POST'
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                title: 'Friend Deleted',
+                                message: 'Friend\'s Trakt account has been deleted successfully.'
+                            });
+                            loadAuthorizedFriends();
+                        } else {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                title: 'Error Deleting Friend',
+                                message: data.error || 'An error occurred while deleting the friend.'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Error Deleting Friend',
+                            message: 'An error occurred while deleting the friend. Please try again.'
+                        });
+                    });
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}

@@ -153,22 +153,30 @@ body {
     margin-right: 10px;
 }
 
+.debug-container #rate-limit-info {
+    margin-bottom: 15px;
+    min-height: 50px;
+}
+
 .debug-container .domain-rate-limit {
     margin-bottom: 15px;
     padding: 10px;
     border-radius: 4px;
     background-color: #3a3a3a;
+    display: block;
 }
 
 .debug-container .domain-rate-limit h5 {
     margin: 0 0 10px 0;
     color: #f4f4f4;
+    display: block;
 }
 
 .debug-container .domain-rate-limit p {
     margin: 5px 0;
     padding: 5px;
     border-radius: 3px;
+    display: block;
 }
 
 .debug-container .rate-limit-normal {

@@ -132,7 +132,8 @@
         <div class="debug_item">
             <h3>Current Rate Limit State</h3>
             <div id="rate-limit-info">
-                <p>Loading rate limit information...</p>
+                <p id="rate-limit-loading">Loading rate limit information...</p>
+                <div id="rate-limit-content" style="display: none;"></div>
             </div>
             <button id="refresh-rate-limits">Refresh Rate Limits</button>
         </div>
@@ -218,7 +219,7 @@
             <a href="{{ url_for('debug.torrent_tracking') }}" class="btn">View Torrent History</a>
         </div>
         <div class="debug_item">
-            <h3>Trakt Token Status</h3>
+            <h3>Personal Trakt Token Status</h3>
             <div id="trakt-token-status">
                 <div class="token-status-container">
                     <!-- Status will be populated here -->
@@ -599,36 +600,101 @@
 
         // Add this new function to fetch and display rate limit information
         function fetchRateLimitInfo() {
+            console.log('Fetching rate limit info...');
+            
+            // Get the rate-limit-info element
+            const rateLimitInfoElement = document.getElementById('rate-limit-info');
+            if (!rateLimitInfoElement) {
+                console.error('rate-limit-info element not found!');
+                return;
+            }
+            
+            // Show loading message
+            document.getElementById('rate-limit-loading').style.display = 'block';
+            document.getElementById('rate-limit-content').style.display = 'none';
+            
+            // Fetch the rate limit data
             fetch('/debug/api/rate_limit_info')
-                .then(response => response.json())
-                .then(data => {
-                    const rateLimitInfo = document.getElementById('rate-limit-info');
-                    let html = '<h4>Rate Limits by Domain:</h4>';
-                    for (const [domain, limits] of Object.entries(data)) {
-                        const fiveMinClass = limits.five_minute.count > limits.five_minute.limit ? 'rate-limit-warning' : 'rate-limit-normal';
-                        const hourlyClass = limits.hourly.count > limits.hourly.limit ? 'rate-limit-warning' : 'rate-limit-normal';
-                        
-                        html += `
-                            <div class="domain-rate-limit">
-                                <h5>${domain}</h5>
-                                <p class="${fiveMinClass}">5-minute: ${limits.five_minute.count} / ${limits.five_minute.limit} requests</p>
-                                <p class="${hourlyClass}">Hourly: ${limits.hourly.count} / ${limits.hourly.limit} requests</p>
-                            </div>
-                        `;
+                .then(response => {
+                    console.log('Rate limit response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
                     }
-                    rateLimitInfo.innerHTML = html;
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Rate limit data received:', data);
+                    
+                    // Build HTML string for the rate limit info
+                    let html = '<h4>Rate Limits by Domain:</h4>';
+                    
+                    if (!data || Object.keys(data).length === 0) {
+                        html += '<p>No rate limit data available.</p>';
+                    } else {
+                        for (const [domain, limits] of Object.entries(data)) {
+                            const fiveMinClass = limits.five_minute.count > limits.five_minute.limit ? 'rate-limit-warning' : 'rate-limit-normal';
+                            const hourlyClass = limits.hourly.count > limits.hourly.limit ? 'rate-limit-warning' : 'rate-limit-normal';
+                            
+                            html += `
+                                <div class="domain-rate-limit">
+                                    <h5>${domain}</h5>
+                                    <p class="${fiveMinClass}">5-minute: ${limits.five_minute.count} / ${limits.five_minute.limit} requests</p>
+                                    <p class="${hourlyClass}">Hourly: ${limits.hourly.count} / ${limits.hourly.limit} requests</p>
+                                </div>
+                            `;
+                        }
+                    }
+                    
+                    // Update the rate limit info element with the new HTML
+                    document.getElementById('rate-limit-loading').style.display = 'none';
+                    document.getElementById('rate-limit-content').style.display = 'block';
+                    document.getElementById('rate-limit-content').innerHTML = html;
                 })
                 .catch(error => {
                     console.error('Error fetching rate limit info:', error);
-                    document.getElementById('rate-limit-info').innerHTML = '<p>Error loading rate limit information. Please try again.</p>';
+                    document.getElementById('rate-limit-loading').style.display = 'none';
+                    document.getElementById('rate-limit-content').style.display = 'block';
+                    document.getElementById('rate-limit-content').innerHTML = '<p>Error loading rate limit information: ' + error.message + '</p>';
                 });
         }
+
+        // Ensure rate limit info is displayed on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM fully loaded, checking rate limit info');
+            
+            // Check if rate limit info is displayed after a short delay
+            setTimeout(function() {
+                const rateLimitInfo = document.getElementById('rate-limit-info');
+                if (rateLimitInfo && document.getElementById('rate-limit-loading').style.display === 'block') {
+                    console.log('Rate limit info still loading, trying again');
+                    fetchRateLimitInfo();
+                }
+            }, 2000);
+        });
 
         // Fetch rate limit info on page load
         fetchRateLimitInfo();
 
         // Add event listener for the refresh button
-        document.getElementById('refresh-rate-limits').addEventListener('click', fetchRateLimitInfo);
+        const refreshRateLimitsButton = document.getElementById('refresh-rate-limits');
+        if (refreshRateLimitsButton) {
+            refreshRateLimitsButton.addEventListener('click', function() {
+                // Add a visual indicator that refresh is happening
+                this.textContent = 'Refreshing...';
+                this.disabled = true;
+                
+                // Call the fetch function
+                fetchRateLimitInfo();
+                
+                // Reset button after a short delay
+                setTimeout(() => {
+                    this.textContent = 'Refresh Rate Limits';
+                    this.disabled = false;
+                }, 1000);
+            });
+        } else {
+            console.error('Refresh rate limits button not found!');
+        }
 
         const sendTestNotificationForm = document.getElementById('send-test-notification-form');
         if (sendTestNotificationForm) {

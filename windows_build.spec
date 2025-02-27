@@ -1,6 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import importlib.util
+import tld
 
 block_cipher = None
 
@@ -43,6 +45,12 @@ individual_files = [
 for src, dst in individual_files:
     if os.path.exists(os.path.join(base_dir, src)):
         data_files.append((src, dst))
+
+# Add tld resource file
+tld_path = os.path.dirname(importlib.util.find_spec('tld').origin)
+tld_res_path = os.path.join(tld_path, 'res', 'effective_tld_names.dat.txt')
+if os.path.exists(tld_res_path):
+    data_files.append((tld_res_path, os.path.join('tld', 'res')))
 
 # Convert relative paths to absolute paths
 datas = [(os.path.join(base_dir, src) if not os.path.isabs(src) else src, dst) for src, dst in data_files]
@@ -93,7 +101,11 @@ a = Analysis(
         'apscheduler.schedulers.background',
         'nyaapy',
         'nyaapy.nyaasi',
-        'nyaapy.nyaasi.nyaa'
+        'nyaapy.nyaasi.nyaa',
+        'tld',
+        'tld.utils',
+        'tld.base',
+        'tld.exceptions'
     ],
     hookspath=['hooks'],
     hooksconfig={},

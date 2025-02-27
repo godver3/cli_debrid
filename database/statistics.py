@@ -448,6 +448,8 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                 filled_by_file,
                 upgrading_from,
                 last_updated,
+                collected_at,
+                original_collected_at,
                 season_number,
                 episode_number,
                 ROW_NUMBER() OVER (
@@ -489,6 +491,8 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                     'filled_by_title': item['filled_by_title'] if item['filled_by_title'] else item['filled_by_file'],
                     'upgrading_from': item['upgrading_from'],
                     'last_updated': item['last_updated'],
+                    'collected_at': item['collected_at'],
+                    'original_collected_at': item['original_collected_at'],
                     'tmdb_id': item['tmdb_id']
                 }
                 

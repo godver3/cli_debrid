@@ -657,7 +657,7 @@ def trending_shows():
         logging.error(f"Error retrieving Trakt Trending Shows: {e}")
         return []
 
-def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str]) -> List[Dict[str, Any]]:
+def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str], skip_cache_check: bool = False) -> List[Dict[str, Any]]:
     #logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}, genres={genres}")
 
     # Convert TMDB ID to IMDB ID using the metadata battery
@@ -683,7 +683,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         multi = True
 
     #logging.info(f"Scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
-                 #f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
+                  #f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
 
     #logging.info(f"Genres: {genres}")
 
@@ -733,7 +733,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
 
     # Check cache status for all hashes
     cache_status = {}
-    if hashes:
+    if hashes and not skip_cache_check:
         if supports_cache_check:
             try:
                 if supports_bulk_check:
@@ -809,6 +809,11 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 # Mark all results as N/A if provider doesn't support direct checking
                 cache_status = {hash_value: 'N/A' for hash_value in hashes}
                 logging.info("Provider does not support direct cache checking, marking all as N/A")
+    else:
+        # If skip_cache_check is True, mark all as N/A
+        if skip_cache_check:
+            logging.info("Skipping cache check as requested")
+            cache_status = {hash_value: 'N/A' for hash_value in hashes}
 
     # Update processed_results with cache status
     for result in processed_results:

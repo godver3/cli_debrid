@@ -427,6 +427,8 @@ def add_torrent_to_debrid():
                                         first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
                                         local_tz = _get_local_timezone()
                                         local_dt = first_aired_utc.astimezone(local_tz)
+                                        
+                                        # Format the local date as string
                                         episode_item['release_date'] = local_dt.strftime("%Y-%m-%d")
                                     except ValueError:
                                         episode_item['release_date'] = 'Unknown'
@@ -615,6 +617,7 @@ def select_media():
         episode = request.form.get('episode')
         multi = request.form.get('multi', 'false').lower() in ['true', '1', 'yes', 'on']
         version = request.form.get('version')
+        skip_cache_check = request.form.get('skip_cache_check', 'false').lower() in ['true', '1', 'yes', 'on']
 
         # Fetch detailed information from Overseerr
         details = get_media_details(media_id, media_type)
@@ -636,7 +639,7 @@ def select_media():
             else:
                 multi = False
 
-        torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version, genres)
+        torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version, genres, skip_cache_check)
         
         if not torrent_results:
             return jsonify({'torrent_results': []})
@@ -740,6 +743,7 @@ def run_scrape():
         version = data['version']
         modified_settings = data.get('modifiedSettings', {})
         genres = data.get('genres', [])
+        skip_cache_check = data.get('skip_cache_check', False)  # Default to NOT skipping cache check
         
         if media_type == 'episode':
             season = int(data.get('season', 1))  # Convert to int, default to 1
@@ -801,31 +805,34 @@ def run_scrape():
                 result['cached'] = 'N/A'
         
         # Check cache status for the first 5 results of each list
-        try:
-            debrid_provider = get_debrid_provider()
-            if isinstance(debrid_provider, RealDebridProvider):
-                # Process original results
-                for i, result in enumerate(original_results[:5]):
-                    if 'magnet' in result:
-                        cache_status = debrid_provider.is_cached(
-                            result['magnet'], 
-                            result_title=result.get('title', ''),
-                            result_index=i
-                        )
-                        result['cached'] = 'Yes' if cache_status is True else 'No' if cache_status is False else 'Unknown'
-                
-                # Process adjusted results
-                for i, result in enumerate(adjusted_results[:5]):
-                    if 'magnet' in result:
-                        cache_status = debrid_provider.is_cached(
-                            result['magnet'], 
-                            result_title=result.get('title', ''),
-                            result_index=i
-                        )
-                        result['cached'] = 'Yes' if cache_status is True else 'No' if cache_status is False else 'Unknown'
-        except Exception as e:
-            logging.error(f"Error checking cache status: {str(e)}", exc_info=True)
-            # Continue without cache status if there's an error
+        if not skip_cache_check:
+            try:
+                debrid_provider = get_debrid_provider()
+                if isinstance(debrid_provider, RealDebridProvider):
+                    # Process original results
+                    for i, result in enumerate(original_results[:5]):
+                        if 'magnet' in result:
+                            cache_status = debrid_provider.is_cached(
+                                result['magnet'], 
+                                result_title=result.get('title', ''),
+                                result_index=i
+                            )
+                            result['cached'] = 'Yes' if cache_status is True else 'No' if cache_status is False else 'Unknown'
+                    
+                    # Process adjusted results
+                    for i, result in enumerate(adjusted_results[:5]):
+                        if 'magnet' in result:
+                            cache_status = debrid_provider.is_cached(
+                                result['magnet'], 
+                                result_title=result.get('title', ''),
+                                result_index=i
+                            )
+                            result['cached'] = 'Yes' if cache_status is True else 'No' if cache_status is False else 'Unknown'
+            except Exception as e:
+                logging.error(f"Error checking cache status: {str(e)}", exc_info=True)
+                # Continue without cache status if there's an error
+        else:
+            logging.info("Skipping cache check as requested")
 
         return jsonify({
             'originalResults': original_results,

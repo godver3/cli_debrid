@@ -17,7 +17,7 @@ from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
 from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
-from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection
+from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.content_source_detail import append_content_source_detail
 from metadata.metadata import process_metadata, get_metadata
@@ -681,6 +681,9 @@ def get_and_add_wanted_content(source_id):
         for trakt_list in trakt_lists:
             trakt_list = trakt_list.strip()
             wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+    elif source_type == 'Friends Trakt Watchlist':
+        update_trakt_settings(content_sources)
+        wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions)
     elif source_type == 'Trakt Collection':
         update_trakt_settings(content_sources)
         wanted_content = get_wanted_from_trakt_collection(versions)

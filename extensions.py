@@ -41,6 +41,27 @@ def get_root_domain(host):
     except (TldDomainNotFound, TldBadUrl):
         # If domain parsing fails, return the full domain to be safe
         return domain if '.' in domain else None
+    except Exception as e:
+        # Handle TldIOError and other exceptions
+        import logging
+        logging.warning(f"Error in get_root_domain: {str(e)}")
+        
+        # Fallback to basic domain parsing
+        parts = domain.split('.')
+        if len(parts) > 1:
+            # Simple heuristic: for domains with 2 parts, return as is
+            # For domains with 3+ parts, return last 2 parts if the TLD is common
+            # Otherwise return the full domain
+            if len(parts) == 2:
+                return domain
+            elif parts[-1].lower() in ('com', 'org', 'net', 'edu', 'gov', 'io', 'co'):
+                if len(parts) == 3 and parts[-2].lower() in ('co', 'com', 'org', 'net'):
+                    # Handle special cases like .co.uk
+                    return '.'.join(parts[-3:])
+                return '.'.join(parts[-2:])
+            else:
+                return domain
+        return domain
 
 class SameSiteMiddleware:
     def __init__(self, app):
