@@ -197,6 +197,19 @@
                 <button type="submit">Propagate Version</button>
             </form>
         </div>
+        <div class="debug_item verification-queue">
+            <h3>Symlink Verification Queue</h3>
+            <div id="verification-stats" class="verification-stats">
+                <div class="stats-loading">Loading verification stats...</div>
+            </div>
+            <div class="verification-actions">
+                <button type="button" id="refresh-verification-queue" class="btn">Refresh Queue</button>
+                <button type="button" id="run-verification-scan" class="btn">Run Verification Scan</button>
+            </div>
+            <div id="verification-queue-container" class="verification-queue-container">
+                <div class="queue-loading">Loading verification queue...</div>
+            </div>
+        </div>
         <div class="debug_item">
             <h3>Convert Library to Symlinks</h3>
             <form id="convert-to-symlinks-form">
@@ -231,7 +244,29 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
-<script>
+<script type="module">
+    import { showPopup, POPUP_TYPES } from "{{ url_for('static', filename='js/notifications.js') }}";
+    
+    // Define showToast function for notifications
+    function showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 10);
+        
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => {
+                toast.remove();
+            }, 300);
+        }, 3000);
+    }
+    
     document.addEventListener('DOMContentLoaded', function() {
         const forms = document.querySelectorAll('form:not(#bulk-queue-action-form)');
         
@@ -913,7 +948,9 @@
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({ task_name: taskName }),
+                        body: JSON.stringify({
+                            task_name: taskName
+                        })
                     })
                     .then(response => response.json())
                     .then(data => {
@@ -1208,6 +1245,138 @@
 
         // Add click handler for refresh button
         document.getElementById('refresh-trakt-tokens').addEventListener('click', refreshTraktTokenStatus);
+
+        // Verification Queue functionality
+        function fetchVerificationQueue() {
+            const statsContainer = document.getElementById('verification-stats');
+            const queueContainer = document.getElementById('verification-queue-container');
+            
+            statsContainer.innerHTML = '<div class="stats-loading">Loading verification stats...</div>';
+            queueContainer.innerHTML = '<div class="queue-loading">Loading verification queue...</div>';
+            
+            fetch('/debug/get_verification_queue')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Display stats
+                        const stats = data.stats;
+                        statsContainer.innerHTML = `
+                            <div class="stats-item">
+                                <span class="stats-label">Total Files:</span>
+                                <span class="stats-value">${stats.total}</span>
+                            </div>
+                            <div class="stats-item">
+                                <span class="stats-label">Verified:</span>
+                                <span class="stats-value">${stats.verified} (${stats.percent_verified}%)</span>
+                            </div>
+                            <div class="stats-item">
+                                <span class="stats-label">Unverified:</span>
+                                <span class="stats-value">${stats.unverified}</span>
+                            </div>
+                            <div class="stats-item">
+                                <span class="stats-label">Multiple Attempts:</span>
+                                <span class="stats-value">${stats.multiple_attempts}</span>
+                            </div>
+                        `;
+                        
+                        // Display queue items
+                        if (data.files.length === 0) {
+                            queueContainer.innerHTML = '<div class="no-items">No files in verification queue</div>';
+                        } else {
+                            let html = '<table class="verification-table">';
+                            html += '<thead><tr>';
+                            html += '<th>Title</th>';
+                            html += '<th>Filename</th>';
+                            html += '<th>Added</th>';
+                            html += '<th>Attempts</th>';
+                            html += '</tr></thead>';
+                            html += '<tbody>';
+                            
+                            data.files.forEach(file => {
+                                const addedDate = new Date(file.added_at).toLocaleString();
+                                const lastAttempt = file.last_attempt ? new Date(file.last_attempt).toLocaleString() : 'Never';
+                                
+                                html += '<tr>';
+                                html += `<td title="${file.title}">${file.title}</td>`;
+                                html += `<td title="${file.full_path}">${file.filename}</td>`;
+                                html += `<td title="Added: ${addedDate}\nLast Attempt: ${lastAttempt}">${addedDate}</td>`;
+                                html += `<td>${file.attempts}</td>`;
+                                html += '</tr>';
+                            });
+                            
+                            html += '</tbody></table>';
+                            queueContainer.innerHTML = html;
+                        }
+                    } else {
+                        statsContainer.innerHTML = '<div class="error">Error loading stats: ' + data.error + '</div>';
+                        queueContainer.innerHTML = '<div class="error">Error loading queue: ' + data.error + '</div>';
+                    }
+                })
+                .catch(error => {
+                    statsContainer.innerHTML = '<div class="error">Error loading stats: ' + error.message + '</div>';
+                    queueContainer.innerHTML = '<div class="error">Error loading queue: ' + error.message + '</div>';
+                });
+        }
+        
+        // Run verification scan
+        function runVerificationScan() {
+            const button = document.getElementById('run-verification-scan');
+            button.disabled = true;
+            
+            // Show loading indicator
+            Loading.show('Running verification scan...', 'This may take a moment depending on your library size.');
+            
+            fetch('/program_operation/trigger_task', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `task_name=${encodeURIComponent('task_verify_symlinked_files')}`
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Verification Scan Started',
+                        message: 'Verification scan started successfully. The queue will refresh shortly.',
+                        autoClose: 3000
+                    });
+                    setTimeout(() => {
+                        fetchVerificationQueue();
+                    }, 3000); // Refresh after 3 seconds
+                } else {
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error',
+                        message: `Error starting verification scan: ${data.error}`,
+                        autoClose: 5000
+                    });
+                }
+                button.disabled = false;
+                button.textContent = 'Run Verification Scan';
+            })
+            .catch(error => {
+                Loading.hide();
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: `Error: ${error.message}`,
+                    autoClose: 5000
+                });
+                button.disabled = false;
+                button.textContent = 'Run Verification Scan';
+            });
+        }
+        
+        // Add event listeners
+        document.getElementById('refresh-verification-queue').addEventListener('click', fetchVerificationQueue);
+        document.getElementById('run-verification-scan').addEventListener('click', runVerificationScan);
+        
+        // Initial fetch of verification queue
+        fetchVerificationQueue();
     });
 </script>
 

@@ -816,14 +816,51 @@ def main():
     from database.statistics import get_cached_download_stats
     from not_wanted_magnets import validate_not_wanted_entries
 
+    # Batch set deprecated settings
+    set_setting('Debug', 'skip_initial_plex_update', False)
+    set_setting('Scraping', 'jackett_seeders_only', True)
+    set_setting('Scraping', 'enable_upgrading_cleanup', True)
+    set_setting('Staleness Threshold', 'staleness_threshold', 7)
+    set_setting('Sync Deletions', 'sync_deletions', True)
+    set_setting('Debrid Provider', 'provider', 'RealDebrid')
+    set_setting('Debug', 'rescrape_missing_files', True)
+    set_setting('Debug', 'anime_renaming_using_anidb', True)
+
     # Add check for Hybrid uncached management setting
     if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':
-        logging.info("Resetting 'Hybrid' uncached content handling setting to None")
+        logging.info("Converting 'Hybrid' uncached content handling setting to 'None' with hybrid_mode=True")
         set_setting('Scraping', 'uncached_content_handling', 'None')
+        set_setting('Scraping', 'hybrid_mode', True)
+    
+    # Get current settings to check if defaults need to be applied
+    scraping_settings = get_setting('Scraping')
+    debug_settings = get_setting('Debug')
+    
+    if 'disable_adult' not in scraping_settings:
+        set_setting('Scraping', 'disable_adult', True)
+        logging.info("Setting default disable_adult to True")
 
-    if get_setting('Debrid Provider', 'provider') == 'Torbox':
-        logging.info("Resetting Torbox debrid provider to Real-Debrid")
-        set_setting('Debrid Provider', 'provider', 'RealDebrid')
+    if 'enable_plex_removal_caching' not in debug_settings:
+        set_setting('Debug', 'enable_plex_removal_caching', True)
+        logging.info("Setting default enable_plex_removal_caching to True")
+    
+    if 'trakt_early_releases' not in scraping_settings:
+        set_setting('Scraping', 'trakt_early_releases', False)
+        logging.info("Setting default trakt_early_releases to False")
+        
+    # Initialize content_source_check_period if it doesn't exist
+    if 'content_source_check_period' not in debug_settings:
+        set_setting('Debug', 'content_source_check_period', {})
+        logging.info("Initializing content_source_check_period as empty dictionary")
+
+    if get_setting('Debug', 'enabled_separate_anime_folders') is True:
+        set_setting('Debug', 'enable_separate_anime_folders', True)
+        # Remove the old setting key
+        config = load_config()
+        if 'Debug' in config and 'enabled_separate_anime_folders' in config['Debug']:
+            del config['Debug']['enabled_separate_anime_folders']
+            save_config(config)
+        logging.info("Migrating enable_separate_anime_folders to True and removing old key")
 
     # Add migration for media_type setting
     from config_manager import load_config, save_config

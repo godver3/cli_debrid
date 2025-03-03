@@ -8,6 +8,7 @@ from .utils import is_user_system_enabled
 import traceback
 import json
 import os
+import platform
 
 settings_bp = Blueprint('settings', __name__)
 
@@ -373,6 +374,9 @@ def index():
         source_types = list(SETTINGS_SCHEMA["Content Sources"]["schema"].keys())        
         scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
 
+        # Check if platform is Windows
+        is_windows = platform.system() == 'Windows'
+
         # Fetch content source settings
         content_source_settings_response = get_content_source_settings_route()
         if isinstance(content_source_settings_response, Response):
@@ -446,7 +450,8 @@ def index():
                                source_types=source_types,
                                content_source_settings=content_source_settings,
                                scraping_versions=scraping_versions,
-                               settings_schema=SETTINGS_SCHEMA)
+                               settings_schema=SETTINGS_SCHEMA,
+                               is_windows=is_windows)
     except Exception as e:
         current_app.logger.error(f"Error in settings route: {str(e)}")
         current_app.logger.error(traceback.format_exc())

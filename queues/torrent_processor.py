@@ -222,7 +222,8 @@ class TorrentProcessor:
                     magnet if not temp_file else "",
                     temp_file,
                     result_title=result_title,
-                    result_index=f"{idx}/{len(results)}"
+                    result_index=f"{idx}/{len(results)}",
+                    remove_uncached=not accept_uncached  # Don't remove if we might use it later
                 )
                     
                 if is_cached is None:
@@ -281,8 +282,24 @@ class TorrentProcessor:
                 if not info:
                     magnet, temp_file = self.process_torrent(original_link)
                     try:
-                        logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
-                        info = self.add_to_account(original_link)
+                        # Extract hash to check if it already exists
+                        hash_value = None
+                        if magnet:
+                            hash_value = extract_hash_from_magnet(magnet)
+                        elif temp_file:
+                            hash_value = extract_hash_from_file(temp_file)
+                            
+                        # Check if this torrent was already added during cache check
+                        existing_torrent_id = None
+                        if hash_value:
+                            existing_torrent_id = self.debrid_provider._all_torrent_ids.get(hash_value)
+                            
+                        if existing_torrent_id:
+                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Reusing existing torrent ID: {existing_torrent_id}")
+                            info = self.debrid_provider.get_torrent_info(existing_torrent_id)
+                        else:
+                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
+                            info = self.add_to_account(original_link)
                         
                         if info:
                             # Extract hash after successful addition
@@ -353,7 +370,7 @@ class TorrentProcessor:
                                 os.unlink(temp_file)
                             except Exception as e:
                                 logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error cleaning up temp file: {str(e)}")
-                
+            
                 if info:
                     info['title'] = torrent_title or result.get('title', '')
                     info['original_scraped_torrent_title'] = result.get('original_title')
@@ -440,7 +457,7 @@ class TorrentProcessor:
                             logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error removing empty torrent {info.get('id')}: {str(e)}")
                 else:
                     logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Failed to add torrent")
-                    
+                
             except Exception as e:
                 logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error processing result: {str(e)}", exc_info=True)
                 continue

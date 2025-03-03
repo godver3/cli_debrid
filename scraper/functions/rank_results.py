@@ -168,7 +168,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         multi_pack_score = (50 + (MULTI_PACK_BONUS * num_items)) if multi and is_queried_season_pack else 0
 
         # Penalize multi-packs when looking for single episodes
-        SINGLE_EPISODE_PENALTY = -25
+        SINGLE_EPISODE_PENALTY = -500
         single_episode_score = SINGLE_EPISODE_PENALTY if not multi and is_multi_pack and query_episode is not None else 0
 
     # Implement preferred filtering logic
@@ -232,6 +232,44 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
                 else:
                     content_type_score = -500
                     logging.debug(f"Applied penalty for TV show with no season/episode in title")
+        else:
+            # Anime pattern matching - look for episode number patterns like "Title - 20" or "Title 20"
+            anime_format = result.get('anime_format')
+            
+            # Check for common anime episode patterns
+            anime_episode_pattern = re.search(r'[-\s_](\d{1,3})(\s|$|\.|_|\[)', torrent_title)
+            
+            if anime_episode_pattern:
+                # Found a potential episode number
+                potential_episode = int(anime_episode_pattern.group(1))
+                
+                # Check if this matches our expected episode
+                if potential_episode == query_episode:
+                    content_type_score = 50  # Bonus for exact episode match
+                    logging.debug(f"Applied bonus for anime with matching episode number: {potential_episode}")
+                else:
+                    content_type_score = -250  # Smaller penalty for wrong episode
+                    logging.debug(f"Applied penalty for anime with wrong episode number: {potential_episode} (expected {query_episode})")
+            elif anime_format:
+                # If we have an anime_format but couldn't find an episode pattern, don't penalize
+                # This could be a batch or other special format
+                content_type_score = 0
+                logging.debug(f"No episode pattern found but has anime_format: {anime_format}")
+            else:
+                # Try alternative pattern matching for anime batches
+                batch_pattern = re.search(r'batch|season|complete|\(s\d+\)|\[s\d+\]', torrent_title, re.IGNORECASE)
+                if batch_pattern:
+                    # This is likely a batch/season pack
+                    if multi:
+                        content_type_score = 30  # Bonus for batch when multi is requested
+                        logging.debug(f"Applied bonus for anime batch/season pack")
+                    else:
+                        content_type_score = -400  # Stronger penalty for batch when single episode requested
+                        logging.debug(f"Applied strong penalty for anime batch when single episode requested")
+                else:
+                    # No clear episode indicators for anime
+                    content_type_score = -250  # Smaller penalty for anime
+                    logging.debug(f"Applied penalty for anime with no clear episode number")
     else:
         logging.warning(f"Unknown content type: {content_type} for result: {torrent_title}")
 

@@ -460,6 +460,42 @@
     document.addEventListener('scrapingContentLoaded', initializeScrapingFunctionality);
 </script>
 
+<style>
+    /* Hide hybrid mode checkbox */
+    .settings-form-group.hybrid-mode-group {
+        display: none !important;
+    }
+</style>
+
+<script>
+    function hideHybridModeCheckboxes() {
+        // Hide hybrid_mode checkbox completely
+        const hybridModeCheckbox = document.getElementById('scraping-hybrid_mode');
+        if (hybridModeCheckbox) {
+            const hybridModeFormGroup = hybridModeCheckbox.closest('.settings-form-group');
+            if (hybridModeFormGroup) {
+                hybridModeFormGroup.classList.add('hybrid-mode-group');
+            }
+        }
+        
+        // Also hide any version-specific hybrid_mode checkboxes
+        document.querySelectorAll('input[data-hybrid-mode="true"]').forEach(function(checkbox) {
+            const formGroup = checkbox.closest('.settings-form-group');
+            if (formGroup) {
+                formGroup.classList.add('hybrid-mode-group');
+            }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', hideHybridModeCheckboxes);
+    document.addEventListener('scrapingContentLoaded', hideHybridModeCheckboxes);
+</script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', initializeScrapingFunctionality);
+    document.addEventListener('scrapingContentLoaded', initializeScrapingFunctionality);
+</script>
+
 {% for version, config in settings.Scraping.versions.items() %}
 <div class="settings-section" data-version-id="{{ version }}">
     <div class="settings-section-header">
@@ -493,15 +529,17 @@
         {# Sort config items based on settings_order #}
         {% set sorted_keys = (settings_order + config.keys()|list)|unique|list %}
         {% for key in sorted_keys %}
-            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only'] %}
                 {% set value = config[key] %}
-                <div class="settings-form-group">
+                <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' %}style="display: none !important;"{% endif %}>
                     {% if value is boolean %}
                         <label class="settings-title">
                             <input type="checkbox" id="scraping-{{ version }}-{{ key }}" 
                                    name="Scraping.versions.{{ version }}.{{ key }}" 
                                    data-section="Scraping" 
                                    data-key="versions.{{ version }}.{{ key }}"
+                                   {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
+                                   {% if key == 'jackett_seeders_only' %}data-jackett-seeders-only="true"{% endif %}
                                    {% if value %}checked{% endif %}>
                             {{ key|replace('_', ' ')|title }}
                         </label>
@@ -675,20 +713,35 @@
     <div class="settings-section-content">
         <div class="settings-subsection">
             {% for key, value in settings_schema.Scraping.items() %}
-                {% if key not in ['versions', 'tab', 'upgrade_similarity_threshold'] %}
-                    <div class="settings-form-group">
+                {% if key not in ['versions', 'tab', 'upgrade_similarity_threshold', 'hybrid_mode', 'jackett_seeders_only', 'ultimate_sort_order', 'soft_max_size_gb', 'enable_upgrading_cleanup'] %}
+                    <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' or key == 'ultimate_sort_order' or key == 'soft_max_size_gb' or key == 'enable_upgrading_cleanup' %}style="display: none !important;"{% endif %}>
                         <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         {% if value.type == 'boolean' %}
                             <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}"
                                    data-section="Scraping" data-key="{{ key }}"
+                                   {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
+                                   {% if key == 'jackett_seeders_only' %}data-jackett-seeders-only="true"{% endif %}
                                    {% if settings.get('Scraping', {}).get(key) %}checked{% endif %}>
                         {% elif value.choices %}
                             <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input"
                                     data-section="Scraping" data-key="{{ key }}">
-                                {% for choice in value.choices %}
-                                    <option value="{{ choice }}" {% if settings.get('Scraping', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
-                                {% endfor %}
+                                {% if key == 'uncached_content_handling' %}
+                                    <option value="None" {% if settings.get('Scraping', {}).get(key) == 'None' and not settings.get('Scraping', {}).get('hybrid_mode', False) %}selected{% endif %}>None</option>
+                                    <option value="Hybrid" {% if settings.get('Scraping', {}).get('hybrid_mode', False) and settings.get('Scraping', {}).get(key) == 'None' %}selected{% endif %}>Hybrid</option>
+                                    <option value="Full" {% if settings.get('Scraping', {}).get(key) == 'Full' %}selected{% endif %}>Full</option>
+                                {% else %}
+                                    {% for choice in value.choices %}
+                                        <option value="{{ choice }}" {% if settings.get('Scraping', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                                    {% endfor %}
+                                {% endif %}
                             </select>
+                            {% if key == 'uncached_content_handling' %}
+                                <p class="settings-description">
+                                    <strong>None:</strong> Only take the best Cached result<br>
+                                    <strong>Hybrid:</strong> Take the first best Cached result, and if no Cached results found, take the best Uncached result<br>
+                                    <strong>Full:</strong> Take the best result, whether it's Cached or Uncached
+                                </p>
+                            {% endif %}
                         {% else %}
                             <input type="{{ value.type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
                                    value="{{ settings.get('Scraping', {}).get(key, '') }}" class="settings-input"
@@ -697,21 +750,25 @@
                         {% endif %}
                         {% if value.description %}
                             {% if value.description is string %}
-                                <p class="settings-description">{{ value.description }}</p>
+                                {% if key != 'uncached_content_handling' %}
+                                    <p class="settings-description">{{ value.description }}</p>
+                                {% endif %}
                             {% else %}
-                                <div class="settings-description">
-                                    {% for item in value.description %}
-                                        {% if loop.first %}
-                                            <p>{{ item }}</p>
-                                            <ul>
-                                        {% elif loop.last %}
-                                            <li>{{ item }}</li>
-                                            </ul>
-                                        {% else %}
-                                            <li>{{ item }}</li>
-                                        {% endif %}
-                                    {% endfor %}
-                                </div>
+                                {% if key != 'uncached_content_handling' %}
+                                    <div class="settings-description">
+                                        {% for item in value.description %}
+                                            {% if loop.first %}
+                                                <p>{{ item }}</p>
+                                                <ul>
+                                            {% elif loop.last %}
+                                                <li>{{ item }}</li>
+                                                </ul>
+                                            {% else %}
+                                                <li>{{ item }}</li>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
                             {% endif %}
                         {% endif %}
                     </div>

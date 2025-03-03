@@ -5,6 +5,7 @@ from settings import load_config, get_setting, save_config
 from settings_schema import SETTINGS_SCHEMA
 from config_manager import add_scraper, add_content_source, load_config
 import logging
+import platform
 from routes.trakt_routes import check_trakt_auth_status
 import json
 
@@ -133,6 +134,9 @@ def onboarding_step(step):
             ('Trakt', 'client_secret')
         ]
 
+        # Check if platform is Windows
+        is_windows = platform.system() == 'Windows'
+
         if request.method == 'POST':
             try:
                 config = load_config()
@@ -220,11 +224,18 @@ def onboarding_step(step):
         # For GET requests, load existing settings if any
         config = load_config()
         can_proceed = all(get_setting(category, key) for category, key in required_settings)
+        is_windows = True
+        
+        # Get Trakt auth status
+        trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
         
         return render_template('onboarding_step_2.html', 
                                current_step=step_num, 
-                               can_proceed=can_proceed,
-                               settings=config, is_onboarding=True)
+                               can_proceed=can_proceed, 
+                               settings=config, 
+                               trakt_status=trakt_status,
+                               is_onboarding=True,
+                               is_windows=is_windows)
 
     elif step_num == 3:
         config = load_config()

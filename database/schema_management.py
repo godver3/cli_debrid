@@ -123,8 +123,28 @@ def migrate_schema():
         if 'physical_release_date' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN physical_release_date DATE')
             logging.info("Successfully added physical_release_date column to media_items table.")
+        if 'plex_verified' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_verified BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added plex_verified column to media_items table.")
         
-        # logging.info("Successfully added new columns to media_items table.")
+        # Check if symlinked_files_verification table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
+        if not cursor.fetchone():
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS symlinked_files_verification (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    media_item_id INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    full_path TEXT NOT NULL,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    verified BOOLEAN DEFAULT FALSE,
+                    verified_at TIMESTAMP,
+                    verification_attempts INTEGER DEFAULT 0,
+                    last_attempt TIMESTAMP,
+                    FOREIGN KEY (media_item_id) REFERENCES media_items (id)
+                )
+            ''')
+            logging.info("Successfully created symlinked_files_verification table.")
 
         # Remove the existing index if it exists
         conn.execute('DROP INDEX IF EXISTS unique_media_item_file')
@@ -237,7 +257,8 @@ def create_tables():
                 imdb_aliases TEXT,
                 title_aliases TEXT,
                 disable_not_wanted_check BOOLEAN DEFAULT FALSE,
-                physical_release_date DATE
+                physical_release_date DATE,
+                plex_verified BOOLEAN DEFAULT FALSE
             )
         ''')
 
@@ -250,6 +271,22 @@ def create_tables():
                 season_number INTEGER NOT NULL,
                 requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(imdb_id, season_number)
+            )
+        ''')
+        
+        # Add new table for tracking symlinked files for Plex verification
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS symlinked_files_verification (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                media_item_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                full_path TEXT NOT NULL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                verified BOOLEAN DEFAULT FALSE,
+                verified_at TIMESTAMP,
+                verification_attempts INTEGER DEFAULT 0,
+                last_attempt TIMESTAMP,
+                FOREIGN KEY (media_item_id) REFERENCES media_items (id)
             )
         ''')
 

@@ -64,6 +64,7 @@ class CheckingQueue:
     def get_contents(self):
         # Add progress and state information to each item
         items_with_info = []
+        items_to_remove = []
         
         # Group items by torrent ID to reduce API calls
         torrent_groups = {}
@@ -79,6 +80,12 @@ class CheckingQueue:
             progress = self.get_torrent_progress(torrent_id)
             state = self.get_torrent_state(torrent_id)
             
+            # If state is 'missing', these items will be moved to Wanted by get_torrent_state
+            # so we should skip them here and mark them for removal
+            if state == 'missing':
+                items_to_remove.extend(items)
+                continue
+            
             for item in items:
                 item_info = dict(item)
                 item_info['progress'] = progress
@@ -92,49 +99,89 @@ class CheckingQueue:
                 item_info['progress'] = None
                 item_info['state'] = 'unknown'
                 items_with_info.append(item_info)
+        
+        # Remove items that are being moved to Wanted
+        for item in items_to_remove:
+            if item in self.items:
+                self.remove_item(item)
                 
         return items_with_info
 
-    def handle_missing_torrent(self, torrent_id: str, queue_manager) -> None:
-        """Handle case where a torrent is no longer on Real-Debrid (404 error)"""
-        # Find all items associated with this torrent ID
-        affected_items = [item for item in self.items if item.get('filled_by_torrent_id') == torrent_id]
+    def handle_missing_torrent(self, torrent_id, queue_manager):
+        """
+        Handle a torrent that is no longer on Real-Debrid (404 error).
         
-        if not affected_items:
-            logging.debug(f"No items found for missing torrent {torrent_id}")
+        This method:
+        1. Finds all items in the checking queue with this torrent ID
+        2. Adds the magnet to the not-wanted list
+        3. Moves all items back to the Wanted state
+        
+        Args:
+            torrent_id (str): The ID of the missing torrent
+            queue_manager (QueueManager): The queue manager instance
+        """
+        logging.info(f"Handling missing torrent {torrent_id}")
+        
+        # Get all items in the checking queue with this torrent ID
+        items = [item for item in self.items if item.get('filled_by_torrent_id') == torrent_id]
+        if not items:
+            logging.warning(f"No items found for missing torrent {torrent_id}")
             return
-            
-        logging.info(f"Torrent {torrent_id} no longer exists on Real-Debrid, moving {len(affected_items)} items back to Wanted")
         
-        # Move each affected item back to wanted
-        for item in affected_items:
-            # Add magnet to not wanted if it exists
+        logging.info(f"Found {len(items)} items for missing torrent {torrent_id}")
+        
+        # Get the magnet link from the first item
+        magnets_to_add = []
+        for item in items:
             magnet = item.get('filled_by_magnet')
-            if magnet:
-                try:
-                    # Check if magnet is actually an HTTP link
-                    if magnet.startswith('http'):
-                        logging.debug(f"Magnet is HTTP link, downloading torrent first")
-                        from debrid.common import download_and_extract_hash
-                        hash_value = download_and_extract_hash(magnet)
-                        add_to_not_wanted(hash_value)
-                        add_to_not_wanted_urls(magnet)
-                        logging.info(f"Added hash {hash_value} and URL to not wanted lists")
-                    else:
+            if magnet and magnet not in magnets_to_add:
+                magnets_to_add.append(magnet)
+        
+        # Add magnets to not-wanted list
+        for magnet in magnets_to_add:
+            try:
+                logging.info(f"Adding magnet to not-wanted list: {magnet[:50]}...")
+                from not_wanted_magnets import add_to_not_wanted
+                from debrid.common import extract_hash_from_magnet
+                
+                # Check if magnet is actually an HTTP link
+                if magnet.startswith('http'):
+                    from debrid.common import download_and_extract_hash
+                    hash_value = download_and_extract_hash(magnet)
+                    add_to_not_wanted(hash_value)
+                    from not_wanted_magnets import add_to_not_wanted_urls
+                    add_to_not_wanted_urls(magnet)
+                else:
+                    # Extract hash from magnet link
+                    try:
                         from debrid.common import extract_hash_from_magnet
                         hash_value = extract_hash_from_magnet(magnet)
                         add_to_not_wanted(hash_value)
-                        logging.info(f"Added hash {hash_value} to not wanted list")
-                except Exception as e:
-                    logging.error(f"Failed to process magnet for not wanted: {str(e)}")
+                    except:
+                        # If extract_hash_from_magnet is not available in debrid.common
+                        import re
+                        hash_match = re.search(r'btih:([a-zA-Z0-9]+)', magnet)
+                        if hash_match:
+                            hash_value = hash_match.group(1).lower()
+                            add_to_not_wanted(hash_value)
+            except Exception as e:
+                logging.error(f"Failed to add magnet to not-wanted list: {str(e)}")
+        
+        # Move items back to Wanted state
+        
+        for item in items:
+            try:
+                item_id = item.get('id', 'unknown')
+                logging.info(f"Moving item {item_id} back to Wanted state")
+                queue_manager.move_to_wanted(item, "Checking")
+                
+                # Remove the item from the checking queue
+                if item in self.items:
+                    self.remove_item(item)
+                    logging.info(f"Removed item {item_id} from checking queue")
+            except Exception as e:
+                logging.error(f"Failed to move item to Wanted state: {str(e)}")
 
-            queue_manager.move_to_wanted(item, "Checking")
-            logging.info(f"Moved item {item['id']} back to Wanted queue")
-            
-            # Remove from checking queue
-            self.remove_item(item)
-
-    @timed_lru_cache(seconds=60)  # Increase cache time to 5 minutes
     def get_torrent_progress(self, torrent_id: str) -> Optional[int]:
         """Get the current progress percentage for a torrent"""
         try:
@@ -153,10 +200,19 @@ class CheckingQueue:
         try:
             current_progress = self.get_torrent_progress(torrent_id)
             
-            # Handle case where progress couldn't be retrieved
+            # Handle case where progress couldn't be retrieved (404 error)
             if current_progress is None:
                 logging.info(f"Could not get progress for torrent {torrent_id}, returning unknown state")
-                return 'unknown'
+                # This is likely a 404 error, so we should handle the missing torrent
+                try:
+                    # Import QueueManager here to avoid circular imports
+                    from queue_manager import QueueManager
+                    queue_manager = QueueManager()
+                    self.handle_missing_torrent(torrent_id, queue_manager)
+                    return 'missing'
+                except Exception as e:
+                    logging.error(f"Failed to handle missing torrent: {str(e)}")
+                    return 'unknown'
             
             # If progress is 100%, it's downloaded
             if current_progress == 100:
@@ -312,8 +368,13 @@ class CheckingQueue:
                 # If current_progress is None, the torrent was not found (404)
                 if current_progress is None:
                     logging.info(f"Torrent {torrent_id} not found (404), moving items back to Wanted")
-                    self.move_items_to_wanted(items, queue_manager, adding_queue, torrent_id)
-                    items_to_remove.extend(items)
+                    try:
+                        # Call handle_missing_torrent directly to ensure items are moved back to Wanted
+                        self.handle_missing_torrent(torrent_id, queue_manager)
+                        # Mark items for removal from checking queue
+                        items_to_remove.extend(items)
+                    except Exception as e:
+                        logging.error(f"Failed to handle missing torrent {torrent_id}: {str(e)}")
                     continue
                 
                 if torrent_id not in self.progress_checks:
@@ -355,7 +416,7 @@ class CheckingQueue:
                                 elif get_setting('File Management', 'plex_url_for_symlink', default=False):
                                     # Call Plex update for the item if we have a Plex URL
                                     plex_update_item(item)
-
+                                    
                                 # Check if the item was marked for upgrading by check_local_file_for_item
                                 from database.core import get_db_connection
                                 conn = get_db_connection()
@@ -495,31 +556,66 @@ class CheckingQueue:
 
         #logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
 
-    def move_items_to_wanted(self, items, queue_manager, adding_queue, torrent_id):
+    def move_items_to_wanted(self, items, queue_manager, adding_queue=None, torrent_id=None):
+        """
+        Move items from the checking queue back to the wanted queue.
+        
+        This is typically used when a torrent is no longer available on Real-Debrid.
+        
+        Args:
+            items (list): List of items to move back to wanted
+            queue_manager (QueueManager): Queue manager instance
+            adding_queue (AddingQueue, optional): Adding queue instance
+            torrent_id (str, optional): ID of the torrent that was removed
+        """
+        if not items:
+            logging.debug("No items to move back to Wanted")
+            return
+        
+        logging.info(f"Moving {len(items)} items back to Wanted state")
+        
+        # Process magnets first
+        magnets_to_add = []
         for item in items:
-            item_identifier = queue_manager.generate_identifier(item)
             magnet = item.get('filled_by_magnet')
-            if magnet:
-                try:
-                    # Check if magnet is actually an HTTP link
-                    if magnet.startswith('http'):
-                        logging.debug(f"Magnet is HTTP link for {item_identifier}, downloading torrent first")
-                        from debrid.common import download_and_extract_hash
-                        hash_value = download_and_extract_hash(magnet)
-                        add_to_not_wanted(hash_value)
-                        add_to_not_wanted_urls(magnet)
-                        logging.info(f"Added hash {hash_value} and URL to not wanted lists for {item_identifier}")
-                    else:
-                        from debrid.common import extract_hash_from_magnet
-                        hash_value = extract_hash_from_magnet(magnet)
-                        add_to_not_wanted(hash_value)
-                        logging.info(f"Added hash {hash_value} to not wanted list for {item_identifier}")
-                except Exception as e:
-                    logging.error(f"Failed to process magnet for not wanted: {str(e)}")
-
+            if magnet and magnet not in magnets_to_add:
+                magnets_to_add.append(magnet)
+        
+        # Add magnets to not-wanted list
+        for magnet in magnets_to_add:
+            try:
+                item_identifier = queue_manager.generate_identifier(items[0]) if items else "unknown"
+                
+                # Check if magnet is actually an HTTP link
+                if magnet.startswith('http'):
+                    logging.debug(f"Magnet is HTTP link, downloading torrent first for {item_identifier}")
+                    from debrid.common import download_and_extract_hash
+                    hash_value = download_and_extract_hash(magnet)
+                    from not_wanted_magnets import add_to_not_wanted
+                    add_to_not_wanted(hash_value)
+                    from not_wanted_magnets import add_to_not_wanted_urls
+                    add_to_not_wanted_urls(magnet)
+                    logging.info(f"Added hash {hash_value} and URL to not wanted lists for {item_identifier}")
+                else:
+                    from debrid.common import extract_hash_from_magnet
+                    hash_value = extract_hash_from_magnet(magnet)
+                    from not_wanted_magnets import add_to_not_wanted
+                    add_to_not_wanted(hash_value)
+                    logging.info(f"Added hash {hash_value} to not wanted list for {item_identifier}")
+            except Exception as e:
+                logging.error(f"Failed to process magnet for not wanted: {str(e)}")
+        
+        # Move items back to Wanted state
         for item in items:
-            queue_manager.move_to_wanted(item, "Checking")
-            logging.info(f"Moving item back to Wanted: {queue_manager.generate_identifier(item)}")
+            try:
+                item_identifier = queue_manager.generate_identifier(item)
+                queue_manager.move_to_wanted(item, "Checking")
+                logging.info(f"Successfully moved item back to Wanted: {item_identifier}")
+            except Exception as e:
+                logging.error(f"Failed to move item {item_identifier} back to Wanted: {str(e)}")
+            
+            # Remove from checking queue
+            self.remove_item(item)
 
     def clean_up_checking_times(self):
         """Clean up old entries from checking times and progress cache"""

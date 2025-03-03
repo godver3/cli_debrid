@@ -6,6 +6,8 @@ from nyaapy.nyaasi.nyaa import Nyaa
 from nyaapy.torrent import Torrent
 from scraper.functions import *
 from database.database_writing import update_anime_format, get_anime_format
+import threading
+import concurrent.futures
 
 def convert_size_to_gb(size: str) -> float:
     """Convert various size formats to GB."""
@@ -110,25 +112,42 @@ def scrape_nyaa_anime_episode(title: str, year: int, season: int, episode: int, 
     all_results = []
     format_results = {}
     
-    # Get stored format preference
-    preferred_format = get_anime_format(tmdb_id)
-    if preferred_format:
-        logging.info(f"Found preferred anime format for {title}: {preferred_format}")
-        # Try preferred format first
-        format_pattern = episode_formats[preferred_format]
-        results = _scrape_nyaa_with_format(title, year, format_pattern)
-        if results:
-            logging.info(f"Found {len(results)} results using preferred format {preferred_format}")
-            return results
-        logging.info(f"No results found with preferred format {preferred_format}, trying other formats")
+    # Use the passed episode_formats instead of hardcoding
+    if not episode_formats:
+        # Fallback to hardcoded formats if none provided
+        episode_formats = {
+            'no_zeros': f"{episode}",
+            'regular': f"S{season:02d}E{episode:02d}",
+            'absolute_with_e': f"E{((season - 1) * 13) + episode:03d}",  # Using default 13 episodes per season
+            'absolute': f"{((season - 1) * 13) + episode:03d}",  # Using default 13 episodes per season
+            'combined': f"S{season:02d}E{((season - 1) * 13) + episode:03d}"  # Using default 13 episodes per season
+        }
     
-    # Try all formats if no preferred format or no results with preferred format
-    for format_type, format_pattern in episode_formats.items():
+    # Define a function to scrape with a specific format
+    def scrape_with_format(format_type, format_pattern):
         logging.info(f"Trying anime format {format_type} for {title}")
         results = _scrape_nyaa_with_format(title, year, format_pattern)
-        format_results[format_type] = results
-        all_results.extend(results)
-        logging.info(f"Found {len(results)} results using format {format_type}")
+        
+        # Add the format type to each result
+        for result in results:
+            result['anime_format'] = format_type
+            
+        return format_type, results
+    
+    # Use ThreadPoolExecutor to scrape all formats simultaneously
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Submit all scraping tasks
+        future_to_format = {
+            executor.submit(scrape_with_format, format_type, format_pattern): format_type
+            for format_type, format_pattern in episode_formats.items()
+        }
+        
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_format):
+            format_type, results = future.result()
+            format_results[format_type] = results
+            all_results.extend(results)
+            logging.info(f"Found {len(results)} results using format {format_type}")
     
     # Determine best format based on number of results
     if format_results:
@@ -167,10 +186,15 @@ def _scrape_nyaa_with_format(title: str, year: int, format_pattern: str) -> List
 
 def scrape_nyaa(title: str, year: int, content_type: str = 'movie', season: Optional[int] = None, 
                 episode: Optional[int] = None, episode_formats: Optional[Dict[str, str]] = None,
-                tmdb_id: Optional[str] = None) -> List[Dict[str, Any]]:
+                tmdb_id: Optional[str] = None, multi: bool = False) -> List[Dict[str, Any]]:
     """Main Nyaa scraping function."""
-    if content_type.lower() == 'episode' and episode_formats and tmdb_id:
-        return scrape_nyaa_anime_episode(title, year, season, episode, episode_formats, tmdb_id)
+    if content_type.lower() == 'episode' and tmdb_id:
+        if multi:
+            # For multi-episode requests, search for season packs instead of individual episodes
+            return scrape_nyaa_anime_season(title, year, season, tmdb_id)
+        elif episode_formats:
+            # For single episode requests with format info
+            return scrape_nyaa_anime_episode(title, year, season, episode, episode_formats, tmdb_id)
     
     # Set up default settings
     settings = {
@@ -181,11 +205,79 @@ def scrape_nyaa(title: str, year: int, content_type: str = 'movie', season: Opti
     }
     
     try:
-        results = scrape_nyaa_instance(settings, title, year, content_type, season, episode, False)
+        results = scrape_nyaa_instance(settings, title, year, content_type, season, episode, multi)
         return results
     except Exception as e:
         logging.error(f"Error scraping Nyaa: {str(e)}")
         return []
+
+def scrape_nyaa_anime_season(title: str, year: int, season: int, tmdb_id: str) -> List[Dict[str, Any]]:
+    """Scrape Nyaa for anime season packs."""
+    all_results = []
+    
+    # Define search patterns for season packs
+    season_patterns = [
+        f"Season {season}",
+        f"S{season:01d}",
+        f"S{season:02d}",
+        "batch",
+        "complete"
+    ]
+    
+    # Define a function to scrape with a specific season pattern
+    def scrape_with_pattern(pattern):
+        logging.info(f"Searching for anime season pack with pattern: {pattern}")
+        search_query = f"{title} {pattern}"
+        logging.debug(f"Searching Nyaa with query: {search_query}")
+        
+        # Set up default settings
+        settings = {
+            "categories": "1_2",  # Use anime category
+            "filter": "0",
+            "sort": "seeders",
+            "order": "desc"
+        }
+        
+        try:
+            results = scrape_nyaa_instance(settings, search_query, year, "episode", season, None, True)
+            
+            # Mark results as season packs
+            for result in results:
+                result['is_anime'] = True
+                result['anime_format'] = 'season_pack'
+                
+                # Add season pack info to parsed_info if it doesn't exist
+                if 'parsed_info' not in result:
+                    result['parsed_info'] = {}
+                
+                if 'season_episode_info' not in result['parsed_info']:
+                    result['parsed_info']['season_episode_info'] = {
+                        'season_pack': 'Complete',
+                        'seasons': [season],
+                        'episodes': []  # Will be filled in by filter_results
+                    }
+            
+            return results
+        except Exception as e:
+            logging.error(f"Error scraping Nyaa with pattern {pattern}: {str(e)}")
+            return []
+    
+    # Use ThreadPoolExecutor to scrape all patterns simultaneously
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Submit all scraping tasks
+        future_to_pattern = {
+            executor.submit(scrape_with_pattern, pattern): pattern
+            for pattern in season_patterns
+        }
+        
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_pattern):
+            pattern = future_to_pattern[future]
+            results = future.result()
+            all_results.extend(results)
+            logging.info(f"Found {len(results)} results using pattern {pattern}")
+    
+    return all_results
 
 if __name__ == "__main__":
     # Test for a movie

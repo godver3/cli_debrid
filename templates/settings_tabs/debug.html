@@ -11,7 +11,7 @@
     </div>
     <div class="settings-section-content">
         {% for key, value in settings_schema.Debug.items() %}
-            {% if key != 'tab' %}
+            {% if key != 'tab' and key != 'skip_initial_plex_update' and key != 'auto_run_program' and key != 'disable_initialization' and key != 'sort_by_uncached_status' and key != 'checking_queue_period' and key != 'rescrape_missing_files' and key != 'enable_reverse_order_scraping' and key != 'content_source_check_period' and key != 'disable_not_wanted_check' and key != 'symlink_movie_template' and key != 'symlink_episode_template' and key != 'timezone_override' and key != 'anime_renaming_using_anidb' and key != 'enable_separate_anime_folders' and key != 'tv_shows_folder_name' and key != 'anime_movies_folder_name' and key != 'anime_tv_shows_folder_name' and key != 'movies_folder_name' and key != 'disable_content_source_caching' and key != 'enable_crash_test' and key != 'cinesync_path' and key != 'emby_url' and key != 'emby_token' %}
             <div class="settings-form-group">
                 <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
@@ -25,15 +25,6 @@
                             <option value="{{ option }}" {% if settings.get('Debug', {}).get(key) == option %}selected{% endif %}>{{ option }}</option>
                         {% endfor %}
                     </select>
-                {% elif key == 'content_source_check_period' %}
-                    <div id="content-source-check-periods">
-                        {% for source, period in settings.Debug.content_source_check_period.items() %}
-                            <div class="content-source-check-period">
-                                <label for="debug-content-source-{{ source }}">{{ source }}:</label>
-                                <input type="number" id="debug-content-source-{{ source }}" name="Debug.content_source_check_period.{{ source }}" value="{{ period }}" step="0.1" min="0.1" class="settings-input">
-                            </div>
-                        {% endfor %}
-                    </div>
                 {% else %}
                     <input type="{{ value.type }}" id="debug-{{ key }}" name="Debug.{{ key }}"
                            value="{{ settings.get('Debug', {}).get(key, '') }}" class="settings-input"
@@ -62,5 +53,37 @@
             </div>
             {% endif %}
         {% endfor %}
+    </div>    
+</div>
+
+<!-- Content Source Check Periods Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Content Source Check Periods</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-subsection">
+            <div id="content-source-check-periods">
+                <h5>Content Source Check Periods (minutes)</h5>
+                {% for source_id, source_config in settings.get('Content Sources', {}).items() %}
+                    {% if source_config.get('enabled', False) %}
+                        <div class="content-source-check-period">
+                            {% set display_name = source_config.get('display_name') %}
+                            {% if display_name and display_name != "" %}
+                                <label for="debug-content-source-{{ source_id }}">{{ display_name }} ({{ source_id }}):</label>
+                            {% else %}
+                                <label for="debug-content-source-{{ source_id }}">{{ source_config.get('type', source_id) }} ({{ source_id }}):</label>
+                            {% endif %}
+                            <input type="number" id="debug-content-source-{{ source_id }}" 
+                                   name="Debug.content_source_check_period.{{ source_id }}" 
+                                   value="{{ settings.get('Debug', {}).get('content_source_check_period', {}).get(source_id, 15) }}" 
+                                   step="0.1" min="0.1" class="settings-input">
+                        </div>
+                    {% endif %}
+                {% endfor %}
+                <p class="settings-description">Override Content Source checking period (in minutes) - note that a minimum of 5 minutes is recommended</p>
+            </div>
+        </div>
     </div>
 </div>

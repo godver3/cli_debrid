@@ -133,4 +133,18 @@ button.delete-scraper-btn:disabled,
     align-items: center;
 }
 
+/* Hide hybrid mode and jackett seeders only checkboxes */
+.settings-form-group.hybrid-mode-group,
+.settings-form-group.jackett-seeders-only-group {
+    display: none !important;
+}
+
+/* Also hide any form group with hybrid_mode or jackett_seeders_only checkbox */
+.settings-form-group:has(#scraping-hybrid_mode),
+.settings-form-group:has(input[data-hybrid-mode="true"]),
+.settings-form-group:has(#scraping-jackett_seeders_only),
+.settings-form-group:has(input[data-jackett-seeders-only="true"]) {
+    display: none !important;
+}
+
 /* Rest of your existing styles... */ 

@@ -30,7 +30,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         
         symlinked_path = get_setting('File Management', 'symlinked_files_path')
         organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)
-        logging.debug(f"Settings: symlinked_path={symlinked_path}, enabled_separate_anime_folders={get_setting('Debug', 'enabled_separate_anime_folders', False)}")
+        logging.debug(f"Settings: symlinked_path={symlinked_path}, enable_separate_anime_folders={get_setting('Debug', 'enable_separate_anime_folders', False)}")
         
         # Get the original extension
         _, extension = os.path.splitext(original_file)
@@ -59,7 +59,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         
         # Determine the appropriate root folder
         # If it's anime and we have separate folders enabled, use anime folders
-        if is_anime and get_setting('Debug', 'enabled_separate_anime_folders', False):
+        if is_anime and get_setting('Debug', 'enable_separate_anime_folders', False):
             if media_type == 'movie':
                 folder_name = get_setting('Debug', 'anime_movies_folder_name', 'Anime Movies')
                 logging.debug(f"Using anime movies folder name: {folder_name}")
@@ -209,7 +209,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         logging.error(f"Error getting symlink path: {str(e)}")
         return None
 
-def create_symlink(source_path: str, dest_path: str) -> bool:
+def create_symlink(source_path: str, dest_path: str, media_item_id: int = None) -> bool:
     """Create a symlink from source to destination path."""
     try:
         dest_dir = os.path.dirname(dest_path)
@@ -236,6 +236,15 @@ def create_symlink(source_path: str, dest_path: str) -> bool:
         # Create the symlink
         os.symlink(source_path, dest_path)
         logging.info(f"Created symlink: {source_path} -> {dest_path}")
+
+        # Add to verification queue if media_item_id is provided and library type is Symlinked/Local
+        if media_item_id and get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            try:
+                from database.symlink_verification import add_symlinked_file_for_verification
+                add_symlinked_file_for_verification(media_item_id, dest_path)
+                logging.info(f"Added file to verification queue: {dest_path}")
+            except Exception as e:
+                logging.error(f"Failed to add file to verification queue: {str(e)}")
 
         return True
     except Exception as e:
@@ -433,7 +442,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     logging.debug(f"[UPGRADE] No old symlink found at {old_dest}")
             
             if not os.path.exists(dest_file):
-                success = create_symlink(source_file, dest_file)
+                success = create_symlink(source_file, dest_file, item.get('id'))
                 logging.debug(f"[UPGRADE] Created new symlink: {success}")
             else:
                 # Verify existing symlink points to correct source
@@ -445,7 +454,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     else:
                         # Recreate symlink if pointing to wrong source
                         os.unlink(dest_file)
-                        success = create_symlink(source_file, dest_file)
+                        success = create_symlink(source_file, dest_file, item.get('id'))
                         logging.debug(f"[UPGRADE] Recreated symlink with correct source: {success}")
                 else:
                     logging.warning(f"[UPGRADE] Destination exists but is not a symlink: {dest_file}")
@@ -462,7 +471,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 
                 # Prepare update values
                 update_values = {
-                    'location_on_disk': dest_file,
+                        'location_on_disk': dest_file,
                     'collected_at': current_time,
                     'original_collected_at': current_time,
                     'original_path_for_symlink': source_file,
@@ -504,7 +513,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     notification_item['new_state'] = 'Upgraded'
                     add_to_collected_notifications(notification_item)
                     logging.info(f"Added upgrade notification for item: {item_identifier}")
-
+            
             return success
             
         except Exception as e:
@@ -514,7 +523,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 continue
             logging.error(f"[UPGRADE] Error checking local file for item: {str(e)}")
             return False
-            
+    
     return False
 
 def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -572,7 +581,7 @@ def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
                         # Create symlink if it doesn't exist
                         success = False
                         if not os.path.exists(dest_file):
-                            success = create_symlink(source_file, dest_file)
+                            success = create_symlink(source_file, dest_file, item.get('id'))
                         else:
                             # Verify existing symlink points to correct source
                             if os.path.islink(dest_file):
@@ -582,7 +591,7 @@ def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
                                 else:
                                     # Recreate symlink if pointing to wrong source
                                     os.unlink(dest_file)
-                                    success = create_symlink(source_file, dest_file)
+                                    success = create_symlink(source_file, dest_file, item.get('id'))
                             else:
                                 logging.warning(f"Destination exists but is not a symlink: {dest_file}")
                                 continue
@@ -659,7 +668,7 @@ def recent_local_library_scan(items: List[Dict[str, Any]], max_files: int = 500)
                 
                 # Create symlink if it doesn't exist
                 if not os.path.exists(dest_file):
-                    if create_symlink(source_file, dest_file):
+                    if create_symlink(source_file, dest_file, target_files[filename].get('id')):
                         item = target_files[filename]
                         found_items[item['id']] = {
                             'location': dest_file,
@@ -721,7 +730,7 @@ def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
         # Create symlink if it doesn't exist
         success = False
         if not os.path.exists(dest_file):
-            success = create_symlink(source_file, dest_file)
+            success = create_symlink(source_file, dest_file, item.get('id'))
         else:
             # Verify existing symlink points to correct source
             if os.path.islink(dest_file):
@@ -731,7 +740,7 @@ def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
                 else:
                     # Recreate symlink if pointing to wrong source
                     os.unlink(dest_file)
-                    success = create_symlink(source_file, dest_file)
+                    success = create_symlink(source_file, dest_file, item.get('id'))
             else:
                 return {
                     'success': False,

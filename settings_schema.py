@@ -417,7 +417,7 @@ SETTINGS_SCHEMA = {
             "description": "Use AniDB to rename anime episodes instead of Trakt metadata (symlinking only)",
             "default": False
         },
-        "enabled_separate_anime_folders": {
+        "enable_separate_anime_folders": {
             "type": "boolean",
             "description": "Create separate anime folders for anime content when organizing symlinks",
             "default": False
@@ -479,7 +479,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_unmatched_items_check": {
             "type": "boolean",
-            "description": "Enable checking and fixing of unmatched items in Plex during collection scans",
+            "description": "Enable checking and fixing of unmatched or incorrectly matched items in Plex during collection scans",
             "default": True
         },
         "upgrade_queue_duration_hours": {

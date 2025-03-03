@@ -271,7 +271,6 @@ def parse_search_term(search_term: str) -> Tuple[str, Optional[int], Optional[in
     if match:
         season = int(match.group(1))
         episode = int(match.group(2)) if match.group(2) else None
-        base_title = re.sub(r'[Ss]\d+(?:[Ee]\d+)?', '', base_title).strip()
         multi = episode is None  # Set multi to True if only season is specified
         return base_title, season, episode, year, multi
 
@@ -657,8 +656,8 @@ def trending_shows():
         logging.error(f"Error retrieving Trakt Trending Shows: {e}")
         return []
 
-def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str], skip_cache_check: bool = False) -> List[Dict[str, Any]]:
-    #logging.info(f"Processing media selection: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}, genres={genres}")
+def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str], skip_cache_check: bool = True, background_cache_check: bool = False) -> List[Dict[str, Any]]:
+    logging.info(f"Processing media selection with skip_cache_check={skip_cache_check}, background_cache_check={background_cache_check}")
 
     # Convert TMDB ID to IMDB ID using the metadata battery
     tmdb_id = int(media_id)
@@ -672,7 +671,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
 
     if not imdb_id:
         logging.error(f"Could not find IMDB ID for TMDB ID {tmdb_id}")
-        return [], []  # Return empty lists for both torrent results and cache status
+        return {"error": "Could not find IMDB ID for the selected media"}
 
     movie_or_episode = 'episode' if media_type == 'tv' or media_type == 'show' else 'movie'
 
@@ -682,16 +681,11 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     elif season is not None and episode is None:
         multi = True
 
-    #logging.info(f"Scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
-                  #f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
-
-    #logging.info(f"Genres: {genres}")
+    logging.info(f"Scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
+                   f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
 
     # Call the scraper function with the version parameter
     scrape_results, filtered_out_results = scrape(imdb_id, str(tmdb_id), title, int(year), movie_or_episode, version, season, episode, multi, genres)
-
-    #for result in scrape_results:
-        #logging.info(f"Scrape result: {result}")
 
     # Process the results
     processed_results = []
@@ -730,107 +724,122 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     
     # Check if this is a RealDebridProvider
     is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
+    
+    logging.info(f"Debrid provider: supports_cache_check={supports_cache_check}, supports_bulk_check={supports_bulk_check}, is_real_debrid={is_real_debrid}")
 
-    # Check cache status for all hashes
-    cache_status = {}
-    if hashes and not skip_cache_check:
+    # Initialize all cache statuses as 'Not Checked'
+    for result in processed_results:
+        result['cached'] = 'Not Checked'
+    
+    # Only perform cache check if explicitly requested and not in background mode
+    if hashes and not skip_cache_check and not background_cache_check:
+        # Always check exactly 5 hashes
+        if len(hashes) > 5:
+            logging.info(f"Limiting immediate cache check from {len(hashes)} to exactly 5 hashes")
+            hashes_to_check = hashes[:5]
+        else:
+            hashes_to_check = hashes
+            logging.info(f"Only {len(hashes)} hashes available for checking, less than the target of 5")
+            
+        logging.info(f"Performing immediate cache check for {len(hashes_to_check)} hashes")
+        
         if supports_cache_check:
             try:
                 if supports_bulk_check:
                     # If provider supports bulk checking, check all hashes at once
-                    cache_status = debrid_provider.is_cached(hashes)
+                    cache_status = debrid_provider.is_cached(hashes_to_check)
                     if isinstance(cache_status, bool):
                         # If we got a single boolean back, convert to dict
-                        cache_status = {hash_value: cache_status for hash_value in hashes}
-                    logging.info(f"Bulk cache status from provider: {cache_status}")
+                        cache_status = {hash_value: cache_status for hash_value in hashes_to_check}
+                    
+                    # Update results with cache status
+                    for result in processed_results:
+                        hash_value = result.get('hash')
+                        if hash_value and hash_value in cache_status:
+                            is_cached = cache_status[hash_value]
+                            result['cached'] = 'Yes' if is_cached else 'No'
                 else:
                     # Check hashes individually for providers that don't support bulk checking
-                    cache_status = {}
-                    for hash_value in hashes:
-                        try:
-                            is_cached = debrid_provider.is_cached(hash_value)
-                            cache_status[hash_value] = is_cached
-                            logging.info(f"Individual cache status for {hash_value}: {is_cached}")
-                        except Exception as e:
-                            logging.error(f"Error checking individual cache status for {hash_value}: {e}")
-                            cache_status[hash_value] = 'N/A'
+                    checked_count = 0
+                    for result in processed_results:
+                        hash_value = result.get('hash')
+                        if hash_value and checked_count < 5:  # Limit to 5 checks
+                            try:
+                                is_cached = debrid_provider.is_cached(hash_value)
+                                result['cached'] = 'Yes' if is_cached else 'No'
+                                checked_count += 1
+                            except Exception as e:
+                                logging.error(f"Error checking individual cache status for {hash_value}: {e}")
+                                result['cached'] = 'Error'
+                
+                # Mark all remaining results as N/A
+                for result in processed_results:
+                    if result['cached'] == 'Not Checked':
+                        result['cached'] = 'N/A'
+                        
             except Exception as e:
                 logging.error(f"Error checking cache status: {e}")
                 # Fall back to N/A on error
-                cache_status = {hash_value: 'N/A' for hash_value in hashes}
+                for result in processed_results:
+                    if result['cached'] == 'Not Checked':
+                        result['cached'] = 'N/A'
         else:
             # If provider doesn't support direct checking but is RealDebrid, check first 5 results
             if is_real_debrid:
-                logging.info("Using RealDebridProvider's is_cached method for first 5 results")
-                cache_status = {hash_value: 'N/A' for hash_value in hashes}  # Initialize all as N/A
+                logging.info("Using RealDebridProvider's is_cached method for exactly 5 results")
                 torrent_ids_to_remove = []  # Track torrent IDs for removal
                 
                 # Only check first 5 results
-                for i, result in enumerate(processed_results[:5]):
-                    if i >= 5:  # Limit to first 5
-                        break
+                checked_count = 0
+                for result in processed_results:
+                    hash_value = result.get('hash')
+                    if not hash_value or checked_count >= 5:  # Limit to 5 checks
+                        continue
                         
-                    if 'magnet' in result:
-                        try:
-                            # Use the is_cached method which will add the torrent and return its cache status
-                            magnet_link = result['magnet']
-                            result_hash = result.get('hash')
-                            
-                            # Use the is_cached method which will add the torrent and return its cache status
-                            # But we need to capture the torrent ID for later removal
-                            cache_result = debrid_provider.is_cached(
-                                magnet_link, 
-                                result_title=result.get('title', ''),
-                                result_index=i
-                            )
-                            
-                            if result_hash:
-                                cache_status[result_hash] = cache_result
-                                logging.info(f"Cache status for result {i+1}: {cache_result}")
-                            
-                            # Try to find the torrent ID using the hash
-                            if result_hash:
-                                # We need to extract the torrent ID from the _all_torrent_ids dictionary
-                                torrent_id = debrid_provider._all_torrent_ids.get(result_hash)
-                                if torrent_id:
-                                    torrent_ids_to_remove.append(torrent_id)
-                                    logging.info(f"Added torrent ID {torrent_id} to removal list")
-                        except Exception as e:
-                            logging.error(f"Error checking cache for result {i+1}: {str(e)}")
+                    checked_count += 1
+                    try:
+                        # Use the is_cached method which will add the torrent and return its cache status
+                        # But we need to capture the torrent ID for later removal
+                        magnet_link = f"magnet:?xt=urn:btih:{hash_value}"
+                        cache_result = debrid_provider.is_cached(
+                            magnet_link, 
+                            result_title=result.get('title', f"Hash {hash_value}"),
+                            result_index=checked_count-1
+                        )
+                        
+                        result['cached'] = 'Yes' if cache_result else 'No'
+                        
+                        # Try to find the torrent ID using the hash
+                        torrent_id = debrid_provider._all_torrent_ids.get(hash_value)
+                        if torrent_id:
+                            torrent_ids_to_remove.append(torrent_id)
+                    except Exception as e:
+                        logging.error(f"Error checking cache for hash {hash_value}: {str(e)}")
+                        result['cached'] = 'Error'
                 
                 # Remove all torrents after checking (even if they're cached)
                 for torrent_id in torrent_ids_to_remove:
                     try:
                         debrid_provider.remove_torrent(torrent_id, "Removed after cache check")
-                        logging.info(f"Removed torrent with ID {torrent_id} after cache check")
                     except Exception as e:
                         logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+                
+                # Mark all remaining results as N/A
+                for result in processed_results:
+                    if result['cached'] == 'Not Checked':
+                        result['cached'] = 'N/A'
             else:
                 # Mark all results as N/A if provider doesn't support direct checking
-                cache_status = {hash_value: 'N/A' for hash_value in hashes}
+                for result in processed_results:
+                    result['cached'] = 'N/A'
                 logging.info("Provider does not support direct cache checking, marking all as N/A")
     else:
-        # If skip_cache_check is True, mark all as N/A
-        if skip_cache_check:
-            logging.info("Skipping cache check as requested")
-            cache_status = {hash_value: 'N/A' for hash_value in hashes}
-
-    # Update processed_results with cache status
-    for result in processed_results:
-        result_hash = result.get('hash')
-        if result_hash:
-            result['cached'] = cache_status.get(result_hash, 'N/A')
-            # Use original title for logging
-            original_title = result.get('parsed_info', {}).get('original_title', result.get('original_title', result.get('title', '')))
-            if result['cached'] == True:
-                result['cached'] = 'Yes'
-            elif result['cached'] == False:
-                result['cached'] = 'No'
-            # Add TMDB ID and version to result
-            result['tmdb_id'] = str(tmdb_id)
-            result['version'] = version
-            logging.info(f"Cache status for {original_title} (hash: {result_hash}): {result['cached']}")
-    return processed_results, cache_status
+        logging.info(f"Skipping immediate cache check. Skip: {skip_cache_check}, Background: {background_cache_check}")
+        
+    # Get media info for display
+    media_info = get_media_details(media_id, media_type)
+    
+    return {"torrent_results": processed_results, "media_info": media_info}
 
 def get_available_versions():
     scraping_versions = get_setting('Scraping', 'versions', default={})
