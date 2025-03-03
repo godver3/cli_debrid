@@ -59,9 +59,14 @@
                             data-section="File Management" data-key="{{ key }}"
                             {% if key == 'file_collection_management' %}data-previous-value="{{ settings.get('File Management', {}).get(key, '') }}"{% endif %}>
                         {% for choice in value.choices %}
-                            <option value="{{ choice }}" {% if settings.get('File Management', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            <option value="{{ choice }}" {% if settings.get('File Management', {}).get(key) == choice %}selected{% endif %} {% if is_windows and choice == 'Symlinked/Local' %}disabled{% endif %}>{{ choice }}</option>
                         {% endfor %}
                     </select>
+                    {% if key == 'file_collection_management' and is_windows %}
+                    <div class="windows-warning" style="margin-top: 10px; padding: 10px; border-radius: 5px; background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404;">
+                        <strong>Warning:</strong> On Windows systems, symlinks cannot be scanned into Plex. Plex management has been selected.
+                    </div>
+                    {% endif %}
                 {% else %}
                     <input type="{{ value.type }}" id="file management-{{ key }}" name="File Management.{{ key }}"
                            value="{{ settings.get('File Management', {}).get(key, '') }}" class="settings-input"
@@ -74,45 +79,42 @@
             </div>
             {% endif %}
         {% endfor %}
-    </div>
-</div>
-
-<!-- Always include Plex section but initially hidden -->
-<div class="settings-section" id="plex-settings-section" style="display: none;">
-    <div class="settings-section-header">
-        <h4>Plex</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        {% for key, value in settings_schema['Plex'].items() %}
-            {% if key != 'tab' %}
-            <div class="settings-form-group">
-                <label for="plex-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="plex-{{ key }}" name="Plex.{{ key }}"
-                           data-section="Plex" data-key="{{ key }}"
-                           {% if settings.get('Plex', {}).get(key) %}checked{% endif %}>
-                {% elif value.choices %}
-                    <select id="plex-{{ key }}" name="Plex.{{ key }}" class="settings-input"
-                            data-section="Plex" data-key="{{ key }}">
-                        {% for choice in value.choices %}
-                            <option value="{{ choice }}" {% if settings.get('Plex', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
-                        {% endfor %}
-                    </select>
-                {% else %}
-                    <input type="{{ value.type }}" id="plex-{{ key }}" name="Plex.{{ key }}"
-                           value="{{ settings.get('Plex', {}).get(key, '') }}" class="settings-input"
-                           data-section="Plex" data-key="{{ key }}"
-                           {% if key in ['movie_libraries', 'shows_libraries'] %}data-plex-required="true"{% endif %}
-                           {% if key == 'disable_plex_library_checks' %}data-plex-required="true"{% endif %}
-                           {% if value.sensitive %}type="password"{% endif %}>
-                {% endif %}
-                {% if value.description %}
-                    <p class="settings-description">{{ value.description }}</p>
-                {% endif %}
+        
+        <!-- Plex settings included in File Management section -->
+        <div id="plex-settings-in-file-management" style="display: none;">
+            <div class="settings-subheader">
+                <h5>Plex Settings</h5>
             </div>
-            {% endif %}
-        {% endfor %}
+            {% for key, value in settings_schema['Plex'].items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="plex-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    {% if value.type == 'boolean' %}
+                        <input type="checkbox" id="plex-{{ key }}" name="Plex.{{ key }}"
+                               data-section="Plex" data-key="{{ key }}"
+                               {% if settings.get('Plex', {}).get(key) %}checked{% endif %}>
+                    {% elif value.choices %}
+                        <select id="plex-{{ key }}" name="Plex.{{ key }}" class="settings-input"
+                                data-section="Plex" data-key="{{ key }}">
+                            {% for choice in value.choices %}
+                                <option value="{{ choice }}" {% if settings.get('Plex', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        <input type="{{ value.type }}" id="plex-{{ key }}" name="Plex.{{ key }}"
+                               value="{{ settings.get('Plex', {}).get(key, '') }}" class="settings-input"
+                               data-section="Plex" data-key="{{ key }}"
+                               {% if key in ['movie_libraries', 'shows_libraries'] %}data-plex-required="true"{% endif %}
+                               {% if key == 'disable_plex_library_checks' %}data-plex-required="true"{% endif %}
+                               {% if value.sensitive %}type="password"{% endif %}>
+                    {% endif %}
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
     </div>
 </div>
 
@@ -152,16 +154,11 @@
             </div>
             {% endif %}
         {% endfor %}
-    </div>
-</div>
-
-<!-- Trakt Authorization Section -->
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>Trakt Authorization</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
+        
+        <!-- Trakt Authorization -->
+        <div class="settings-subheader">
+            <h5>Authorization</h5>
+        </div>
         <p class="settings-description">Click the button below to authorize Trakt. You must first have entered your Client ID and Client Secret above (after creating an application).</p>
         <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
         <div id="trakt-auth-status" class="trakt-status"></div>
@@ -210,10 +207,46 @@ document.addEventListener('DOMContentLoaded', function() {
         // Initial UI setup based on current value
         updateUIVisibility(collectionTypeSelect.value);
         
+        {% if is_windows %}
+        // For Windows: Ensure Symlinked/Local is not selected
+        if (collectionTypeSelect.value === 'Symlinked/Local') {
+            collectionTypeSelect.value = 'Plex';
+            // Update the previous value attribute
+            collectionTypeSelect.setAttribute('data-previous-value', 'Plex');
+            // Trigger UI update
+            updateUIVisibility('Plex');
+        }
+        
+        // Add event listener to prevent selecting Symlinked/Local on Windows
+        collectionTypeSelect.addEventListener('change', function(event) {
+            if (this.value === 'Symlinked/Local') {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                showPopup({
+                    type: POPUP_TYPES.WARNING,
+                    title: 'Windows Limitation',
+                    message: 'Symlinked/Local management is not supported on Windows. Please use Plex management instead.',
+                    autoClose: 5000
+                });
+                
+                // Reset to previous value
+                this.value = this.getAttribute('data-previous-value') || 'Plex';
+            }
+        });
+        {% endif %}
+        
         collectionTypeSelect.addEventListener('change', async function(event) {
             // Prevent any immediate changes
             event.preventDefault();
             event.stopPropagation();
+            
+            {% if is_windows %}
+            // Skip confirmation for Windows if trying to select Symlinked/Local
+            if (this.value === 'Symlinked/Local') {
+                return;
+            }
+            {% endif %}
             
             const previousValue = this.getAttribute('data-previous-value');
             const newValue = this.value;
@@ -222,10 +255,21 @@ document.addEventListener('DOMContentLoaded', function() {
             this.value = previousValue;
             
             if (previousValue !== newValue) {
+                let confirmMessage = 'Changing the collection management type may affect your existing library structure. Are you sure you want to proceed?';
+                
+                // Customize message based on the specific change
+                if (previousValue === 'Symlinked/Local' && newValue === 'Plex') {
+                    confirmMessage = 'Changing from Symlinked/Local to Plex management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?';
+                } else if (previousValue === 'Plex' && newValue === 'Symlinked/Local') {
+                    confirmMessage = 'Changing from Plex to Symlinked/Local management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?';
+                } else if (previousValue === 'None' && (newValue === 'Plex' || newValue === 'Symlinked/Local')) {
+                    confirmMessage = 'Setting up ' + newValue + ' management will require additional configuration. Are you sure you want to proceed?';
+                }
+                
                 showPopup({
                     type: POPUP_TYPES.CONFIRM,
                     title: '⚠️ Change Collection Management Type',
-                    message: 'Changing between Plex and Symlinked/Local management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?',
+                    message: confirmMessage,
                     confirmText: 'Yes, Change',
                     cancelText: 'No, Keep Current',
                     onConfirm: () => {
@@ -258,27 +302,30 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Function to update UI visibility
     function updateUIVisibility(value) {
-        const plexSection = document.getElementById('plex-settings-section');
+        const plexSection = document.getElementById('plex-settings-in-file-management');
         const symlinkFields = [
             document.querySelector('div.settings-form-group:has(#file\\ management-original_files_path)'),
             document.querySelector('div.settings-form-group:has(#file\\ management-symlinked_files_path)'),
-            document.querySelector('div.settings-form-group:has(#file\\ management-plex_url_for_symlink)'),
-            document.querySelector('div.settings-form-group:has(#file\\ management-plex_token_for_symlink)')
+            ...document.querySelectorAll('.symlink-plex-setting')
         ];
 
         if (value === 'Plex') {
-            // Show Plex section
-            plexSection.style.display = 'block';
-            // Hide symlink fields
+            // Show Plex settings, hide symlink fields
+            if (plexSection) plexSection.style.display = 'block';
             symlinkFields.forEach(field => {
                 if (field) field.style.display = 'none';
             });
-        } else {
-            // Hide Plex section
-            plexSection.style.display = 'none';
-            // Show symlink fields
+        } else if (value === 'Symlinked/Local') {
+            // Show symlink fields, hide Plex settings
+            if (plexSection) plexSection.style.display = 'none';
             symlinkFields.forEach(field => {
                 if (field) field.style.display = 'block';
+            });
+        } else {
+            // Hide both
+            if (plexSection) plexSection.style.display = 'none';
+            symlinkFields.forEach(field => {
+                if (field) field.style.display = 'none';
             });
         }
     }

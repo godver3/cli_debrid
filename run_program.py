@@ -113,6 +113,7 @@ class ProgramRunner:
             'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
             'task_check_database_health': 3600,  # Run every hour
             'task_run_library_maintenance': 12 * 60 * 60,  # Run every twelve hours
+            'task_verify_symlinked_files': 900,  # Run every 15 minutes
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -149,6 +150,12 @@ class ProgramRunner:
             get_setting('Plex', 'disable_plex_library_checks')
         ):
             self.enabled_tasks.add('task_check_plex_files')
+
+        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local' and (
+            get_setting('File Management', 'plex_url_for_symlink') and 
+            get_setting('File Management', 'plex_token_for_symlink')
+        ):
+            self.enabled_tasks.add('task_verify_symlinked_files')
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
             self.enabled_tasks.add('task_get_plex_watch_history')
@@ -1390,6 +1397,49 @@ class ProgramRunner:
                 logging.info("Periodic database health check passed")
         except Exception as e:
             logging.error(f"Error during periodic database health check: {str(e)}")
+
+    def task_verify_symlinked_files(self):
+        """Verify symlinked files have been properly scanned into Plex."""
+        logging.info("Checking for symlinked files to verify in Plex...")
+        try:
+            # Import here to avoid circular imports
+            from database.symlink_verification import get_verification_stats
+            from utilities.plex_verification import run_plex_verification_scan
+            
+            # Check if there are any unverified files to process
+            stats = get_verification_stats()
+            if stats['unverified'] == 0:
+                logging.info("No unverified files in queue. Skipping verification scan.")
+                return
+            
+            # Alternate between full and recent scans
+            # Use a class attribute to track the last scan type
+            if not hasattr(self, '_last_symlink_scan_was_full'):
+                # Initialize to True so first scan will be recent (gets toggled below)
+                self._last_symlink_scan_was_full = True
+            
+            # Toggle scan type
+            do_full_scan = not self._last_symlink_scan_was_full
+            self._last_symlink_scan_was_full = do_full_scan
+            
+            scan_type = "full" if do_full_scan else "recent"
+            logging.info(f"Running {scan_type} symlink verification scan...")
+            
+            # Run the verification scan
+            verified_count, total_processed = run_plex_verification_scan(
+                max_files=50,
+                recent_only=not do_full_scan
+            )
+            
+            logging.info(f"Verified {verified_count} out of {total_processed} symlinked files in Plex ({scan_type} scan)")
+            
+            # If recent scan found nothing but we have unverified files, force a full scan next time
+            if not do_full_scan and total_processed == 0 and stats['unverified'] > 0:
+                logging.info("Recent scan found no files but unverified files exist. Will run full scan next time.")
+                self._last_symlink_scan_was_full = False
+                
+        except Exception as e:
+            logging.error(f"Error verifying symlinked files: {e}")
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

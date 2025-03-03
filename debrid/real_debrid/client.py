@@ -42,7 +42,7 @@ class RealDebridProvider(DebridProvider):
         except Exception as e:
             raise ProviderUnavailableError(f"Failed to load API key: {str(e)}")
 
-    def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None) -> Union[bool, Dict[str, Optional[bool]]]:
+    def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True) -> Union[bool, Dict[str, bool], None]:
         """
         Check if one or more magnet links or torrent files are cached on Real-Debrid.
         If a single input is provided, returns a boolean or None (for error).
@@ -53,6 +53,7 @@ class RealDebridProvider(DebridProvider):
             temp_file_path: Optional path to torrent file
             result_title: Optional title of the result being checked (for logging)
             result_index: Optional index of the result in the list (for logging)
+            remove_uncached: Whether to remove uncached torrents after checking (default: True)
             
         Returns:
             - True: Torrent is cached
@@ -199,13 +200,17 @@ class RealDebridProvider(DebridProvider):
                     self._cached_torrent_ids[hash_value] = torrent_id
                     self._cached_torrent_titles[hash_value] = info.get('filename', '')
                 else:
-                    try:
-                        self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
-                        from database.torrent_tracking import update_cache_check_removal
-                        update_cache_check_removal(hash_value)
-                    except Exception as e:
-                        logging.error(f"{log_prefix} Error removing uncached torrent: {str(e)}")
-                        self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
+                    if remove_uncached:
+                        try:
+                            self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
+                            from database.torrent_tracking import update_cache_check_removal
+                            update_cache_check_removal(hash_value)
+                        except Exception as e:
+                            logging.error(f"{log_prefix} Error removing uncached torrent: {str(e)}")
+                            self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
+                    else:
+                        # Keep the torrent for later use
+                        logging.info(f"{log_prefix} Keeping uncached torrent (ID: {torrent_id}) for later use")
                 
                 results[hash_value] = is_cached
                 

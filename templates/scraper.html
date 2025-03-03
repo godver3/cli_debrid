@@ -114,6 +114,30 @@
         background-color: #607d8b;
         color: white;
     }
+
+    /* Simple CSS reset for checkbox */
+    #skip-cache-check {
+        /* Reset to browser defaults */
+        -webkit-appearance: checkbox !important;
+        -moz-appearance: checkbox !important;
+        appearance: checkbox !important;
+        
+        /* Remove any custom styling */
+        all: revert !important;
+        
+        /* Optional: add minimal styling if needed */
+        margin-right: 5px !important;
+        vertical-align: middle !important;
+    }
+    
+    .checkbox-container label {
+        cursor: pointer !important;
+        vertical-align: middle !important;
+    }
+
+    .checkbox-container {
+        display: none !important;
+    }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
         <form id="search-form">
@@ -125,6 +149,10 @@
                 {% endfor %}
                 <option value="No Version">No Version</option>
             </select>
+            <div class="checkbox-container" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
+                <input type="checkbox" id="skip-cache-check" name="skip_cache_check">
+                <label for="skip-cache-check" style="color: #ccc; font-size: 0.9em;">Skip Cache Check</label>
+            </div>
             <button id="searchformButton" type="button">Search</button>
         </form>
         {% if not compact_view and not tmdb_api_key_set %}

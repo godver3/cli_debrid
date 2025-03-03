@@ -1065,10 +1065,16 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
             
         plex = PlexServer(plex_url, plex_token)
         
-        # Get the file location from the item
-        file_location = get_media_item_by_id(item['id'])['location_on_disk']
+        # Use the full_path directly from the item data passed from verification
+        file_location = item.get('full_path')
         if not file_location:
-            logger.error("No file location provided in item")
+            # Fallback to database lookup if full_path is not in the item
+            media_item = get_media_item_by_id(item.get('media_item_id') or item.get('id'))
+            if media_item:
+                file_location = media_item.get('location_on_disk')
+            
+        if not file_location:
+            logger.error(f"No file location found for item: {item.get('title', 'Unknown')}")
             return False
             
         # Get the directory containing the file

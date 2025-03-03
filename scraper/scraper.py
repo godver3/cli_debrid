@@ -60,8 +60,8 @@ def convert_anime_episode_format(season: int, episode: int, total_episodes: int)
         'combined': combined_format
     }
 
-def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}")
+def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}, skip_cache_check={skip_cache_check}")
 
     try:
         start_time = time.time()
@@ -346,6 +346,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Sort all results together
         def stable_rank_key(x):
+            # Make sure is_anime flag is set in each result
+            if is_anime and 'is_anime' not in x:
+                x['is_anime'] = is_anime
             return rank_result_key(x, deduplicated_results, title, year, season, episode, multi, content_type, version_settings)
 
         # Apply ultimate sort order if present

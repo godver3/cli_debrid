@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -39,11 +39,98 @@
                 </div>
                 {% endif %}
             {% endfor %}
+            
+            <!-- Add Auto Run Program and Disable Initialization settings to UI Settings section -->
+            {% if section == "UI Settings" %}
+            <div class="settings-form-group">
+                <label for="additional-auto_run_program" class="settings-title">Auto Run Program:</label>
+                <input type="checkbox" id="additional-auto_run_program" name="Debug.auto_run_program"
+                       data-section="Debug" data-key="auto_run_program"
+                       {% if settings.get('Debug', {}).get('auto_run_program') %}checked{% endif %}>
+                <p class="settings-description">Run the program automatically on startup</p>
+            </div>
+            <div class="settings-form-group">
+                <label for="additional-disable_initialization" class="settings-title">Disable Initialization:</label>
+                <input type="checkbox" id="additional-disable_initialization" name="Debug.disable_initialization"
+                       data-section="Debug" data-key="disable_initialization"
+                       {% if settings.get('Debug', {}).get('disable_initialization') %}checked{% endif %}>
+                <p class="settings-description">Disable initialization tasks</p>
+            </div>
+            {% endif %}
         </div>
     </div>
     {% endif %}
 {% endfor %}
 
+<!-- Symlink Settings Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Symlink Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="additional-symlink_movie_template" class="settings-title">Symlink Movie Template:</label>
+            <input type="text" id="additional-symlink_movie_template" name="Debug.symlink_movie_template"
+                   value="{{ settings.get('Debug', {}).get('symlink_movie_template', '{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="symlink_movie_template">
+            <p class="settings-description">Template for movie symlink filenames</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="additional-symlink_episode_template" class="settings-title">Symlink Episode Template:</label>
+            <input type="text" id="additional-symlink_episode_template" name="Debug.symlink_episode_template"
+                   value="{{ settings.get('Debug', {}).get('symlink_episode_template', '{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="symlink_episode_template">
+            <p class="settings-description">Template for episode symlink filenames</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-enable_separate_anime_folders" class="settings-title">Enable Separate Anime Folders:</label>
+            <input type="checkbox" id="additional-enable_separate_anime_folders" name="Debug.enable_separate_anime_folders"
+                   data-section="Debug" data-key="enable_separate_anime_folders"
+                   {% if settings.get('Debug', {}).get('enable_separate_anime_folders') %}checked{% endif %}>
+            <p class="settings-description">Enable separate folders for anime content</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-movies_folder_name" class="settings-title">Movies Folder Name:</label>
+            <input type="text" id="additional-movies_folder_name" name="Debug.movies_folder_name"
+                   value="{{ settings.get('Debug', {}).get('movies_folder_name', 'Movies') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="movies_folder_name">
+            <p class="settings-description">Name of the movies folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-tv_shows_folder_name" class="settings-title">TV Shows Folder Name:</label>
+            <input type="text" id="additional-tv_shows_folder_name" name="Debug.tv_shows_folder_name"
+                   value="{{ settings.get('Debug', {}).get('tv_shows_folder_name', 'TV Shows') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="tv_shows_folder_name">
+            <p class="settings-description">Name of the TV shows folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-anime_movies_folder_name" class="settings-title">Anime Movies Folder Name:</label>
+            <input type="text" id="additional-anime_movies_folder_name" name="Debug.anime_movies_folder_name"
+                   value="{{ settings.get('Debug', {}).get('anime_movies_folder_name', 'Anime Movies') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="anime_movies_folder_name">
+            <p class="settings-description">Name of the anime movies folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-anime_tv_shows_folder_name" class="settings-title">Anime TV Shows Folder Name:</label>
+            <input type="text" id="additional-anime_tv_shows_folder_name" name="Debug.anime_tv_shows_folder_name"
+                   value="{{ settings.get('Debug', {}).get('anime_tv_shows_folder_name', 'Anime TV Shows') }}" 
+                   class="settings-input"
+                   data-section="Debug" data-key="anime_tv_shows_folder_name">
+            <p class="settings-description">Name of the anime TV shows folder</p>
+        </div>
+    </div>
+</div>
 
 <style>
 #trakt-auth-btn {

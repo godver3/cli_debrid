@@ -615,46 +615,60 @@ def select_media():
         media_type = request.form.get('media_type')
         season = request.form.get('season')
         episode = request.form.get('episode')
-        multi = request.form.get('multi', 'false').lower() in ['true', '1', 'yes', 'on']
-        version = request.form.get('version')
-        skip_cache_check = request.form.get('skip_cache_check', 'false').lower() in ['true', '1', 'yes', 'on']
-
-        # Fetch detailed information from Overseerr
-        details = get_media_details(media_id, media_type)
-
-        # Extract keywords and genres
-        genres = details.get('genres', [])
-
-        if not version or version == 'undefined':
-            version = get_setting('Scraping', 'default_version', '1080p')  # Fallback to a default version
-
-        season = int(season) if season and season.isdigit() else None
-        episode = int(episode) if episode and episode.isdigit() else None
-
-        # Adjust multi and episode based on season
-        if media_type == 'tv' and season is not None:
-            if episode is None:
-                episode = 1
-                multi = True
-            else:
-                multi = False
-
-        torrent_results, cache_status = process_media_selection(media_id, title, year, media_type, season, episode, multi, version, genres, skip_cache_check)
+        multi = request.form.get('multi', 'false').lower() == 'true'
+        version = request.form.get('version', 'default')
+        genre_ids = request.form.get('genre_ids', '')
         
-        if not torrent_results:
-            return jsonify({'torrent_results': []})
-
-        cached_results = []
-        for result in torrent_results:
-            # Cache status should already be set by process_media_selection
-            if 'cached' not in result:
-                result['cached'] = 'N/A'  # Fallback if somehow not set
-            cached_results.append(result)
-
-        return jsonify({'torrent_results': cached_results})
+        # Parse skip_cache_check parameter
+        skip_cache_check = request.form.get('skip_cache_check', 'false').lower() == 'true'
+        
+        # Parse background_check parameter
+        background_check = request.form.get('background_check', 'true').lower() == 'true'
+        
+        # Log the parameters
+        logging.info(f"Select media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
+        logging.info(f"Cache check settings: skip_cache_check={skip_cache_check}, background_check={background_check}")
+        
+        if not media_id or not title or not year or not media_type:
+            return jsonify({'error': 'Missing required parameters'}), 400
+            
+        if season:
+            season = int(season)
+        if episode:
+            episode = int(episode)
+            
+        # Parse genre_ids
+        genres = []
+        if genre_ids:
+            try:
+                genres = [int(g) for g in genre_ids.split(',') if g]
+            except ValueError:
+                logging.warning(f"Invalid genre_ids format: {genre_ids}")
+                
+        # Process the media selection
+        result = process_media_selection(
+            media_id, 
+            title, 
+            year, 
+            media_type, 
+            season, 
+            episode, 
+            multi, 
+            version, 
+            genres,
+            skip_cache_check=skip_cache_check,
+            background_cache_check=background_check
+        )
+        
+        # Check if there was an error
+        if isinstance(result, dict) and 'error' in result:
+            return jsonify(result), 400
+            
+        # Return the results
+        return jsonify(result)
     except Exception as e:
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
-        return jsonify({'error': 'An error occurred while selecting media'}), 500
+        return jsonify({'error': 'An error occurred while processing your request'}), 500
 
 @scraper_bp.route('/add_torrent', methods=['POST'])
 def add_torrent():
@@ -762,7 +776,7 @@ def run_scrape():
         
         # Run first scrape with current settings
         original_results, _ = scrape(
-            imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres
+            imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres, skip_cache_check
         )
 
         # Update version settings with modified settings
@@ -787,7 +801,7 @@ def run_scrape():
         # Run second scrape with modified settings
         try:
             adjusted_results, _ = scrape(
-                imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres
+                imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres, skip_cache_check
             )
         finally:
             # Revert settings back to original
@@ -977,3 +991,121 @@ def tmdb_image_proxy(image_path):
     except requests.RequestException as e:
         logging.error(f"Error proxying TMDB image: {e}")
         return make_response('Image not found', 404)
+
+@scraper_bp.route('/check_cache_status', methods=['POST'])
+def check_cache_status():
+    try:
+        hashes = request.json.get('hashes', [])
+        if not hashes:
+            return jsonify({'error': 'No hashes provided'}), 400
+            
+        # Always limit to exactly 5 hashes, preserving the order
+        if len(hashes) > 5:
+            logging.info(f"Limiting cache check from {len(hashes)} to exactly 5 hashes")
+            hashes = hashes[:5]
+        elif len(hashes) < 5:
+            logging.info(f"Only {len(hashes)} hashes provided, less than the target of 5")
+            
+        # Get the debrid provider and check its capabilities
+        debrid_provider = get_debrid_provider()
+        supports_cache_check = debrid_provider.supports_direct_cache_check
+        supports_bulk_check = debrid_provider.supports_bulk_cache_checking
+        
+        # Check if this is a RealDebridProvider
+        is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
+        
+        # Check cache status for all hashes
+        cache_status = {}
+        if hashes:
+            if supports_cache_check:
+                try:
+                    # Optimize for single hash requests which are common with our new frontend
+                    if len(hashes) == 1:
+                        hash_value = hashes[0]
+                        is_cached = debrid_provider.is_cached(hash_value)
+                        cache_status[hash_value] = is_cached
+                        logging.info(f"Single hash cache status for {hash_value}: {is_cached}")
+                    elif supports_bulk_check:
+                        # If provider supports bulk checking, check all hashes at once
+                        # But we need to ensure we maintain the order in the response
+                        bulk_result = debrid_provider.is_cached(hashes)
+                        if isinstance(bulk_result, bool):
+                            # If we got a single boolean back, convert to dict
+                            cache_status = {hash_value: bulk_result for hash_value in hashes}
+                        else:
+                            # Make sure we preserve the order of hashes in the response
+                            cache_status = {}
+                            for hash_value in hashes:
+                                cache_status[hash_value] = bulk_result.get(hash_value, 'N/A')
+                        logging.info(f"Bulk cache status from provider: {cache_status}")
+                    else:
+                        # Check hashes individually for providers that don't support bulk checking
+                        # Process them in the exact order they were received
+                        cache_status = {}
+                        for hash_value in hashes:
+                            try:
+                                is_cached = debrid_provider.is_cached(hash_value)
+                                cache_status[hash_value] = is_cached
+                                logging.info(f"Individual cache status for {hash_value}: {is_cached}")
+                            except Exception as e:
+                                logging.error(f"Error checking individual cache status for {hash_value}: {e}")
+                                cache_status[hash_value] = 'N/A'
+                except Exception as e:
+                    logging.error(f"Error checking cache status: {e}")
+                    # Fall back to N/A on error
+                    cache_status = {hash_value: 'N/A' for hash_value in hashes}
+            else:
+                # If provider doesn't support direct checking but is RealDebrid, check first 5 results
+                if is_real_debrid:
+                    logging.info("Using RealDebridProvider's is_cached method")
+                    cache_status = {hash_value: 'N/A' for hash_value in hashes}  # Initialize all as N/A
+                    torrent_ids_to_remove = []  # Track torrent IDs for removal
+                    
+                    # Check each hash in the order provided
+                    for i, hash_value in enumerate(hashes):
+                        try:
+                            # Use the is_cached method which will add the torrent and return its cache status
+                            # But we need to capture the torrent ID for later removal
+                            magnet_link = f"magnet:?xt=urn:btih:{hash_value}"
+                            cache_result = debrid_provider.is_cached(
+                                magnet_link, 
+                                result_title=f"Hash {hash_value}",
+                                result_index=i
+                            )
+                            # Convert None to 'No' for frontend display
+                            if cache_result is None:
+                                cache_result = 'No'
+                            cache_status[hash_value] = cache_result
+                            logging.info(f"Cache status for hash {hash_value}: {cache_result}")
+                            
+                            # Try to find the torrent ID using the hash
+                            torrent_id = debrid_provider._all_torrent_ids.get(hash_value)
+                            if torrent_id:
+                                torrent_ids_to_remove.append(torrent_id)
+                                logging.info(f"Added torrent ID {torrent_id} to removal list")
+                        except Exception as e:
+                            logging.error(f"Error checking cache for hash {hash_value}: {str(e)}")
+                    
+                    # Remove all torrents after checking (even if they're cached)
+                    for torrent_id in torrent_ids_to_remove:
+                        try:
+                            debrid_provider.remove_torrent(torrent_id, "Removed after cache check")
+                            logging.info(f"Removed torrent with ID {torrent_id} after cache check")
+                        except Exception as e:
+                            logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+                else:
+                    # Mark all results as N/A if provider doesn't support direct checking
+                    cache_status = {hash_value: 'N/A' for hash_value in hashes}
+                    logging.info("Provider does not support direct cache checking, marking all as N/A")
+        
+        # Convert boolean values to strings for consistency with the frontend
+        for hash_value, status in cache_status.items():
+            if status is True:
+                cache_status[hash_value] = 'Yes'
+            elif status is False:
+                cache_status[hash_value] = 'No'
+                
+        return jsonify({'cache_status': cache_status})
+    except Exception as e:
+        logging.error(f"Error in check_cache_status: {str(e)}", exc_info=True)
+        return jsonify({'error': 'An error occurred while checking cache status'}), 500

@@ -886,8 +886,8 @@ class MetadataManager:
                 else:
                     if 'seasons' in metadata:
                         logging.info(f"Found {len(metadata['seasons'])} seasons in cached metadata")
-                        for season_num in metadata['seasons'].keys():
-                            logging.info(f"Cached season {season_num} has {len(metadata['seasons'][season_num].get('episodes', {}))} episodes")
+                        #for season_num in metadata['seasons'].keys():
+                            #logging.info(f"Cached season {season_num} has {len(metadata['seasons'][season_num].get('episodes', {}))} episodes")
                     return metadata, "battery"
 
             # Fetch from Trakt if not in database

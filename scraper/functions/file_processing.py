@@ -9,6 +9,7 @@ from babelfish import Language
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
 from functools import lru_cache
+from guessit import guessit
 
 # Pre-compile regex patterns
 _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
@@ -17,7 +18,8 @@ _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
 def _parse_with_ptt(title: str) -> Dict[str, Any]:
     """Cached PTT parsing"""
     result = parse_title(title)
-    
+
+    '''
     # Special handling for shows where the title is a year (e.g. "1923")
     if result.get('year'):
         # Handle both space and dot-separated formats
@@ -44,7 +46,23 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
                 # If title is missing or just contains season info
                 result['title'] = first_part
                 result['year'] = None  # Clear the year since it's actually the title
-    
+    '''
+
+    if "french" in title.lower():
+        try:
+            # First parse with PTT to get all the normal fields
+            ptt_result = parse_title(title)
+            
+            # Then use guessit to get a better title for French content
+            guess = guessit(title)
+            
+            # Only replace the title field from guessit
+            ptt_result['title'] = guess.get('title')
+                
+            return ptt_result
+        except Exception as e:
+            logging.warning(f"Error using guessit for '{title}': {e}. Falling back to PTT.")
+        
     return result
 
 def detect_hdr(parsed_info: Dict[str, Any]) -> bool:

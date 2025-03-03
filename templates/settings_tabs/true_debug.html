@@ -1,0 +1,175 @@
+<h3>Debug Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Debug Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-subsection">
+            <!-- Ultimate Sort Order -->
+            <div class="settings-form-group">
+                <label for="debug-ultimate_sort_order" class="settings-title">Ultimate Sort Order:</label>
+                <select id="debug-ultimate_sort_order" name="Scraping.ultimate_sort_order" class="settings-input"
+                        data-section="Scraping" data-key="ultimate_sort_order">
+                    <option value="None" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'None' %}selected{% endif %}>None</option>
+                    <option value="Size: large to small" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: large to small' %}selected{% endif %}>Size: large to small</option>
+                    <option value="Size: small to large" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: small to large' %}selected{% endif %}>Size: small to large</option>
+                </select>
+                <p class="settings-description">Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic</p>
+            </div>
+
+            <!-- Soft Max Size GB -->
+            <div class="settings-form-group">
+                <label for="debug-soft_max_size_gb" class="settings-title">Soft Max Size Gb:</label>
+                <input type="checkbox" id="debug-soft_max_size_gb" name="Scraping.soft_max_size_gb"
+                       data-section="Scraping" data-key="soft_max_size_gb"
+                       {% if settings.get('Scraping', {}).get('soft_max_size_gb') %}checked{% endif %}>
+                <p class="settings-description">If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available</p>
+            </div>
+
+            <!-- Sort By Uncached Status -->
+            <div class="settings-form-group">
+                <label for="debug-sort_by_uncached_status" class="settings-title">Sort By Uncached Status:</label>
+                <input type="checkbox" id="debug-sort_by_uncached_status" name="Debug.sort_by_uncached_status"
+                       data-section="Debug" data-key="sort_by_uncached_status"
+                       {% if settings.get('Debug', {}).get('sort_by_uncached_status') %}checked{% endif %}>
+                <p class="settings-description">Sort results by uncached status over cached status</p>
+            </div>
+            
+            <!-- Checking Queue Period -->
+            <div class="settings-form-group">
+                <label for="debug-checking_queue_period" class="settings-title">Checking Queue Period:</label>
+                <input type="number" id="debug-checking_queue_period" name="Debug.checking_queue_period"
+                       value="{{ settings.get('Debug', {}).get('checking_queue_period', 3600) }}" class="settings-input"
+                       data-section="Debug" data-key="checking_queue_period">
+                <p class="settings-description">Checking queue max period (in seconds) before moving items back to Wanted queue</p>
+            </div>
+            
+            <!-- Enable Reverse Order Scraping -->
+            <div class="settings-form-group">
+                <label for="debug-enable_reverse_order_scraping" class="settings-title">Enable Reverse Order Scraping:</label>
+                <input type="checkbox" id="debug-enable_reverse_order_scraping" name="Debug.enable_reverse_order_scraping"
+                       data-section="Debug" data-key="enable_reverse_order_scraping"
+                       {% if settings.get('Debug', {}).get('enable_reverse_order_scraping') %}checked{% endif %}>
+                <p class="settings-description">Enable reverse order scraping</p>
+            </div>
+            
+            <!-- Disable Not Wanted Check -->
+            <div class="settings-form-group">
+                <label for="debug-disable_not_wanted_check" class="settings-title">Disable Not Wanted Check:</label>
+                <input type="checkbox" id="debug-disable_not_wanted_check" name="Debug.disable_not_wanted_check"
+                       data-section="Debug" data-key="disable_not_wanted_check"
+                       {% if settings.get('Debug', {}).get('disable_not_wanted_check') %}checked{% endif %}>
+                <p class="settings-description">Disable the not wanted check for items in the queue</p>
+            </div>
+
+            <!-- Timezone Override -->
+            <div class="settings-form-group">
+                <label for="debug-timezone_override" class="settings-title">Timezone Override:</label>
+                <input type="text" id="debug-timezone_override" name="Debug.timezone_override"
+                       value="{{ settings.get('Debug', {}).get('timezone_override', '') }}" class="settings-input"
+                       data-section="Debug" data-key="timezone_override">
+                <p class="settings-description">Override the system timezone (e.g. 'America/New_York')</p>
+            </div>
+
+            <!-- Disable Content Source Caching -->
+            <div class="settings-form-group">
+                <label for="debug-disable_content_source_caching" class="settings-title">Disable Content Source Caching:</label>
+                <input type="checkbox" id="debug-disable_content_source_caching" name="Debug.disable_content_source_caching"
+                       data-section="Debug" data-key="disable_content_source_caching"
+                       {% if settings.get('Debug', {}).get('disable_content_source_caching') %}checked{% endif %}>
+                <p class="settings-description">Disable caching for content sources</p>
+            </div>
+
+            <!-- Enable Crash Test -->
+            <div class="settings-form-group">
+                <label for="debug-enable_crash_test" class="settings-title">Enable Crash Test:</label>
+                <input type="checkbox" id="debug-enable_crash_test" name="Debug.enable_crash_test"
+                       data-section="Debug" data-key="enable_crash_test"
+                       {% if settings.get('Debug', {}).get('enable_crash_test') %}checked{% endif %}>
+                <p class="settings-description">Enable crash testing functionality</p>
+            </div>
+
+            <!-- Cinesync Path -->
+            <div class="settings-form-group">
+                <label for="debug-cinesync_path" class="settings-title">Cinesync Path:</label>
+                <input type="text" id="debug-cinesync_path" name="Debug.cinesync_path"
+                       value="{{ settings.get('Debug', {}).get('cinesync_path', '') }}" class="settings-input"
+                       data-section="Debug" data-key="cinesync_path">
+                <p class="settings-description">Path to Cinesync installation</p>
+            </div>
+
+            <!-- Emby URL -->
+            <div class="settings-form-group">
+                <label for="debug-emby_url" class="settings-title">Emby URL:</label>
+                <input type="text" id="debug-emby_url" name="Debug.emby_url"
+                       value="{{ settings.get('Debug', {}).get('emby_url', '') }}" class="settings-input"
+                       data-section="Debug" data-key="emby_url">
+                <p class="settings-description">URL for Emby server</p>
+            </div>
+
+            <!-- Emby Token -->
+            <div class="settings-form-group">
+                <label for="debug-emby_token" class="settings-title">Emby Token:</label>
+                <input type="password" id="debug-emby_token" name="Debug.emby_token"
+                       value="{{ settings.get('Debug', {}).get('emby_token', '') }}" class="settings-input"
+                       data-section="Debug" data-key="emby_token">
+                <p class="settings-description">Authentication token for Emby</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize expand/collapse functionality
+        initializeExpandCollapse();
+    });
+
+    document.addEventListener('trueDebugContentLoaded', function() {
+        // Initialize expand/collapse functionality when tab is loaded
+        initializeExpandCollapse();
+    });
+
+    function initializeExpandCollapse() {
+        // Add click event to section headers
+        document.querySelectorAll('.settings-section-header').forEach(function(header) {
+            header.addEventListener('click', function() {
+                const content = this.nextElementSibling;
+                const icon = this.querySelector('.settings-toggle-icon');
+                
+                if (content.style.display === 'none' || !content.style.display) {
+                    content.style.display = 'block';
+                    icon.textContent = '-';
+                } else {
+                    content.style.display = 'none';
+                    icon.textContent = '+';
+                }
+            });
+        });
+
+        // Add click events to expand/collapse all buttons
+        document.querySelector('.settings-expand-all').addEventListener('click', function() {
+            document.querySelectorAll('.settings-section-content').forEach(function(content) {
+                content.style.display = 'block';
+            });
+            document.querySelectorAll('.settings-toggle-icon').forEach(function(icon) {
+                icon.textContent = '-';
+            });
+        });
+
+        document.querySelector('.settings-collapse-all').addEventListener('click', function() {
+            document.querySelectorAll('.settings-section-content').forEach(function(content) {
+                content.style.display = 'none';
+            });
+            document.querySelectorAll('.settings-toggle-icon').forEach(function(icon) {
+                icon.textContent = '+';
+            });
+        });
+    }
+</script>

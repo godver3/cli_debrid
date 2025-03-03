@@ -11,7 +11,7 @@
         outline: none;
         color: white;
         padding: 5px 10px;
-        margin: 0 5px;
+        margin: 0 3px;
         text-align: center;
         text-decoration: none;
         display: inline-block;
@@ -191,7 +191,7 @@
         color: white;
         text-decoration: none;
         border-radius: 4px;
-        transition: all 0.3s ease;
+        transition: background-color 0.3s;
         height: 28px;
     }
 
@@ -427,6 +427,7 @@
         <option value="debug">Advanced Settings</option>
         <option value="notifications">Notifications</option>
         <option value="reverse-parser">Reverse Parser</option>
+        <option value="true-debug">Debug</option>
     </select>
     <div class="settings-tabs settings-tabs-desktop">
         <button type="button" class="btn btn-secondary settings-tab-button active" data-tab="required">Required Settings</button>
@@ -437,6 +438,7 @@
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="debug">Advanced Settings</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="notifications">Notifications</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="reverse-parser">Reverse Parser</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="true-debug">Debug</button>
     </div>
     
     <div id="settingsForm">
@@ -460,6 +462,9 @@
         </div>
         <div id="reverse-parser" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/reverse_parser.html' %}
+        </div>
+        <div id="true-debug" class="settings-tab-content" style="display: none;">
+            {% include 'settings_tabs/true_debug.html' %}
         </div>
     </div>
 
@@ -498,6 +503,10 @@
                     } else if (tabName === 'scraping') {
                         console.log('Dispatching scrapingContentLoaded event');
                         const event = new CustomEvent('scrapingContentLoaded');
+                        document.dispatchEvent(event);
+                    } else if (tabName === 'true-debug') {
+                        console.log('Dispatching trueDebugContentLoaded event');
+                        const event = new CustomEvent('trueDebugContentLoaded');
                         document.dispatchEvent(event);
                     }
                     initializeExpandCollapse();

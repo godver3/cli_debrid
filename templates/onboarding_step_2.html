@@ -121,6 +121,15 @@
         cursor: not-allowed;
         opacity: 0.7;
     }
+    
+    .windows-warning {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 5px;
+        background-color: #fff3cd;
+        border: 1px solid #ffeeba;
+        color: #856404;
+    }
 </style>
 <div class="onboarding-container">
     <h2 class="onboarding-title">Step 2: Required Settings</h2>
@@ -130,10 +139,19 @@
 
         <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
             <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
-            <option value="Symlinked/Local" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Symlinked/Local' %}selected{% endif %}>Symlinked/Local</option>
+            <option value="Symlinked/Local" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Symlinked/Local' %}selected{% endif %} {% if is_windows %}disabled{% endif %}>Symlinked/Local</option>
         </select>
+        {% if is_windows %}
+        <div class="windows-warning">
+            <strong>Warning:</strong> Symlinked/Local management is not supported on Windows. Plex management has been selected.
+        </div>
+        {% endif %}
         <div id="plex-description" class="settings-description">
             Plex management will integrate with your Plex Media Server to manage and organize your media files.
+            {% if is_windows %}
+            <br><br>
+            <strong>Note:</strong> On Windows systems, symlinks cannot be scanned into Plex. The Symlinked/Local option has been disabled.
+            {% endif %}
         </div>
         <div id="local-description" class="settings-description" style="display: none;">
             Symlinked/Local management will organize files in your local filesystem using symbolic links.
@@ -241,7 +259,7 @@
         </div>
         <input type="text" id="debrid_api_key" name="debrid_api_key" required class="onboarding-input" value="{{ settings.get('Debrid Provider', {}).get('api_key', '') }}">
 
-        <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/ target="_blank" style="color: #3498db;">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
+        <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
         <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
 
         <label for="trakt_client_id" class="onboarding-label"><br>Trakt Client ID:</label>
@@ -477,6 +495,31 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    {% if is_windows %}
+    if (fileManagementSelect.value === 'Symlinked/Local') {
+        fileManagementSelect.value = 'Plex';
+        // Trigger change event to update UI
+        const event = new Event('change');
+        fileManagementSelect.dispatchEvent(event);
+    }
+    
+    // Add event listener to prevent selecting Symlinked/Local on Windows
+    fileManagementSelect.addEventListener('change', function() {
+        if (this.value === 'Symlinked/Local') {
+            showPopup({
+                type: POPUP_TYPES.WARNING,
+                title: 'Windows Limitation',
+                message: 'Symlinked/Local management is not supported on Windows. Please use Plex management instead.',
+                autoClose: 5000
+            });
+            // Reset to Plex
+            this.value = 'Plex';
+            // Trigger change event to update UI
+            const event = new Event('change');
+            this.dispatchEvent(event);
+        }
+    });
+    {% endif %}
     initializeTraktAuthorization();
 });
 

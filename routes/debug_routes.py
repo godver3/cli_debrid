@@ -50,6 +50,7 @@ from content_checkers.content_cache_management import (
     should_process_item, update_cache_for_item
 )
 import traceback
+from database.symlink_verification import get_unverified_files, get_verification_stats
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -1030,6 +1031,7 @@ def run_task():
         'task_get_plex_watch_history': program_runner.task_get_plex_watch_history,
         'task_check_database_health': program_runner.task_check_database_health,
         'task_run_library_maintenance': program_runner.task_run_library_maintenance,
+        'task_verify_symlinked_files': program_runner.task_verify_symlinked_files,
     }
 
     if task_name not in tasks:
@@ -1052,7 +1054,8 @@ def get_available_tasks():
         'task_generate_airtime_report', 'task_check_service_connectivity', 'task_send_notifications',
         'task_check_trakt_early_releases', 'task_reconcile_queues', 'task_check_plex_files',
         'task_update_show_ids', 'task_update_show_titles', 'task_get_plex_watch_history',
-        'task_check_database_health', 'task_run_library_maintenance', 'task_update_movie_ids', 'task_update_movie_titles'
+        'task_check_database_health', 'task_run_library_maintenance', 'task_update_movie_ids', 'task_update_movie_titles',
+        'task_verify_symlinked_files'
     ]
     return jsonify({'tasks': tasks}), 200
 
@@ -1669,6 +1672,51 @@ def get_trakt_token_status():
         })
     except Exception as e:
         logging.error(f"Error getting Trakt token status: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@debug_bp.route('/get_verification_queue', methods=['GET'])
+@admin_required
+def get_verification_queue():
+    """Get the contents of the symlink verification queue."""
+    try:
+        # Get verification stats
+        stats = get_verification_stats()
+        
+        # Get unverified files (limit to 500 to prevent overwhelming the UI)
+        unverified_files = get_unverified_files(limit=500)
+        
+        # Format the data for display
+        formatted_files = []
+        for file in unverified_files:
+            if file['type'] == 'episode':
+                title = f"{file['title']} - S{file['season_number']:02d}E{file['episode_number']:02d}"
+                if file['episode_title']:
+                    title += f" - {file['episode_title']}"
+            else:
+                title = file['title']
+                
+            formatted_files.append({
+                'id': file['verification_id'],
+                'title': title,
+                'filename': file['filename'],
+                'full_path': file['full_path'],
+                'media_item_id': file['media_item_id'],
+                'added_at': file['added_at'],
+                'attempts': file['verification_attempts'],
+                'last_attempt': file['last_attempt'],
+                'type': file['type']
+            })
+        
+        return jsonify({
+            'success': True,
+            'stats': stats,
+            'files': formatted_files
+        })
+    except Exception as e:
+        logger.error(f"Error getting verification queue: {str(e)}")
         return jsonify({
             'success': False,
             'error': str(e)

@@ -35,7 +35,7 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
         except Exception as e:
             logging.error(f"Error parsing title with guessit: {str(e)}")
             return result
-
+    
     # Check for complete series indicators
     title = parsed_info.get('title', '').lower()
     if any(indicator in title for indicator in ['complete', 'collection', 'all.seasons']):

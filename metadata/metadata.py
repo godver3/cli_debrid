@@ -148,7 +148,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             else:
                 logging.error(f"Unexpected seasons data type: {type(seasons)}")
                 processed_metadata['seasons'] = {}
-            logging.info(f"Season data structure: {json.dumps(seasons, indent=2)}")
+            #logging.info(f"Season data structure: {json.dumps(seasons, indent=2)}")
 
         return processed_metadata
 
