@@ -815,6 +815,7 @@ def main():
     from database import verify_database
     from database.statistics import get_cached_download_stats
     from not_wanted_magnets import validate_not_wanted_entries
+    from config_manager import load_config, save_config
 
     # Batch set deprecated settings
     set_setting('Debug', 'skip_initial_plex_update', False)
@@ -863,7 +864,6 @@ def main():
         logging.info("Migrating enable_separate_anime_folders to True and removing old key")
 
     # Add migration for media_type setting
-    from config_manager import load_config, save_config
     config = load_config()
 
     # Add migration for folder locations
