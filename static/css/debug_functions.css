@@ -283,7 +283,8 @@ body {
 .debug-container .token-last-refresh,
 .debug-container .token-access,
 .debug-container .token-refresh,
-.debug-container .token-username {
+.debug-container .token-username,
+.debug-container .token-last-checked {
     color: #ababab;
     padding: 5px 0;
     border-bottom: 1px solid #4a4a4a;
@@ -478,7 +479,8 @@ body {
 .debug-container #trakt-token-status .token-expiry,
 .debug-container #trakt-token-status .token-last-refresh,
 .debug-container #trakt-token-status .token-access,
-.debug-container #trakt-token-status .token-refresh {
+.debug-container #trakt-token-status .token-refresh,
+.debug-container #trakt-token-status .token-last-checked {
     margin: 5px 0;
     font-family: monospace;
 }

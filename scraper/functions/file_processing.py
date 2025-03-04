@@ -48,6 +48,7 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
                 result['year'] = None  # Clear the year since it's actually the title
     '''
 
+    '''
     if "french" in title.lower():
         try:
             # First parse with PTT to get all the normal fields
@@ -62,7 +63,8 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
             return ptt_result
         except Exception as e:
             logging.warning(f"Error using guessit for '{title}': {e}. Falling back to PTT.")
-        
+    '''
+    
     return result
 
 def detect_hdr(parsed_info: Dict[str, Any]) -> bool:

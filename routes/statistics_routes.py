@@ -426,45 +426,22 @@ def root():
         if upgrade_enabled:
             recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
             for item in recently_upgraded:
-                # Ensure we have valid collected_at and original_collected_at
-                if item.get('collected_at') is None and item.get('last_updated') is not None:
-                    item['collected_at'] = item['last_updated']
-                
-                # Format the dates
+                # Format the upgrade date using collected_at for better differentiation
                 item['formatted_date'] = format_datetime_preference(
-                    item['collected_at'] if item.get('collected_at') else item.get('last_updated', ''), 
+                    item['collected_at'], 
                     use_24hour_format
                 )
                 
-                # Check if original_collected_at exists and is not None before formatting
+                # For original_collected_at, use the existing value if available
                 if item.get('original_collected_at'):
                     item['original_collected_at'] = format_datetime_preference(
                         item['original_collected_at'],
                         use_24hour_format
                     )
                 else:
-                    # If original_collected_at is not available, use a date earlier than collected_at
-                    if item.get('collected_at'):
-                        # Parse the collected_at date if it's a string
-                        if isinstance(item['collected_at'], str):
-                            try:
-                                collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
-                            except ValueError:
-                                try:
-                                    collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
-                                except ValueError:
-                                    collected_date = None
-                        else:
-                            collected_date = item['collected_at']
-                            
-                        if collected_date:
-                            # Set original date to 1 day before collected date
-                            original_date = collected_date - timedelta(days=1)
-                            item['original_collected_at'] = format_datetime_preference(original_date, use_24hour_format)
-                        else:
-                            item['original_collected_at'] = 'Unknown'
-                    else:
-                        item['original_collected_at'] = 'Unknown'
+                    # If original_collected_at is not available, we don't need to create a fake one
+                    # as the UI only needs to show when the upgrade happened
+                    item['original_collected_at'] = 'Unknown'
         else:
             recently_upgraded = []
     
@@ -599,45 +576,22 @@ def set_time_preference():
             if upgrade_enabled:
                 recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
                 for item in recently_upgraded:
-                    # Ensure we have valid collected_at and original_collected_at
-                    if item.get('collected_at') is None and item.get('last_updated') is not None:
-                        item['collected_at'] = item['last_updated']
-                    
-                    # Format the dates
+                    # Format the upgrade date using collected_at for better differentiation
                     item['formatted_date'] = format_datetime_preference(
-                        item['collected_at'] if item.get('collected_at') else item.get('last_updated', ''), 
+                        item['collected_at'], 
                         use_24hour_format
                     )
                     
-                    # Check if original_collected_at exists and is not None before formatting
+                    # For original_collected_at, use the existing value if available
                     if item.get('original_collected_at'):
                         item['original_collected_at'] = format_datetime_preference(
                             item['original_collected_at'],
                             use_24hour_format
                         )
                     else:
-                        # If original_collected_at is not available, use a date earlier than collected_at
-                        if item.get('collected_at'):
-                            # Parse the collected_at date if it's a string
-                            if isinstance(item['collected_at'], str):
-                                try:
-                                    collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
-                                except ValueError:
-                                    try:
-                                        collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
-                                    except ValueError:
-                                        collected_date = None
-                            else:
-                                collected_date = item['collected_at']
-                                
-                            if collected_date:
-                                # Set original date to 1 day before collected date
-                                original_date = collected_date - timedelta(days=1)
-                                item['original_collected_at'] = format_datetime_preference(original_date, use_24hour_format)
-                            else:
-                                item['original_collected_at'] = 'Unknown'
-                        else:
-                            item['original_collected_at'] = 'Unknown'
+                        # If original_collected_at is not available, we don't need to create a fake one
+                        # as the UI only needs to show when the upgrade happened
+                        item['original_collected_at'] = 'Unknown'
             else:
                 recently_upgraded = []
                 
@@ -989,45 +943,22 @@ def index_api():
         if upgrade_enabled:
             recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
             for item in recently_upgraded:
-                # Ensure we have valid collected_at and original_collected_at
-                if item.get('collected_at') is None and item.get('last_updated') is not None:
-                    item['collected_at'] = item['last_updated']
-                
-                # Format the dates
+                # Format the upgrade date using collected_at for better differentiation
                 item['formatted_date'] = format_datetime_preference(
-                    item['collected_at'] if item.get('collected_at') else item.get('last_updated', ''), 
+                    item['collected_at'], 
                     use_24hour_format
                 )
                 
-                # Check if original_collected_at exists and is not None before formatting
+                # For original_collected_at, use the existing value if available
                 if item.get('original_collected_at'):
                     item['original_collected_at'] = format_datetime_preference(
                         item['original_collected_at'],
                         use_24hour_format
                     )
                 else:
-                    # If original_collected_at is not available, use a date earlier than collected_at
-                    if item.get('collected_at'):
-                        # Parse the collected_at date if it's a string
-                        if isinstance(item['collected_at'], str):
-                            try:
-                                collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
-                            except ValueError:
-                                try:
-                                    collected_date = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
-                                except ValueError:
-                                    collected_date = None
-                        else:
-                            collected_date = item['collected_at']
-                            
-                        if collected_date:
-                            # Set original date to 1 day before collected date
-                            original_date = collected_date - timedelta(days=1)
-                            item['original_collected_at'] = format_datetime_preference(original_date, use_24hour_format)
-                        else:
-                            item['original_collected_at'] = 'Unknown'
-                    else:
-                        item['original_collected_at'] = 'Unknown'
+                    # If original_collected_at is not available, we don't need to create a fake one
+                    # as the UI only needs to show when the upgrade happened
+                    item['original_collected_at'] = 'Unknown'
         else:
             recently_upgraded = []
     

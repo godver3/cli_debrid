@@ -182,6 +182,7 @@ class CheckingQueue:
             except Exception as e:
                 logging.error(f"Failed to move item to Wanted state: {str(e)}")
 
+    @timed_lru_cache(seconds=60)
     def get_torrent_progress(self, torrent_id: str) -> Optional[int]:
         """Get the current progress percentage for a torrent"""
         try:
