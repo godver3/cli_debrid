@@ -1659,12 +1659,25 @@ def get_trakt_token_status():
         from cli_battery.app.trakt_auth import TraktAuth
         trakt_auth = TraktAuth()
         
+        token_data = trakt_auth.get_token_data()
+        last_refresh = trakt_auth.get_last_refresh_time()
+        expires_at = trakt_auth.get_expiration_time()
+        
+        logging.debug(f"Trakt token status - Token Data: {token_data}")
+        logging.debug(f"Trakt token status - Last Refresh: {last_refresh}")
+        logging.debug(f"Trakt token status - Expires At: {expires_at}")
+        
+        # Ensure last_refresh is included in both places for compatibility
+        token_data['last_refresh'] = last_refresh
+        
         status = {
             'is_authenticated': trakt_auth.is_authenticated(),
-            'token_data': trakt_auth.get_token_data(),
-            'last_refresh': trakt_auth.get_last_refresh_time(),
-            'expires_at': trakt_auth.get_expiration_time()
+            'token_data': token_data,
+            'last_refresh': last_refresh,
+            'expires_at': expires_at
         }
+        
+        logging.debug(f"Trakt token status response: {status}")
         
         return jsonify({
             'success': True,

@@ -34,6 +34,7 @@ class TraktAuth:
         self.access_token = self.settings.Trakt['access_token']
         self.refresh_token = self.settings.Trakt['refresh_token']
         self.expires_at = self.settings.Trakt['expires_at']
+        self.last_refresh = self.settings.Trakt.get('last_refresh')
         
         if not self.access_token:
             self.load_from_pytrakt()
@@ -45,20 +46,25 @@ class TraktAuth:
             self.access_token = pytrakt_data.get('OAUTH_TOKEN')
             self.refresh_token = pytrakt_data.get('OAUTH_REFRESH')
             self.expires_at = pytrakt_data.get('OAUTH_EXPIRES_AT')
+            self.last_refresh = pytrakt_data.get('LAST_REFRESH')
             
             # Update settings with the loaded data
             self.settings.Trakt['access_token'] = self.access_token
             self.settings.Trakt['refresh_token'] = self.refresh_token
             self.settings.Trakt['expires_at'] = self.expires_at
+            self.settings.Trakt['last_refresh'] = self.last_refresh
             self.settings.save_settings()
             
         else:
             logger.warning(f".pytrakt.json file not found at {self.pytrakt_file}")
 
     def save_token_data(self, token_data):
+        now = datetime.now(timezone.utc)
         self.settings.Trakt['access_token'] = token_data['access_token']
         self.settings.Trakt['refresh_token'] = token_data['refresh_token']
-        self.settings.Trakt['expires_at'] = (datetime.now() + timedelta(seconds=token_data['expires_in'])).isoformat()
+        self.settings.Trakt['expires_at'] = (now + timedelta(seconds=token_data['expires_in'])).isoformat()
+        self.settings.Trakt['last_refresh'] = now.isoformat()
+        logger.debug(f"Saving token data - Last Refresh: {now.isoformat()}")
         self.settings.save_settings()
         self.load_auth()  # Reload the auth data after saving
         self.save_trakt_credentials()  # Also update the .pytrakt.json file
@@ -152,7 +158,8 @@ class TraktAuth:
             'CLIENT_SECRET': self.client_secret,
             'OAUTH_TOKEN': self.access_token,
             'OAUTH_REFRESH': self.refresh_token,
-            'OAUTH_EXPIRES_AT': self.expires_at
+            'OAUTH_EXPIRES_AT': self.expires_at,
+            'LAST_REFRESH': self.last_refresh
         }
         os.makedirs(os.path.dirname(self.pytrakt_file), exist_ok=True)
         with open(self.pytrakt_file, 'w') as f:
@@ -163,28 +170,31 @@ class TraktAuth:
         return {
             'access_token': self.access_token,
             'refresh_token': self.refresh_token,
-            'expires_at': self.expires_at
+            'expires_at': self.expires_at,
+            'last_refresh': self.last_refresh
         }
 
     def get_last_refresh_time(self):
-        """Get the last refresh time based on expiration"""
-        if not self.expires_at:
+        """Get the last refresh time"""
+        last_refresh = self.settings.Trakt.get('last_refresh')
+        if not last_refresh:
+            # If no last_refresh, use the token data to estimate it
+            if self.expires_at:
+                try:
+                    if isinstance(self.expires_at, str):
+                        expires_at = iso8601.parse_date(self.expires_at)
+                    elif isinstance(self.expires_at, (int, float)):
+                        expires_at = datetime.fromtimestamp(self.expires_at, tz=timezone.utc)
+                    else:
+                        return None
+                    # Token is valid for 90 days, so last refresh was when the current token was issued
+                    last_refresh = expires_at - timedelta(days=90)
+                    return last_refresh.isoformat()
+                except Exception as e:
+                    logger.error(f"Error calculating last refresh time: {str(e)}")
+                    return None
             return None
-        try:
-            if isinstance(self.expires_at, str):
-                expires_at = iso8601.parse_date(self.expires_at)
-            elif isinstance(self.expires_at, (int, float)):
-                expires_at = datetime.fromtimestamp(self.expires_at, tz=timezone.utc)
-            else:
-                return None
-                
-            # The token is valid for 24 hours, so the last refresh was when the current token was issued
-            # Which is the expiration time minus 24 hours
-            last_refresh = expires_at - timedelta(hours=24)
-            return last_refresh.isoformat()
-        except Exception as e:
-            logger.error(f"Error calculating last refresh time: {str(e)}")
-            return None
+        return last_refresh
 
     def get_expiration_time(self):
         """Get the token expiration time"""

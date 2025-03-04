@@ -434,7 +434,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
     try:
         cursor = conn.cursor()
         
-        # Optimized query for upgrades
+        # Optimized query for upgrades - sort by collected_at for better differentiation
         upgraded_query = """
         WITH LatestUpgrades AS (
             SELECT 
@@ -458,16 +458,16 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                             WHEN type = 'movie' THEN title || year
                             ELSE title || season_number || episode_number
                         END 
-                    ORDER BY last_updated DESC
+                    ORDER BY collected_at DESC
                 ) as rn
             FROM media_items
             WHERE upgraded = 1
-            AND last_updated IS NOT NULL
+            AND collected_at IS NOT NULL
         )
         SELECT *
         FROM LatestUpgrades
         WHERE rn = 1
-        ORDER BY last_updated DESC
+        ORDER BY collected_at DESC
         LIMIT ?
         """
         
@@ -481,6 +481,11 @@ async def get_recently_upgraded_items(upgraded_limit=5):
             for row in upgrade_results:
                 item = dict(row)
                 media_type = 'movie' if item['type'] == 'movie' else 'tv'
+                
+                # Make sure collected_at is available for sorting consistency
+                if item['collected_at'] is None:
+                    logging.warning(f"Upgraded item missing collected_at: {item['title']}")
+                    continue
                 
                 media_item = {
                     'title': item['title'],

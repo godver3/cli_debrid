@@ -1169,8 +1169,19 @@
             const status = data.status;
             const tokenData = status.token_data || {};
             const expiresAt = status.expires_at ? new Date(status.expires_at) : null;
-            const lastRefresh = status.last_refresh ? new Date(status.last_refresh) : null;
+            // Try to get last_refresh from both possible locations
+            const lastRefresh = status.last_refresh ? new Date(status.last_refresh) : 
+                              (tokenData.last_refresh ? new Date(tokenData.last_refresh) : null);
             const now = new Date();
+
+            console.log('Token Status Data:', {
+                status,
+                tokenData,
+                expiresAt,
+                lastRefresh,
+                rawLastRefresh: status.last_refresh,
+                tokenDataLastRefresh: tokenData.last_refresh
+            });
 
             let html = `
                 <div class="token-details">

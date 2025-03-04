@@ -121,52 +121,53 @@ class ScrapingQueue:
                         if season_str in show_metadata['seasons']:
                             season_data = show_metadata['seasons'][season_str]
                             if 'episodes' in season_data:
-                                # Check if most episodes have valid air dates and have aired
-                                today = date.today()
+                                # Check if this is the season finale
                                 total_episodes = len(season_data['episodes'])
-                                valid_air_dates = 0
-                                future_air_dates = 0
-                                
-                                # First pass - log all episode dates
-                                logging.info(f"Checking air dates for {total_episodes} episodes in season {season_str}:")
-                                sorted_episodes = sorted(season_data['episodes'].items(), key=lambda x: int(x[0]))
-                                for ep_num, ep_data in sorted_episodes:
-                                    first_aired = ep_data.get('first_aired', 'unknown')
-                                    if first_aired and first_aired != 'unknown':
-                                        try:
-                                            # Parse ISO 8601 datetime and convert to date
-                                            air_date = datetime.strptime(first_aired.split('T')[0], '%Y-%m-%d').date()
-                                            status = "future" if air_date > today else "aired"
-                                            logging.info(f"  Episode {ep_num}: {air_date} ({status})")
-                                        except (ValueError, TypeError):
-                                            logging.info(f"  Episode {ep_num}: {first_aired} (invalid format)")
-                                    else:
-                                        logging.info(f"  Episode {ep_num}: unknown air date")
-
-                                # Second pass - count valid and future dates
-                                for ep_data in season_data['episodes'].values():
-                                    if 'first_aired' not in ep_data or not ep_data['first_aired']:
-                                        logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has unknown air date")
-                                        continue
-                                    try:
-                                        air_date = datetime.strptime(ep_data['first_aired'].split('T')[0], '%Y-%m-%d').date()
-                                        valid_air_dates += 1
-                                        if air_date > today:
-                                            future_air_dates += 1
-                                            logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} hasn't aired yet (releases {air_date})")
-                                    except (ValueError, TypeError):
-                                        logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has invalid air date format")
-                                        continue
-
-                                # Enable multi-pack if we have valid air dates for >75% of episodes and none are in the future
-                                if valid_air_dates >= total_episodes * 0.75 and future_air_dates == 0:
-                                    is_multi_pack = True
-                                    logging.info(f"Found {valid_air_dates}/{total_episodes} valid air dates, all aired - enabling multi-pack")
+                                is_finale = item['episode_number'] == total_episodes
+                                if is_finale:
+                                    logging.info(f"Episode {item['episode_number']} is the season finale - skipping multi-pack search")
+                                    is_multi_pack = False
                                 else:
-                                    if future_air_dates > 0:
-                                        logging.info(f"Found {future_air_dates} episodes that haven't aired yet, skipping multi-pack")
+                                    # First pass - log all episode dates
+                                    logging.info(f"Checking air dates for {total_episodes} episodes in season {season_str}:")
+                                    sorted_episodes = sorted(season_data['episodes'].items(), key=lambda x: int(x[0]))
+                                    for ep_num, ep_data in sorted_episodes:
+                                        first_aired = ep_data.get('first_aired', 'unknown')
+                                        if first_aired and first_aired != 'unknown':
+                                            try:
+                                                # Parse ISO 8601 datetime and convert to date
+                                                air_date = datetime.strptime(first_aired.split('T')[0], '%Y-%m-%d').date()
+                                                status = "future" if air_date > today else "aired"
+                                                logging.info(f"  Episode {ep_num}: {air_date} ({status})")
+                                            except (ValueError, TypeError):
+                                                logging.info(f"  Episode {ep_num}: {first_aired} (invalid format)")
+                                        else:
+                                            logging.info(f"  Episode {ep_num}: unknown air date")
+
+                                    # Check for any unaired episodes
+                                    has_unaired_episodes = False
+                                    for ep_data in season_data['episodes'].values():
+                                        if 'first_aired' not in ep_data or not ep_data['first_aired']:
+                                            logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has unknown air date")
+                                            has_unaired_episodes = True
+                                            break
+                                        try:
+                                            air_date = datetime.strptime(ep_data['first_aired'].split('T')[0], '%Y-%m-%d').date()
+                                            if air_date > today:
+                                                has_unaired_episodes = True
+                                                logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} hasn't aired yet (releases {air_date})")
+                                                break
+                                        except (ValueError, TypeError):
+                                            logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has invalid air date format")
+                                            has_unaired_episodes = True
+                                            break
+
+                                    # Enable multi-pack only if all episodes have aired
+                                    if not has_unaired_episodes:
+                                        is_multi_pack = True
+                                        logging.info("All episodes have aired - enabling multi-pack")
                                     else:
-                                        logging.info(f"Only found {valid_air_dates}/{total_episodes} valid air dates, skipping multi-pack")
+                                        logging.info("Some episodes haven't aired yet - skipping multi-pack")
                             else:
                                 logging.info("No episodes data found in season metadata")
                         else:

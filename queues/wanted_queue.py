@@ -31,7 +31,9 @@ class WantedQueue:
                     else:
                         movie_airtime_offset = get_setting("Queue", "movie_airtime_offset", 19)
                     movie_airtime_offset = float(movie_airtime_offset) if movie_airtime_offset else 19.0
-                    airtime_cutoff = (datetime.combine(release_date, datetime.min.time()) + timedelta(hours=movie_airtime_offset)).time()
+                    # Calculate the full datetime with offset for movies
+                    scrape_time = datetime.combine(release_date, datetime.min.time()) + timedelta(hours=movie_airtime_offset)
+                    item['scrape_time'] = scrape_time.strftime('%Y-%m-%d %H:%M:%S')
                 elif item['type'] == 'episode':
                     if get_setting("Queue", "episode_airtime_offset", 0) == '':
                         episode_airtime_offset = 0
@@ -49,12 +51,13 @@ class WantedQueue:
                         except ValueError:
                             # If both formats fail, use default time
                             airtime = datetime.strptime("19:00", '%H:%M').time()
-                    airtime_cutoff = (datetime.combine(release_date, airtime) + timedelta(hours=episode_airtime_offset)).time()
+                    # Calculate the full datetime with offset, allowing it to roll over to next day
+                    scrape_time = datetime.combine(release_date, airtime) + timedelta(hours=episode_airtime_offset)
+                    item['scrape_time'] = scrape_time.strftime('%Y-%m-%d %H:%M:%S')
                 else:
-                    airtime_cutoff = datetime.now().time()
-
-                scrape_time = datetime.combine(release_date, airtime_cutoff)
-                item['scrape_time'] = scrape_time.strftime('%Y-%m-%d %H:%M:%S')
+                    # For unknown types, use current time
+                    scrape_time = datetime.now()
+                    item['scrape_time'] = scrape_time.strftime('%Y-%m-%d %H:%M:%S')
             except ValueError as e:
                 logging.error(f"Error calculating scrape time for item {item.get('id', 'Unknown')}: {str(e)}")
                 item['scrape_time'] = "Invalid date or time"
