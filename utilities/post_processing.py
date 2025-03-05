@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 import subprocess
 from settings import get_setting
+from .downsub import main as downsub_main
 
 def validate_cinesync_path(path: str) -> bool:
     """
@@ -98,7 +99,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             #logging.info(f"Item collected: {fresh_item.get('title')} ({fresh_item.get('type')}) - Version: {fresh_item.get('version')}")
             # Run CineSync for items
             run_cinesync(dict(fresh_item))
-            pass
+            
+            # Run subtitle downloader
+            try:
+                logging.info("Running subtitle downloader - this may take some time if it has never been run.")
+                downsub_main()
+            except Exception as e:
+                logging.error(f"Failed to run subtitle downloader: {str(e)}")
+                logging.exception("Subtitle downloader traceback:")
         else:
             logging.warning(f"Unhandled state {state} in post-processing")
 

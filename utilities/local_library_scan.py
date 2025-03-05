@@ -356,18 +356,29 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             
             success = False
             
+            # Create item identifier first
+            item_identifier = f"{item.get('title')} ({item.get('year', '')})"
+            if item.get('type') == 'episode':
+                item_identifier += f" S{item.get('season_number', '00'):02d}E{item.get('episode_number', '00'):02d}"
+            
             # Check if this is a potential upgrade based on release date
-            release_date = datetime.strptime(item.get('release_date', '1970-01-01'), '%Y-%m-%d').date()
-            days_since_release = (datetime.now().date() - release_date).days
+            if item.get('release_date', '').lower() in ['unknown', 'none', '']:
+                # Treat unknown release dates as very recent (0 days since release)
+                logging.debug(f"[UPGRADE] Unknown release date for {item_identifier} - treating as new content")
+                days_since_release = 0
+            else:
+                try:
+                    release_date = datetime.strptime(item.get('release_date', '1970-01-01'), '%Y-%m-%d').date()
+                    days_since_release = (datetime.now().date() - release_date).days()
+                except ValueError:
+                    # Handle invalid but non-empty release dates by treating them as new
+                    logging.debug(f"[UPGRADE] Invalid release date format: {item.get('release_date')} - treating as new content")
+                    days_since_release = 0
             
             # If release is within last 7 days and upgrading is enabled, treat as potential upgrade
             is_upgrade_candidate = days_since_release <= 7 and get_setting("Scraping", "enable_upgrading", default=False)
             
             # Log upgrade status
-            item_identifier = f"{item.get('title')} ({item.get('year', '')})"
-            if item.get('type') == 'episode':
-                item_identifier += f" S{item.get('season_number', '00'):02d}E{item.get('episode_number', '00'):02d}"
-            
             logging.debug(f"[UPGRADE] Processing item: {item_identifier}")
             logging.debug(f"[UPGRADE] Days since release: {days_since_release}")
             logging.debug(f"[UPGRADE] Is upgrade candidate: {is_upgrade_candidate}")
@@ -512,7 +523,6 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     notification_item['is_upgrade'] = True
                     notification_item['new_state'] = 'Upgraded'
                     add_to_collected_notifications(notification_item)
-                    logging.info(f"Added upgrade notification for item: {item_identifier}")
             
             return success
             

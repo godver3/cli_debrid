@@ -1,11 +1,12 @@
 from flask import Blueprint, jsonify, request, render_template
 from .models import user_required, onboarding_required
-from web_scraper import search_trakt
+from web_scraper import search_trakt, parse_search_term
 from cli_battery.app.direct_api import DirectAPI
 from config_manager import load_config
 from metadata.metadata import process_metadata
 from database.wanted_items import add_wanted_items
 import logging
+import re
 
 content_requestor_bp = Blueprint('content', __name__)
 
@@ -30,7 +31,11 @@ def search():
         if not search_term:
             return jsonify({'error': 'No search term provided'}), 400
             
-        results = search_trakt(search_term)
+        # Use the parse_search_term function from web_scraper
+        base_title, season, episode, year, multi = parse_search_term(search_term)
+        
+        # Use the parsed title and year for search
+        results = search_trakt(base_title, year)
         
         # Log the first few results for debugging
         if results:
