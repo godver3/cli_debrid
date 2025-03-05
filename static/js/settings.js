@@ -340,12 +340,42 @@ export function updateSettings() {
     }
 
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
         }
     });
+
+    // Handle subtitle providers multi-select
+    const subtitleProvidersSelect = document.getElementById('additional-subtitle_providers');
+    if (subtitleProvidersSelect) {
+        if (!settingsData['Subtitle Settings']) {
+            settingsData['Subtitle Settings'] = {};
+        }
+        settingsData['Subtitle Settings']['subtitle_providers'] = Array.from(subtitleProvidersSelect.selectedOptions).map(option => option.value);
+    }
+
+    // Set default values for Subtitle Settings if not set
+    if (!settingsData['Subtitle Settings']) {
+        settingsData['Subtitle Settings'] = {};
+    }
+    
+    if (settingsData['Subtitle Settings']['enable_subtitles'] === undefined) {
+        settingsData['Subtitle Settings']['enable_subtitles'] = false;
+    }
+    
+    if (!settingsData['Subtitle Settings']['subtitle_languages']) {
+        settingsData['Subtitle Settings']['subtitle_languages'] = 'eng,zho';
+    }
+    
+    if (!settingsData['Subtitle Settings']['subtitle_providers'] || !settingsData['Subtitle Settings']['subtitle_providers'].length) {
+        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitles', 'opensubtitlescom', 'podnapisi', 'tvsubtitles'];
+    }
+    
+    if (!settingsData['Subtitle Settings']['user_agent']) {
+        settingsData['Subtitle Settings']['user_agent'] = 'SubDownloader/1.0 (your-email@example.com)';
+    }
 
     // Log the Debug settings before sending
     if (settingsData.Debug && settingsData.Debug.content_source_check_period) {

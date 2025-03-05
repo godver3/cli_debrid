@@ -756,5 +756,41 @@ SETTINGS_SCHEMA = {
             "description": "Default version for reverse parsing if no other version is selected",
             "default": ""
         }
+    },
+    "Subtitle Settings": {
+        "tab": "Additional Settings",
+        "enable_subtitles": {
+            "type": "boolean",
+            "description": "Enable automatic subtitle downloading for media files using 'downsub'",
+            "default": False
+        },
+        "opensubtitles_username": {
+            "type": "string",
+            "description": "OpenSubtitles username for subtitle downloads",
+            "default": "",
+            "sensitive": False
+        },
+        "opensubtitles_password": {
+            "type": "string",
+            "description": "OpenSubtitles password for subtitle downloads",
+            "default": "",
+            "sensitive": True
+        },
+        "subtitle_languages": {
+            "type": "string",
+            "description": "Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.",
+            "default": "eng,zho"
+        },
+        "subtitle_providers": {
+            "type": "list",
+            "description": "Select subtitle providers to use",
+            "default": ["opensubtitles", "opensubtitlescom", "podnapisi", "tvsubtitles"],
+            "choices": ["opensubtitles", "opensubtitlescom", "podnapisi", "tvsubtitles"]
+        },
+        "user_agent": {
+            "type": "string",
+            "description": "User agent for subtitle API requests",
+            "default": "SubDownloader/1.0 (your-email@example.com)"
+        }
     }
 }

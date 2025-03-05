@@ -141,11 +141,18 @@ def add_collected_items(media_items_batch, recent=False):
                         item_id = existing_item['id']
                         
                         if existing_item['state'] not in ['Collected', 'Upgrading']:
-                            if existing_item['release_date'] == 'Unknown':
-                                days_since_release = -1  # Treat unknown dates as unreleased
+                            if existing_item['release_date'] in ['Unknown', 'unknown', 'None', 'none', None, '']:
+                                # Treat unknown dates as new content
+                                days_since_release = 0
+                                logging.debug(f"Unknown release date for {item_identifier} - treating as new content")
                             else:
-                                release_date = datetime.strptime(existing_item['release_date'], '%Y-%m-%d').date()
-                                days_since_release = (datetime.now().date() - release_date).days
+                                try:
+                                    release_date = datetime.strptime(existing_item['release_date'], '%Y-%m-%d').date()
+                                    days_since_release = (datetime.now().date() - release_date).days
+                                except ValueError:
+                                    # Handle invalid but non-empty release dates by treating them as new
+                                    logging.debug(f"Invalid release date format: {existing_item['release_date']} - treating as new content")
+                                    days_since_release = 0
 
                             if days_since_release <= 7:
                                 if get_setting("Scraping", "enable_upgrading", default=False): 

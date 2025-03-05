@@ -696,7 +696,12 @@ def scraper_tester():
             search_term = request.form.get('search_term')
         
         if search_term:
-            search_results = search_trakt(search_term)
+            # Use the parse_search_term function from web_scraper
+            from web_scraper import parse_search_term
+            base_title, season, episode, year, multi = parse_search_term(search_term)
+            
+            # Use the parsed title and year for search
+            search_results = search_trakt(base_title, year)
             
             # Fetch IMDB IDs and season/episode counts for each result
             for result in search_results:
@@ -708,8 +713,6 @@ def scraper_tester():
                     result['imdbId'] = imdb_id
                     
                     if result['mediaType'] == 'tv':
-                        overseerr_url = get_setting('Overseerr', 'url')
-                        overseerr_api_key = get_setting('Overseerr', 'api_key')
                         season_episode_counts = get_all_season_episode_counts(tmdb_id)
                         result['seasonEpisodeCounts'] = season_episode_counts
                 else:

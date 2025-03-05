@@ -15,6 +15,7 @@ from database import get_recently_added_items, get_poster_url, get_collected_cou
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
 from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
 from database.statistics import get_cached_download_stats
+from .program_operation_routes import program_is_running, program_is_initializing
 import json
 import math
 from functools import wraps
@@ -885,6 +886,12 @@ def index_api():
     local_tz = _get_local_timezone()
     stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)
+    
+    # Get program status
+    stats['program_status'] = {
+        'running': program_is_running(),
+        'initializing': program_is_initializing()
+    }
     
     # Get collection counts
     counts = get_collected_counts()

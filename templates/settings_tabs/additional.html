@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -128,6 +128,73 @@
                    class="settings-input"
                    data-section="Debug" data-key="anime_tv_shows_folder_name">
             <p class="settings-description">Name of the anime TV shows folder</p>
+        </div>
+    </div>
+</div>
+
+<!-- Subtitle Settings Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Subtitle Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="additional-enable_subtitles" class="settings-title">Enable Subtitle Downloads (Movies Only):</label>
+            <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
+                   data-section="Subtitle Settings" data-key="enable_subtitles"
+                   {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
+            <p class="settings-description">Enable automatic subtitle downloading for media files using 'downsub'</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-opensubtitles_username" class="settings-title">OpenSubtitles Username:</label>
+            <input type="text" id="additional-opensubtitles_username" name="Subtitle Settings.opensubtitles_username"
+                   value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_username', '') }}" 
+                   class="settings-input"
+                   data-section="Subtitle Settings" data-key="opensubtitles_username">
+            <p class="settings-description">OpenSubtitles username for subtitle downloads</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-opensubtitles_password" class="settings-title">OpenSubtitles Password:</label>
+            <input type="password" id="additional-opensubtitles_password" name="Subtitle Settings.opensubtitles_password"
+                   value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_password', '') }}" 
+                   class="settings-input"
+                   data-section="Subtitle Settings" data-key="opensubtitles_password">
+            <p class="settings-description">OpenSubtitles password for subtitle downloads</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-subtitle_languages" class="settings-title">Subtitle Languages:</label>
+            <input type="text" id="additional-subtitle_languages" name="Subtitle Settings.subtitle_languages"
+                   value="{{ settings.get('Subtitle Settings', {}).get('subtitle_languages', 'eng,zho') }}" 
+                   class="settings-input"
+                   data-section="Subtitle Settings" data-key="subtitle_languages">
+            <p class="settings-description">Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-subtitle_providers" class="settings-title">Subtitle Providers:</label>
+            <select id="additional-subtitle_providers" name="Subtitle Settings.subtitle_providers" 
+                    class="settings-input" multiple
+                    data-section="Subtitle Settings" data-key="subtitle_providers">
+                {% set selected_providers = settings.get('Subtitle Settings', {}).get('subtitle_providers', []) %}
+                <option value="opensubtitles" {% if 'opensubtitles' in selected_providers %}selected{% endif %}>OpenSubtitles</option>
+                <option value="opensubtitlescom" {% if 'opensubtitlescom' in selected_providers %}selected{% endif %}>OpenSubtitles.com</option>
+                <option value="podnapisi" {% if 'podnapisi' in selected_providers %}selected{% endif %}>Podnapisi</option>
+                <option value="tvsubtitles" {% if 'tvsubtitles' in selected_providers %}selected{% endif %}>TVSubtitles</option>
+            </select>
+            <p class="settings-description">Select subtitle providers to use (hold Ctrl/Cmd to select multiple)</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-user_agent" class="settings-title">User Agent:</label>
+            <input type="text" id="additional-user_agent" name="Subtitle Settings.user_agent"
+                   value="{{ settings.get('Subtitle Settings', {}).get('user_agent', 'SubDownloader/1.0 (your-email@example.com)') }}" 
+                   class="settings-input"
+                   data-section="Subtitle Settings" data-key="user_agent">
+            <p class="settings-description">User agent for subtitle API requests</p>
         </div>
     </div>
 </div>

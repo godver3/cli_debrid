@@ -18,6 +18,12 @@ class WantedQueue:
 
     def _calculate_scrape_times(self):
         for item in self.items:
+            # For early release items without release date, set scrape time to now
+            if item.get('early_release', False) and (not item.get('release_date') or str(item.get('release_date')).lower() in ["unknown", "none"]):
+                item['scrape_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                logging.info(f"Early release item without release date - setting immediate scrape time for {item.get('title', 'Unknown')}")
+                continue
+
             if not item.get('release_date') or str(item.get('release_date')).lower() in ["unknown", "none"]:
                 item['scrape_time'] = "Unknown"
                 continue
@@ -150,6 +156,12 @@ class WantedQueue:
                     if require_physical and not physical_release_date:
                         logging.info(f"Item {item_identifier} requires physical release date but none available. Moving to Unreleased queue.")
                         items_to_move_unreleased.append(item)
+                        continue
+
+                    # Handle early release items without release date
+                    if item.get('early_release', False):
+                        logging.info(f"Early release item {item_identifier} - moving to Scraping queue regardless of release date")
+                        items_to_move_scraping.append(item)
                         continue
 
                     if not release_date_str or release_date_str is None or (isinstance(release_date_str, str) and release_date_str.lower() == 'unknown'):

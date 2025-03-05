@@ -33,6 +33,17 @@ class UnreleasedQueue:
             release_date_str = item.get('release_date')
             version = item.get('version')
 
+            # Handle early release items without release date
+            if item.get('early_release', False):
+                if not release_date_str or release_date_str.lower() == 'unknown':
+                    logging.info(f"Early release item {item_identifier} with no release date. Moving to Wanted queue immediately.")
+                    items_to_move.append(item)
+                    continue
+                else:
+                    logging.info(f"Early release item {item_identifier}. Moving to Wanted queue immediately.")
+                    items_to_move.append(item)
+                    continue
+
             if not release_date_str or release_date_str.lower() == 'unknown':
                 logging.warning(f"Item {item_identifier} has no release date. Keeping in Unreleased queue.")
                 continue
