@@ -23,11 +23,16 @@ MOVIES_FOLDER = get_setting('Debug', 'movies_folder_name')
 ENABLE_ANIME = get_setting('Debug', 'enable_separate_anime_folders', False)
 ANIME_FOLDER = get_setting('Debug', 'anime_movies_folder_name') if ENABLE_ANIME else None
 
-VIDEO_FOLDERS = [
-    os.path.join(SYMLINKED_PATH, MOVIES_FOLDER)
-]
-if ENABLE_ANIME and ANIME_FOLDER:
-    VIDEO_FOLDERS.append(os.path.join(SYMLINKED_PATH, ANIME_FOLDER))
+# Initialize VIDEO_FOLDERS as an empty list
+VIDEO_FOLDERS = []
+
+# Only add paths if SYMLINKED_PATH is not None
+if SYMLINKED_PATH is not None:
+    if MOVIES_FOLDER:
+        VIDEO_FOLDERS.append(os.path.join(SYMLINKED_PATH, MOVIES_FOLDER))
+    
+    if ENABLE_ANIME and ANIME_FOLDER:
+        VIDEO_FOLDERS.append(os.path.join(SYMLINKED_PATH, ANIME_FOLDER))
 
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)

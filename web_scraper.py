@@ -719,8 +719,25 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     elif season is not None and episode is None:
         multi = True
 
+    # Check if anime is in the genres
+    is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+    logging.info(f"Genres from frontend: {genres}")
+    logging.info(f"Is anime detected from frontend genres: {is_anime}")
+
+    # If anime is not detected in the frontend genres, check if it's in the metadata
+    if not is_anime and metadata and 'genres' in metadata:
+        metadata_genres = metadata.get('genres', [])
+        is_anime_from_metadata = metadata_genres and 'anime' in [genre.lower() for genre in metadata_genres]
+        logging.info(f"Genres from metadata: {metadata_genres}")
+        logging.info(f"Is anime detected from metadata genres: {is_anime_from_metadata}")
+        
+        # If anime is detected in metadata but not in frontend genres, add it
+        if is_anime_from_metadata and not is_anime:
+            genres.append('anime')
+            logging.info(f"Added anime to genres: {genres}")
+
     logging.info(f"Scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
-                   f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}")
+                   f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}, genres={genres}")
 
     # Call the scraper function with the version parameter
     scrape_results, filtered_out_results = scrape(imdb_id, str(tmdb_id), title, int(year), movie_or_episode, version, season, episode, multi, genres)
