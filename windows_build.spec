@@ -37,7 +37,7 @@ for directory in directories:
 individual_files = [
     ('version.txt', '.'),
     ('branch_id', '.'),
-    'tooltip_schema.json', '.'),
+    ('tooltip_schema.json', '.'),  # Fixed syntax error here
     ('main.py', '.'),
     ('cli_battery/main.py', 'cli_battery'),
     ('optional_default_versions.json', '.'),
