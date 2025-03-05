@@ -24,7 +24,8 @@ directories = [
     'routes',
     'scraper',
     'static',
-    'utilities'
+    'utilities',
+    'utilities/config'  # Add the config subdirectory explicitly
 ]
 
 for directory in directories:
@@ -36,10 +37,11 @@ for directory in directories:
 individual_files = [
     ('version.txt', '.'),
     ('branch_id', '.'),
-    ('tooltip_schema.json', '.'),
+    'tooltip_schema.json', '.'),
     ('main.py', '.'),
     ('cli_battery/main.py', 'cli_battery'),
-    ('optional_default_versions.json', '.')
+    ('optional_default_versions.json', '.'),
+    ('utilities/config/downsub_config.py', 'utilities/config')  # Add the config file explicitly
 ]
 
 for src, dst in individual_files:
@@ -105,7 +107,16 @@ a = Analysis(
         'tld',
         'tld.utils',
         'tld.base',
-        'tld.exceptions'
+        'tld.exceptions',
+        'subliminal',
+        'subliminal.refiners',  # Add the missing subliminal.refiners module
+        'subliminal.providers',
+        'subliminal.score',
+        'subliminal.subtitle',
+        'subliminal.video',
+        'utilities',
+        'utilities.config',  # Add the missing utilities.config module
+        'utilities.config.downsub_config'  # Add the specific config module
     ],
     hookspath=['hooks'],
     hooksconfig={},
