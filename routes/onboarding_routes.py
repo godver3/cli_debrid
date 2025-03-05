@@ -224,7 +224,7 @@ def onboarding_step(step):
         # For GET requests, load existing settings if any
         config = load_config()
         can_proceed = all(get_setting(category, key) for category, key in required_settings)
-        is_windows = True
+        is_windows = platform.system() == 'Windows'  # Proper platform detection
         
         # Get Trakt auth status
         trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))

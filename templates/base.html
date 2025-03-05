@@ -397,11 +397,13 @@
     
     <header>
         <div class="header-content">
-            <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
-            <div class="title-version">
-                <h1>cli_debrid</h1>
-                <span class="version-info">v{{ get_version_with_branch() }}</span>
-            </div>
+            <a href="{{ url_for('root.root') }}" style="text-decoration: none; color: inherit; display: flex; align-items: center;">
+                <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
+                <div class="title-version">
+                    <h1>cli_debrid</h1>
+                    <span class="version-info">v{{ get_version_with_branch() }}</span>
+                </div>
+            </a>
             {% if current_user.is_authenticated and not is_onboarding %}
             <div class="user-info">
                 <span class="username">Welcome, {{ current_user.username }}</span>
