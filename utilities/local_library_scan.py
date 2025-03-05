@@ -369,7 +369,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             else:
                 try:
                     release_date = datetime.strptime(item.get('release_date', '1970-01-01'), '%Y-%m-%d').date()
-                    days_since_release = (datetime.now().date() - release_date).days()
+                    days_since_release = (datetime.now().date() - release_date).days
                 except ValueError:
                     # Handle invalid but non-empty release dates by treating them as new
                     logging.debug(f"[UPGRADE] Invalid release date format: {item.get('release_date')} - treating as new content")
