@@ -425,7 +425,8 @@
                         ('root.root', 'Home'),
                         ('queues.index', 'Queues'),
                         ('scraper.index', 'Scraper'),
-                        ('content.index', 'Request')
+                        ('content.index', 'Request'),
+                        ('wiki', 'Wiki', 'https://github.com/godver3/cli_debrid/wiki')
                     ],
                     'System': [
                         ('logs.logs', 'Logs'),
@@ -453,8 +454,12 @@
                             <li class="menu-group">
                                 <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
                                 <ul class="dropdown">
-                                    {% for route, label in items %}
-                                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                                    {% for item in items %}
+                                        {% if item|length > 2 %}
+                                            <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                        {% else %}
+                                            <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                        {% endif %}
                                     {% endfor %}
                                 </ul>
                             </li>
@@ -470,8 +475,12 @@
                             <li class="menu-group">
                                 <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
                                 <ul class="dropdown">
-                                    {% for route, label in items %}
-                                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                                    {% for item in items %}
+                                        {% if item|length > 2 %}
+                                            <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                        {% else %}
+                                            <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                        {% endif %}
                                     {% endfor %}
                                 </ul>
                             </li>
@@ -483,8 +492,12 @@
                     <li class="menu-group">
                         <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
                         <ul class="dropdown">
-                            {% for route, label in items %}
-                                <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                            {% for item in items %}
+                                {% if item|length > 2 %}
+                                    <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                {% else %}
+                                    <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                {% endif %}
                             {% endfor %}
                         </ul>
                     </li>
