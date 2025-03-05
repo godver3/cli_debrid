@@ -125,6 +125,7 @@ a = Analysis(
         'subliminal.providers',
         'subliminal.providers.addic7ed',
         'subliminal.providers.opensubtitles',
+        'subliminal.providers.opensubtitlescom',
         'subliminal.providers.podnapisi',
         'subliminal.providers.subscenter',
         'subliminal.providers.thesubdb',
@@ -141,6 +142,8 @@ a = Analysis(
         'dogpile.cache.api',
         'dogpile.cache.region',
         'dogpile.cache.memory',
+        'dogpile.cache.backends',
+        'dogpile.cache.backends.memory',
         'dogpile.core'
     ],
     hookspath=['hooks'],
