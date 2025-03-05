@@ -25,23 +25,30 @@ directories = [
     'scraper',
     'static',
     'utilities',
-    'utilities/config'  # Add the config subdirectory explicitly
+    'utilities/config'  # Ensure config directory is included
 ]
 
 for directory in directories:
     dir_path = os.path.join(base_dir, directory)
     if os.path.exists(dir_path) and os.path.isdir(dir_path):
-        data_files.append((directory, directory))
+        # For utilities/config, include all .py files explicitly
+        if directory == 'utilities/config':
+            for file in os.listdir(dir_path):
+                if file.endswith('.py'):
+                    data_files.append((os.path.join(directory, file), directory))
+        else:
+            data_files.append((directory, directory))
 
 # Add individual files
 individual_files = [
     ('version.txt', '.'),
     ('branch_id', '.'),
-    ('tooltip_schema.json', '.'),  # Fixed syntax error here
+    ('tooltip_schema.json', '.'),
     ('main.py', '.'),
     ('cli_battery/main.py', 'cli_battery'),
     ('optional_default_versions.json', '.'),
-    ('utilities/config/downsub_config.py', 'utilities/config')  # Add the config file explicitly
+    ('utilities/config/downsub_config.py', 'utilities/config'),
+    ('utilities/config/__init__.py', 'utilities/config')  # Explicitly include __init__.py
 ]
 
 for src, dst in individual_files:
@@ -113,6 +120,7 @@ a = Analysis(
         'subliminal.refiners.tmdb',
         'subliminal.refiners.metadata',
         'subliminal.refiners.omdb',
+        'subliminal.refiners.tvdb',  # Added missing tvdb refiner
         'subliminal.providers',
         'subliminal.providers.addic7ed',
         'subliminal.providers.opensubtitles',
@@ -124,8 +132,10 @@ a = Analysis(
         'subliminal.subtitle',
         'subliminal.video',
         'utilities',
-        'utilities.config',
-        'utilities.config.downsub_config'
+        'utilities.config',  # Ensure utilities.config is included
+        'utilities.config.downsub_config',
+        'utilities.post_processing',  # Add related modules
+        'utilities.downsub'  # Add related modules
     ],
     hookspath=['hooks'],
     hooksconfig={},
