@@ -7,17 +7,21 @@ from datetime import datetime, timedelta
 from babelfish import Language
 from subliminal import download_best_subtitles, scan_video
 from subliminal.cache import region
-from .config import downsub_config as config
+from .config.downsub_config import (
+    SUBTITLES_ENABLED, VIDEO_FOLDERS, SCAN_CACHE_FILE, DIR_CACHE_FILE,
+    LOG_LEVEL, LOG_FORMAT, LOG_FILE, VIDEO_EXTENSIONS,
+    SUBTITLE_LANGUAGES, SUBLIMINAL_USER_AGENT, SUBTITLE_PROVIDERS
+)
 
 # Configure global in-memory cache for subliminal
 region.configure("dogpile.cache.memory")
 
 # Logging configuration
 logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL),
-    format=config.LOG_FORMAT,
+    level=getattr(logging, LOG_LEVEL),
+    format=LOG_FORMAT,
     handlers=[
-        logging.FileHandler(config.LOG_FILE),
+        logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
     ]
 )
@@ -68,7 +72,7 @@ def scan_directory(dir_path, dir_cache, file_cache, ignore_dir_cache=False):
                 if entry.is_dir(follow_symlinks=True):
                     files_found.extend(scan_directory(entry.path, dir_cache, file_cache, ignore_dir_cache))
                 # If it's a movie file, add it
-                elif entry.is_file(follow_symlinks=True) and entry.name.lower().endswith(config.VIDEO_EXTENSIONS):
+                elif entry.is_file(follow_symlinks=True) and entry.name.lower().endswith(VIDEO_EXTENSIONS):
                     try:
                         # Use the symlink's metadata so the subtitle file is saved next to the symlink.
                         stat_info = os.stat(full_path, follow_symlinks=False)
@@ -88,8 +92,8 @@ def download_subtitles(files):
         logging.info("✅ No files to process.")
         return
 
-    languages = {Language(lang) for lang in config.SUBTITLE_LANGUAGES}
-    os.environ['SUBLIMINAL_USER_AGENT'] = config.SUBLIMINAL_USER_AGENT
+    languages = {Language(lang) for lang in SUBTITLE_LANGUAGES}
+    os.environ['SUBLIMINAL_USER_AGENT'] = SUBLIMINAL_USER_AGENT
 
     videos = []
     for f in files:
@@ -108,7 +112,7 @@ def download_subtitles(files):
         subtitles = download_best_subtitles(
             [v[0] for v in videos], 
             languages=languages, 
-            providers=config.SUBTITLE_PROVIDERS
+            providers=SUBTITLE_PROVIDERS
         )
         for video, original_path in videos:
             subs = subtitles.get(video, [])
@@ -127,18 +131,18 @@ def main():
     Uses cache to track processed files and only downloads subtitles for new or modified files.
     """
     # Skip everything if subtitles are not enabled
-    if not config.SUBTITLES_ENABLED:
+    if not SUBTITLES_ENABLED:
         logging.info("Subtitle downloading is disabled in settings")
         return
 
     # Load caches
-    file_cache = load_cache(config.SCAN_CACHE_FILE)
-    dir_cache = load_cache(config.DIR_CACHE_FILE)
+    file_cache = load_cache(SCAN_CACHE_FILE)
+    dir_cache = load_cache(DIR_CACHE_FILE)
 
     files_to_process = []
     
     # Process each configured video folder
-    for folder_path in config.VIDEO_FOLDERS:
+    for folder_path in VIDEO_FOLDERS:
         # Check if video folder exists
         if not os.path.isdir(folder_path):
             logging.error(f"❌ Invalid video folder path: {folder_path}")
@@ -157,8 +161,8 @@ def main():
     download_subtitles(files_to_process)
 
     # Save updated caches
-    save_cache(file_cache, config.SCAN_CACHE_FILE)
-    save_cache(dir_cache, config.DIR_CACHE_FILE)
+    save_cache(file_cache, SCAN_CACHE_FILE)
+    save_cache(dir_cache, DIR_CACHE_FILE)
 
 if __name__ == "__main__":
     main()
