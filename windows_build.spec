@@ -120,7 +120,8 @@ a = Analysis(
         'subliminal.refiners.tmdb',
         'subliminal.refiners.metadata',
         'subliminal.refiners.omdb',
-        'subliminal.refiners.tvdb',  # Added missing tvdb refiner
+        'subliminal.refiners.tvdb',
+        'subliminal.refiners.hash',
         'subliminal.providers',
         'subliminal.providers.addic7ed',
         'subliminal.providers.opensubtitles',
@@ -135,7 +136,12 @@ a = Analysis(
         'utilities.config',  # Ensure utilities.config is included
         'utilities.config.downsub_config',
         'utilities.post_processing',  # Add related modules
-        'utilities.downsub'  # Add related modules
+        'utilities.downsub',  # Add related modules
+        'dogpile.cache',
+        'dogpile.cache.api',
+        'dogpile.cache.region',
+        'dogpile.cache.memory',
+        'dogpile.core'
     ],
     hookspath=['hooks'],
     hooksconfig={},

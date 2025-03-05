@@ -14,7 +14,7 @@ from .config.downsub_config import (
 )
 
 # Configure global in-memory cache for subliminal
-region.configure("dogpile.cache.memory")
+region.configure('dogpile.cache.memory', expiration_time=timedelta(days=1))
 
 # Logging configuration
 logging.basicConfig(
