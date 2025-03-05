@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from babelfish import Language
 from subliminal import download_best_subtitles, scan_video
 from subliminal.cache import region
-from .config.downsub_config import (
+from utilities.config.downsub_config import (
     SUBTITLES_ENABLED, VIDEO_FOLDERS, SCAN_CACHE_FILE, DIR_CACHE_FILE,
     LOG_LEVEL, LOG_FORMAT, LOG_FILE, VIDEO_EXTENSIONS,
     SUBTITLE_LANGUAGES, SUBLIMINAL_USER_AGENT, SUBTITLE_PROVIDERS

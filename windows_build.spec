@@ -109,14 +109,23 @@ a = Analysis(
         'tld.base',
         'tld.exceptions',
         'subliminal',
-        'subliminal.refiners',  # Add the missing subliminal.refiners module
+        'subliminal.refiners',
+        'subliminal.refiners.tmdb',
+        'subliminal.refiners.metadata',
+        'subliminal.refiners.omdb',
         'subliminal.providers',
+        'subliminal.providers.addic7ed',
+        'subliminal.providers.opensubtitles',
+        'subliminal.providers.podnapisi',
+        'subliminal.providers.subscenter',
+        'subliminal.providers.thesubdb',
+        'subliminal.providers.tvsubtitles',
         'subliminal.score',
         'subliminal.subtitle',
         'subliminal.video',
         'utilities',
-        'utilities.config',  # Add the missing utilities.config module
-        'utilities.config.downsub_config'  # Add the specific config module
+        'utilities.config',
+        'utilities.config.downsub_config'
     ],
     hookspath=['hooks'],
     hooksconfig={},
