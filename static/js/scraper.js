@@ -678,6 +678,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('skip_cache_check', 'true'); // Always use background checking
+    if (genre_ids) formData.append('genre_ids', genre_ids); // Add genre_ids to form data
     
     fetch('/scraper/select_media', {
         method: 'POST',
