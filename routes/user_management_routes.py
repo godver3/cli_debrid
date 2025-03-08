@@ -95,6 +95,8 @@ def register():
         new_user = User(username=username, password=hashed_password, onboarding_complete=True)
         if User.query.count() == 0:
             new_user.role = 'admin'
+        else:
+            new_user.role = 'user'  # Default role for new users
         db.session.add(new_user)
         db.session.commit()
         login_user(new_user)

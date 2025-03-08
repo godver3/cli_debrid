@@ -175,15 +175,21 @@ form#search-form input:-ms-input-placeholder {
 }
 
 .media-poster-img,
-.sresult img,
 .mediatype-tv,
 .mediatype-mv {
     transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
     transform: translateY(0);
 }
 
-.media-poster-img,
-.sresult img {
+/* Remove transitions from search result elements */
+.sresult img,
+.sresult .mediatype-tv,
+.sresult .mediatype-mv {
+    transition: none;
+    transform: none;
+}
+
+.media-poster-img {
     width: 176px;
     height: 264px;
     border-radius: var(--border-radius-lg);
@@ -194,6 +200,18 @@ form#search-form input:-ms-input-placeholder {
     box-shadow: 
         0 4px 6px rgba(0, 0, 0, 0.2),
         0 0 25px rgba(255, 255, 255, 0.15);
+}
+
+/* Remove box-shadow from search result images */
+.sresult img {
+    width: 176px;
+    height: 264px;
+    border-radius: var(--border-radius-lg);
+    overflow: hidden;
+    object-fit: cover;
+    position: relative;
+    z-index: 1;
+    box-shadow: none;
 }
 
 .mediatype-tv, .mediatype-mv {
@@ -243,26 +261,53 @@ form#search-form input:-ms-input-placeholder {
     display: block;
 }
 
-.media-poster:hover .media-poster-img,
-.media-poster:hover .mediatype-tv,
-.media-poster:hover .mediatype-mv,
-.sresult:hover img,
-.sresult button:hover .mediatype-tv,
-.sresult button:hover .mediatype-mv {
+/* Keep hover effects for regular media items */
+.media-poster:hover .media-poster-img {
     transform: translateY(-8px);
 }
 
-.media-poster:hover .media-poster-img,
-.sresult:hover img {
+/* Remove all hover animations for search results */
+.sresult:hover img,
+.sresult button:hover .mediatype-tv,
+.sresult button:hover .mediatype-mv {
+    transform: none;
+    /* Explicitly ensure no box-shadow or other effects */
+    box-shadow: none !important; /* Using !important to override any other styles */
+    transition: none;
+}
+
+/* Keep shadow effects for regular media items */
+.media-poster:hover .media-poster-img {
     box-shadow: 
         0 8px 16px rgba(0, 0, 0, 0.3),
         0 0 40px rgba(255, 255, 255, 0.4);
 }
 
-.media-poster:hover .media-title,
-.sresult:hover .searchresult-info {
+/* Remove box-shadow for search results */
+.sresult:hover img {
+    box-shadow: none !important; /* Using !important to override any other styles */
+    transform: none;
+    transition: none;
+}
+
+/* Keep effects for regular media titles */
+.media-poster:hover .media-title {
     opacity: 1;
     transform: translateY(-8px);
+}
+
+/* Remove all effects for search result info */
+.sresult:hover .searchresult-info {
+    /* Keep text visible but remove animations */
+    transform: none;
+    /* Do not change opacity on hover */
+    opacity: inherit;
+}
+
+/* Remove hover effects for search results without TMDB API key */
+.no-tmdb-api .sresult:hover .searchresult-info {
+    transform: none;
+    opacity: inherit;
 }
 
 /* Ensure the badge stays visible for placeholder posters */

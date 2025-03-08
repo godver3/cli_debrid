@@ -63,18 +63,18 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "file_collection_management": {
             "type": "string",
-            "description": "Select library management method.",
+            "description": "Select library management method. Note: On Windows systems, hardlinks will be used instead of symlinks when selecting Symlinked/Local option.",
             "default": "Plex",
             "choices": ["Plex", "Symlinked/Local"]
         },
         "original_files_path": {
             "type": "string",
-            "description": "Path to the original files (in Zurg use the /__all__ folder)",
+            "description": "Path to the original files (in Zurg use the /__all__ folder). On Windows, this must be on the same drive as the symlinked files path.",
             "default": "/mnt/zurg/__all__"
         },
         "symlinked_files_path": {
             "type": "string",
-            "description": "Path to the destination folder (where you want your files symlinked to)",
+            "description": "Path to the destination folder (where you want your files linked to). On Windows, this must be on the same drive as the original files path.",
             "default": "/mnt/symlinked"
         },
         "symlink_organize_by_type": {
@@ -761,7 +761,32 @@ SETTINGS_SCHEMA = {
         "tab": "Additional Settings",
         "enable_subtitles": {
             "type": "boolean",
-            "description": "Enable automatic subtitle downloading for media files using 'downsub'",
+            "description": "Enable automatic subtitle downloading for media files using 'downsub'. Works for both movies and TV shows.",
+            "default": False
+        },
+        "apply_to_movies": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to movie folders",
+            "default": True
+        },
+        "apply_to_tv_shows": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to TV show folders",
+            "default": True
+        },
+        "apply_to_anime_movies": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to anime movie folders (if separate anime folders are enabled)",
+            "default": True
+        },
+        "apply_to_anime_tv_shows": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to anime TV show folders (if separate anime folders are enabled)",
+            "default": True
+        },
+        "only_current_file": {
+            "type": "boolean",
+            "description": "Only download subtitles for the current file being processed (instead of scanning all folders)",
             "default": False
         },
         "opensubtitles_username": {
@@ -791,6 +816,24 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "User agent for subtitle API requests",
             "default": "SubDownloader/1.0 (your-email@example.com)"
+        }
+    },
+    "Custom Post-Processing": {
+        "tab": "Additional Settings",
+        "enable_custom_script": {
+            "type": "boolean",
+            "description": "Enable custom post-processing script",
+            "default": False
+        },
+        "custom_script_path": {
+            "type": "string",
+            "description": "Absolute path to your custom post-processing script",
+            "default": ""
+        },
+        "custom_script_args": {
+            "type": "string",
+            "description": "Arguments template for the script. Available variables: {title}, {year}, {type}, {imdb_id}, {location_on_disk}, {original_path_for_symlink}, {state}, {version}",
+            "default": "{title} {imdb_id}"
         }
     }
 }

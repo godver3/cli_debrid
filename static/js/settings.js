@@ -91,11 +91,15 @@ function validateContentSources(contentSources) {
 
 // Export the updateSettings function
 export function updateSettings() {
-    const settingsData = {};
+    settingsData = {}; // Reset settingsData
+
+    // First handle all regular inputs
     const inputs = document.querySelectorAll('#settingsForm input, #settingsForm select, #settingsForm textarea');
     
     inputs.forEach(input => {
         const name = input.name;
+        if (!name) return; // Skip inputs without names
+        
         let value = input.value;
         
         if (input.type === 'checkbox') {
@@ -107,13 +111,6 @@ export function updateSettings() {
         }
 
         const nameParts = name.split('.');
-        // Special handling for content source check period
-        if (nameParts.length >= 3 && nameParts[0] === 'Debug' && nameParts[1] === 'content_source_check_period') {
-            console.log(`Content source check period - Before conversion: name=${name}, value=${value}, type=${typeof value}`);
-            value = parseFloat(value) || 0;
-            console.log(`Content source check period - After conversion: value=${value}, type=${typeof value}`);
-        }
-
         let current = settingsData;
         
         for (let i = 0; i < nameParts.length - 1; i++) {
@@ -125,6 +122,20 @@ export function updateSettings() {
         
         current[nameParts[nameParts.length - 1]] = value;
     });
+
+    // Create Custom Post-Processing section if it doesn't exist
+    if (!settingsData['Custom Post-Processing']) {
+        settingsData['Custom Post-Processing'] = {};
+    }
+
+    // Handle custom post-processing settings
+    const customPostProcessingInputs = document.querySelectorAll('[id^="additional-"][name^="Custom Post-Processing."]');
+    customPostProcessingInputs.forEach(input => {
+        const key = input.name.split('.')[1];
+        settingsData['Custom Post-Processing'][key] = input.type === 'checkbox' ? input.checked : input.value;
+    });
+
+    console.log('Final Custom Post-Processing settings:', settingsData['Custom Post-Processing']);
 
     // Ensure UI Settings section exists
     if (!settingsData['UI Settings']) {
@@ -340,7 +351,7 @@ export function updateSettings() {
     }
 
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Custom Post-Processing'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];

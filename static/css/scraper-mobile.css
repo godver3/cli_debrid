@@ -542,6 +542,15 @@
         gap: 10px;
     }
 
+    .movie-list {
+        margin-bottom: 10px;
+    }
+
+    input[name="versions"], input[name="selection-type"], input[name="seasons"] {
+        height: auto !important;
+        appearance: auto !important;
+    }
+
     .scroll-container {
         padding: 10px;
         margin: 0;
@@ -557,11 +566,8 @@
         opacity: 1;
     }
 
-    /* Ensure titles are always visible */
-    .media-title,
-    .searchresult-info {
-        display: block !important;
-        opacity: 1 !important;
+    .media-title {
+        display: none;
     }
 
     /* Trending sections adjustments */

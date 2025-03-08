@@ -144,6 +144,33 @@ class ProgramRunner:
             'task_refresh_plex_tokens',
             'task_check_database_health'
         }
+        
+        # Load saved task toggle states from JSON file
+        try:
+            import os
+            import json
+            
+            # Get the user_db_content directory from environment variable
+            db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+            toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
+            
+            # Check if file exists
+            if os.path.exists(toggles_file_path):
+                # Load from JSON file
+                with open(toggles_file_path, 'r') as f:
+                    saved_states = json.load(f)
+                
+                # Apply saved states
+                for task_name, enabled in saved_states.items():
+                    normalized_name = self._normalize_task_name(task_name)
+                    if enabled and normalized_name not in self.enabled_tasks:
+                        self.enabled_tasks.add(normalized_name)
+                        logging.info(f"Enabled task from saved settings: {normalized_name}")
+                    elif not enabled and normalized_name in self.enabled_tasks:
+                        self.enabled_tasks.remove(normalized_name)
+                        logging.info(f"Disabled task from saved settings: {normalized_name}")
+        except Exception as e:
+            logging.error(f"Error loading saved task toggle states: {str(e)}")
 
         if get_setting('File Management', 'file_collection_management') == 'Plex' and (
             get_setting('Plex', 'update_plex_on_file_discovery') or 

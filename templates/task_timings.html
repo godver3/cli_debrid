@@ -21,6 +21,50 @@
         color: #f4f4f4;
     }
 
+    .save-toggles-container {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 1.5rem;
+        position: relative;
+    }
+
+    .save-toggles-btn {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        transition: background-color 0.3s ease;
+        position: relative;
+    }
+
+    .save-toggles-btn:hover {
+        background-color: #0069d9;
+    }
+
+    .save-toggles-btn:hover::after {
+        content: "Save current toggle states for future program restarts";
+        position: absolute;
+        bottom: -40px;
+        right: 0;
+        background-color: #333;
+        color: white;
+        padding: 0.5rem;
+        border-radius: 5px;
+        font-size: 0.875rem;
+        white-space: nowrap;
+        z-index: 10;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+
+    .save-toggles-btn i {
+        margin-right: 0.5rem;
+    }
+
     .task-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -238,6 +282,12 @@
         <p><i class="fas fa-info-circle"></i> Task timings are only displayed while the program is running. When the program is stopped, no timing information will be available.</p>
     </div>
     
+    <div class="save-toggles-container">
+        <button id="saveTogglesBtn" class="save-toggles-btn">
+            <i class="fas fa-save"></i> Save Toggles
+        </button>
+    </div>
+    
     <div class="tab-container">
         <div class="tabs">
             <button class="tab active" data-tab="queues">
@@ -290,7 +340,118 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById(tab.dataset.tab).classList.add('active');
         });
     });
+
+    // Add event listener for Save Toggles button
+    document.getElementById('saveTogglesBtn').addEventListener('click', saveToggleStates);
+    
+    // Initial fetch and setup
+    fetchAndUpdateTasks();
+    
+    // If no tasks are loaded (program not running), try to load saved toggle states
+    setTimeout(() => {
+        const taskTiles = document.querySelectorAll('.task-tile');
+        if (taskTiles.length === 0) {
+            loadSavedToggleStates();
+        }
+    }, 1000);
 });
+
+// Function to save toggle states
+function saveToggleStates() {
+    // Collect all task states
+    const taskStates = {};
+    let enabledCount = 0;
+    let disabledCount = 0;
+    
+    document.querySelectorAll('.task-tile').forEach(tile => {
+        const taskName = tile.dataset.taskName;
+        const isEnabled = tile.querySelector('input[type="checkbox"]').checked;
+        taskStates[taskName] = isEnabled;
+        
+        if (isEnabled) {
+            enabledCount++;
+        } else {
+            disabledCount++;
+        }
+    });
+    
+    // Show loading indicator
+    const saveBtn = document.getElementById('saveTogglesBtn');
+    const originalText = saveBtn.innerHTML;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+    saveBtn.disabled = true;
+
+    // Send to server
+    fetch('/program_operation/save_task_toggles', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ task_states: taskStates })
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Restore button
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
+        
+        if (data.success) {
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Success',
+                message: `Task toggle states saved successfully. ${enabledCount} tasks enabled, ${disabledCount} tasks disabled. These settings will be applied when the program starts.`
+            });
+        } else {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: data.error || 'Failed to save task toggle states'
+            });
+        }
+    })
+    .catch(error => {
+        // Restore button
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
+        
+        console.error('Error:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Error',
+            message: 'Failed to save task toggle states'
+        });
+    });
+}
+
+// Function to load saved toggle states
+function loadSavedToggleStates() {
+    fetch('/program_operation/load_task_toggles')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.task_states) {
+                const taskStates = data.task_states;
+                const taskCount = Object.keys(taskStates).length;
+                
+                if (taskCount > 0) {
+                    // Count enabled and disabled tasks
+                    let enabledCount = 0;
+                    let disabledCount = 0;
+                    
+                    Object.values(taskStates).forEach(enabled => {
+                        if (enabled) {
+                            enabledCount++;
+                        } else {
+                            disabledCount++;
+                        }
+                    });
+                    
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading saved toggle states:', error);
+        });
+}
 
 let timers = {};
 
@@ -301,11 +462,24 @@ function formatTime(hours, minutes, seconds) {
 function createTaskTile(taskName, taskData) {
     const enabled = taskData.enabled;
     const intervalMinutes = Math.floor(taskData.interval / 60);
-    const displayName = taskName
-        .replace('task_', '')
-        .replace('_wanted', '')
-        .replace(/_/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase());
+    
+    // Format display name based on task type
+    let displayName;
+    if (taskName.endsWith('_wanted')) {
+        // Content source task
+        displayName = taskName
+            .replace('task_', '')
+            .replace('_wanted', '')
+            .replace(/_/g, ' ');
+    } else {
+        // Regular task
+        displayName = taskName
+            .replace('task_', '')
+            .replace(/_/g, ' ');
+    }
+    
+    // Capitalize first letter of each word
+    displayName = displayName.replace(/\b\w/g, c => c.toUpperCase());
 
     const tile = document.createElement('div');
     tile.className = `task-tile ${enabled ? '' : 'disabled'}`;
@@ -399,6 +573,9 @@ function fetchAndUpdateTasks() {
             if (data.success) {
                 const tasks = data.tasks;
                 
+                // Debug logging for content sources
+                console.log("Content sources:", tasks.content_sources);
+                
                 // Update task sections
                 document.querySelector('#queues .task-grid').innerHTML = '';
                 Object.entries(tasks.queues || {}).forEach(([name, info]) => {
@@ -406,9 +583,17 @@ function fetchAndUpdateTasks() {
                 });
 
                 document.querySelector('#sources .task-grid').innerHTML = '';
-                Object.entries(tasks.content_sources || {}).forEach(([name, info]) => {
-                    document.querySelector('#sources .task-grid').appendChild(createTaskTile(name, info));
-                });
+                if (Object.keys(tasks.content_sources || {}).length === 0) {
+                    const noSourcesMsg = document.createElement('div');
+                    noSourcesMsg.className = 'info-banner';
+                    noSourcesMsg.style.margin = '1rem 0';
+                    noSourcesMsg.innerHTML = '<p><i class="fas fa-info-circle"></i> No content sources found. Content sources will appear here when they are configured and the program is running.</p>';
+                    document.querySelector('#sources .task-grid').appendChild(noSourcesMsg);
+                } else {
+                    Object.entries(tasks.content_sources || {}).forEach(([name, info]) => {
+                        document.querySelector('#sources .task-grid').appendChild(createTaskTile(name, info));
+                    });
+                }
 
                 document.querySelector('#system .task-grid').innerHTML = '';
                 Object.entries(tasks.system_tasks || {}).forEach(([name, info]) => {
@@ -425,6 +610,7 @@ function fetchAndUpdateTasks() {
                         timers[taskName] = Math.max(0, Math.floor(info.next_run_in.total_seconds));
                     });
                 });
+                
             }
         })
         .catch(error => {
@@ -577,9 +763,6 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
         });
     });
 }
-
-// Initial fetch and setup
-fetchAndUpdateTasks();
 
 // Update countdown every second
 setInterval(updateTimers, 1000);

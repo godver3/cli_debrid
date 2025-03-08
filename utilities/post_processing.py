@@ -66,6 +66,49 @@ def run_cinesync(item: Dict[str, Any]) -> None:
     except Exception as e:
         logging.error(f"Failed to start CineSync MediaHub: {str(e)}")
 
+def run_custom_script(item: Dict[str, Any]) -> None:
+    """
+    Run custom post-processing script if configured.
+    
+    Args:
+        item (Dict[str, Any]): The media item that triggered the state change
+    """
+    if not get_setting('Custom Post-Processing', 'enable_custom_script', False):
+        return
+        
+    script_path = get_setting('Custom Post-Processing', 'custom_script_path', '')
+    if not script_path or not os.path.isfile(script_path):
+        logging.warning(f"Custom script not found at: {script_path}")
+        return
+        
+    try:
+        # Get argument template
+        args_template = get_setting('Custom Post-Processing', 'custom_script_args', '{title} {imdb_id}')
+        
+        # Format arguments with item data
+        formatted_args = args_template.format(
+            title=item.get('title', ''),
+            year=item.get('year', ''),
+            type=item.get('type', ''),
+            imdb_id=item.get('imdb_id', ''),
+            location_on_disk=item.get('location_on_disk', ''),
+            original_path_for_symlink=item.get('original_path_for_symlink', ''),
+            state=item.get('state', ''),
+            version=item.get('version', '')
+        )
+        
+        # Build command
+        cmd = [script_path] + formatted_args.split()
+        
+        logging.info(f"Running custom script with args: {' '.join(cmd)}")
+        
+        # Run script
+        subprocess.Popen(cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE)
+    except Exception as e:
+        logging.error(f"Failed to run custom script: {str(e)}")
+
 def handle_state_change(item: Dict[str, Any]) -> None:
     """
     Handle any post-processing needed when an item enters a new state.
@@ -96,17 +139,29 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             
         # Log state change details
         if state == 'Collected' or state == 'Upgrading':
-            #logging.info(f"Item collected: {fresh_item.get('title')} ({fresh_item.get('type')}) - Version: {fresh_item.get('version')}")
             # Run CineSync for items
             run_cinesync(dict(fresh_item))
             
             # Run subtitle downloader
             try:
                 logging.info("Running subtitle downloader - this may take some time if it has never been run.")
-                downsub_main()
+                # Get the file path based on collection management setting
+                file_path = None
+                if get_setting('File Management', 'file_collection_management') == 'Plex':
+                    if fresh_item.get('location_on_disk'):
+                        file_path = fresh_item['location_on_disk']
+                else:
+                    if fresh_item.get('original_path_for_symlink'):
+                        file_path = fresh_item['original_path_for_symlink']
+                
+                # Run downsub with the specific file path
+                downsub_main(file_path)
             except Exception as e:
                 logging.error(f"Failed to run subtitle downloader: {str(e)}")
                 logging.exception("Subtitle downloader traceback:")
+                
+            # Run custom script if enabled
+            run_custom_script(dict(fresh_item))
         else:
             logging.warning(f"Unhandled state {state} in post-processing")
 

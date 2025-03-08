@@ -9,6 +9,15 @@ import traceback
 import json
 import os
 import platform
+from datetime import datetime
+from notifications import (
+    send_telegram_notification, 
+    send_discord_notification, 
+    send_ntfy_notification, 
+    send_email_notification
+)
+import re
+import time
 
 settings_bp = Blueprint('settings', __name__)
 
@@ -863,7 +872,7 @@ def save_version_settings():
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-    
+
 def update_required_settings(form_data):
     config = load_config()
     config['Plex']['url'] = form_data.get('plex_url')
@@ -1211,4 +1220,115 @@ def clear_all_versions():
         return jsonify({'success': True})
     except Exception as e:
         logging.error(f"Error clearing versions: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/notifications/test', methods=['POST'])
+def test_notification():
+    try:
+        notification_id = request.json.get('notification_id')
+        if not notification_id:
+            return jsonify({'success': False, 'error': 'No notification ID provided'}), 400
+
+        config = load_config()
+        if 'Notifications' not in config or notification_id not in config['Notifications']:
+            return jsonify({'success': False, 'error': 'Notification not found'}), 404
+
+        notification_config = config['Notifications'][notification_id]
+        
+        # Create a test notification
+        test_notification = {
+            'title': 'Test Notification',
+            'message': f'This is a test notification from {notification_config["title"]}',
+            'type': 'info',
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # Get the notification type
+        notification_type = notification_config['type']
+        
+        # Send the test notification based on the type
+        success = False
+        message = "Test notification sent successfully"
+        
+        try:
+            if notification_type == 'Telegram':
+                if not notification_config.get('bot_token') or not notification_config.get('chat_id'):
+                    return jsonify({'success': False, 'error': 'Missing Telegram configuration'}), 400
+                
+                content = f"<b>Test Notification</b>\n\nThis is a test message from CLI Debrid. If you're seeing this, your Telegram notifications are working correctly!"
+                send_telegram_notification(
+                    notification_config['bot_token'],
+                    notification_config['chat_id'],
+                    content
+                )
+                success = True
+                
+            elif notification_type == 'Discord':
+                if not notification_config.get('webhook_url'):
+                    return jsonify({'success': False, 'error': 'Missing Discord webhook URL'}), 400
+                
+                content = "**Test Notification**\n\nThis is a test message from CLI Debrid. If you're seeing this, your Discord notifications are working correctly!"
+                send_discord_notification(
+                    notification_config['webhook_url'],
+                    content
+                )
+                success = True
+                
+            elif notification_type == 'NTFY':
+                if not notification_config.get('host') or not notification_config.get('topic'):
+                    return jsonify({'success': False, 'error': 'Missing NTFY configuration'}), 400
+                
+                content = "Test Notification\n\nThis is a test message from CLI Debrid. If you're seeing this, your NTFY notifications are working correctly!"
+                send_ntfy_notification(
+                    notification_config['host'],
+                    notification_config.get('api_key', ''),
+                    notification_config.get('priority', 'low'),
+                    notification_config['topic'],
+                    content
+                )
+                success = True
+                
+            elif notification_type == 'Email':
+                required_fields = ['smtp_server', 'smtp_port', 'smtp_username', 'smtp_password', 'from_address', 'to_address']
+                missing_fields = [field for field in required_fields if not notification_config.get(field)]
+                
+                if missing_fields:
+                    return jsonify({'success': False, 'error': f'Missing Email configuration: {", ".join(missing_fields)}'}), 400
+                
+                content = """
+                <html>
+                <body>
+                <h2>Test Notification</h2>
+                <p>This is a test message from CLI Debrid. If you're seeing this, your Email notifications are working correctly!</p>
+                </body>
+                </html>
+                """
+                
+                smtp_config = {
+                    'smtp_server': notification_config['smtp_server'],
+                    'smtp_port': notification_config['smtp_port'],
+                    'smtp_username': notification_config['smtp_username'],
+                    'smtp_password': notification_config['smtp_password'],
+                    'from_address': notification_config['from_address'],
+                    'to_address': notification_config['to_address']
+                }
+                
+                send_email_notification(smtp_config, content)
+                success = True
+            
+            else:
+                return jsonify({'success': False, 'error': f'Unknown notification type: {notification_type}'}), 400
+                
+            if success:
+                logging.info(f"Test notification sent successfully for {notification_id}")
+                return jsonify({'success': True, 'message': message})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to send test notification'}), 500
+                
+        except Exception as e:
+            logging.error(f"Error sending test notification: {str(e)}", exc_info=True)
+            return jsonify({'success': False, 'error': f'Error sending test notification: {str(e)}'}), 500
+            
+    except Exception as e:
+        logging.error(f"Error testing notification: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

@@ -100,7 +100,7 @@ def get_upcoming_releases():
     
     # First get all upcoming releases
     query = """
-    SELECT DISTINCT m.title, m.release_date, m.tmdb_id
+    SELECT DISTINCT m.title, m.release_date, m.tmdb_id, m.imdb_id
     FROM media_items m
     WHERE m.type = 'movie' AND m.release_date BETWEEN ? AND ?
     ORDER BY m.release_date ASC
@@ -122,16 +122,25 @@ def get_upcoming_releases():
     
     # Group by release date, excluding existing movies
     grouped_results = {}
-    for title, release_date, tmdb_id in results:
+    for title, release_date, tmdb_id, imdb_id in results:
         if tmdb_id not in existing_tmdb_ids:  # Only include if not in our collection
             if release_date not in grouped_results:
-                grouped_results[release_date] = set()
-            grouped_results[release_date].add(title)
+                grouped_results[release_date] = []
+            grouped_results[release_date].append({
+                'title': title,
+                'tmdb_id': tmdb_id,
+                'imdb_id': imdb_id
+            })
     
     # Format the results
     formatted_results = [
-        {'titles': list(titles), 'release_date': date}
-        for date, titles in grouped_results.items()
+        {
+            'titles': [item['title'] for item in items],
+            'tmdb_ids': [item['tmdb_id'] for item in items if item['tmdb_id']],
+            'imdb_ids': [item['imdb_id'] for item in items if item['imdb_id']],
+            'release_date': date
+        }
+        for date, items in grouped_results.items()
     ]
     
     return formatted_results

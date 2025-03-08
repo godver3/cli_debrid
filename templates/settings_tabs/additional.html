@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing"%}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -140,11 +140,50 @@
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
-            <label for="additional-enable_subtitles" class="settings-title">Enable Subtitle Downloads (Movies Only):</label>
+            <label for="additional-enable_subtitles" class="settings-title">Enable Subtitle Downloads:</label>
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
             <p class="settings-description">Enable automatic subtitle downloading for media files using 'downsub'. Requires Symlink File Management.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-only_current_file" class="settings-title">Only Process Current File:</label>
+            <input type="checkbox" id="additional-only_current_file" name="Subtitle Settings.only_current_file"
+                   data-section="Subtitle Settings" data-key="only_current_file"
+                   {% if settings.get('Subtitle Settings', {}).get('only_current_file') %}checked{% endif %}>
+            <p class="settings-description">Only download subtitles for the current file being processed (instead of scanning all folders)</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label class="settings-title">Apply To Folders:</label>
+            <div class="settings-checkbox-group">
+                <div class="settings-checkbox-item">
+                    <input type="checkbox" id="additional-apply_to_movies" name="Subtitle Settings.apply_to_movies"
+                           data-section="Subtitle Settings" data-key="apply_to_movies"
+                           {% if settings.get('Subtitle Settings', {}).get('apply_to_movies', True) %}checked{% endif %}>
+                    <label for="additional-apply_to_movies">Movies</label>
+                </div>
+                <div class="settings-checkbox-item">
+                    <input type="checkbox" id="additional-apply_to_tv_shows" name="Subtitle Settings.apply_to_tv_shows"
+                           data-section="Subtitle Settings" data-key="apply_to_tv_shows"
+                           {% if settings.get('Subtitle Settings', {}).get('apply_to_tv_shows', True) %}checked{% endif %}>
+                    <label for="additional-apply_to_tv_shows">TV Shows</label>
+                </div>
+                <div class="settings-checkbox-item">
+                    <input type="checkbox" id="additional-apply_to_anime_movies" name="Subtitle Settings.apply_to_anime_movies"
+                           data-section="Subtitle Settings" data-key="apply_to_anime_movies"
+                           {% if settings.get('Subtitle Settings', {}).get('apply_to_anime_movies', True) %}checked{% endif %}>
+                    <label for="additional-apply_to_anime_movies">Anime Movies</label>
+                </div>
+                <div class="settings-checkbox-item">
+                    <input type="checkbox" id="additional-apply_to_anime_tv_shows" name="Subtitle Settings.apply_to_anime_tv_shows"
+                           data-section="Subtitle Settings" data-key="apply_to_anime_tv_shows"
+                           {% if settings.get('Subtitle Settings', {}).get('apply_to_anime_tv_shows', True) %}checked{% endif %}>
+                    <label for="additional-apply_to_anime_tv_shows">Anime TV Shows</label>
+                </div>
+            </div>
+            <p class="settings-description">Select which folder types to apply subtitle downloads to</p>
         </div>
 
         <div class="settings-form-group">
@@ -199,6 +238,41 @@
     </div>
 </div>
 
+<!-- Custom Post-Processing Settings Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Custom Post-Processing Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="additional-enable_custom_script" class="settings-title">Enable Custom Script:</label>
+            <input type="checkbox" id="additional-enable_custom_script" name="Custom Post-Processing.enable_custom_script"
+                   data-section="Custom Post-Processing" data-key="enable_custom_script"
+                   {% if settings.get('Custom Post-Processing', {}).get('enable_custom_script') %}checked{% endif %}>
+            <p class="settings-description">Enable running a custom script during post-processing</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-custom_script_path" class="settings-title">Custom Script Path:</label>
+            <input type="text" id="additional-custom_script_path" name="Custom Post-Processing.custom_script_path"
+                   value="{{ settings.get('Custom Post-Processing', {}).get('custom_script_path', '') }}" 
+                   class="settings-input"
+                   data-section="Custom Post-Processing" data-key="custom_script_path">
+            <p class="settings-description">Absolute path to your custom post-processing script</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-custom_script_args" class="settings-title">Custom Script Arguments:</label>
+            <input type="text" id="additional-custom_script_args" name="Custom Post-Processing.custom_script_args"
+                   value="{{ settings.get('Custom Post-Processing', {}).get('custom_script_args', '{title} {imdb_id}') }}" 
+                   class="settings-input"
+                   data-section="Custom Post-Processing" data-key="custom_script_args">
+            <p class="settings-description">Arguments template for the script. Available variables: {title}, {year}, {type}, {imdb_id}, {location_on_disk}, {original_path_for_symlink}, {state}, {version}</p>
+        </div>
+    </div>
+</div>
+
 <style>
 #trakt-auth-btn {
     background-color: #ed1c24;
@@ -209,6 +283,24 @@
     cursor: pointer;
     font-weight: bold;
     transition: background-color 0.3s;
+}
+
+.settings-checkbox-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 5px;
+}
+
+.settings-checkbox-item {
+    display: flex;
+    align-items: center;
+    margin-right: 15px;
+}
+
+.settings-checkbox-item label {
+    margin-left: 5px;
+    font-weight: normal;
 }
 
 #trakt-auth-btn:hover {
