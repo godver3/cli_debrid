@@ -12,7 +12,8 @@ from database.symlink_verification import (
     get_unverified_files,
     mark_file_as_verified,
     update_verification_attempt,
-    get_verification_stats
+    get_verification_stats,
+    mark_file_as_permanently_failed
 )
 from utilities.plex_functions import plex_update_item
 
@@ -110,6 +111,19 @@ async def verify_plex_file(file_data: Dict[str, Any], plex_library: Dict[str, Li
         bool: True if file is verified in Plex, False otherwise
     """
     try:
+        # First check if file exists
+        if not os.path.exists(file_data['full_path']):
+            logger.error(f"File does not exist on disk: {file_data['full_path']}")
+            return False
+            
+        # Check if it's a symlink and if it's valid
+        if os.path.islink(file_data['full_path']):
+            target_path = os.path.realpath(file_data['full_path'])
+            if not os.path.exists(target_path):
+                logger.error(f"Symlink target does not exist: {target_path} for symlink: {file_data['full_path']}")
+                return False
+            logger.debug(f"Symlink is valid. Target: {target_path}")
+        
         # Extract the filename without extension for comparison
         filename = os.path.basename(file_data['full_path'])
         filename_no_ext = os.path.splitext(filename)[0]
@@ -131,7 +145,7 @@ async def verify_plex_file(file_data: Dict[str, Any], plex_library: Dict[str, Li
                     logger.info(f"Verified movie in Plex: {file_data['title']} - {filename}")
                     return True
                 
-            logger.info(f"Movie not found in Plex: {file_data['title']} - {filename}")
+            logger.warning(f"Movie not found in Plex after {file_data.get('verification_attempts', 0)} attempts: {file_data['title']} - {filename}")
                     
         else:  # TV show
             # Log the number of episodes in Plex library
@@ -152,7 +166,14 @@ async def verify_plex_file(file_data: Dict[str, Any], plex_library: Dict[str, Li
                     logger.info(f"Verified episode in Plex: {file_data['title']} {episode_info} - {file_data.get('episode_title', 'unknown')} - {filename}")
                     return True
             
-            logger.info(f"Episode not found in Plex: {file_data['title']} {episode_info} - {file_data.get('episode_title', 'unknown')} - {filename}")
+            logger.warning(f"Episode not found in Plex after {file_data.get('verification_attempts', 0)} attempts: {file_data['title']} {episode_info} - {file_data.get('episode_title', 'unknown')} - {filename}")
+        
+        # If verification failed, log file permissions and ownership
+        try:
+            stat_info = os.stat(file_data['full_path'])
+            logger.debug(f"File permissions: {oct(stat_info.st_mode)}, Owner: {stat_info.st_uid}, Group: {stat_info.st_gid}")
+        except Exception as e:
+            logger.error(f"Error getting file stats: {str(e)}")
         
         return False
         
@@ -160,13 +181,14 @@ async def verify_plex_file(file_data: Dict[str, Any], plex_library: Dict[str, Li
         logger.error(f"Error verifying file in Plex: {str(e)}", exc_info=True)
         return False
 
-def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False) -> Tuple[int, int]:
+def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, max_attempts: int = 10) -> Tuple[int, int]:
     """
     Run a verification scan to check if symlinked files are in Plex.
     
     Args:
         max_files: Maximum number of files to check in one run
         recent_only: If True, only check recently added files in Plex
+        max_attempts: Maximum number of verification attempts before marking as failed
         
     Returns:
         Tuple of (verified_count, total_processed)
@@ -203,6 +225,48 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False) -
     
     for file_data in unverified_files:
         total_processed += 1
+        
+        # Check if max attempts exceeded
+        if file_data.get('verification_attempts', 0) >= max_attempts:
+            logger.error(f"File exceeded maximum verification attempts ({max_attempts}): {file_data['full_path']}")
+            
+            # Check if file exists
+            if not os.path.exists(file_data['full_path']):
+                logger.error(f"File does not exist on disk and has exceeded max attempts: {file_data['full_path']}")
+                mark_file_as_permanently_failed(
+                    file_data['verification_id'],
+                    f"File does not exist on disk after {max_attempts} verification attempts"
+                )
+                continue
+                
+            # Check if it's a symlink and if it's valid
+            if os.path.islink(file_data['full_path']):
+                target_path = os.path.realpath(file_data['full_path'])
+                if not os.path.exists(target_path):
+                    logger.error(f"Symlink target does not exist and has exceeded max attempts. Target: {target_path}, Symlink: {file_data['full_path']}")
+                    mark_file_as_permanently_failed(
+                        file_data['verification_id'],
+                        f"Symlink target does not exist after {max_attempts} verification attempts. Target: {target_path}"
+                    )
+                    continue
+            
+            # If file exists but still fails, log detailed information and mark as failed
+            try:
+                stat_info = os.stat(file_data['full_path'])
+                failure_reason = (
+                    f"File exists but verification keeps failing after {max_attempts} attempts. "
+                    f"Permissions: {oct(stat_info.st_mode)}, Owner: {stat_info.st_uid}, Group: {stat_info.st_gid}"
+                )
+                logger.error(failure_reason)
+                mark_file_as_permanently_failed(file_data['verification_id'], failure_reason)
+            except Exception as e:
+                logger.error(f"Error getting file stats: {str(e)}")
+                mark_file_as_permanently_failed(
+                    file_data['verification_id'],
+                    f"Error accessing file after {max_attempts} attempts: {str(e)}"
+                )
+            
+            continue
         
         # Check if the file exists
         if not os.path.exists(file_data['full_path']):
@@ -244,6 +308,7 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False) -
     # Log stats
     stats = get_verification_stats()
     logger.info(f"Plex verification scan completed. Verified: {verified_count}/{total_processed}. "
-                f"Overall progress: {stats['verified']}/{stats['total']} ({stats['percent_verified']}%)")
+                f"Overall progress: {stats['verified']}/{stats['total']} ({stats['percent_verified']}%). "
+                f"Permanently failed: {stats['permanently_failed']}")
     
     return (verified_count, total_processed)

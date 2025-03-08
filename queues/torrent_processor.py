@@ -90,6 +90,129 @@ class TorrentProcessor:
             logging.error(f"Error processing magnet/URL: {str(e)}", exc_info=True)
             return None, None
             
+    def check_cache_for_url(self, url: str) -> Optional[bool]:
+        """
+        Download a torrent file from URL and check if it's cached
+        
+        Args:
+            url: URL to the torrent file
+            
+        Returns:
+            - True: Torrent is cached
+            - False: Torrent is not cached
+            - None: Error occurred
+        """
+        logging.info(f"Checking cache for torrent URL: {url[:60]}...")
+        torrent_id_to_remove = None
+        
+        try:
+            import tempfile
+            import requests
+            import os
+            import bencodepy
+            import hashlib
+            from debrid.common.torrent import torrent_to_magnet
+            
+            # Create a temporary file to store the torrent
+            with tempfile.NamedTemporaryFile(suffix='.torrent', delete=False) as tmp:
+                temp_file_path = tmp.name
+                
+                try:
+                    # Download the torrent file
+                    logging.info(f"Downloading torrent file from {url} to {temp_file_path}")
+                    response = requests.get(url, timeout=30)
+                    
+                    if response.status_code != 200:
+                        logging.error(f"Failed to download torrent file. Status code: {response.status_code}")
+                        return None
+                    
+                    # Write the content to the temp file
+                    tmp.write(response.content)
+                    tmp.flush()
+                    
+                    # Try to parse the torrent and extract hash
+                    try:
+                        # Parse the torrent file
+                        with open(temp_file_path, 'rb') as f:
+                            torrent_data = bencodepy.decode(f.read())
+                        
+                        # Extract hash from torrent data
+                        if b'info' in torrent_data:
+                            info_data = bencodepy.encode(torrent_data[b'info'])
+                            info_hash = hashlib.sha1(info_data).hexdigest()
+                            logging.info(f"Extracted hash from torrent file: {info_hash}")
+                            
+                            # Check cache using the extracted hash
+                            magnet_link = f"magnet:?xt=urn:btih:{info_hash}"
+                            logging.info(f"Checking cache with extracted magnet link: {magnet_link}")
+                            is_cached = self.debrid_provider.is_cached(magnet_link)
+                            logging.info(f"Cache check result for extracted hash: {is_cached}")
+                            
+                            # Track torrent ID for removal if this is Real-Debrid
+                            from debrid.real_debrid.client import RealDebridProvider
+                            if isinstance(self.debrid_provider, RealDebridProvider) and hasattr(self.debrid_provider, '_all_torrent_ids'):
+                                torrent_id = self.debrid_provider._all_torrent_ids.get(info_hash)
+                                if torrent_id:
+                                    torrent_id_to_remove = torrent_id
+                                    logging.info(f"Tracked torrent ID {torrent_id} for removal")
+                            
+                            return is_cached
+                    except Exception as parse_error:
+                        logging.error(f"Error parsing torrent file: {str(parse_error)}", exc_info=True)
+                        
+                        # Try using the torrent file directly as fallback
+                        logging.info("Falling back to direct torrent file cache check")
+                        is_cached = self.debrid_provider.is_cached(temp_file_path)
+                        logging.info(f"Direct cache check result: {is_cached}")
+                        
+                        # For direct file checks, we don't get the hash so we'll need to look up all recent torrents
+                        # in the Real-Debrid client if applicable
+                        from debrid.real_debrid.client import RealDebridProvider
+                        if isinstance(self.debrid_provider, RealDebridProvider) and hasattr(self.debrid_provider, 'get_all_torrents'):
+                            try:
+                                # Check for recently added torrents (within the last minute)
+                                logging.info("Checking for recently added torrents to remove")
+                                all_torrents = self.debrid_provider.get_all_torrents()
+                                # Find the most recently added torrent within the last minute
+                                import time
+                                current_time = time.time()
+                                for torrent in all_torrents:
+                                    if 'id' in torrent and 'added' in torrent:
+                                        added_time = torrent.get('added', 0)
+                                        # If added within the last minute
+                                        if current_time - added_time < 60:
+                                            torrent_id_to_remove = torrent['id']
+                                            logging.info(f"Found recent torrent ID {torrent_id_to_remove} for removal")
+                                            break
+                            except Exception as e:
+                                logging.error(f"Error finding recent torrents for removal: {str(e)}")
+                        
+                        return is_cached
+                
+                finally:
+                    # Clean up temporary file
+                    try:
+                        os.unlink(temp_file_path)
+                        logging.info(f"Removed temporary file: {temp_file_path}")
+                    except Exception as e:
+                        logging.warning(f"Failed to delete temporary file: {str(e)}")
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f"Error checking cache for URL: {str(e)}", exc_info=True)
+            return None
+        finally:
+            # Remove the torrent from Real-Debrid if applicable
+            if torrent_id_to_remove:
+                try:
+                    from debrid.real_debrid.client import RealDebridProvider
+                    if isinstance(self.debrid_provider, RealDebridProvider) and hasattr(self.debrid_provider, 'remove_torrent'):
+                        self.debrid_provider.remove_torrent(torrent_id_to_remove, "Removed after cache check")
+                        logging.info(f"Successfully removed torrent ID {torrent_id_to_remove} after cache check")
+                except Exception as e:
+                    logging.error(f"Error removing torrent {torrent_id_to_remove}: {str(e)}")
+            
     def check_cache(self, magnet_or_url: str, temp_file: Optional[str] = None) -> Optional[bool]:
         """
         Check if a magnet link or torrent file is cached
@@ -103,8 +226,48 @@ class TorrentProcessor:
             - False: Torrent is not cached
             - None: Error occurred (no video files, invalid magnet, etc)
         """
+        torrent_id_to_remove = None
+        
         try:
+            logging.info(f"Checking cache for: {magnet_or_url[:60]}...")
+            
+            # Handle URLs that are torrent files
+            if not magnet_or_url.startswith('magnet:') and (
+                magnet_or_url.startswith('http') or 
+                'jackett' in magnet_or_url.lower() or 
+                'prowlarr' in magnet_or_url.lower()):
+                logging.info("Processing URL as a potential torrent file")
+                
+                # Use the specialized method for handling URLs
+                return self.check_cache_for_url(magnet_or_url)
+            
+            # For magnet links, extract the hash for potential removal later
+            hash_value = None
+            if magnet_or_url.startswith('magnet:'):
+                try:
+                    from urllib.parse import parse_qs
+                    params = parse_qs(magnet_or_url.split('?', 1)[1])
+                    xt_params = params.get('xt', [])
+                    for xt in xt_params:
+                        if xt.startswith('urn:btih:'):
+                            hash_value = xt.split(':')[2].lower()
+                            logging.info(f"Extracted hash from magnet link: {hash_value}")
+                            break
+                except Exception as e:
+                    logging.error(f"Error extracting hash from magnet link: {e}")
+            
+            # If it's a magnet link or we already have a temp file, use the standard method
             is_cached = self.debrid_provider.is_cached(magnet_or_url, temp_file)
+            logging.info(f"Cache check result: {is_cached}")
+            
+            # Track torrent ID for removal if this is Real-Debrid
+            from debrid.real_debrid.client import RealDebridProvider
+            if isinstance(self.debrid_provider, RealDebridProvider) and hasattr(self.debrid_provider, '_all_torrent_ids') and hash_value:
+                torrent_id = self.debrid_provider._all_torrent_ids.get(hash_value)
+                if torrent_id:
+                    torrent_id_to_remove = torrent_id
+                    logging.info(f"Tracked torrent ID {torrent_id} for removal")
+            
             if is_cached is None:
                 return None
             return is_cached
@@ -112,6 +275,17 @@ class TorrentProcessor:
         except Exception as e:
             logging.error(f"Error checking cache: {str(e)}", exc_info=True)
             return None
+        
+        finally:
+            # Remove the torrent from Real-Debrid if applicable
+            if torrent_id_to_remove:
+                try:
+                    from debrid.real_debrid.client import RealDebridProvider
+                    if isinstance(self.debrid_provider, RealDebridProvider) and hasattr(self.debrid_provider, 'remove_torrent'):
+                        self.debrid_provider.remove_torrent(torrent_id_to_remove, "Removed after cache check")
+                        logging.info(f"Successfully removed torrent ID {torrent_id_to_remove} after cache check")
+                except Exception as e:
+                    logging.error(f"Error removing torrent {torrent_id_to_remove}: {str(e)}")
             
     def add_to_account(self, magnet_or_url: str) -> Optional[Dict]:
         """

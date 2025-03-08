@@ -218,6 +218,34 @@
         /*margin-left: 110px;*/
     }
 
+    .search-results-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    button#seasonPackButton {
+        min-width: auto !important;
+    }
+    
+    /* Replace "Season Pack" with "Pack" on mobile */
+    button#seasonPackButton {
+        font-size: 0;
+    }
+    
+    button#seasonPackButton::before {
+        content: "Pack";
+        font-size: 16px;
+    }
+    
+    /* Replace "Request Season" with "Request" on mobile */
+    button#requestSeasonButton {
+        font-size: 0;
+    }
+    
+    button#requestSeasonButton::before {
+        content: "Request";
+        font-size: 16px;
+    }
+
     select#seasonDropdown,
     button#seasonPackButton {
         position: static;
@@ -394,7 +422,7 @@
     /* Form Styles */
     form#search-form {
         display: flex;
-        width: 100%;
+        width: 95%;
         flex-direction: row;
         gap: 8px;
         padding: 10px;

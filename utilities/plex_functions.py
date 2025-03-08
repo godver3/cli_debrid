@@ -148,6 +148,7 @@ async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: D
                     show_year = show_metadata.get('year')
         except Exception as e:
             logger.error(f"Error retrieving show metadata for {show_title}: {str(e)}")
+            # Continue processing without the metadata
 
     # If we couldn't get the year from metadata, use the show's year as fallback
     if show_year is None:
@@ -174,8 +175,12 @@ async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: D
         episodes = await get_season_episodes(session, plex_url, season_key, headers, semaphore)
         
         for episode in episodes:
-            episode_entries = await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id, filtered_show_genres, show_year)
-            all_episodes.extend(episode_entries)
+            try:
+                episode_entries = await process_episode(episode, show_title, season_number, show_imdb_id, show_tmdb_id, filtered_show_genres, show_year)
+                all_episodes.extend(episode_entries)
+            except Exception as e:
+                logger.error(f"Error processing episode {episode.get('title')} of {show_title} S{season_number}: {str(e)}")
+                continue
     
     return all_episodes
 
@@ -223,7 +228,7 @@ async def process_episode(episode: Dict[str, Any], show_title: str, season_numbe
                     metadata, _ = metadata_result
                     if metadata and isinstance(metadata, dict):
                         episode_data = metadata.get('episode', {})
-                        if episode_data:
+                        if episode_data and isinstance(episode_data, dict):  # Add type check
                             # Get first_aired from episode data
                             first_aired = episode_data.get('first_aired')
                             if first_aired:
@@ -238,19 +243,22 @@ async def process_episode(episode: Dict[str, Any], show_title: str, season_numbe
                     if show_metadata and isinstance(show_metadata, dict):
                         # Check if we have season/episode data in show metadata
                         seasons = show_metadata.get('seasons', {})
-                        season_data = seasons.get(str(season_number), {})
-                        if season_data and 'episodes' in season_data:
-                            episodes = season_data['episodes']
-                            # Find the matching episode by number
-                            for ep_num, ep_data in episodes.items():
-                                if str(base_episode_data['episode_number']) == ep_num:
-                                    first_aired = ep_data.get('first_aired')
-                                    if first_aired and not base_episode_data['release_date']:
-                                        base_episode_data['release_date'] = first_aired[:10]
-                                    break
+                        if isinstance(seasons, dict):  # Add type check
+                            season_data = seasons.get(str(season_number), {})
+                            if season_data and isinstance(season_data, dict) and 'episodes' in season_data:  # Add type check
+                                episodes = season_data['episodes']
+                                if isinstance(episodes, dict):  # Add type check
+                                    # Find the matching episode by number
+                                    for ep_num, ep_data in episodes.items():
+                                        if str(base_episode_data['episode_number']) == ep_num:
+                                            first_aired = ep_data.get('first_aired') if isinstance(ep_data, dict) else None  # Add type check
+                                            if first_aired and not base_episode_data['release_date']:
+                                                base_episode_data['release_date'] = first_aired[:10]
+                                            break
                 
         except Exception as e:
             logger.error(f"Error retrieving metadata for {show_title} S{season_number}E{base_episode_data['episode_number']}: {str(e)}")
+            # Continue processing without the metadata
     
     episode_entries = []
     if 'Media' in episode and episode['Media']:
