@@ -204,7 +204,7 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
                 'media_type': media_type,
                 'content_source_detail': account.username
             })
-            logging.debug(f"Added {media_type} '{item.title}' (IMDB: {imdb_id}) to processed items with source: {account.username}")
+            #logging.debug(f"Added {media_type} '{item.title}' (IMDB: {imdb_id}) to processed items with source: {account.username}")
 
         # Log detailed statistics
         logging.info(f"Plex.tv cloud watchlist processing complete:")

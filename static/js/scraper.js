@@ -58,7 +58,7 @@ function addToRealDebrid(magnetLink, torrent) {
                         showPopup({
                             type: POPUP_TYPES.CONFIRM,
                             title: 'Uncached Item',
-                            message: 'This item is not cached on your debrid provider. It will need to be downloaded first. Do you want to keep it?',
+                            message: data.message + ' (Uncached item will be kept)',
                             confirmText: 'Keep',
                             cancelText: 'Remove',
                             onConfirm: () => {
@@ -263,6 +263,7 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
 function toggleResultsVisibility(section) {
     const trendingContainer = document.getElementById('trendingContainer');
     const searchResult = document.getElementById('searchResult');
+    const searchResults = document.getElementById('searchResults');
     const seasonResults = document.getElementById('seasonResults');
     const dropdown = document.getElementById('seasonDropdown');
     const seasonPackButton = document.getElementById('seasonPackButton');
@@ -275,6 +276,7 @@ function toggleResultsVisibility(section) {
     if (section === 'displayEpisodeResults') {
         trendingContainer.style.display = 'none';
         searchResult.style.display = 'none';
+        searchResults.style.display = 'none';
         seasonResults.style.display = 'block';
         dropdown.style.display = 'block';
         // Only show season pack button for non-requester users
@@ -283,18 +285,17 @@ function toggleResultsVisibility(section) {
     }
     if (section === 'displaySearchResults') {
         trendingContainer.style.display = 'none';
-        searchResult.style.display = 'block';
+        searchResult.style.display = 'none';
+        searchResults.style.display = 'block';
         seasonResults.style.display = 'none';
         episodeResultsDiv.style.display = 'none';
     }
     if (section === 'get_trendingMovies') {
         trendingContainer.style.display = 'block';
         searchResult.style.display = 'none';
+        searchResults.style.display = 'none';
         seasonResults.style.display = 'none';
-        dropdown.style.display = 'none';
-        seasonPackButton.style.display = 'none';
         episodeResultsDiv.style.display = 'none';
-
     }
 }
 
@@ -318,6 +319,12 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 torResDiv.className = 'torresult';
                 var options = {year: 'numeric', month: 'long', day: 'numeric' };
                 var date = torrent.air_date ? new Date(torrent.air_date) : null;
+                
+                // Prepare the torrent data with both magnet_link and torrent_url for cache checking
+                if (torrent.magnet) {
+                    torrent.magnet_link = torrent.magnet;
+                }
+                
                 torResDiv.innerHTML = `
                     <button>
                     <div class="torresult-info">
@@ -327,7 +334,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                         <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' : 
                                       torrent.cached === 'No' ? 'not-cached' : 
                                       torrent.cached === 'Not Checked' ? 'not-checked' :
-                                      torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}" data-hash="${torrent.hash || ''}" data-index="${index}">${torrent.cached}</span>
+                                      torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}" data-index="${index}">${torrent.cached}</span>
                     </div>
                     </button>             
                 `;
@@ -379,6 +386,11 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                                       cacheStatus === 'No' ? 'not-cached' : 
                                       cacheStatus === 'Not Checked' ? 'not-checked' :
                                       cacheStatus === 'N/A' ? 'check-unavailable' : 'unknown';
+                
+                // Prepare the torrent data with both magnet_link and torrent_url for cache checking
+                if (torrent.magnet) {
+                    torrent.magnet_link = torrent.magnet;
+                }
 
                 const row = document.createElement('tr');
                 row.innerHTML = `
@@ -391,7 +403,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     <td style="color: rgb(191 191 190);">${torrent.source}</td>
                     <td style="color: rgb(191 191 190);">${torrent.score_breakdown.total_score}</td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                        <span class="cache-status ${cacheStatusClass}" data-hash="${torrent.hash || ''}" data-index="${index}">${cacheStatus}</span>
+                        <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
                         <button onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
@@ -418,6 +430,10 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
     handleScreenChange(mediaQuery);
 
     overlay.style.display = 'block';
+    
+    // Prepare data for cache check - now using the full results object
+    // Check cache status in the background for first 5 items
+    checkCacheStatusInBackground(null, data);
 }
 
 // Add event listeners when DOM content is loaded
@@ -1103,25 +1119,25 @@ function displaySearchResults(results, version) {
     // First hide trending container and show search results
     toggleResultsVisibility('displaySearchResults');
     
-    // Get the search results container and clear it
-    const searchResultsDiv = document.getElementById('searchResult');
-    if (!searchResultsDiv) {
-        console.error('Search result div not found!');
+    // Get the search results container
+    const searchResultsDiv = document.getElementById('searchResults');
+    const resultsList = document.getElementById('resultsList');
+    
+    if (!searchResultsDiv || !resultsList) {
+        console.error('Search result elements not found!');
         return;
     }
     
-    console.log('Updating search results HTML');
-    searchResultsDiv.innerHTML = '<div class="search-results-container"></div>';
+    // Clear previous results
+    resultsList.innerHTML = '';
     
-    const gridContainer = searchResultsDiv.querySelector('.search-results-container');
-    gridContainer.style.display = 'flex';
-    gridContainer.style.flexWrap = 'wrap';
-    gridContainer.style.gap = '20px';
+    // Show the search results container
+    searchResultsDiv.style.display = 'block';
     
     // Check if we have results
     if (!results || results.length === 0) {
         console.log('No results found');
-        gridContainer.innerHTML = '<p>No results found. Try a different search term.</p>';
+        resultsList.innerHTML = '<p>No results found. Try a different search term.</p>';
         return;
     }
     
@@ -1217,7 +1233,7 @@ function displaySearchResults(results, version) {
             };
         }
         
-        gridContainer.appendChild(searchResDiv);
+        resultsList.appendChild(searchResDiv);
     });
 }
 
@@ -1267,18 +1283,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
         }
         displayTorrentResults(data.torrent_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
         
-        // Start background cache checking if we have results and not skipping cache check
-        if (data.torrent_results && data.torrent_results.length > 0) {
-            // Extract hashes from results
-            const hashes = data.torrent_results
-                .filter(result => result.hash && result.cached === 'Not Checked')
-                .map(result => result.hash);
-                
-            if (hashes.length > 0) {
-                // Start background cache checking
-                checkCacheStatusInBackground(hashes, data.torrent_results);
-            }
-        }
+        // No need to do additional cache checking since displayTorrentResults already does it
     })
     .catch(error => {
         hideLoadingState();
@@ -1289,216 +1294,169 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
 
 // Function to check cache status in the background and update the UI
 function checkCacheStatusInBackground(hashes, results) {
-    if (!hashes || hashes.length === 0) return;
-    
-    console.log("Starting cache status check for hashes:", hashes.slice(0, 5));
-    
-    // Create a map of hash to result for quick lookup
-    const hashToResultMap = {};
-    results.forEach((result) => {
-        if (result.hash) {
-            hashToResultMap[result.hash] = result;
+    const cacheStatusElements = document.querySelectorAll('.cache-status');
+    let processedCount = 0;
+    let totalCount = Math.min(5, results.length);
+    let processingQueue = [];
+    let isProcessing = false;
+
+    // Update to handle both magnet links and torrent files
+    function updateCacheStatusUI(index, status) {
+        if (index >= cacheStatusElements.length) return;
+        
+        const element = cacheStatusElements[index];
+        element.classList.remove('not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
+        
+        if (status === 'cached') {
+            element.classList.add('cached');
+            element.textContent = '✓';
+        } else if (status === 'not_cached') {
+            element.classList.add('not-cached');
+            element.textContent = '✗';
+        } else if (status === 'check_unavailable') {
+            element.classList.add('check-unavailable');
+            element.textContent = 'N/A';
+        } else {
+            element.classList.add('unknown');
+            element.textContent = '?';
         }
-    });
-    
-    // Function to update the UI with cache status
-    function updateCacheStatusUI(hash, status) {
-        const result = hashToResultMap[hash];
-        if (!result) return;
         
-        // Handle null/None values from backend
-        if (status === null || status === 'None') {
-            status = 'No';
-        }
-        
-        // Update the result object
-        result.cached = status;
-        
-        // Find all elements with this hash and update them
-        const cacheStatusElements = document.querySelectorAll(`[data-hash="${hash}"]`);
-        cacheStatusElements.forEach(element => {
-            // Remove all status classes
-            element.classList.remove('cached', 'not-cached', 'not-checked', 'check-unavailable', 'unknown');
-            
-            // Add appropriate class based on status
-            if (status === 'Yes') {
-                element.classList.add('cached');
-                // Add a brief highlight effect to show the status has changed
-                element.classList.add('status-updated');
-                setTimeout(() => {
-                    element.classList.remove('status-updated');
-                }, 1000);
-            } else if (status === 'No') {
-                element.classList.add('not-cached');
-                // Add a brief highlight effect to show the status has changed
-                element.classList.add('status-updated');
-                setTimeout(() => {
-                    element.classList.remove('status-updated');
-                }, 1000);
-            } else if (status === 'Not Checked') {
-                element.classList.add('not-checked');
-            } else if (status === 'N/A') {
-                element.classList.add('check-unavailable');
-            } else {
-                element.classList.add('unknown');
-            }
-            
-            // Update the text
-            element.textContent = status;
-        });
+        processedCount++;
     }
-    
-    // Function to mark all remaining unchecked items as N/A
+
     function markRemainingAsNA() {
-        // Only mark items after the first 5 as N/A
-        const firstFiveHashes = new Set(hashesToCheck);
-        
-        // Count how many items we've processed
-        let processedCount = 0;
-        let jackettResultsProcessed = 0;
-        
-        // First, handle results with hashes (our first 5 priority)
-        results.forEach(result => {
-            if (result.hash && firstFiveHashes.has(result.hash)) {
-                // This is one of the first 5 hashes, don't mark as N/A
-                processedCount++;
-                console.log(`Preserving status for hash in first 5: ${result.hash} = ${result.cached}`);
-            }
-        });
-        
-        // Now handle all results (with or without hashes)
-        results.forEach((result, index) => {
-            // For results with hashes that aren't in the first 5
-            if (result.hash && !firstFiveHashes.has(result.hash) && result.cached === 'Not Checked') {
-                // This is after the first 5 and not checked, mark as N/A
-                updateCacheStatusUI(result.hash, 'N/A');
-                console.log(`Marking hash after first 5 as N/A: ${result.hash}`);
-            }
-            // For ALL Jackett results without hashes, mark them as N/A
-            else if (!result.hash && result.cached === 'Not Checked') {
-                // Mark all Jackett results as N/A
-                jackettResultsProcessed++;
-                
-                // We need to find the element by index since there's no hash
-                const cacheStatusElements = document.querySelectorAll(`.cache-status[data-index="${index}"]`);
-                cacheStatusElements.forEach(element => {
-                    // Remove all status classes
-                    element.classList.remove('cached', 'not-cached', 'not-checked', 'check-unavailable', 'unknown');
-                    // Add N/A class
-                    element.classList.add('check-unavailable');
-                    // Update the text
-                    element.textContent = 'N/A';
-                });
-                result.cached = 'N/A';
-                console.log(`Marking Jackett result #${jackettResultsProcessed} without hash as N/A`);
-            }
-        });
-        
-        console.log(`Processed ${processedCount} hashes in the first 5 and marked ${jackettResultsProcessed} Jackett results as N/A`);
+        for (let i = processedCount; i < cacheStatusElements.length; i++) {
+            const element = cacheStatusElements[i];
+            element.classList.remove('not-checked');
+            element.classList.add('check-unavailable');
+            element.textContent = 'N/A';
+        }
     }
-    
-    // Function to show completion notification
+
     function showCompletionNotification() {
-        // Create notification element
-        const notification = document.createElement('div');
-        notification.className = 'cache-check-complete';
-        notification.textContent = `Cache check completed for 5 items`;
-        
-        // Add to document
-        document.body.appendChild(notification);
-        
-        // Remove after animation completes
-        setTimeout(() => {
-            notification.remove();
-        }, 3000);
+        if (processedCount > 0) {
+            // Only show if at least one result was processed
+            const message = `Cache check completed for ${processedCount} ${processedCount === 1 ? 'result' : 'results'}`;
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.classList.add('show');
+                setTimeout(() => {
+                    notification.classList.remove('show');
+                    setTimeout(() => {
+                        document.body.removeChild(notification);
+                    }, 500);
+                }, 3000);
+            }, 100);
+        }
     }
-    
-    // Function to finalize the cache check process
+
     function finalizeCacheCheck() {
-        console.log("Finalizing cache check");
-        
-        // Mark items after the first 5 as N/A
         markRemainingAsNA();
-        
-        // Show completion notification
-        // showCompletionNotification();
-        
-        console.log("Cache check completed");
+        showCompletionNotification();
     }
-    
-    // Always check exactly 5 items
-    const exactItemsToCheck = 5;
-    
-    // Select the first 5 hashes to check
-    const hashesToCheck = hashes.slice(0, exactItemsToCheck);
-    
-    // Process hashes sequentially to ensure order
-    let currentIndex = 0;
-    
-    function checkNextHashInOrder() {
-        // If we've checked all hashes or reached our limit, finalize
-        if (currentIndex >= hashesToCheck.length || currentIndex >= exactItemsToCheck) {
-            finalizeCacheCheck();
+
+    // Function to check cache status of an item by index
+    function checkItemCacheStatus(index) {
+        if (index >= totalCount || index >= results.length) {
+            isProcessing = false;
+            if (processingQueue.length > 0) {
+                const nextIndex = processingQueue.shift();
+                isProcessing = true;
+                checkItemCacheStatus(nextIndex);
+            } else {
+                finalizeCacheCheck();
+            }
             return;
         }
+
+        const result = results[index];
         
-        const hash = hashesToCheck[currentIndex];
-        if (!hash) {
-            currentIndex++;
-            setTimeout(checkNextHashInOrder, 0);
+        // Skip if no magnet link or torrent URL
+        if (!result.magnet_link && !result.torrent_url) {
+            updateCacheStatusUI(index, 'check_unavailable');
+            isProcessing = false;
+            if (processingQueue.length > 0) {
+                const nextIndex = processingQueue.shift();
+                isProcessing = true;
+                checkItemCacheStatus(nextIndex);
+            } else if (processedCount >= totalCount) {
+                finalizeCacheCheck();
+            }
             return;
         }
-        
-        console.log(`Checking hash #${currentIndex + 1}: ${hash}`);
-        
-        // Send request to check cache status for a single hash
+
+        // Prepare the data to send
+        const payload = {
+            index: index
+        };
+
+        // Add either magnet link or torrent URL
+        if (result.magnet_link) {
+            payload.magnet_link = result.magnet_link;
+        } else if (result.torrent_url) {
+            payload.torrent_url = result.torrent_url;
+        }
+
+        console.log(`Checking cache status for item at index ${index}`, payload);
         fetch('/scraper/check_cache_status', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ hashes: [hash] })
+            body: JSON.stringify(payload)
         })
         .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+            console.log(`Received response for index ${index} with status ${response.status}`);
             return response.json();
         })
         .then(data => {
-            if (data.error) {
-                console.error('Error checking cache status:', data.error);
-                updateCacheStatusUI(hash, 'Error');
-                return;
-            }
+            console.log(`Cache status for index ${index}:`, data);
+            updateCacheStatusUI(index, data.status);
             
-            // Update UI with cache status
-            const cacheStatus = data.cache_status || {};
-            if (cacheStatus[hash]) {
-                updateCacheStatusUI(hash, cacheStatus[hash]);
-                console.log(`Updated hash #${currentIndex + 1} (${hash}) with status: ${cacheStatus[hash]}`);
-            } else if (cacheStatus[hash] === null || cacheStatus[hash] === 'None') {
-                // Handle null/None values explicitly
-                updateCacheStatusUI(hash, 'No');
-                console.log(`Updated hash #${currentIndex + 1} (${hash}) with status: No (converted from null/None)`);
+            isProcessing = false;
+            if (processingQueue.length > 0) {
+                const nextIndex = processingQueue.shift();
+                isProcessing = true;
+                checkItemCacheStatus(nextIndex);
+            } else if (processedCount >= totalCount) {
+                finalizeCacheCheck();
             }
         })
         .catch(error => {
-            console.error('Error checking cache status for hash:', hash, error);
-            // Mark as error in UI
-            updateCacheStatusUI(hash, 'Error');
-        })
-        .finally(() => {
-            // Move to the next hash
-            currentIndex++;
+            console.error('Error checking cache status:', error);
+            updateCacheStatusUI(index, 'unknown');
             
-            // Check the next hash with a small delay
-            setTimeout(checkNextHashInOrder, 100);
+            isProcessing = false;
+            if (processingQueue.length > 0) {
+                const nextIndex = processingQueue.shift();
+                isProcessing = true;
+                checkItemCacheStatus(nextIndex);
+            } else if (processedCount >= totalCount) {
+                finalizeCacheCheck();
+            }
         });
     }
-    
-    // Start checking hashes in order
-    checkNextHashInOrder();
+
+    // Initialize all cache status elements to "Checking..."
+    for (let i = 0; i < cacheStatusElements.length; i++) {
+        const element = cacheStatusElements[i];
+        element.textContent = '...';
+        element.classList.add('not-checked');
+    }
+
+    // Check the first 5 results (or fewer if there are less than 5 results)
+    for (let i = 0; i < totalCount; i++) {
+        if (i === 0) {
+            isProcessing = true;
+            checkItemCacheStatus(i);
+        } else {
+            processingQueue.push(i);
+        }
+    }
 }
 
 function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview, tmdb_api_key_set) {
@@ -1573,7 +1531,22 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
             dropdown.addEventListener('change', function() {
                 const selectedItem = JSON.parse(this.value);
                 if (tmdb_api_key_set) {
-                    displaySeasonInfo(selectedItem.title, selectedItem.season_num, selectedItem.air_date, selectedItem.season_overview, selectedItem.poster_path, genre_ids, vote_average, backdrop_path, show_overview);
+                    // Use the backdrop_path from the selected item or from the parent scope backdrop_path parameter
+                    // Same for show_overview
+                    const itemBackdropPath = selectedItem.backdrop_path || backdrop_path || null;
+                    const itemShowOverview = selectedItem.show_overview || show_overview || 'No overview available';
+                    
+                    displaySeasonInfo(
+                        selectedItem.title, 
+                        selectedItem.season_num, 
+                        selectedItem.air_date, 
+                        selectedItem.season_overview, 
+                        selectedItem.poster_path, 
+                        genre_ids, 
+                        vote_average, 
+                        itemBackdropPath, 
+                        itemShowOverview
+                    );
                 } else {
                     displaySeasonInfoTextOnly(selectedItem.title, selectedItem.season_num);
                 }
@@ -1592,8 +1565,6 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
             
             // Add event handler for the request season button
             requestSeasonButton.onclick = function() {
-
-                
                 const selectedItem = JSON.parse(dropdown.value);
                 
                 // Create content object for the version modal
@@ -1610,6 +1581,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                 showVersionModalForSeason(content);
             };
 
+            // Show results
             resultsDiv.style.display = 'block';
 
             // Trigger initial selection
@@ -1622,7 +1594,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     .catch(error => {
         hideLoadingState();
         console.error('Error:', error);
-        displayError('An error occurred while selecting media.');
+        displayError('An error occurred while processing your request.');
     });
 }
 
@@ -1655,6 +1627,15 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
         genreString = 'Genres not available';
     }
 
+    // Create the background image style with a fallback if backdrop_path is undefined
+    let backgroundImageStyle = '';
+    if (backdrop_path) {
+        backgroundImageStyle = `background-image: url('${backdrop_path.startsWith('http') ? backdrop_path : `/scraper/tmdb_image/w1920_and_h800_multi_faces${backdrop_path}`}');`;
+    } else {
+        // Set a fallback background color or gradient
+        backgroundImageStyle = 'background: linear-gradient(to bottom, #333333, #121212);';
+    }
+
     seasonInfo.innerHTML = `
         <div class="season-info-container">
             <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
@@ -1667,7 +1648,7 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
                 </div>
             </div>
         </div>
-        <div class="season-bg-image" style="background-image: url('${backdrop_path.startsWith('http') ? backdrop_path : `/scraper/tmdb_image/w1920_and_h800_multi_faces${backdrop_path}`}');"></div>
+        <div class="season-bg-image" style="${backgroundImageStyle}"></div>
     `;
 }
 

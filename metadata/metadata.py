@@ -531,6 +531,10 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     return processed_items
 
 def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = None) -> str:
+    if not media_details:
+        logging.warning("No media details provided for release date")
+        return 'Unknown'
+        
     if not imdb_id:
         logging.warning("Attempted to get release date with None IMDB ID")
         return media_details.get('released', 'Unknown')
@@ -643,10 +647,15 @@ def refresh_release_dates():
 
             if media_type == 'movie':
                 metadata, _ = DirectAPI.get_movie_metadata(imdb_id)
-                logging.info("Getting release date and physical release date")
-                new_release_date = get_release_date(metadata, imdb_id)
-                new_physical_release_date = get_physical_release_date(imdb_id)
-                logging.info(f"Physical release date: {new_physical_release_date}")
+                if not metadata:
+                    logging.warning(f"No metadata found for movie {title} ({imdb_id})")
+                    new_release_date = 'Unknown'
+                    new_physical_release_date = None
+                else:
+                    logging.info("Getting release date and physical release date")
+                    new_release_date = get_release_date(metadata, imdb_id)
+                    new_physical_release_date = get_physical_release_date(imdb_id)
+                    logging.info(f"Physical release date: {new_physical_release_date}")
 
                 # Store original values for comparison
                 item_dict['early_release_original'] = item_dict.get('early_release', False)
@@ -669,40 +678,51 @@ def refresh_release_dates():
                 logging.info(f"Processing metadata for {title} S{season_number}E{episode_number}")
                 
                 if not metadata or not isinstance(metadata, dict):
-                    logging.error(f"Invalid metadata for show {imdb_id}: {type(metadata)}")
+                    logging.warning(f"Invalid or missing metadata for show {imdb_id}")
                     new_release_date = 'Unknown'
                 else:
                     seasons = metadata.get('seasons', {})
-                    season_data = seasons.get(str(season_number), {})
-                    episodes = season_data.get('episodes', {})
-                    episode_data = episodes.get(str(episode_number))
-                    
-                    if not episode_data:
-                        logging.error(f"No data found for S{season_number}E{episode_number}")
+                    if not isinstance(seasons, dict):
+                        logging.warning(f"Invalid seasons data for show {imdb_id}")
                         new_release_date = 'Unknown'
                     else:
-                        first_aired_str = episode_data.get('first_aired')
-                        logging.info(f"First aired date from metadata: {first_aired_str}")
-                        
-                        if first_aired_str:
-                            try:
-                                # Parse the UTC datetime string
-                                first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-                                first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-                                
-                                # Convert UTC to local timezone
-                                local_tz = _get_local_timezone()
-                                local_dt = first_aired_utc.astimezone(local_tz)
-                                
-                                # Format the local date
-                                new_release_date = local_dt.strftime("%Y-%m-%d")
-                                logging.info(f"Converted UTC {first_aired_str} to local date {new_release_date}")
-                            except ValueError as e:
-                                logging.error(f"Invalid datetime format: {first_aired_str} - Error: {e}")
-                                new_release_date = 'Unknown'
-                        else:
-                            logging.warning("No first_aired date found in episode data")
+                        season_data = seasons.get(str(season_number), {})
+                        if not isinstance(season_data, dict):
+                            logging.warning(f"Invalid season data for show {imdb_id} season {season_number}")
                             new_release_date = 'Unknown'
+                        else:
+                            episodes = season_data.get('episodes', {})
+                            if not isinstance(episodes, dict):
+                                logging.warning(f"Invalid episodes data for show {imdb_id} season {season_number}")
+                                new_release_date = 'Unknown'
+                            else:
+                                episode_data = episodes.get(str(episode_number))
+                                if not episode_data or not isinstance(episode_data, dict):
+                                    logging.warning(f"No valid data found for S{season_number}E{episode_number}")
+                                    new_release_date = 'Unknown'
+                                else:
+                                    first_aired_str = episode_data.get('first_aired')
+                                    logging.info(f"First aired date from metadata: {first_aired_str}")
+                                    
+                                    if first_aired_str:
+                                        try:
+                                            # Parse the UTC datetime string
+                                            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+                                            first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+                                            
+                                            # Convert UTC to local timezone
+                                            local_tz = _get_local_timezone()
+                                            local_dt = first_aired_utc.astimezone(local_tz)
+                                            
+                                            # Format the local date
+                                            new_release_date = local_dt.strftime("%Y-%m-%d")
+                                            logging.info(f"Converted UTC {first_aired_str} to local date {new_release_date}")
+                                        except ValueError as e:
+                                            logging.error(f"Invalid datetime format: {first_aired_str} - Error: {e}")
+                                            new_release_date = 'Unknown'
+                                    else:
+                                        logging.warning("No first_aired date found in episode data")
+                                        new_release_date = 'Unknown'
                 
                 logging.info(f"New release date: {new_release_date}")
 

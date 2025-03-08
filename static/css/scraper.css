@@ -148,7 +148,12 @@ form#search-form input:-ms-input-placeholder {
     transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     padding: 16px;
-    margin: -8px 8px;
+    margin: -8px 8px; /* Restore original margin */
+    z-index: 1; /* Keep z-index for proper stacking */
+}
+
+.sresult .media-poster {
+    margin-bottom: 20px;
 }
 
 .media-card:first-child,
@@ -172,6 +177,7 @@ form#search-form input:-ms-input-placeholder {
     margin: 0;
     border: none;
     background: none;
+    overflow: visible; /* Keep overflow visible to allow glow */
 }
 
 .media-poster-img,
@@ -181,12 +187,12 @@ form#search-form input:-ms-input-placeholder {
     transform: translateY(0);
 }
 
-/* Remove transitions from search result elements */
+/* Apply the same transitions to search result elements */
 .sresult img,
 .sresult .mediatype-tv,
 .sresult .mediatype-mv {
-    transition: none;
-    transform: none;
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateY(0);
 }
 
 .media-poster-img {
@@ -202,7 +208,7 @@ form#search-form input:-ms-input-placeholder {
         0 0 25px rgba(255, 255, 255, 0.15);
 }
 
-/* Remove box-shadow from search result images */
+/* Apply the same box-shadow to search result images */
 .sresult img {
     width: 176px;
     height: 264px;
@@ -211,7 +217,9 @@ form#search-form input:-ms-input-placeholder {
     object-fit: cover;
     position: relative;
     z-index: 1;
-    box-shadow: none;
+    box-shadow: 
+        0 4px 6px rgba(0, 0, 0, 0.2),
+        0 0 25px rgba(255, 255, 255, 0.15);
 }
 
 .mediatype-tv, .mediatype-mv {
@@ -266,28 +274,54 @@ form#search-form input:-ms-input-placeholder {
     transform: translateY(-8px);
 }
 
-/* Remove all hover animations for search results */
-.sresult:hover img,
-.sresult button:hover .mediatype-tv,
-.sresult button:hover .mediatype-mv {
-    transform: none;
-    /* Explicitly ensure no box-shadow or other effects */
-    box-shadow: none !important; /* Using !important to override any other styles */
-    transition: none;
+/* Apply same hover animations for search results */
+.sresult:hover {
+    transform: translateY(-8px);
+    z-index: 2; /* Keep raised z-index on hover */
 }
 
-/* Keep shadow effects for regular media items */
+.sresult:hover .mediatype-tv,
+.sresult:hover .mediatype-mv {
+    transform: none;
+}
+
+/* Enhanced media poster image box-shadow on hover (keep this enhancement) */
 .media-poster:hover .media-poster-img {
     box-shadow: 
         0 8px 16px rgba(0, 0, 0, 0.3),
-        0 0 40px rgba(255, 255, 255, 0.4);
+        0 0 50px rgba(255, 255, 255, 0.5);
 }
 
-/* Remove box-shadow for search results */
+/* Apply enhanced box-shadow for search results */
 .sresult:hover img {
-    box-shadow: none !important; /* Using !important to override any other styles */
-    transform: none;
-    transition: none;
+    box-shadow: 
+        0 8px 16px rgba(0, 0, 0, 0.3),
+        0 0 50px rgba(255, 255, 255, 0.5);
+    transform: none; /* No transform on the img itself */
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Move glow effect to the media-poster for search results */
+.sresult .media-poster {
+    overflow: visible;
+}
+
+.sresult:hover .media-poster::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--border-radius-lg);
+    box-shadow: none;
+    z-index: -1;
+    pointer-events: none;
+}
+
+/* Remove the effect from the sresult itself */
+.sresult:hover::after {
+    content: none;
 }
 
 /* Keep effects for regular media titles */
@@ -296,18 +330,24 @@ form#search-form input:-ms-input-placeholder {
     transform: translateY(-8px);
 }
 
-/* Remove all effects for search result info */
+/* Apply same effects for search result info */
 .sresult:hover .searchresult-info {
-    /* Keep text visible but remove animations */
-    transform: none;
-    /* Do not change opacity on hover */
-    opacity: inherit;
+    opacity: 1;
+    transform: none; /* No transform as it's on the card itself */
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Remove hover effects for search results without TMDB API key */
-.no-tmdb-api .sresult:hover .searchresult-info {
-    transform: none;
-    opacity: inherit;
+/* Apply hover effects for search results without TMDB API key */
+.no-tmdb-api .media-poster:hover .media-title,
+.no-tmdb-api .sresult:hover .searchresult-info,
+.placeholder-poster:hover + .media-title,
+.placeholder-poster:hover + .searchresult-info {
+    transform: none; /* Remove transform as it's now on the parent */
+}
+
+/* Add hover effect for the entire search result card in no-tmdb-api mode */
+.no-tmdb-api .sresult:hover {
+    transform: translateY(-8px);
 }
 
 /* Ensure the badge stays visible for placeholder posters */
@@ -331,7 +371,7 @@ form#search-form input:-ms-input-placeholder {
 .no-tmdb-api .sresult:hover .searchresult-info,
 .placeholder-poster:hover + .media-title,
 .placeholder-poster:hover + .searchresult-info {
-    transform: translateY(-8px);
+    transform: none; /* Remove transform as it's now on the parent */
 }
 
 /* Add styles for placeholder images */
@@ -820,6 +860,49 @@ p.torresult-title {
     max-width: 85vw;
 }
 
+/* Search results container styles */
+.search-results-container {
+    background-color: #1e1e1e;
+    border-radius: var(--border-radius-md);
+    padding: var(--spacing-md);
+    margin: var(--spacing-lg) auto;
+    width: 95%;
+    max-width: 1200px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.search-results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: var(--spacing-sm);
+}
+
+.search-results-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.search-results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+    gap: var(--spacing-md);
+    justify-items: center;
+    margin: 30px;
+}
+
+/* Adjust sresult for grid layout */
+.sresult {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+}
+
 /* Media queries for better responsive design */
 @media (max-width: 768px) {
     .movie-list, .show-list {
@@ -863,6 +946,17 @@ p.torresult-title {
         height: 32px;
         font-size: 14px;
         line-height: 32px;
+    }
+
+    /* Responsive search results container */
+    .search-results-container {
+        width: 100%;
+        padding: var(--spacing-sm);
+    }
+
+    .search-results-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: var(--spacing-sm);
     }
 }
 
@@ -936,4 +1030,13 @@ p.torresult-title {
 
 .overlay-content td button:hover {
     background-color: var(--primary-hover);
+}
+
+/* Remove glow effect for normal media cards (revert changes) */
+.media-card:hover {
+    z-index: auto;
+}
+
+.media-card:hover::after {
+    content: none;
 }

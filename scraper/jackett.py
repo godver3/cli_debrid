@@ -152,8 +152,11 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
         title = item.get('Title', 'N/A')
         if item.get('MagnetUri'):
             magnet = item['MagnetUri']
+            is_torrent_url = False
         elif item.get('Link'):
             magnet = item['Link']
+            # Check if this is likely a torrent URL rather than a magnet link
+            is_torrent_url = not magnet.startswith('magnet:')
         else:
             filtered_no_magnet += 1
             #logging.debug(f"Skipping result '{title}' - No magnet or link found")
@@ -173,6 +176,26 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
                 'magnet': magnet,
                 'seeders': seeders
             }
+            
+            # Set the appropriate property for cache checking
+            if is_torrent_url:
+                result['torrent_url'] = magnet
+            else:
+                result['magnet_link'] = magnet
+                
+                # Try to extract hash for standard magnet links
+                if magnet.startswith('magnet:'):
+                    try:
+                        from urllib.parse import parse_qs
+                        params = parse_qs(magnet.split('?', 1)[1])
+                        xt_params = params.get('xt', [])
+                        for xt in xt_params:
+                            if xt.startswith('urn:btih:'):
+                                result['hash'] = xt.split(':')[2].lower()
+                                break
+                    except Exception as e:
+                        logging.error(f"Error extracting hash from magnet link: {e}")
+                
             results.append(result)
             #logging.debug(f"Added result: {title} ({result['size']:.2f}GB, {seeders} seeders)")
 

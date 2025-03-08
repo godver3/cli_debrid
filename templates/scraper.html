@@ -92,7 +92,7 @@
         font-weight: bold;
         text-transform: uppercase;
         margin-top: 5px;
-        min-width: 120px;
+        min-width: 40px;
         text-align: center;
         white-space: nowrap;
         overflow: hidden;
@@ -335,31 +335,86 @@
     .sresult {
         position: relative;
         margin-bottom: 15px;
-        /* Remove all transitions */
-        transition: none;
+        transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        overflow: visible;
+        margin: -8px 8px; /* Restore original margin */
+        z-index: 1;
     }
     
     .sresult .media-poster {
         position: relative;
         display: inline-block;
-        overflow: hidden;
+        overflow: visible;
         border-radius: 5px;
-        /* Remove all transitions */
-        transition: none;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
     }
     
-    /* Remove hover effects completely */
-    .sresult .media-poster:hover {
+    /* Apply hover effects to search results - THE ENTIRE CARD */
+    .sresult:hover {
+        transform: translateY(-8px);
+        z-index: 2;
+    }
+    
+    /* Remove the transform from the inner poster since it's now on the card */
+    .sresult:hover .media-poster {
         transform: none;
-        /* Ensure no other effects are applied */
-        box-shadow: none;
     }
     
     .sresult .media-poster img {
         max-width: 100%;
         display: block;
-        /* Remove transitions for images */
-        transition: none;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 
+            0 4px 6px rgba(0, 0, 0, 0.2),
+            0 0 25px rgba(255, 255, 255, 0.15);
+        border-radius: var(--border-radius-lg);
+    }
+    
+    /* Apply box-shadow enhancement to the img on hover */
+    .sresult:hover .media-poster img {
+        box-shadow: 
+            0 8px 16px rgba(0, 0, 0, 0.3),
+            0 0 50px rgba(255, 255, 255, 0.5);
+    }
+    
+    /* Reduce glow intensity to match trending items */
+    .sresult:hover .media-poster::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: var(--border-radius-lg);
+        box-shadow: none;
+        z-index: -1;
+        pointer-events: none;
+    }
+    
+    /* Remove the effect from the sresult itself */
+    .sresult:hover::after {
+        content: none;
+    }
+    
+    .sresult .searchresult-info {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: var(--spacing-md);
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
+        color: var(--text-primary);
+        opacity: 0;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        text-align: center;
+        backdrop-filter: blur(4px);
+        z-index: 2;
+        border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+    }
+    
+    /* Make the info section visible on hover */
+    .sresult:hover .searchresult-info {
+        opacity: 1;
     }
     
     .sresult .request-icon {
@@ -369,17 +424,17 @@
         z-index: 5;
     }
     
-    /* Remove all effects on poster hover */
-    .sresult .media-poster:hover .request-icon {
+    /* No need for separate transform on the icon, it will move with the card */
+    .sresult:hover .request-icon {
         transform: none;
     }
 
-    /* Keep only the icon hover effect */
-    .sresult .media-poster .request-icon:hover {
+    /* Maintain the icon hover effect */
+    .sresult .request-icon:hover {
         transform: scale(1.1);
         background-color: #2980b9;
     }
-
+    
     /* Style for the Request Season button */
     #requestSeasonButton {
         background-color: #3498db;
@@ -387,6 +442,51 @@
     
     #requestSeasonButton:hover {
         background-color: #2980b9;
+    }
+    
+    #searchResults {
+        min-width: 95%;
+    }
+
+    /* Search results container similar to trending container */
+    .search-results-container {
+        background-color: #1e1e1e;
+        border-radius: var(--border-radius-md);
+        padding: var(--spacing-md);
+        margin: var(--spacing-lg) auto;
+        width: 95%;
+        max-width: 1200px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .search-results-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--spacing-md);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding-bottom: var(--spacing-sm);
+    }
+    
+    .search-results-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin: 0;
+    }
+    
+    .search-results-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+        gap: var(--spacing-md);
+        justify-items: center;
+    }
+    
+    /* Adjust sresult for grid layout */
+    .sresult {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
     }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
@@ -463,8 +563,12 @@
         <div id="searchResult"></div>
         <!-- Add this div for search results -->
         <div id="searchResults" style="display: none;">
-            <h2>Search Results</h2>
-            <div id="resultsList"></div>
+            <div class="search-results-container">
+                <div class="search-results-header">
+                    <h2 class="search-results-title">Search Results</h2>
+                </div>
+                <div id="resultsList" class="search-results-grid"></div>
+            </div>
         </div>
 
         <!-- Version Selection Modal -->

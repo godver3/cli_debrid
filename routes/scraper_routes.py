@@ -12,7 +12,7 @@ from utilities.manual_scrape import get_details
 from web_scraper import search_trakt
 from database.database_reading import get_all_season_episode_counts
 from metadata.metadata import get_imdb_id_if_missing, get_metadata, get_release_date, _get_local_timezone, DirectAPI
-import re
+from queues.torrent_processor import TorrentProcessor
 from queues.media_matcher import MediaMatcher
 from guessit import guessit
 from typing import Dict, Any, Tuple
@@ -1048,7 +1048,57 @@ def tmdb_image_proxy(image_path):
 @scraper_permission_required
 def check_cache_status():
     try:
-        hashes = request.json.get('hashes', [])
+        data = request.json
+        logging.info(f"Cache check request data: {data}")
+        
+        # Handle single item cache check (new approach)
+        if 'index' in data:
+            index = data.get('index')
+            magnet_link = data.get('magnet_link')
+            torrent_url = data.get('torrent_url')
+            
+            logging.info(f"Processing cache check for item at index {index}")
+            if magnet_link:
+                logging.info(f"Magnet link: {magnet_link[:60]}...")
+            if torrent_url:
+                logging.info(f"Torrent URL: {torrent_url[:60]}...")
+                
+            if not magnet_link and not torrent_url:
+                logging.warning(f"No magnet link or torrent URL provided for index {index}")
+                return jsonify({'status': 'check_unavailable'}), 200
+            
+            # Get the debrid provider
+            debrid_provider = get_debrid_provider()
+            logging.info(f"Using debrid provider: {debrid_provider.__class__.__name__}")
+            
+            # Create a torrent processor with the debrid provider
+            torrent_processor = TorrentProcessor(debrid_provider)
+            
+            # Check cache status based on what we have
+            if magnet_link:
+                logging.info(f"Checking cache status for magnet link at index {index}")
+                is_cached = torrent_processor.check_cache(magnet_link)
+                logging.info(f"Cache check result for magnet link: {is_cached}")
+            elif torrent_url:
+                logging.info(f"Checking cache status for torrent URL at index {index}")
+                is_cached = torrent_processor.check_cache_for_url(torrent_url)
+                logging.info(f"Cache check result for torrent URL: {is_cached}")
+            
+            # Convert result to the expected format
+            if is_cached is True:
+                status = 'cached'
+            elif is_cached is False:
+                status = 'not_cached'
+            else:
+                # Handle None responses which can happen with download failures or empty torrents
+                logging.warning(f"Cache check returned None for index {index}")
+                status = 'check_unavailable'
+                
+            logging.info(f"Returning cache status for index {index}: {status}")
+            return jsonify({'status': status, 'index': index}), 200
+            
+        # Handle multiple hashes (legacy approach)
+        hashes = data.get('hashes', [])
         if not hashes:
             return jsonify({'error': 'No hashes provided'}), 400
             

@@ -748,9 +748,19 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     for result in scrape_results:
         if isinstance(result, dict):
             magnet_link = result.get('magnet')
-            if magnet_link:
+            torrent_url = None
+            
+            # Check if this is a Jackett/Prowlarr source (which could be a torrent URL)
+            if magnet_link and ('jackett' in magnet_link.lower() or 'prowlarr' in magnet_link.lower()):
+                # Try to detect if this is a torrent file URL
+                if not magnet_link.startswith('magnet:'):
+                    torrent_url = magnet_link
+                    result['torrent_url'] = torrent_url
+            
+            # Process standard magnet links
+            if magnet_link and magnet_link.startswith('magnet:'):
                 try:
-                    # Handle Jackett/Prowlarr URLs
+                    # Handle Jackett/Prowlarr magnet links
                     if 'jackett' in magnet_link.lower() or 'prowlarr' in magnet_link.lower():
                         file_param = re.search(r'file=([^&]+)', magnet_link)
                         if file_param:
@@ -767,10 +777,17 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                         magnet_hash = extract_hash_from_magnet(magnet_link)
                         result['hash'] = magnet_hash
                         hashes.append(magnet_hash)
+                    # Make sure magnet_link is also available for the frontend
+                    result['magnet_link'] = result['magnet']
                     processed_results.append(result)
                 except Exception as e:
                     logging.error(f"Error processing magnet link {magnet_link}: {str(e)}")
                     continue
+            # Process torrent URLs
+            elif torrent_url:
+                # No hash extraction needed for torrent URLs, but include them in results
+                processed_results.append(result)
+                logging.info(f"Added torrent URL result: {result['title']}")
 
     # Get the debrid provider and check its capabilities
     debrid_provider = get_debrid_provider()
@@ -785,6 +802,20 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     # Initialize all cache statuses as 'Not Checked'
     for result in processed_results:
         result['cached'] = 'Not Checked'
+        
+        # Ensure both magnet and magnet_link are set (for UI and cache checking)
+        if 'magnet' in result and not 'magnet_link' in result:
+            result['magnet_link'] = result['magnet']
+        elif 'magnet_link' in result and not 'magnet' in result:
+            result['magnet'] = result['magnet_link']
+            
+        # Log some info about the result for debugging
+        if 'torrent_url' in result:
+            logging.info(f"Torrent URL result: {result['title']} (URL: {result['torrent_url'][:40]}...)")
+        elif 'magnet_link' in result:
+            logging.info(f"Magnet link result: {result['title']} (Link: {result['magnet_link'][:40]}...)")
+        else:
+            logging.warning(f"Result without magnet or torrent URL: {result['title']}")
     
     # Only perform cache check if explicitly requested and not in background mode
     if hashes and not skip_cache_check and not background_cache_check:
